@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WLO-Launcher · Boerdi</title>
+  <meta name="description" content="Boerdi, die WLO-Eule, hilft dir, die Dienste von WirLernenOnline in deinem KI-Chat zu nutzen: offene Bildungsinhalte über die REST-API abrufen und fertige Skills aus einer WLO-Sammlung anwenden." />
+  <style>
+    /* Design tokens — a calm blue accent on a slate-blue neutral scale, plus one
+       warm amber pop for Boerdi. Dark mode is a token variation. All UI colours
+       meet WCAG AA. */
+    :root {
+      --bg: #f3f7fc;
+      --surface: #ffffff;
+      --surface-2: #e7eef8;
+      --text: #12212f;
+      --text-muted: #47586a;
+      --border: #b3c6da;
+      --accent: #1565c0;
+      --accent-fg: #ffffff;
+      --accent-weak: #dbeafe;
+      --accent-strong: #0d4a94;
+      --danger: #9a2b2b;
+      --ok: #1d6b3a;
+      --amber: #ef8f1c;
+      --owl-body: #1e88e5;
+      --owl-belly: #cfe6fb;
+      --owl-dark: #0d4a94;
+      --owl-eye: #14304d;
+      --radius: 12px;
+      --maxw: 48rem;
+      --ring: 3px solid var(--accent);
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1826;
+        --surface: #14273d;
+        --surface-2: #1d3350;
+        --text: #e6eef8;
+        --text-muted: #a6b8cd;
+        --border: #34527a;
+        --accent: #64b5f6;
+        --accent-fg: #08243f;
+        --accent-weak: #12294a;
+        --accent-strong: #90caf9;
+        --danger: #f2a3a3;
+        --ok: #7fd39c;
+        --amber: #f6a623;
+        --owl-body: #4a90d9;
+        --owl-belly: #16385c;
+        --owl-dark: #90caf9;
+        --owl-eye: #0b2138;
+      }
+    }
+    :root[data-theme="dark"] { color-scheme: dark; }
+    :root[data-theme="light"] { color-scheme: light; }
+
+    * { box-sizing: border-box; }
+    html { color-scheme: light dark; }
+    body {
+      margin: 0; font-family: var(--font); font-size: 1rem; line-height: 1.55;
+      color: var(--text); background: var(--bg);
+    }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+
+    /* Header with Boerdi */
+    .topbar { display: flex; justify-content: flex-end; margin-bottom: 0.25rem; }
+    .hero { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .owl { flex: 0 0 auto; width: 88px; height: 88px; }
+    .hero-text { flex: 1 1 16rem; min-width: 14rem; }
+    h1 { font-size: 1.55rem; margin: 0; line-height: 1.15; }
+    .sub { font-size: 0.95rem; font-weight: 600; color: var(--accent-strong); margin: 0.2rem 0 0; }
+    .speech {
+      position: relative; background: var(--accent-weak); color: var(--text);
+      border-radius: var(--radius); padding: 0.7rem 0.9rem; margin: 0.75rem 0 1.5rem;
+      font-size: 0.97rem;
+    }
+
+    .lang { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+    .lang button {
+      appearance: none; border: 0; background: var(--surface); color: var(--text);
+      padding: 0.35rem 0.8rem; font: inherit; cursor: pointer; min-height: 2.25rem;
+    }
+    .lang button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.1rem 1.15rem; margin-top: 1.1rem;
+    }
+    .card > h2 { font-size: 1.1rem; margin: 0 0 0.15rem; display: flex; align-items: center; gap: 0.5rem; }
+    .card .lead { color: var(--text-muted); margin: 0.1rem 0 0.9rem; font-size: 0.95rem; }
+    .step { font-weight: 700; color: var(--accent-strong); }
+
+    /* App picker as accessible radio chips */
+    fieldset { border: 0; margin: 0; padding: 0; }
+    legend { font-weight: 600; padding: 0; margin-bottom: 0.5rem; }
+    .apps { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip { position: relative; }
+    .chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+    .chip span {
+      display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.75rem;
+      padding: 0.5rem 0.9rem; border: 1.5px solid var(--border); border-radius: 999px;
+      background: var(--surface); color: var(--text); font-weight: 600; cursor: pointer;
+    }
+    .chip input:checked + span { border-color: var(--accent); background: var(--accent-weak); color: var(--accent-strong); }
+    .chip input:focus-visible + span { outline: var(--ring); outline-offset: 2px; }
+    /* Selected chip carries a trailing check — a non-colour cue (WCAG 1.4.1) on
+       top of the border/background/text shift, so selection is clear without
+       relying on colour alone. A text glyph, not a sized box, so it cannot be
+       stretched by the flex row. */
+    .chip input:checked + span::after { content: "✓"; font-weight: 700; }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
+    button.btn, a.btn {
+      appearance: none; font: inherit; font-weight: 600; cursor: pointer;
+      border-radius: var(--radius); padding: 0.7rem 1.2rem; min-height: 2.85rem;
+      border: 1.5px solid var(--border); background: var(--surface); color: var(--text);
+      text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+    button.btn:hover, a.btn:hover { background: var(--surface-2); }
+    .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .btn.primary:hover { filter: brightness(1.06); }
+    .btn[hidden] { display: none; }
+    button.btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+    .note {
+      margin-top: 0.6rem; font-size: 0.88rem; color: var(--text-muted);
+      background: var(--surface-2); border-radius: 8px; padding: 0.5rem 0.65rem;
+    }
+    .status { margin-top: 0.75rem; font-weight: 600; min-height: 1.5rem; }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+    .result-list { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+    .result-list li { margin: 0.15rem 0; }
+
+    /* Collapsible advanced / preview */
+    details { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-top: 1.1rem; }
+    details > summary {
+      cursor: pointer; padding: 0.85rem 1.1rem; font-weight: 600; list-style: none;
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: 2.85rem;
+    }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::after { content: "▸"; color: var(--text-muted); }
+    details[open] > summary::after { content: "▾"; }
+    details > summary:focus-visible { outline: var(--ring); outline-offset: -2px; border-radius: var(--radius); }
+    .details-body { padding: 0 1.1rem 1.1rem; }
+
+    form { display: grid; gap: 1.05rem; }
+    .field { display: grid; gap: 0.35rem; }
+    label { font-weight: 600; }
+    .hint { color: var(--text-muted); font-size: 0.875rem; margin: 0; }
+    input[type="text"], input[type="search"], select, textarea {
+      font: inherit; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 0.6rem 0.7rem; width: 100%; min-height: 2.75rem;
+    }
+    textarea { min-height: 11rem; resize: vertical; line-height: 1.45; font-size: 0.92rem; }
+    .row { display: grid; gap: 1.05rem; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 34rem) { .row { grid-template-columns: 1fr; } }
+    :focus-visible { outline: var(--ring); outline-offset: 2px; }
+
+    .url {
+      display: block; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.83rem; word-break: break-all; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.7rem;
+    }
+    .url + .hint { margin-top: 0.75rem; }
+
+    .spin {
+      width: 1rem; height: 1rem; border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+    footer { margin-top: 2.5rem; color: var(--text-muted); font-size: 0.875rem; }
+    footer a, .card a { color: var(--accent-strong); }
+    ul.tight { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    ul.tight li { margin: 0.2rem 0; }
+    code.inline { background: var(--surface-2); border-radius: 5px; padding: 0.05rem 0.3rem; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="lang" role="group" aria-label="Sprache / Language">
+        <button type="button" id="lang-de" aria-pressed="true" lang="de">DE</button>
+        <button type="button" id="lang-en" aria-pressed="false" lang="en">EN</button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <svg class="owl" viewBox="0 0 120 120" role="img" aria-labelledby="owl-title">
+        <title id="owl-title" data-i18n="owl_alt">Boerdi, die WLO-Eule</title>
+        <rect x="20" y="99" width="80" height="7" rx="3.5" fill="#8a5a2b"/>
+        <path d="M34 30 L45 47 L27 45 Z" fill="var(--owl-body)"/>
+        <path d="M86 30 L93 45 L75 47 Z" fill="var(--owl-body)"/>
+        <ellipse cx="60" cy="61" rx="35" ry="39" fill="var(--owl-body)"/>
+        <ellipse cx="60" cy="72" rx="22" ry="26" fill="var(--owl-belly)"/>
+        <circle cx="47" cy="53" r="15.5" fill="#ffffff"/>
+        <circle cx="73" cy="53" r="15.5" fill="#ffffff"/>
+        <circle cx="49" cy="55" r="7" fill="var(--owl-eye)"/>
+        <circle cx="71" cy="55" r="7" fill="var(--owl-eye)"/>
+        <circle cx="51.4" cy="52.6" r="2.3" fill="#ffffff"/>
+        <circle cx="73.4" cy="52.6" r="2.3" fill="#ffffff"/>
+        <path d="M33 41 q13 -8 25 0" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M62 41 q13 -8 25 0" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M60 61 l-7 9 h14 Z" fill="var(--amber)"/>
+        <path d="M51 98 v6 M47 104 h8 M69 98 v6 M65 104 h8" stroke="var(--amber)" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path d="M27 60 q-4 21 9 31" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M93 60 q4 21 -9 31" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+      </svg>
+      <div class="hero-text">
+        <h1 data-i18n="title">WLO-Launcher</h1>
+        <p class="sub" data-i18n="subtitle">mit Boerdi, der WLO-Eule</p>
+      </div>
+    </div>
+
+    <p class="speech" data-i18n="speech">
+      Hallo, ich bin <strong>Boerdi</strong>! Ich helfe dir, die Dienste von
+      WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen" –
+      und dein Chat weiß, wie er offene Bildungsinhalte findet und fertige Skills anwendet.
+    </p>
+
+    <!-- Primary action: choose AI + one button -->
+    <section class="card" aria-labelledby="use-h">
+      <h2 id="use-h"><span class="step">1.</span> <span data-i18n="use_h">Öffne WLO in deiner KI</span></h2>
+      <p class="lead" data-i18n="use_lead">Wähle deine KI. Der „Öffnen"-Button übergibt ihr die Anleitung, wie sie die WLO-Dienste selbst nutzt.</p>
+      <fieldset>
+        <legend data-i18n="app_legend">Deine KI</legend>
+        <div class="apps" id="apps">
+          <label class="chip"><input type="radio" name="target" value="claude" checked /><span>Claude</span></label>
+          <label class="chip"><input type="radio" name="target" value="chatgpt" /><span>ChatGPT</span></label>
+          <label class="chip"><input type="radio" name="target" value="copilot" /><span>Copilot</span></label>
+          <label class="chip"><input type="radio" name="target" value="gemini" /><span>Gemini</span></label>
+          <label class="chip"><input type="radio" name="target" value="copy" /><span><span data-i18n="app_copy">Nur kopieren</span></span></label>
+        </div>
+      </fieldset>
+      <div class="actions">
+        <a class="btn primary" id="open" href="#" target="_blank" rel="noopener noreferrer" data-i18n="open">In KI öffnen</a>
+        <button type="button" class="btn" id="copy" data-i18n="copy">Anleitung kopieren</button>
+      </div>
+      <p class="note" id="gemini-note" hidden data-i18n="gemini_note">
+        Gemini füllt das Eingabefeld nicht automatisch. Beim Öffnen wird die
+        Anleitung in die Zwischenablage kopiert – bitte in Gemini einfügen.
+      </p>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- Skills -->
+    <section class="card" aria-labelledby="skills-h">
+      <h2 id="skills-h">🧩 <span data-i18n="skills_h">Fertige Skills</span></h2>
+      <p class="lead" data-i18n="skills_lead">
+        Neben der Suche liefert Boerdi fertige „Skills" – kurze Anleitungen aus einer
+        WirLernenOnline-Sammlung. Titel und Beschreibung sagen, was ein Skill tut und
+        wann du ihn nutzt; das rohe Markdown wird über die Download-URL des Treffers geladen.
+      </p>
+      <p class="hint" data-i18n="skills_url_label">Skill-Liste (der Chat lädt hier die verfügbaren Skills):</p>
+      <code class="url" id="skills-url"></code>
+      <p class="note" data-i18n="skills_native">
+        Hast du den WLO-MCP nativ in deiner KI eingetragen? Dann nutze das Tool
+        <code class="inline">find_wlo_skills</code> – es findet passende Skills und liefert ihre Instruktionen direkt.
+      </p>
+    </section>
+
+    <!-- Targeted search (collapsed) -->
+    <details id="adv">
+      <summary data-i18n="adv_summary">🔍 Gezielte Suche (optional)</summary>
+      <div class="details-body">
+        <form id="launcher" novalidate>
+          <div class="field">
+            <label for="q" data-i18n="q_label">Suchbegriff</label>
+            <input type="search" id="q" name="q" autocomplete="off" aria-describedby="q-hint" enterkeyhint="search" />
+            <p class="hint" id="q-hint" data-i18n="q_hint">Erscheint als konkretes Beispiel in der Anleitung und für „RAW-Ergebnis laden".</p>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="discipline" data-i18n="fach_label">Fach</label>
+              <input type="text" id="discipline" name="discipline" list="discipline-list" autocomplete="off" />
+              <datalist id="discipline-list">
+                <option value="Mathematik"></option><option value="Physik"></option>
+                <option value="Biologie"></option><option value="Chemie"></option>
+                <option value="Deutsch"></option><option value="Geschichte"></option>
+                <option value="Informatik"></option><option value="Englisch"></option>
+              </datalist>
+            </div>
+            <div class="field">
+              <label for="educationalContext" data-i18n="stufe_label">Bildungsstufe</label>
+              <select id="educationalContext" name="educationalContext">
+                <option value="" data-i18n="any">beliebig</option>
+                <option value="Primarstufe">Primarstufe</option>
+                <option value="Sekundarstufe I">Sekundarstufe I</option>
+                <option value="Sekundarstufe II">Sekundarstufe II</option>
+                <option value="Berufliche Bildung">Berufliche Bildung</option>
+                <option value="Hochschule">Hochschule</option>
+                <option value="Erwachsenenbildung">Erwachsenenbildung</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="learningResourceType" data-i18n="typ_label">Materialtyp</label>
+            <input type="text" id="learningResourceType" name="learningResourceType" list="type-list" autocomplete="off" />
+            <datalist id="type-list">
+              <option value="Video"></option><option value="Arbeitsblatt"></option>
+              <option value="Website"></option><option value="Bild"></option>
+              <option value="Audio"></option><option value="Interaktives Medium"></option>
+            </datalist>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn" id="test" data-i18n="test" disabled>RAW-Ergebnis laden</button>
+          </div>
+          <p class="status" id="adv-status" role="status" aria-live="polite"></p>
+          <ul class="result-list" id="results" hidden></ul>
+        </form>
+      </div>
+    </details>
+
+    <!-- Preview (collapsed) -->
+    <details id="preview">
+      <summary data-i18n="preview_summary">📋 Vorschau: Was der Chat bekommt</summary>
+      <div class="details-body">
+        <div class="field">
+          <label for="prompt" data-i18n="prompt_label">Diese Nachricht bekommt der Chat</label>
+          <textarea id="prompt" readonly aria-live="polite"></textarea>
+        </div>
+        <p class="hint" id="example-label" data-i18n="exampleurl_label">Beispiel-Such-URL (RAW-JSON):</p>
+        <code class="url" id="rest-url"></code>
+        <p class="hint" id="deeplink-label" data-i18n="deeplink_label">Deeplink:</p>
+        <code class="url" id="deeplink"></code>
+      </div>
+    </details>
+
+    <!-- Install help -->
+    <section class="card" aria-labelledby="install-h">
+      <h2 id="install-h">🛠️ <span data-i18n="install_h">WLO-Dienste einrichten</span></h2>
+      <p class="lead" data-i18n="install_lead">Zwei Wege, wie deine KI WLO nutzt – Boerdi hilft bei beiden:</p>
+      <ul class="tight">
+        <li data-i18n="install_a"><strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen" – fertig.</li>
+        <li data-i18n="install_b"><strong>Nativ (MCP):</strong> trägst du den WLO-MCP-Server in deiner KI (z. B. Claude Desktop) ein, hast du alle WLO-Tools direkt, inkl. <code class="inline">find_wlo_skills</code>.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p data-i18n="footer_html">
+        Öffentliche, nur lesende Schnittstelle von WirLernenOnline. Schnellzugriff per
+        <a href="bookmarklet.md">Bookmarklet</a>.
+      </p>
+    </footer>
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var I18N = {
+      de: {
+        title: "WLO-Launcher", subtitle: "mit Boerdi, der WLO-Eule",
+        owl_alt: "Boerdi, die WLO-Eule",
+        speech: 'Hallo, ich bin <strong>Boerdi</strong>! Ich helfe dir, die Dienste von WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen" – und dein Chat weiß, wie er offene Bildungsinhalte findet und fertige Skills anwendet.',
+        use_h: "Öffne WLO in deiner KI",
+        use_lead: "Wähle deine KI. Der „Öffnen“-Button übergibt ihr die Anleitung, wie sie die WLO-Dienste selbst nutzt.",
+        app_legend: "Deine KI", app_copy: "Nur kopieren",
+        open: "In KI öffnen", copy: "Anleitung kopieren",
+        gemini_note: "Gemini füllt das Eingabefeld nicht automatisch. Beim Öffnen wird die Anleitung in die Zwischenablage kopiert – bitte in Gemini einfügen.",
+        skills_h: "Fertige Skills",
+        skills_lead: "Neben der Suche liefert Boerdi fertige „Skills“ – kurze Anleitungen aus einer WirLernenOnline-Sammlung. Titel und Beschreibung sagen, was ein Skill tut und wann du ihn nutzt; das rohe Markdown wird über die Download-URL des Treffers geladen.",
+        skills_url_label: "Skill-Liste (der Chat lädt hier die verfügbaren Skills):",
+        skills_native: 'Hast du den WLO-MCP nativ in deiner KI eingetragen? Dann nutze das Tool <code class="inline">find_wlo_skills</code> – es findet passende Skills und liefert ihre Instruktionen direkt.',
+        adv_summary: "🔍 Gezielte Suche (optional)",
+        q_label: "Suchbegriff",
+        q_hint: "Erscheint als konkretes Beispiel in der Anleitung und für „RAW-Ergebnis laden“.",
+        fach_label: "Fach", stufe_label: "Bildungsstufe", any: "beliebig", typ_label: "Materialtyp",
+        test: "RAW-Ergebnis laden",
+        preview_summary: "📋 Vorschau: Was der Chat bekommt",
+        prompt_label: "Diese Nachricht bekommt der Chat",
+        exampleurl_label: "Beispiel-Such-URL (RAW-JSON):", deeplink_label: "Deeplink:",
+        install_h: "WLO-Dienste einrichten",
+        install_lead: "Zwei Wege, wie deine KI WLO nutzt – Boerdi hilft bei beiden:",
+        install_a: "<strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen“ – fertig.",
+        install_b: '<strong>Nativ (MCP):</strong> trägst du den WLO-MCP-Server in deiner KI (z. B. Claude Desktop) ein, hast du alle WLO-Tools direkt, inkl. <code class="inline">find_wlo_skills</code>.',
+        footer_html: 'Öffentliche, nur lesende Schnittstelle von WirLernenOnline. Schnellzugriff per <a href="bookmarklet.md">Bookmarklet</a>.',
+        need_query: "Für „RAW-Ergebnis laden“ bitte einen Suchbegriff eingeben.",
+        copied: "Anleitung in die Zwischenablage kopiert.",
+        copied_open: "Anleitung kopiert – im Chat einfügen, falls sie nicht automatisch übernommen wird.",
+        copy_failed: "Kopieren nicht möglich – bitte den Text im Vorschau-Feld manuell markieren.",
+        testing: "WLO-API wird abgefragt …",
+        no_hits: "Keine Treffer für „{q}“.",
+        hits: "{c} Inhalte, {s} Sammlungen, {t} Themenseiten gefunden.",
+        wiki_suffix: " (inkl. Wikipedia: {title})",
+        test_error: "Die API konnte nicht erreicht werden ({msg}).",
+        instruction_tpl:
+          "Du hast Zugriff auf eine öffentliche, nur lesende REST-API von WirLernenOnline (OER; Antworten sind JSON). Wenn der Nutzer ein Thema nennt, rufe die Such-URL sofort mit deinem Web-/Abruf-Werkzeug auf und antworte aus den echten Treffern – schlage nicht nur Filter oder eine URL vor. Kannst du keine URL abrufen, sag das in einem Satz und gib die fertige URL aus.\n\n" +
+          "1) Suche: GET {base}/api/search?q=<Suchbegriff>\n" +
+          "   Optionale Parameter: &discipline=<Fach>, &educationalContext=<Stufe>, &learningResourceType=<Typ>, &includeWikipedia=true, &includeCompendium=true\n" +
+          "   → Lade die URL, werte das JSON aus (Felder: content, collections, topicPages, optional wikipedia) und fasse die Treffer mit Titel, kurzer Beschreibung und Link (Feld \"url\") zusammen.\n\n" +
+          "2) Weitere Endpunkte: {base}/api/topic-page?collectionId=<id> · {base}/api/compendium?ids=<id1,id2> · {base}/api/wikipedia?q=<Begriff>\n\n" +
+          "3) Fertige Anleitungen („Skills“) aus WirLernenOnline: Liste per GET {base}/api/collection — je Treffer sagen \"title\" und \"description\", was der Skill tut und wann du ihn nutzt. Lade den rohen Markdown über das Feld \"downloadUrl\" des Treffers und wende ihn an. (Hast du den WLO-MCP nativ eingebunden, nutze stattdessen das Tool find_wlo_skills.){example}",
+        example_line: "\n\n4) Beispiel für den Einstieg: {url}"
+      },
+      en: {
+        title: "WLO Launcher", subtitle: "with Boerdi, the WLO owl",
+        owl_alt: "Boerdi, the WLO owl",
+        speech: 'Hi, I’m <strong>Boerdi</strong>! I help you use the WirLernenOnline services in your AI. Pick your AI, click “Open” – and your chat knows how to find open educational resources and apply ready-made skills.',
+        use_h: "Open WLO in your AI",
+        use_lead: "Pick your AI. The “Open” button hands it the instructions for using the WLO services itself.",
+        app_legend: "Your AI", app_copy: "Copy only",
+        open: "Open in AI", copy: "Copy instructions",
+        gemini_note: "Gemini does not pre-fill the input box automatically. On open, the instructions are copied to the clipboard – please paste them into Gemini.",
+        skills_h: "Ready-made skills",
+        skills_lead: "Besides search, Boerdi delivers ready-made “skills” – short guides from a WirLernenOnline collection. Title and description say what a skill does and when to use it; the raw Markdown is loaded from each result’s download URL.",
+        skills_url_label: "Skill list (the chat loads the available skills here):",
+        skills_native: 'Registered the WLO MCP natively in your AI? Then use the <code class="inline">find_wlo_skills</code> tool – it finds matching skills and returns their instructions directly.',
+        adv_summary: "🔍 Targeted search (optional)",
+        q_label: "Search term",
+        q_hint: "Appears as a concrete example in the instructions and for “Load raw result”.",
+        fach_label: "Subject", stufe_label: "Educational level", any: "any", typ_label: "Resource type",
+        test: "Load raw result",
+        preview_summary: "📋 Preview: what the chat receives",
+        prompt_label: "This message goes to the chat",
+        exampleurl_label: "Example search URL (raw JSON):", deeplink_label: "Deep link:",
+        install_h: "Set up the WLO services",
+        install_lead: "Two ways your AI can use WLO – Boerdi helps with both:",
+        install_a: "<strong>No install:</strong> this page. Pick your AI above and click “Open” – done.",
+        install_b: '<strong>Native (MCP):</strong> register the WLO MCP server in your AI (e.g. Claude Desktop) to get all WLO tools directly, incl. <code class="inline">find_wlo_skills</code>.',
+        footer_html: 'Public, read-only interface of WirLernenOnline. Quick access via <a href="bookmarklet.md">bookmarklet</a>.',
+        need_query: "For “Load raw result”, please enter a search term.",
+        copied: "Instructions copied to clipboard.",
+        copied_open: "Instructions copied – paste them into the chat if not filled in automatically.",
+        copy_failed: "Could not copy – please select the text in the preview field manually.",
+        testing: "Querying the WLO API …",
+        no_hits: "No results for “{q}”.",
+        hits: "{c} content, {s} collections, {t} topic pages found.",
+        wiki_suffix: " (incl. Wikipedia: {title})",
+        test_error: "Could not reach the API ({msg}).",
+        instruction_tpl:
+          "You have access to a public, read-only REST API of WirLernenOnline (OER; responses are JSON). When the user names a topic, call the search URL right away with your web/fetch tool and answer from the real hits – do not just suggest filters or a URL. If you cannot fetch a URL, say so in one sentence and output the ready-to-open URL.\n\n" +
+          "1) Search: GET {base}/api/search?q=<search term>\n" +
+          "   Optional parameters: &discipline=<subject>, &educationalContext=<level>, &learningResourceType=<type>, &includeWikipedia=true, &includeCompendium=true\n" +
+          "   → Load the URL, evaluate the JSON (fields: content, collections, topicPages, optional wikipedia) and summarise the hits with title, a short description and a link (field \"url\").\n\n" +
+          "2) More endpoints: {base}/api/topic-page?collectionId=<id> · {base}/api/compendium?ids=<id1,id2> · {base}/api/wikipedia?q=<term>\n\n" +
+          "3) Ready-made guides (\"skills\") from WirLernenOnline: list via GET {base}/api/collection — each result’s \"title\" and \"description\" say what the skill does and when to use it. Load the raw Markdown from the result’s \"downloadUrl\" field and apply it. (If you have the WLO MCP registered natively, use the find_wlo_skills tool instead.){example}",
+        example_line: "\n\n4) Example to get started: {url}"
+      }
+    };
+
+    var DEEPLINKS = {
+      claude: function (text) { return "https://claude.ai/new?q=" + encodeURIComponent(text); },
+      chatgpt: function (text) { return "https://chatgpt.com/?q=" + encodeURIComponent(text); },
+      copilot: function (text) { return "https://copilot.microsoft.com/?q=" + encodeURIComponent(text); },
+      gemini: function () { return "https://gemini.google.com/app"; }
+    };
+
+    var lang = "de";
+    var $ = function (id) { return document.getElementById(id); };
+    function t(key) { return (I18N[lang] && I18N[lang][key]) || I18N.de[key] || key; }
+    function targetValue() {
+      var el = document.querySelector('input[name="target"]:checked');
+      return el ? el.value : "claude";
+    }
+
+    function base() { return location.origin; }
+    function skillsUrl() { return base() + "/api/collection"; }
+
+    function exampleSearchUrl() {
+      var q = $("q").value.trim();
+      if (!q) return null;
+      var params = new URLSearchParams();
+      params.set("q", q);
+      ["discipline", "educationalContext", "learningResourceType"].forEach(function (name) {
+        var v = $(name).value.trim();
+        if (v) params.set(name, v);
+      });
+      return base() + "/api/search?" + params.toString();
+    }
+
+    function instructionText() {
+      var ex = exampleSearchUrl();
+      var example = ex ? t("example_line").replace("{url}", ex) : "";
+      return t("instruction_tpl").split("{base}").join(base()).replace("{example}", example);
+    }
+
+    function currentDeeplink() {
+      var fn = DEEPLINKS[targetValue()];
+      return fn ? fn(instructionText()) : "";
+    }
+
+    function refresh() {
+      $("prompt").value = instructionText();
+      $("skills-url").textContent = skillsUrl();
+
+      var ex = exampleSearchUrl();
+      $("example-label").hidden = !ex;
+      $("rest-url").hidden = !ex;
+      $("rest-url").textContent = ex || "";
+
+      var target = targetValue();
+      var isCopy = target === "copy";
+      $("gemini-note").hidden = target !== "gemini";
+
+      var open = $("open");
+      if (isCopy) {
+        open.hidden = true;
+        $("deeplink-label").hidden = true;
+        $("deeplink").hidden = true;
+      } else {
+        open.hidden = false;
+        open.setAttribute("href", currentDeeplink());
+        $("deeplink-label").hidden = false;
+        $("deeplink").hidden = false;
+        $("deeplink").textContent = currentDeeplink();
+      }
+      $("test").disabled = !ex;
+    }
+
+    function setStatus(node, msg, kind, busy) {
+      var s = $(node);
+      s.className = "status" + (kind ? " " + kind : "");
+      s.textContent = "";
+      if (busy) { var sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); s.appendChild(sp); s.appendChild(document.createTextNode(" ")); }
+      s.appendChild(document.createTextNode(msg));
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise(function (resolve, reject) {
+        try { $("prompt").focus(); $("prompt").select(); document.execCommand("copy"); resolve(); }
+        catch (e) { reject(e); }
+      });
+    }
+
+    function copyInstructions() {
+      copyText(instructionText()).then(
+        function () { setStatus("status", t("copied"), "ok"); },
+        function () { setStatus("status", t("copy_failed"), "error"); }
+      );
+    }
+
+    function openTarget() {
+      copyText(instructionText()).then(
+        function () { setStatus("status", t("copied_open"), "ok"); },
+        function () { /* navigation still proceeds; clipboard is best-effort */ }
+      );
+    }
+
+    function loadRaw() {
+      var url = exampleSearchUrl();
+      if (!url) { setStatus("adv-status", t("need_query"), "error"); return; }
+      setStatus("adv-status", t("testing"), null, true);
+      $("results").hidden = true; $("results").textContent = "";
+      fetch(url, { headers: { Accept: "application/json" } })
+        .then(function (resp) { if (!resp.ok) throw new Error("HTTP " + resp.status); return resp.json(); })
+        .then(function (data) { renderRaw(data, $("q").value.trim()); })
+        .catch(function (err) { setStatus("adv-status", t("test_error").replace("{msg}", String(err.message || err)), "error"); });
+    }
+
+    function bucketCount(b) { return b && typeof b.count === "number" ? b.count : 0; }
+
+    // Scheme guard for untrusted result URLs (publisher-supplied ccm:wwwurl):
+    // return the URL only when it is http(s)/mailto, else "" (no link) — mirrors
+    // the widgets' safe-url.ts so a javascript:/data: value can't become a
+    // click-to-execute href. The launcher is self-contained and cannot import it.
+    // Covered by tests/launcher-safe-url.test.ts (extracts + exercises this fn).
+    function safeUrl(u) {
+      var s = (u == null ? "" : String(u)).trim();
+      if (!s) return "";
+      try {
+        return /^(https?|mailto):$/.test(new URL(s, "https://wlo.invalid").protocol) ? s : "";
+      } catch (e) { return ""; }
+    }
+
+    function renderRaw(data, q) {
+      var c = bucketCount(data.content), s = bucketCount(data.collections), tp = bucketCount(data.topicPages);
+      if (c + s + tp === 0 && !data.wikipedia) { setStatus("adv-status", t("no_hits").replace("{q}", q), null); return; }
+      var msg = t("hits").replace("{c}", c).replace("{s}", s).replace("{t}", tp);
+      if (data.wikipedia && data.wikipedia.title) msg += t("wiki_suffix").replace("{title}", data.wikipedia.title);
+      setStatus("adv-status", msg, "ok");
+      var list = $("results"); list.textContent = "";
+      var items = (data.content && data.content.results) || [];
+      items.slice(0, 5).forEach(function (n) {
+        var li = document.createElement("li");
+        var safe = safeUrl(n.url);
+        if (safe) {
+          var a = document.createElement("a");
+          a.href = safe; a.target = "_blank"; a.rel = "noopener noreferrer";
+          a.textContent = n.title || n.nodeId;
+          li.appendChild(a);
+        } else { li.textContent = n.title || n.nodeId; }
+        list.appendChild(li);
+      });
+      list.hidden = items.length === 0;
+    }
+
+    function applyLang(next) {
+      lang = next;
+      document.documentElement.lang = next;
+      $("lang-de").setAttribute("aria-pressed", String(next === "de"));
+      $("lang-en").setAttribute("aria-pressed", String(next === "en"));
+      document.querySelectorAll("[data-i18n]").forEach(function (el) {
+        var key = el.getAttribute("data-i18n");
+        var val = I18N[next][key];
+        if (val == null) return;
+        // Entries that carry inline markup (strong/code/a) render as HTML; the
+        // strings are static, author-controlled constants — no user input.
+        if (/[<][a-z]/i.test(val)) el.innerHTML = val; else el.textContent = val;
+      });
+      refresh();
+    }
+
+    document.getElementById("launcher").addEventListener("input", refresh);
+    document.getElementById("launcher").addEventListener("change", refresh);
+    document.getElementById("apps").addEventListener("change", refresh);
+    $("copy").addEventListener("click", copyInstructions);
+    $("open").addEventListener("click", openTarget);
+    $("test").addEventListener("click", loadRaw);
+    $("lang-de").addEventListener("click", function () { applyLang("de"); });
+    $("lang-en").addEventListener("click", function () { applyLang("en"); });
+
+    // Prefill from ?q= (bookmarklet integration) → open the search panel.
+    try {
+      var pre = new URLSearchParams(location.search).get("q");
+      if (pre) { $("q").value = pre; $("adv").open = true; }
+    } catch (e) { /* ignore malformed query string */ }
+
+    refresh();
+  })();
+  </script>
+</body>
+</html>

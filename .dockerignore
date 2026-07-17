@@ -1,0 +1,14 @@
+# Keep the build context small and reproducible. The Dockerfile copies exactly
+# what it needs (package*.json, tsconfig.json, src/, public/); build artifacts
+# are regenerated inside the builder stage, never copied from the host.
+node_modules
+dist
+dist-widgets
+.git
+.github
+docs
+tests
+*.log
+.env
+.env.*
+!.env.example

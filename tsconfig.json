@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  // Widget browser entry points (main.ts) and the host-bridge DOM glue
+  // (shared/host.ts) use DOM globals (window/document/postMessage) and are
+  // bundled by esbuild (build.mjs), not tsc. The pure render/state/escape/
+  // host-bridge modules they import stay type-checked.
+  "exclude": ["node_modules", "dist", "src/apps/widgets/**/main.ts", "src/apps/widgets/shared/host.ts"]
+}

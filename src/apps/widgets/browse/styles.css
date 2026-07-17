@@ -1,0 +1,51 @@
+/* browse/styles.css – W2 specifics (base.css carries tokens + tile). */
+.wlo-browse { max-width: 720px; }
+.wlo-browse__title { margin: 0 0 12px; font-size: 1.2rem; font-weight: 700; }
+
+.wlo-tree { list-style: none; margin: 0; padding: 0; }
+.wlo-tree .wlo-tree { margin-inline-start: 18px; border-inline-start: 1px solid var(--wlo-border); padding-inline-start: 8px; }
+
+.wlo-tree__node { margin: 2px 0; }
+.wlo-tree__row { display: flex; align-items: center; gap: 6px; }
+
+.wlo-tree__toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--wlo-fg);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.wlo-tree__toggle:hover { background: var(--wlo-surface-2); }
+.wlo-tree__toggle:focus-visible { outline: 2px solid var(--wlo-focus); outline-offset: 2px; }
+.wlo-tree__caret { color: var(--wlo-muted); font-size: 0.8rem; width: 1em; }
+
+.wlo-tree__open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  color: var(--wlo-accent);
+  text-decoration: none;
+  border-radius: 8px;
+}
+.wlo-tree__open:hover { background: var(--wlo-surface-2); }
+.wlo-tree__open:focus-visible { outline: 2px solid var(--wlo-focus); outline-offset: 2px; }
+
+.wlo-tree__leaf {
+  display: inline-block;
+  min-height: 24px;
+  padding: 3px 8px;
+  color: var(--wlo-accent);
+  text-decoration: underline;
+}
+.wlo-tree__children { padding-block: 2px; }
+.wlo-tree__loading { color: var(--wlo-muted); font-size: 0.85rem; padding: 4px 10px; }

@@ -1,0 +1,18 @@
+{
+  // CI type gate over EVERYTHING tsc's build project cannot see: the Vercel
+  // entry (api/), the test suite (tsx strips types at runtime), and the widget
+  // DOM entry points (bundled by esbuild, which does not type-check). The
+  // build tsconfig stays src-only; this project never emits.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    // Widget entry points + host bridge use DOM globals.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*", "api/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

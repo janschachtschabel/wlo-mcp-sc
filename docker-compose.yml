@@ -1,0 +1,61 @@
+# docker-compose for the self-hosted WLO MCP server (vServer deployment).
+# Full walkthrough — build, .env, TLS reverse proxy, verification — in
+# docs/DEPLOYMENT.md.
+#
+#   cp .env.example .env               # optional: override any setting below
+#   docker compose up -d --build       # build + run detached
+#   docker compose logs -f             # follow logs
+#   curl localhost:3000/health         # -> {"status":"ok",...}
+#
+# Endpoints once up: POST /mcp (MCP, SSE), GET /health, GET /api/* (public REST),
+# GET /launcher.html (prompt launcher), GET /api/skills[/<id>] (skill Markdown).
+#
+# Every setting below is overridable WITHOUT editing this file: put it in a `.env`
+# next to this compose file (auto-loaded) or export it in the shell. Defaults keep
+# `docker compose up` working out of the box.
+#
+# REVERSE PROXY (nginx / Traefik / Caddy) terminating TLS in front: the image
+# serves real SSE (MCP_SSE=1), which breaks if the proxy buffers the `/mcp`
+# response. See docs/DEPLOYMENT.md for the required nginx config
+# (`proxy_buffering off;`, long read timeout) — without it, ChatGPT never receives
+# the stream.
+
+services:
+  wlo-mcp:
+    build: .
+    image: wlomcp:latest
+    restart: unless-stopped
+    ports:
+      # Loopback by default — the plaintext server sits BEHIND the TLS-terminating
+      # reverse proxy. For direct exposure without a proxy, set BIND_ADDR=0.0.0.0
+      # AND TRUST_PROXY=0 (otherwise a client can spoof X-Forwarded-For to defeat
+      # the per-IP rate limits). HOST_PORT = host side; the container listens on 3000.
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+    environment:
+      WLO_REPOSITORY_URL: "${WLO_REPOSITORY_URL:-https://redaktion.openeduhub.net/edu-sharing}"
+      # Real SSE streaming (image default) for ChatGPT developer mode. Set 0 for
+      # single-JSON responses (curl / simple clients).
+      MCP_SSE: "${MCP_SSE:-1}"
+      # Derive the client IP from X-Forwarded-For (rightmost, proxy-appended hop)
+      # for per-client rate limiting behind a proxy. Set 0 if directly exposed.
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
+      # Optional tuning (defaults shown; see .env.example for the full list):
+      RATE_LIMIT_RPM: "${RATE_LIMIT_RPM:-120}"
+      API_RATE_LIMIT_RPM: "${API_RATE_LIMIT_RPM:-30}"
+      WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-10000}"
+    # Resource + privilege hardening. The server is a DoS/amplification surface,
+    # so cap memory/CPU (a spike can't OOM the host, only the container), drop all
+    # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege
+    # escalation, and run a read-only root filesystem (the app writes nothing; a
+    # small tmpfs covers /tmp).
+    mem_limit: 512m
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Liveness is defined by the image (Dockerfile HEALTHCHECK → wget /health);
+    # compose inherits it, so it is intentionally not duplicated here.

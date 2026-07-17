@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-widgets/
+.env
+.vercel/
+*.log
+# Agent tooling scratch (Claude Code sessions, worktrees) — never part of the repo.
+.claude/

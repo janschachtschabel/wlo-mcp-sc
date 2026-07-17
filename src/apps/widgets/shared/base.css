@@ -1,0 +1,121 @@
+/*
+ * base.css – Shared widget styling: theme tokens + tile + grid + chips.
+ *
+ * Inlined into every widget by build.mjs (ahead of the widget-specific
+ * styles.css). Theme-aware (light/dark via prefers-color-scheme), WCAG 2.2 AA
+ * contrast, no nested scroll (the host sizes the iframe), touch targets ≥ 24px.
+ * Self-contained: no host CSS variables are assumed, so contrast holds even if
+ * the iframe does not inherit host theme tokens.
+ */
+
+:root {
+  color-scheme: light dark;
+  --wlo-fg: #1a1a1a;
+  --wlo-muted: #565656;
+  --wlo-accent: #14539a;
+  --wlo-surface: #ffffff;
+  --wlo-surface-2: #f4f6f9;
+  --wlo-border: #c4c9d2;
+  --wlo-chip-bg: #eaeef4;
+  --wlo-chip-fg: #2c3340;
+  --wlo-focus: #0b5fff;
+  --wlo-radius: 10px;
+  --wlo-gap: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wlo-fg: #f1f2f4;
+    --wlo-muted: #b9bec7;
+    --wlo-accent: #7db0ff;
+    --wlo-surface: #1f2126;
+    --wlo-surface-2: #262a31;
+    --wlo-border: #3a3f48;
+    --wlo-chip-bg: #2c313a;
+    --wlo-chip-fg: #dfe3ea;
+    --wlo-focus: #7db0ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--wlo-fg);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+#wlo-root { padding: 12px; }
+
+/* ── Sections ─────────────────────────────────────────────────────────── */
+.wlo-section { margin: 0 0 20px; }
+.wlo-section__title {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.wlo-section--emphasis {
+  padding-left: 12px;
+  border-inline-start: 3px solid var(--wlo-accent);
+}
+.wlo-results__query {
+  margin: 0 0 16px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+/* ── Tile grid ────────────────────────────────────────────────────────── */
+.wlo-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: var(--wlo-gap);
+}
+
+.wlo-tile {
+  display: flex;
+  flex-direction: column;
+  background: var(--wlo-surface);
+  border: 1px solid var(--wlo-border);
+  border-radius: var(--wlo-radius);
+  overflow: hidden;
+}
+
+.wlo-tile__thumb {
+  aspect-ratio: 16 / 9;
+  background: var(--wlo-surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wlo-tile__img { width: 100%; height: 100%; object-fit: cover; }
+.wlo-tile__icon { font-size: 2rem; }
+
+.wlo-tile__body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.wlo-tile__title { margin: 0; font-size: 0.98rem; font-weight: 600; line-height: 1.3; }
+.wlo-tile__link { color: var(--wlo-accent); text-decoration: underline; }
+.wlo-tile__link:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--wlo-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+a.wlo-tile__link { display: inline-block; min-height: 24px; }
+
+.wlo-tile__desc { margin: 0; color: var(--wlo-muted); font-size: 0.88rem; }
+
+.wlo-tile__chips { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.wlo-chip {
+  background: var(--wlo-chip-bg);
+  color: var(--wlo-chip-fg);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.76rem;
+}
+
+.wlo-tile__meta { margin: 4px 0 0; color: var(--wlo-muted); font-size: 0.76rem; }
+
+.wlo-empty { color: var(--wlo-muted); font-size: 0.95rem; padding: 8px 0; }
