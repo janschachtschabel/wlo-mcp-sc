@@ -30,15 +30,19 @@ operator decision):
   fixed URL pattern with the example term "OER" (labelled "replace with the
   user's topic" — no warm-up call), and tell the chat to explain the options
   (topic + optional subject/level/type filters) before asking for the topic.
-- **Pre-filled search URL is now an imperative FIRST TASK, not a "Beispiel".**
-  A URL inside the launcher prompt arrives as part of the USER's message — the
-  one provenance a restricted fetch tool (Claude) accepts without a paste-back.
-  The old "Beispiel für den Einstieg" label wasted that free fetch
-  (live-observed); the template now orders "fetch exactly this URL now — it
-  comes from the user's message, so your fetch tool may load it". The launcher
-  field hint says so too ("bei Claude entfällt damit das Rein-Kopieren").
-  In-chat FOLLOW-UP topics still need the paste-back in Claude's refusal mode —
-  that is the host's provenance rule, only the MCP connector removes it.
+- **Templates rewritten in the USER's voice; authorization claims removed.**
+  Live-observed: Claude flagged the launcher prompt as prompt injection at
+  chat start and distrusted the URL even more. The prompt WAS carrying the
+  classic injection signature — a prefilled instruction block in command tone
+  ("Du hast Zugriff…") plus an authorization claim ("dein Abruf-Werkzeug DARF
+  sie laden") and ALL-CAPS urgency ("ERSTER AUFTRAG"). Both language templates
+  now read as the user's own request ("Ich möchte offene Bildungsmaterialien
+  finden… bitte nutze die API so", "Meine erste Suche: {url} – bitte direkt
+  abrufen"); the claim and the caps are gone, pinned by doesNotMatch tests.
+  The launcher field hint still explains that a pre-picked topic lets Claude
+  run the first search without a paste-back. In-chat FOLLOW-UP topics still
+  need the paste in Claude's refusal mode — that is the host's provenance
+  rule, only the MCP connector removes it.
 - **Both bundled skills** (`public/skills/*.skill.md`) updated the same way:
   path-form search leads, the stripped-query failure mode is named with its
   recovery (path form / paste-back), and the wlo-search failure table reflects
