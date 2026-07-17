@@ -34,6 +34,20 @@ export function initialBrowseState(): BrowseState {
   return { rootLabel: '', roots: [], expanded: [], childrenById: {}, loadingId: null };
 }
 
+/**
+ * True when a toolOutput update is the ECHO of a drill-down THIS widget
+ * requested itself. ChatGPT mirrors a widget-initiated `callTool` result back
+ * as a new toolOutput (openai:set_globals, live-observed 2026-07-17); treating
+ * that echo as a fresh seed re-initialised — and visibly reset — the whole
+ * tree. `browse_collection_tree` output carries `parent` = the requested
+ * nodeId, so an output whose parent is in the widget's own-loads set is an
+ * echo: keep the tree state, never re-init.
+ */
+export function isOwnDrilldownEcho(output: unknown, selfLoaded: ReadonlySet<string>): boolean {
+  const parent = (output as { parent?: unknown } | undefined)?.parent;
+  return typeof parent === 'string' && selfLoaded.has(parent);
+}
+
 export function browseReducer(state: BrowseState, action: BrowseAction): BrowseState {
   switch (action.type) {
     case 'init':

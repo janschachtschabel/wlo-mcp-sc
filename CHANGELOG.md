@@ -82,6 +82,20 @@ what the live chat tests showed:
   unclear", never invent hits.
 Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts`.
 
+### Fixed (browse tree reset/flicker on expand in ChatGPT, 2026-07-17)
+- **Expanding a subcategory no longer resets the tree.** Root cause: ChatGPT
+  mirrors a WIDGET-initiated `callTool` result back as a new toolOutput
+  (`openai:set_globals`); the browse widget's onUpdate treated that echo as a
+  fresh seed and re-initialised the whole tree — visible as "loading… →
+  flicker → expansion gone". Fix: the widget tracks which nodeIds it fetched
+  itself; an output whose `parent` is in that set is recognised as an own
+  drill-down echo (`isOwnDrilldownEcho`, pure + unit-tested) and repaints
+  WITHOUT re-seeding. Foreign outputs (model-initiated calls, portal lists)
+  still re-seed as before. This was the second, independent cause behind the
+  earlier flicker report (the first — focus() scroll-jumping the iframe — was
+  fixed this morning); wiring pinned by a source-level test since browse
+  main.ts is DOM glue verified live.
+
 ### Fixed (ChatGPT "Failed to fetch template" after redeploys, 2026-07-17)
 - **Stale widget URIs keep resolving.** Root cause: every redeploy rolls new
   content-addressed `ui://` URIs, but the server registered ONLY the current

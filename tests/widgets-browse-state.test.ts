@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initialBrowseState, browseReducer } from '../src/apps/widgets/browse/state.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { initialBrowseState, browseReducer, isOwnDrilldownEcho } from '../src/apps/widgets/browse/state.js';
 
 function coll(id: string): any {
   return {
@@ -10,6 +13,24 @@ function coll(id: string): any {
     license: '', publisher: '', nodeType: 'collection', topicPageUrl: '',
   };
 }
+
+// Live failure 2026-07-17 (ChatGPT): expanding a node made the tree flicker
+// and reset. ChatGPT mirrors a WIDGET-initiated callTool result back as a new
+// toolOutput (openai:set_globals); onUpdate treated it as a fresh seed and
+// re-initialised the whole tree. An output whose `parent` is a nodeId THIS
+// widget loaded itself is an echo — keep the tree state, never re-init.
+test('isOwnDrilldownEcho: recognises the echo of an own drill-down, not a fresh seed', () => {
+  const self = new Set(['node-1']);
+  assert.equal(isOwnDrilldownEcho({ parent: 'node-1', results: [] }, self), true, 'own drill-down echo');
+  assert.equal(isOwnDrilldownEcho({ parent: 'other', results: [] }, self), false, 'foreign drill-down = new seed');
+  assert.equal(isOwnDrilldownEcho({ results: [] }, self), false, 'portal list (no parent) = new seed');
+  assert.equal(isOwnDrilldownEcho(undefined, self), false, 'no output');
+});
+
+test('browse main.ts wires the echo guard (source pin — main.ts is DOM glue, verified live)', () => {
+  const src = readFileSync(fileURLToPath(new URL('../src/apps/widgets/browse/main.ts', import.meta.url)), 'utf8');
+  assert.match(src, /isOwnDrilldownEcho/, 'onUpdate must consult the echo guard before re-initialising');
+});
 
 test('init seeds roots + label and clears any drill-down state', () => {
   const dirty = { ...initialBrowseState(), expanded: ['x'], loadingId: 'x', childrenById: { x: [] } };

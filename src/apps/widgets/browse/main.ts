@@ -12,7 +12,7 @@
  */
 
 import { renderBrowse } from './render.js';
-import { browseReducer, initialBrowseState, type BrowseAction, type BrowseState } from './state.js';
+import { browseReducer, initialBrowseState, isOwnDrilldownEcho, type BrowseAction, type BrowseState } from './state.js';
 import { resolveLocale, t } from '../shared/strings.js';
 import { createHost } from '../shared/host.js';
 import type { BrowseNode } from '../shared/types.js';
@@ -21,6 +21,10 @@ const host = createHost();
 
 let state: BrowseState = initialBrowseState();
 let lastOutput: unknown;
+// nodeIds whose children THIS widget fetched itself (drill-down). The host may
+// mirror that callTool result back as a toolOutput update (ChatGPT does) —
+// such an echo must never re-seed the tree (see isOwnDrilldownEcho).
+const selfLoaded = new Set<string>();
 // The disclosure node the user last toggled — its button is re-focused after a
 // re-render so a keyboard/screen-reader user does not lose their place in the
 // tree when innerHTML is rebuilt (WCAG 2.4.3).
@@ -53,6 +57,7 @@ function persist(): void {
 }
 
 async function load(nodeId: string): Promise<void> {
+  selfLoaded.add(nodeId);
   try {
     const res = await host.callTool('browse_collection_tree', { nodeId, outputFormat: 'json' });
     const sc = res?.structuredContent as { results?: BrowseNode[] } | undefined;
@@ -94,6 +99,13 @@ function onUpdate(): void {
   const out = toolOutput();
   if (out !== lastOutput) {
     lastOutput = out;
+    if (isOwnDrilldownEcho(out, selfLoaded)) {
+      // Echo of our own drill-down (ChatGPT mirrors callTool results into
+      // toolOutput): the children are already merged via the reducer — a
+      // re-init here is what visibly reset the tree (live 2026-07-17).
+      paint();
+      return;
+    }
     initFromOutput();
   } else {
     paint(); // theme/locale change only — keep the drill-down state
