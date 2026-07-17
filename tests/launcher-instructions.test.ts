@@ -39,6 +39,12 @@ test('launcher templates forbid warm-up calls and teach the user-paste fetch fal
   assert.match(html, /erkläre ihm kurz die Möglichkeiten/i, 'DE: without a topic, explain topic + filter options to the user');
   assert.match(html, /Lizenz unklar/i, 'DE: empty license must not be reported as a real licence');
   assert.match(html, /Erfinde keine Treffer/i, 'DE: no invented hits');
+  // A URL inside the launcher prompt IS user-provided — the one thing a
+  // provenance-restricted fetch tool (Claude) may load without a paste-back.
+  // The pre-filled search URL must therefore be an imperative FIRST TASK, not
+  // a mere "Beispiel" the chat politely ignores (live-observed 2026-07-17).
+  assert.match(html, /ERSTER AUFTRAG/, 'DE: pre-filled search URL is an imperative first task');
+  assert.match(html, /stammt aus der Nutzer-Nachricht/i, 'DE: names WHY the URL is fetchable (user-provided)');
 });
 
 test('launcher templates forbid warm-up calls and teach the user-paste fetch fallback (EN)', async () => {
@@ -55,4 +61,6 @@ test('launcher templates forbid warm-up calls and teach the user-paste fetch fal
   assert.ok((html.match(/api\/search\/OER/g) ?? []).length >= 2, 'both templates carry the OER example pattern');
   assert.match(html, /licen[cs]e unclear/i, 'EN: empty license must not be reported as a real licence');
   assert.match(html, /Do not invent hits/i, 'EN: no invented hits');
+  assert.match(html, /FIRST TASK/, 'EN: pre-filled search URL is an imperative first task');
+  assert.match(html, /comes from the user's message/i, 'EN: names WHY the URL is fetchable (user-provided)');
 });

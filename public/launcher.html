@@ -272,7 +272,7 @@
           <div class="field">
             <label for="q" data-i18n="q_label">Suchbegriff</label>
             <input type="search" id="q" name="q" autocomplete="off" aria-describedby="q-hint" enterkeyhint="search" />
-            <p class="hint" id="q-hint" data-i18n="q_hint">Erscheint als konkretes Beispiel in der Anleitung und für „RAW-Ergebnis laden".</p>
+            <p class="hint" id="q-hint" data-i18n="q_hint">Wird zum ersten Suchauftrag in der Anleitung – bei Claude entfällt damit das Rein-Kopieren – und dient für „RAW-Ergebnis laden".</p>
           </div>
           <div class="row">
             <div class="field">
@@ -369,7 +369,7 @@
         skills_native: 'Hast du den WLO-MCP nativ in deiner KI eingetragen? Dann nutze das Tool <code class="inline">find_wlo_skills</code> – es findet passende Skills und liefert ihre Instruktionen direkt.',
         adv_summary: "🔍 Gezielte Suche (optional)",
         q_label: "Suchbegriff",
-        q_hint: "Erscheint als konkretes Beispiel in der Anleitung und für „RAW-Ergebnis laden“.",
+        q_hint: "Wird zum ersten Suchauftrag in der Anleitung – bei Claude entfällt damit das Rein-Kopieren – und dient für „RAW-Ergebnis laden“.",
         fach_label: "Fach", stufe_label: "Bildungsstufe", any: "beliebig", typ_label: "Materialtyp",
         test: "RAW-Ergebnis laden",
         preview_summary: "📋 Vorschau: Was der Chat bekommt",
@@ -398,7 +398,7 @@
           "   → Lade die URL und werte das JSON aus (Felder: content, collections, topicPages, optional wikipedia). Prüfe: Das Feld \"query\" der Antwort muss dem Suchbegriff entsprechen, sonst behandle sie als veraltet und sag das. Fasse Treffer mit Titel, kurzer sinngemäßer Beschreibung (\"description\" kann Scraping-Reste enthalten – nicht wörtlich übernehmen) und Link (Feld \"url\") zusammen; leere \"license\" als \"Lizenz unklar\" nennen. Erfinde keine Treffer.\n\n" +
           "2) Weitere Endpunkte: {base}/api/topic-page?collectionId=<id> · {base}/api/compendium?ids=<id1,id2> · {base}/api/wikipedia?q=<Begriff>\n\n" +
           "3) Fertige Anleitungen („Skills“) aus WirLernenOnline: Liste per GET {base}/api/collection — je Treffer sagen \"title\" und \"description\", was der Skill tut und wann du ihn nutzt. Lade den rohen Markdown über das Feld \"downloadUrl\" des Treffers und wende ihn an. (Hast du den WLO-MCP nativ eingebunden, nutze stattdessen das Tool find_wlo_skills.){example}",
-        example_line: "\n\n4) Beispiel für den Einstieg: {url}"
+        example_line: "\n\n4) ERSTER AUFTRAG: Der Nutzer hat sein Thema bereits im Launcher gewählt. Rufe genau diese URL jetzt ab – sie stammt aus der Nutzer-Nachricht, dein Abruf-Werkzeug darf sie also laden – und fasse die Treffer zusammen: {url}"
       },
       en: {
         title: "WLO Launcher", subtitle: "with Boerdi, the WLO owl",
@@ -415,7 +415,7 @@
         skills_native: 'Registered the WLO MCP natively in your AI? Then use the <code class="inline">find_wlo_skills</code> tool – it finds matching skills and returns their instructions directly.',
         adv_summary: "🔍 Targeted search (optional)",
         q_label: "Search term",
-        q_hint: "Appears as a concrete example in the instructions and for “Load raw result”.",
+        q_hint: "Becomes the first search task in the instructions – with Claude this skips the paste-back step – and is used for “Load raw result”.",
         fach_label: "Subject", stufe_label: "Educational level", any: "any", typ_label: "Resource type",
         test: "Load raw result",
         preview_summary: "📋 Preview: what the chat receives",
@@ -444,7 +444,7 @@
           "   → Load the URL and evaluate the JSON (fields: content, collections, topicPages, optional wikipedia). Check: the response field \"query\" must match the search term, otherwise treat it as stale and say so. Summarise hits with title, a short paraphrased description (\"description\" may contain scraping noise – do not quote it verbatim) and a link (field \"url\"); report an empty \"license\" as \"licence unclear\". Do not invent hits.\n\n" +
           "2) More endpoints: {base}/api/topic-page?collectionId=<id> · {base}/api/compendium?ids=<id1,id2> · {base}/api/wikipedia?q=<term>\n\n" +
           "3) Ready-made guides (\"skills\") from WirLernenOnline: list via GET {base}/api/collection — each result’s \"title\" and \"description\" say what the skill does and when to use it. Load the raw Markdown from the result’s \"downloadUrl\" field and apply it. (If you have the WLO MCP registered natively, use the find_wlo_skills tool instead.){example}",
-        example_line: "\n\n4) Example to get started: {url}"
+        example_line: "\n\n4) FIRST TASK: The user already picked their topic in the launcher. Fetch exactly this URL now – it comes from the user's message, so your fetch tool may load it – and summarise the hits: {url}"
       }
     };
 

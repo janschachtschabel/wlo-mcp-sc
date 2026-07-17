@@ -30,6 +30,15 @@ operator decision):
   fixed URL pattern with the example term "OER" (labelled "replace with the
   user's topic" — no warm-up call), and tell the chat to explain the options
   (topic + optional subject/level/type filters) before asking for the topic.
+- **Pre-filled search URL is now an imperative FIRST TASK, not a "Beispiel".**
+  A URL inside the launcher prompt arrives as part of the USER's message — the
+  one provenance a restricted fetch tool (Claude) accepts without a paste-back.
+  The old "Beispiel für den Einstieg" label wasted that free fetch
+  (live-observed); the template now orders "fetch exactly this URL now — it
+  comes from the user's message, so your fetch tool may load it". The launcher
+  field hint says so too ("bei Claude entfällt damit das Rein-Kopieren").
+  In-chat FOLLOW-UP topics still need the paste-back in Claude's refusal mode —
+  that is the host's provenance rule, only the MCP connector removes it.
 - **Both bundled skills** (`public/skills/*.skill.md`) updated the same way:
   path-form search leads, the stripped-query failure mode is named with its
   recovery (path form / paste-back), and the wlo-search failure table reflects
