@@ -38,6 +38,25 @@ function payload(over: Record<string, unknown> = {}): any {
   };
 }
 
+test('renderTopicPage renders the WLO-style page header: collection title over description over lanes', () => {
+  const html = renderTopicPage(payload({
+    collectionTitle: 'Optik',
+    description: 'Alles zur <Lichtausbreitung>, Brechung und Reflexion.',
+  }), 'de');
+  assert.match(html, /<header class="wlo-topic__head">/);
+  assert.match(html, /Optik/);
+  assert.match(html, /&lt;Lichtausbreitung&gt;/, 'description is escaped');
+  // The collection title takes precedence as the page heading.
+  const h1 = html.match(/<h1[^>]*>(.*?)<\/h1>/)?.[1] ?? '';
+  assert.match(h1, /Optik/);
+});
+
+test('renderTopicPage without header data renders no empty header block', () => {
+  const html = renderTopicPage(payload(), 'de');
+  assert.doesNotMatch(html, /wlo-topic__desc/, 'no empty description paragraph');
+  assert.match(html, /Bruchrechnung/, 'variant title remains the fallback heading');
+});
+
 test('renderTopicPage shows the variant title and every swimlane heading + tiles', () => {
   const html = renderTopicPage(payload(), 'de');
   assert.match(html, /Bruchrechnung/);
@@ -58,6 +77,16 @@ test('renderTopicPage drops a dangerous topicPageUrl (no javascript: more-link)'
   const html = renderTopicPage(payload({ topicPageUrl: 'javascript:alert(1)' }), 'de');
   assert.doesNotMatch(html, /href="javascript:/i, 'no javascript: href');
   assert.doesNotMatch(html, /Mehr auf der Themenseite/, 'no more-link when the topic URL is unsafe');
+});
+
+test('renderTopicPage keeps the page header over the empty state (the title says WHAT is empty)', () => {
+  const html = renderTopicPage(
+    payload({ swimlanes: [], swimlaneCount: 0, collectionTitle: 'Optik', description: 'Einführung' }),
+    'de',
+  );
+  assert.match(html, /wlo-topic__head/, 'header renders even without lanes');
+  assert.match(html, /Optik/);
+  assert.match(html, /Keine Treffer gefunden/);
 });
 
 test('renderTopicPage escapes the heading and renders an empty state when there are no swimlanes', () => {

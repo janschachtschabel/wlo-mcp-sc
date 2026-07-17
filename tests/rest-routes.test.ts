@@ -291,9 +291,14 @@ test('GET /api/collection lists a collection\'s file contents with downloadUrl',
 });
 
 test('GET /api/collection with q searches within the collection', async () => {
+  // Scope = the collection's /children listing, matched locally: the backend
+  // rejects a primaryparent-scoped ngsearch with 400 (live-verified).
   const mock = installFetchMock((url) => {
-    if (url.includes('/ngsearch')) {
-      return { json: { nodes: [makeNode('sk-2', 'Video Skill')], pagination: { total: 3, from: 0, count: 1 } } };
+    if (url.includes('/children')) {
+      return { json: { nodes: [
+        makeNode('sk-2', 'Video Skill'),
+        makeNode('sk-3', 'Textblatt'),
+      ], pagination: { total: 2, from: 0, count: 2 } } };
     }
     return { json: {} };
   });
@@ -302,8 +307,9 @@ test('GET /api/collection with q searches within the collection', async () => {
     assert.equal(r?.status, 200);
     const body = r!.json as { query: string; total: number; results: { nodeId: string }[] };
     assert.equal(body.query, 'video');
-    assert.equal(body.total, 3);
+    assert.equal(body.total, 1, 'total = the filtered set');
     assert.equal(body.results[0].nodeId, 'sk-2');
+    assert.ok(!mock.calls.some(c => c.url.includes('/ngsearch')), 'no primaryparent ngsearch');
   } finally {
     mock.restore();
   }
@@ -316,8 +322,8 @@ test('GET /api/collection without nodeId (and no WLO_SKILLS_COLLECTION_ID) → 4
 
 test('GET /api/collection?fields=title,url projects each result item', async () => {
   const mock = installFetchMock((url) => {
-    if (url.includes('/ngsearch')) {
-      return { json: { nodes: [makeNode('sk-2', 'Video Skill')], pagination: { total: 3, from: 0, count: 1 } } };
+    if (url.includes('/children')) {
+      return { json: { nodes: [makeNode('sk-2', 'Video Skill')], pagination: { total: 1, from: 0, count: 1 } } };
     }
     return { json: {} };
   });

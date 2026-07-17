@@ -68,6 +68,10 @@ OR collectionId (a "Sammlung-nodeId"). At least one is required.`,
             variantId: struct?.variantId ?? params.variantId ?? '',
             collectionId: struct?.collectionId ?? params.collectionId ?? null,
             variantTitle: struct?.variantTitle ?? '',
+            // Header fields survive the empty case so the widget can still say
+            // WHAT is empty (schema-optional; undefined is valid and dropped).
+            collectionTitle: struct?.collectionTitle,
+            description: struct?.description,
             topicPageUrl: null,
             swimlaneCount: 0,
             swimlanesTotal: struct?.swimlanes.length ?? 0,

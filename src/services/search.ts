@@ -42,14 +42,18 @@ export interface SearchWithinCollectionResult {
   pagination: { total: number; from: number; count: number };
   labeled: LabeledCriterion[];
   unresolved: UnresolvedFilter[];
+  /** The collection's true content count, as reported by the backend. */
+  collectionTotal: number;
+  /** True when the collection holds more items than the sampled window. */
+  truncated: boolean;
 }
 
 /**
- * Children sample bound for the reference-collection fallback — the same
- * "up to 100 direct children" window the stats service uses; keeps the
- * fallback to a single bounded upstream call.
+ * Sampling window: how many of the collection's direct children are examined —
+ * the same "up to 100" bound the stats service uses, keeping this to a single
+ * upstream call. `truncated` discloses when a collection exceeds it.
  */
-const WITHIN_FALLBACK_CHILDREN_MAX = 100;
+const WITHIN_CHILDREN_MAX = 100;
 
 export async function searchWithinCollection(
   opts: SearchWithinCollectionOptions,
@@ -59,44 +63,32 @@ export async function searchWithinCollection(
   const maxResults = opts.maxResults ?? 10;
   const skipCount = opts.skipCount ?? 0;
 
-  // Scope the search to the collection subtree via the primary-parent criterion,
-  // then layer the free-text query and resolved vocab filters on top.
-  const criteria: SearchCriterion[] = [
-    { property: 'virtual:primaryparent_nodeid', values: [opts.nodeId] },
-    ...(query ? [{ property: 'ngsearchword', values: [query] }] : []),
-    ...filters,
-  ];
-
-  const resp = await ngsearch(criteria, 'FILES', maxResults, skipCount);
-
-  if (resp.nodes.length === 0 && resp.pagination.total === 0) {
-    // Reference-collection fallback (audit H-A): curated WLO collections hold
-    // *references* to nodes whose primary parent lives elsewhere, so the
-    // primaryparent-scoped ngsearch above finds nothing for them. Enumerate the
-    // actual children instead and apply the query + resolved vocab filters
-    // locally (bounded sample; pagination is local over the filtered set).
-    const children = await getCollectionContents(opts.nodeId, 'files', WITHIN_FALLBACK_CHILDREN_MAX, 0);
-    const filtered = children.nodes.filter(
-      n => (!query || nodeMatchesText(n, query)) && nodeMatchesCriteria(n, filters),
-    );
-    const page = filtered.slice(skipCount, skipCount + maxResults);
-    return {
-      nodeId: opts.nodeId,
-      query,
-      results: formatNodes(page),
-      pagination: { total: filtered.length, from: skipCount, count: page.length },
-      labeled,
-      unresolved,
-    };
-  }
+  // The collection's own `/children` listing is the ONLY working scope: the
+  // backend rejects `virtual:primaryparent_nodeid` as an ngsearch criterion
+  // with 400 Bad Request (live-probed 2026-07-17 — `ngsearchword` and
+  // `ccm:taxonid` are accepted, the primaryparent property is not), so the
+  // previously attempted scoped search could never succeed. `/children` also
+  // covers curated collections, which hold *references* to nodes whose primary
+  // parent lives elsewhere and which a primaryparent search would miss anyway.
+  //
+  // Query and resolved vocab filters are therefore matched locally against the
+  // node metadata the listing carries, and pagination runs over the filtered
+  // set. The window is bounded to one upstream call; `truncated` says so.
+  const children = await getCollectionContents(opts.nodeId, 'files', WITHIN_CHILDREN_MAX, 0);
+  const filtered = children.nodes.filter(
+    n => (!query || nodeMatchesText(n, query)) && nodeMatchesCriteria(n, filters),
+  );
+  const page = filtered.slice(skipCount, skipCount + maxResults);
 
   return {
     nodeId: opts.nodeId,
     query,
-    results: formatNodes(resp.nodes),
-    pagination: resp.pagination,
+    results: formatNodes(page),
+    pagination: { total: filtered.length, from: skipCount, count: page.length },
     labeled,
     unresolved,
+    collectionTotal: children.pagination.total,
+    truncated: children.pagination.total > children.nodes.length,
   };
 }
 

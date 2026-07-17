@@ -38,6 +38,25 @@ test('resolveLocale defaults to German, honours an English locale hint', () => {
   assert.equal(t('en', 'sectionCollections'), 'Collections');
 });
 
+test('a collection renders as an edu-sharing style tile (colored block, badge, no thumb img)', () => {
+  const coll = node({ nodeType: 'collection', title: 'Bruchrechnung', topicPageUrl: 'https://example.org/tp', previewUrl: '', previewIsIcon: true });
+  const html = renderTile(coll, { locale: 'de' });
+  assert.match(html, /wlo-tile--coll/, 'collection variant class');
+  assert.match(html, /aria-hidden="true"/, 'the glyph is decorative');
+  assert.doesNotMatch(html, /<img/, 'collections use the colored block, not a thumbnail');
+  assert.match(html, /Themenseite/, 'topic-page badge when the collection has one');
+  const plain = renderTile(node({ nodeType: 'collection', topicPageUrl: '' }), { locale: 'de' });
+  assert.doesNotMatch(plain, /wlo-badge/, 'no badge without a topic page');
+});
+
+test('detailButton is strictly opt-in and carries the node id + accessible name', () => {
+  const withBtn = renderTile(node(), { locale: 'de', detailButton: true });
+  assert.match(withBtn, /<button[^>]*data-node-id="n1"/, 'details button carries the node id');
+  assert.match(withBtn, /Details zu\s*[^<]*Photosynthese/, 'accessible name names the item');
+  const without = renderTile(node(), { locale: 'de' });
+  assert.doesNotMatch(without, /data-node-id=/, 'no dead button in widgets without a handler');
+});
+
 test('renderTile shows a real thumbnail with meaningful German alt text', () => {
   const html = renderTile(node());
   assert.match(html, /^<li /, 'tile is a list item (wrapped by a <ul> container)');

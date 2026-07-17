@@ -28,6 +28,19 @@ test('computeWidgetUri is content-addressed (stable per content, changes on edit
   assert.match(a, /^ui:\/\/widget\/search-results-[0-9a-f]{8}\.html$/);
 });
 
+test('computeWidgetUri also covers the _meta — a metadata-only change busts the cache', () => {
+  // The URI is the host's CACHE KEY for the WHOLE resource. Hashing only the
+  // HTML meant a metadata-only fix (e.g. dropping ui.domain) kept the old URI,
+  // so Claude kept serving its cached, broken copy — the deployed fix had no
+  // effect (live-proven 2026-07-17).
+  const html = '<html>same</html>';
+  const a = computeWidgetUri('search-results', html, { ui: { domain: 'https://old.example' } });
+  const b = computeWidgetUri('search-results', html, { ui: {} });
+  assert.notEqual(a, b, 'same HTML but different _meta must yield a different URI');
+  assert.equal(a, computeWidgetUri('search-results', html, { ui: { domain: 'https://old.example' } }),
+    'same HTML + same _meta stays stable');
+});
+
 test('widgetResourceMeta whitelists the configured edu-sharing origin in its CSP', () => {
   const meta = widgetResourceMeta() as {
     ui: { domain?: string; csp: { connectDomains: string[]; resourceDomains: string[] } };

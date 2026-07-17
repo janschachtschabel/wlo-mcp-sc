@@ -366,7 +366,10 @@ by its nodeId, with optional full-text query and the usual vocab filters
 (discipline/level/type). Use this when the user already has a collection and wants
 to narrow it down ("welche Videos zu Zellteilung gibt es in dieser Sammlung?").
 For an unscoped search across all of WLO use search_wlo_content instead; to list a
-collection's raw contents without filtering use get_collection_contents.`,
+collection's raw contents without filtering use get_collection_contents.
+NOTE: matching runs over the collection's direct contents (a bounded sample of up
+to 100 items, examined locally — the backend offers no collection-scoped search).
+The output says so when the collection is larger.`,
     {
       nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),
@@ -397,13 +400,19 @@ collection's raw contents without filtering use get_collection_contents.`,
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(res.results, res.pagination.total)
           : (renderToText(res.results, res.pagination.total) || 'Keine Inhalte in dieser Sammlung gefunden.');
+        // Never let a sampled answer look exhaustive.
+        const sampleHint = res.truncated
+          ? `\n_Hinweis: Durchsucht wurden die ersten 100 von ${res.collectionTotal} Inhalten dieser Sammlung._`
+          : '';
 
         const meta = queryMetaContent({
           toolName: 'search_wlo_within_collection',
-          queryType: 'ngsearch_within_collection',
+          // The scope is the collection's own contents listing, matched locally
+          // — the backend has no collection-scoped search (400 on primaryparent).
+          queryType: 'collection_children_filtered',
           searchTerm: res.query,
           criteria: [
-            { property: 'virtual:primaryparent_nodeid', values: [params.nodeId] },
+            { property: 'nodeId', values: [params.nodeId] },
             ...(res.query ? [{ property: 'ngsearchword', values: [res.query] }] : []),
             ...res.labeled,
           ],
@@ -413,7 +422,7 @@ collection's raw contents without filtering use get_collection_contents.`,
         });
 
         const hint = formatUnresolvedHint(res.unresolved);
-        const content = [{ type: 'text' as const, text }];
+        const content = [{ type: 'text' as const, text: text + sampleHint }];
         if (hint) content.push({ type: 'text' as const, text: hint });
         content.push(meta);
         return { content };

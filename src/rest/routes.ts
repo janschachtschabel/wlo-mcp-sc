@@ -96,11 +96,17 @@ interface RestRes {
 export async function handleRestRequest(req: RestReq, res: RestRes): Promise<boolean> {
   const result = await routeRestRequest(req.method, req.url);
   if (!result) return false;
+  // nosniff on the whole public surface: the declared Content-Type is
+  // authoritative (matches rest/static.ts) — a browser must never sniff e.g.
+  // HTML out of a served markdown body.
   if (result.raw != null) {
-    res.writeHead(result.status, { 'Content-Type': result.contentType ?? 'text/plain; charset=utf-8' });
+    res.writeHead(result.status, {
+      'Content-Type': result.contentType ?? 'text/plain; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+    });
     res.end(result.raw);
   } else {
-    res.writeHead(result.status, { 'Content-Type': 'application/json' });
+    res.writeHead(result.status, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
     res.end(JSON.stringify(result.json));
   }
   return true;

@@ -35,6 +35,28 @@ function installSwimlaneMock() {
   });
 }
 
+test('resolveTopicPageSwimlanes: passes the collection header (title + description) through', async () => {
+  // The topic-page widget renders a header like the WLO Themenseite itself:
+  // collection title on top, its description below, lanes underneath.
+  const mock = installFetchMock(() => ({ json: {} }));
+  try {
+    const struct: TopicPageStructure = {
+      collectionId: 'coll-42',
+      variantId: 'var-1',
+      variantTitle: 'Variante Ideal',
+      collectionTitle: 'Optik',
+      description: 'Alles zur Lichtausbreitung, Brechung und Reflexion.',
+      swimlanes: [],
+      referencedNodeIds: [],
+    };
+    const payload = await resolveTopicPageSwimlanes(struct, 3);
+    assert.equal(payload.collectionTitle, 'Optik');
+    assert.equal(payload.description, 'Alles zur Lichtausbreitung, Brechung und Reflexion.');
+  } finally {
+    mock.restore();
+  }
+});
+
 test('resolveTopicPageSwimlanes: resolves a content-teaser and a collection-chips swimlane', async () => {
   const mock = installSwimlaneMock();
   try {

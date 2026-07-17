@@ -147,6 +147,10 @@ export async function handleTopicPage(params: URLSearchParams): Promise<RestResu
         variantId: struct?.variantId ?? variantId ?? '',
         collectionId: struct?.collectionId ?? collectionId ?? null,
         variantTitle: struct?.variantTitle ?? '',
+        // Header fields survive the empty case so the widget can still say
+        // WHAT is empty (undefined keys are dropped by JSON serialization).
+        collectionTitle: struct?.collectionTitle,
+        description: struct?.description,
         topicPageUrl: null,
         swimlaneCount: 0,
         swimlanesTotal: struct?.swimlanes.length ?? 0,

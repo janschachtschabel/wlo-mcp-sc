@@ -29,6 +29,10 @@ export interface SwimlanePayload {
   variantId: string;
   collectionId: string | null;
   variantTitle: string;
+  /** The owning collection's title — the page's real heading (when resolvable). */
+  collectionTitle?: string;
+  /** The collection's description — the page intro text (when present). */
+  description?: string;
   topicPageUrl: string | null;
   swimlaneCount: number;
   /** Total swimlanes on the page (may exceed swimlaneCount when capped). */
@@ -142,6 +146,8 @@ export async function resolveTopicPageSwimlanes(
     variantId: struct.variantId,
     collectionId: struct.collectionId ?? null,
     variantTitle: struct.variantTitle,
+    ...(struct.collectionTitle ? { collectionTitle: struct.collectionTitle } : {}),
+    ...(struct.description ? { description: struct.description } : {}),
     topicPageUrl,
     swimlaneCount: swimlanes.length,
     swimlanesTotal: struct.swimlanes.length,   // capped if > MAX_LANES

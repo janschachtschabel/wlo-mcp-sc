@@ -4,6 +4,36 @@ import assert from 'node:assert/strict';
 import { getRelatedContent } from '../src/services/related.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
+test('getRelatedContent: an unreadable parent collection must not fail the whole tool', async () => {
+  // Live-found 2026-07-17: the siblings lookup hit `403 Forbidden` on a real
+  // node, getCollectionContents threw, and the ENTIRE tool failed — discarding
+  // the related results it had already fetched. The optional enrichment must
+  // degrade, like the wiki/collections legs of searchAll.
+  const mock = installFetchMock((url) => {
+    if (url.includes('/metadata')) {
+      // taxonid is what the related search relates ON — without it there is
+      // nothing to search for and the assertion would test nothing.
+      return { json: { node: makeNode('seed', 'Seed', {
+        'ccm:taxonid': ['http://w3id.org/openeduhub/vocabs/discipline/080'],
+        'virtual:primaryparent_nodeid': ['parent-forbidden'],
+      }) } };
+    }
+    if (url.includes('/ngsearch')) {
+      return { json: { nodes: [makeNode('r1', 'Verwandt 1')], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    if (url.includes('/children')) return { status: 403, json: { error: 'Forbidden' } };
+    return { json: {} };
+  });
+  try {
+    const res = await getRelatedContent({ nodeId: 'seed', includeSiblings: true });
+    assert.ok(res, 'the tool must still return a result');
+    assert.deepEqual(res.results.map(r => r.title), ['Verwandt 1'], 'related results must survive');
+    assert.deepEqual(res.siblings, [], 'siblings degrade to empty instead of throwing');
+  } finally {
+    mock.restore();
+  }
+});
+
 const BIO = 'http://w3id.org/openeduhub/vocabs/discipline/080';
 const SEK1 = 'http://w3id.org/openeduhub/vocabs/educationalContext/sekundarstufe_1';
 

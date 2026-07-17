@@ -47,6 +47,38 @@ test('renderSearchResults emphasizes the collections section', () => {
   assert.match(html, /wlo-section--emphasis/);
 });
 
+test('renderSearchResults: collections render as a coll-tile row, content as detail-capable cards', () => {
+  const html = renderSearchResults(payload(), 'de');
+  assert.match(html, /wlo-grid--coll/, 'collection sections use the coll-row grid');
+  assert.match(html, /wlo-tile--coll/, 'collection tiles use the edu-sharing block style');
+  assert.match(html, /data-node-id="c1"/, 'content cards carry the detail affordance');
+});
+
+test('renderSearchResults: a selected node switches to the detail view with a back button', () => {
+  const html = renderSearchResults(payload(), 'de', { selectedId: 'c1' });
+  assert.match(html, /wlo-detail/, 'detail view renders');
+  assert.match(html, /data-action="back"/, 'back button present');
+  assert.match(html, /Inhalt A/, 'the selected node is shown');
+  assert.doesNotMatch(html, /wlo-grid--coll/, 'the grid is replaced, not stacked under the detail');
+  // Unknown id falls back to the grid — never a blank widget.
+  assert.match(renderSearchResults(payload(), 'de', { selectedId: 'nope' }), /wlo-grid/);
+});
+
+test('renderSearchResults: the detail CTA arrow is decorative (aria-hidden)', () => {
+  const html = renderSearchResults(payload(), 'de', { selectedId: 'c1' });
+  assert.match(html, /<span aria-hidden="true">↗<\/span>/, 'arrow is hidden from screen readers');
+  assert.doesNotMatch(html, /Inhalt öffnen ↗/, 'no bare arrow inside the accessible link text');
+});
+
+test('renderSearchResults: the detail view escapes untrusted fields', () => {
+  const p = payload();
+  p.content.results[0].description = '<img src=x onerror=alert(1)>';
+  p.content.results[0].publisher = '<b>Evil</b>';
+  const html = renderSearchResults(p, 'de', { selectedId: 'c1' });
+  assert.doesNotMatch(html, /<img src=x/, 'description escaped');
+  assert.doesNotMatch(html, /<b>Evil<\/b>/, 'publisher escaped');
+});
+
 test('renderSearchResults uses locale-appropriate quotes around the query', () => {
   assert.match(renderSearchResults(payload(), 'de'), /„Photosynthese“/);
   const en = renderSearchResults(payload(), 'en');

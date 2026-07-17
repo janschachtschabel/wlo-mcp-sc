@@ -33,14 +33,19 @@ export interface StaticResult {
 
 const HTML = 'text/html; charset=utf-8';
 const MARKDOWN = 'text/markdown; charset=utf-8';
+const TEXT = 'text/plain; charset=utf-8';
 
 // Closed allow-list: request pathname → the file under public/ it serves.
 // `/` is shared with the MCP endpoint (POST /), so this GET mapping is only
 // reached after the MCP branch declines it (see http.ts ordering).
+// robots.txt is served explicitly (permissive): AI fetch tools check it before
+// touching the public GET /api/* surface, and a missing file leaves the
+// decision to each fetcher's default policy.
 const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/': { relPath: 'launcher.html', contentType: HTML },
   '/launcher.html': { relPath: 'launcher.html', contentType: HTML },
   '/bookmarklet.md': { relPath: 'bookmarklet.md', contentType: MARKDOWN },
+  '/robots.txt': { relPath: 'robots.txt', contentType: TEXT },
 };
 
 /**

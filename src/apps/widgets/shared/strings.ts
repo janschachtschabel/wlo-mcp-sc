@@ -24,6 +24,13 @@ const STRINGS = {
     loadError: 'Inhalt konnte nicht geladen werden.',
     back: 'Zurück',
     open: 'Öffnen',
+    badgeTopicPage: 'Themenseite',
+    details: 'Details',
+    detailsFor: 'Details zu',
+    licenseLabel: 'Lizenz',
+    sourceLabel: 'Quelle',
+    openContent: 'Inhalt öffnen',
+    openTopicPage: 'Zur Themenseite',
   },
   en: {
     quoteOpen: '“',
@@ -40,6 +47,13 @@ const STRINGS = {
     loadError: 'Content could not be loaded.',
     back: 'Back',
     open: 'Open',
+    badgeTopicPage: 'Topic page',
+    details: 'Details',
+    detailsFor: 'Details for',
+    licenseLabel: 'License',
+    sourceLabel: 'Source',
+    openContent: 'Open content',
+    openTopicPage: 'Open topic page',
   },
 } as const;
 

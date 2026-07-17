@@ -57,8 +57,10 @@ stateless proxy in front of edu-sharing.
 - **OpenAI Apps SDK support** — display tools return `structuredContent`
   (per-tool `outputSchema`) with read-only `annotations`, the server advertises
   cross-tool `instructions`, and four tools ship an inlined `ui://` widget
-  (combined search results, topic-page swimlanes, and an interactive collection
-  browser) — theme-aware, WCAG 2.2 AA, DE/EN. Non-Apps clients are unaffected.
+  (combined search results with an in-widget detail view, topic-page swimlanes
+  under a title/description header, and an interactive collection browser),
+  each described by widget `_meta` (description, CSP, `prefersBorder`) —
+  theme-aware, WCAG 2.2 AA, DE/EN. Non-Apps clients are unaffected.
 - **Quality reranking** — multi-query expansion (synonyms, keyword, title,
   stop-word variants) fused with Reciprocal Rank Fusion (RRF) and a metadata
   quality score. Deterministic ordering.
@@ -103,7 +105,7 @@ else has sensible defaults.
 | Variable | Default | Scope | Description |
 |---|---|---|---|
 | `WLO_REPOSITORY_URL` | `https://redaktion.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. |
-| `WLO_ROOT_COLLECTION_ID` | `5e40e372-735c-4b17-bbf7-e827a5702b57` | all | Root node of the collection hierarchy. Identical on WLO prod and staging. Override only for a custom repository with a different root. |
+| `WLO_ROOT_COLLECTION_ID` | per host | all | Root node of the collection hierarchy — **repository-bound**. The known WLO hosts (prod `redaktion.openeduhub.net`, staging `repository.staging.openeduhub.net`) get a per-host default automatically (the same id on both today, live-verified 2026-07-17, but maintained per host). Any **other** edu-sharing instance must set this explicitly — otherwise the server logs a startup warning and falls back to the WLO id, which will not exist there. |
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it. Unset → callers pass an explicit `?nodeId=`. |
 | `WLO_POOL_SIZE` | `25` | all | Candidate pool size **per search variant** for reranking (`enhancedSearch`) — **not** the number of returned hits (that is `maxResults`). Smaller = faster/smaller fetches at minimally lower recall. |
 | `WLO_FETCH_TIMEOUT_MS` | `10000` | all | Per-request timeout (ms) for every upstream edu-sharing call. Prevents a hung backend socket from blocking a tool call. |

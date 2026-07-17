@@ -21,7 +21,7 @@ import {
   stripStoreRef,
 } from './wlo-api.js';
 import { logUpstreamMiss } from './wlo-config.js';
-import { nodeMatchesText } from './node-match.js';
+import { nodeMatchesText, nodeTitle } from './node-match.js';
 
 // Topic-page variants additionally need the page_variant fields
 // (template flag, target group, swimlane config).
@@ -242,6 +242,10 @@ export interface TopicPageStructure {
   collectionId?: string;
   variantId: string;
   variantTitle: string;
+  /** Human-readable title of the OWNING collection (the page's real heading). */
+  collectionTitle?: string;
+  /** The collection's description — rendered as the page intro text. */
+  description?: string;
   swimlanes: Swimlane[];
   /** Flat, de-duplicated list of every embedded nodeId across all swimlanes. */
   referencedNodeIds: string[];
@@ -290,8 +294,19 @@ export async function getTopicPageContent(
   let variantNode: WloNode | null = await getNodeMetadata(seedId);
   const hasVariantConfig = (n: WloNode | null) => !!n?.properties?.['ccm:page_variant_config']?.[0];
 
+  // Page header data: when the seed is the OWNING collection, its title and
+  // description are the Themenseite's real heading + intro text (rendered by
+  // the widget above the swimlanes). A variant seed has no collection context.
+  let collectionTitle: string | undefined;
+  let description: string | undefined;
+
   if (variantNode && !hasVariantConfig(variantNode)) {
-    const ref = variantNode.properties?.['ccm:page_config_ref']?.[0];
+    const cProps = variantNode.properties ?? {};
+    collectionTitle = nodeTitle(variantNode) || undefined;
+    description = cProps['cclom:general_description']?.[0]
+      || variantNode.collection?.description
+      || undefined;
+    const ref = cProps['ccm:page_config_ref']?.[0];
     if (!ref) return null;
     // The page variants ARE the child collections of the page_config_ref folder:
     // they THEMSELVES carry ``ccm:page_variant_config`` (title e.g. "Variante_Ideal"
@@ -326,6 +341,8 @@ export async function getTopicPageContent(
     collectionId: opts.collectionId,
     variantId: variantNode.ref?.id ?? opts.variantId ?? '',
     variantTitle: vProps['cclom:title']?.[0] || vProps['cm:title']?.[0] || '',
+    ...(collectionTitle ? { collectionTitle } : {}),
+    ...(description ? { description } : {}),
     swimlanes,
     referencedNodeIds,
   };

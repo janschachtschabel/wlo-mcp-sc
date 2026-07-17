@@ -40,17 +40,28 @@ export type WidgetName = (typeof WIDGET_NAMES)[number];
  * of the user-facing copy.
  */
 const WIDGET_DESCRIPTIONS: Record<string, string> = {
-  'search-results': 'WLO-Suchergebnisse als Kachelliste (Materialien, Sammlungen, Themenseiten)',
-  'topic-page': 'WLO-Themenseite mit ihren Swimlanes und Inhalten',
+  'search-results': 'WLO-Suchergebnisse: Sammlungs-Kacheln und Material-Karten mit aufklappbarer Detailansicht',
+  'topic-page': 'WLO-Themenseite: Titel und Beschreibung über den Swimlanes mit ihren Inhalten',
   'browse': 'Interaktiver WLO-Sammlungsbaum zum Stöbern',
 };
 
 /**
- * Content-addressed resource URI. A rebuilt widget yields a new hash so hosts
- * that cache `ui://` resources fetch the fresh HTML instead of a stale copy.
+ * Content-addressed resource URI: the hash covers the ENTIRE resource — the
+ * HTML **and** its `_meta` (CSP, domain, description).
+ *
+ * Hosts treat the `ui://` URI as their cache key, so anything that changes the
+ * resource must change the URI. Hashing only the HTML meant a metadata-only fix
+ * kept the old URI and hosts kept serving their cached, stale copy — the
+ * deployed fix silently had no effect (live-proven 2026-07-17). `_meta` is
+ * derived from the environment, so a config change correctly yields a new URI
+ * too.
  */
-export function computeWidgetUri(name: string, html: string): string {
-  const hash = createHash('sha256').update(html).digest('hex').slice(0, 8);
+export function computeWidgetUri(name: string, html: string, meta: Record<string, unknown> = {}): string {
+  const hash = createHash('sha256')
+    .update(html)
+    .update(JSON.stringify(meta))
+    .digest('hex')
+    .slice(0, 8);
   return `ui://widget/${name}-${hash}.html`;
 }
 
@@ -154,7 +165,9 @@ function loadWidgets(): WidgetResource[] {
     const file = join(distWidgetsDir, `${name}.html`);
     if (!existsSync(file)) continue;
     const html = readFileSync(file, 'utf8');
-    built.push({ name, uri: computeWidgetUri(name, html), html });
+    // Same meta object the registration emits — so the URI provably matches
+    // the resource it addresses.
+    built.push({ name, uri: computeWidgetUri(name, html, widgetResourceMeta(name)), html });
   }
   widgetCache = built;
   return built;

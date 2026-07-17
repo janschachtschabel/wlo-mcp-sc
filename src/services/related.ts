@@ -12,6 +12,7 @@ import type { SearchCriterion } from '../wlo-api.js';
 import { getCollectionContents, getNodeMetadata, ngsearch } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode, formatNodes } from '../formatter.js';
+import { log } from '../logger.js';
 
 export interface RelatedContentOptions {
   nodeId: string;
@@ -67,11 +68,21 @@ export async function getRelatedContent(
     // The primary-parent id is carried on the node itself; works for file nodes
     // too (unlike /parents, which 500s for ccm:io — see getNodeParents).
     const parentId = props['virtual:primaryparent_nodeid']?.[0];
+    result.siblings = [];
     if (parentId) {
-      const sib = await getCollectionContents(parentId, 'files', maxResults + 1, 0);
-      result.siblings = formatNodes(sib.nodes).filter(n => n.nodeId !== opts.nodeId).slice(0, maxResults);
-    } else {
-      result.siblings = [];
+      // Degrade, never fail: the parent collection can be unreadable for the
+      // anonymous user (live-found: 403 Forbidden) and getCollectionContents
+      // throws. Siblings are an OPTIONAL enrichment — losing them must not
+      // discard the related results already fetched above.
+      try {
+        const sib = await getCollectionContents(parentId, 'files', maxResults + 1, 0);
+        result.siblings = formatNodes(sib.nodes).filter(n => n.nodeId !== opts.nodeId).slice(0, maxResults);
+      } catch (err) {
+        log.warn('related: siblings lookup failed, continuing without', {
+          parentId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 

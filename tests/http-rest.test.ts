@@ -47,3 +47,12 @@ test('handleRestRequest surfaces a 400 for invalid input', async () => {
   assert.equal(handled, true);
   assert.equal(res.rec.status, 400);
 });
+
+test('handleRestRequest sends X-Content-Type-Options: nosniff on JSON and raw responses', async () => {
+  const res = fakeRes();
+  await handleRestRequest({ method: 'GET', url: '/api/search' }, res); // 400 JSON path, offline
+  assert.equal(res.rec.headers?.['X-Content-Type-Options'], 'nosniff');
+  const raw = fakeRes();
+  await handleRestRequest({ method: 'GET', url: '/api/skills/wlo-search' }, raw); // raw markdown path
+  assert.equal(raw.rec.headers?.['X-Content-Type-Options'], 'nosniff');
+});

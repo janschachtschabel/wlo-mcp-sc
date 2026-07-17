@@ -17,6 +17,34 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { registerWloTool } from '../src/apps/register.js';
+import { createMcpServer } from '../src/server.js';
+
+test('EVERY tool carries the full Apps-SDK metadata set (title, hints, noauth, status)', async () => {
+  // Conformance pin for all current AND future tools: the Apps SDK requires a
+  // human-readable title alongside the machine name, the three annotation
+  // hints, an auth declaration, and (ChatGPT extension) the invocation status
+  // strings. 14 plain-registered tools shipped without a title (found in the
+  // 2026-07-17 metadata audit) — this test makes that class of gap impossible
+  // to reintroduce silently.
+  const server = createMcpServer();
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'conformance', version: '0.0.0' });
+  await Promise.all([server.connect(st), client.connect(ct)]);
+  const { tools } = await client.listTools();
+  assert.ok(tools.length >= 22, `expected the full tool set, got ${tools.length}`);
+  for (const t of tools) {
+    const title = (t as { title?: string }).title ?? t.annotations?.title;
+    assert.ok(title && title.trim().length > 0, `${t.name}: missing human-readable title`);
+    assert.equal(t.annotations?.readOnlyHint, true, `${t.name}: readOnlyHint`);
+    assert.equal(t.annotations?.destructiveHint, false, `${t.name}: destructiveHint`);
+    assert.equal(typeof t.annotations?.openWorldHint, 'boolean', `${t.name}: openWorldHint`);
+    const m = (t as { _meta?: Record<string, unknown> })._meta ?? {};
+    assert.deepEqual(m.securitySchemes, [{ type: 'noauth' }], `${t.name}: securitySchemes`);
+    assert.ok(m['openai/toolInvocation/invoking'], `${t.name}: invoking status`);
+    assert.ok(m['openai/toolInvocation/invoked'], `${t.name}: invoked status`);
+  }
+  await client.close();
+});
 
 async function listToolsFrom(register: (server: McpServer) => void) {
   const server = new McpServer({ name: 'defaults-test', version: '0.0.0' });

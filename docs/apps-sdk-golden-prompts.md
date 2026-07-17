@@ -43,8 +43,8 @@ should fire.
 
 | # | Prompt (DE) | Expected tool | Expected output / widget | Pass criteria |
 |---|-------------|---------------|--------------------------|---------------|
-| D1 | „Finde WLO-Materialien zur Photosynthese für die Sekundarstufe I." | `search_wlo_all` | **search-results** widget | widget renders content + collections + topic pages |
-| D2 | „Zeig mir die WLO-Themenseite zu Optik." | `get_topic_page_content` | **topic-page** widget (swimlanes) | swimlanes render as tile grids |
+| D1 | „Finde WLO-Materialien zur Photosynthese für die Sekundarstufe I." | `search_wlo_all` | **search-results** widget | widget renders content + collections + topic pages; a card's „Details" button opens the in-widget Einzelansicht, back/Escape returns to the grid |
+| D2 | „Zeig mir die WLO-Themenseite zu Optik." | `get_topic_page_content` | **topic-page** widget (title/description header + swimlanes) | header + swimlanes render as tile grids |
 | D3 | „Welche Fachportale gibt es bei WLO?" | `get_subject_portals` | **browse** widget | portal list renders |
 | D4 | „Klappe im Fachportal Mathematik die Unterthemen auf." | `browse_collection_tree` (from the widget) | **browse** widget drill-down | expanding a portal loads its children live (**F3**) |
 | D5 | „Welche Anbieter liefern die meisten Biologie-Materialien auf WLO?" | `lookup_wlo_publishers` | text (publisher counts) | ranked publisher list |

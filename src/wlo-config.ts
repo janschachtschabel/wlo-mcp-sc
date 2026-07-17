@@ -84,17 +84,57 @@ export const WLO_REPOSITORY_URL: string = (() => {
 /** REST API base — ``<repository-url>/rest``. */
 export const BASE_URL: string = `${WLO_REPOSITORY_URL}/rest`;
 
+/** The WLO root ("Portale") collection nodeId. */
+const _WLO_ROOT_ID = '5e40e372-735c-4b17-bbf7-e827a5702b57';
+
 /**
- * Central/root collection nodeId of the configured repository.
- *
- * Default is the WLO root (``5e40e372-...``) which is the same node ID
- * on the staging mirror today. Override per deployment via
- * ``WLO_ROOT_COLLECTION_ID`` if a future staging/development repo uses
- * a different root.
+ * Known root-collection nodeIds per repository host. The root collection id is
+ * REPOSITORY-BOUND — node ids only carry over between instances cloned as
+ * id-faithful mirrors. WLO prod and staging are such mirrors: both resolve the
+ * same root id (live-verified 2026-07-17 via
+ * ``GET /node/v1/nodes/-home-/<id>/metadata`` on both hosts). One entry per
+ * host anyway, so a future divergence is a one-line change here.
+ */
+const KNOWN_ROOT_COLLECTION_IDS: Record<string, string> = {
+  'redaktion.openeduhub.net': _WLO_ROOT_ID,
+  'repository.staging.openeduhub.net': _WLO_ROOT_ID,
+};
+
+/**
+ * Resolve the root collection id: explicit env value → per-host default for
+ * the known WLO instances → WLO fallback. ``source: 'fallback'`` tells the
+ * caller the repository host is unknown, so the WLO id is almost certainly
+ * wrong there (an unrelated edu-sharing has different node ids) and a warning
+ * is warranted. Pure for testability (like ``sanitizeRepositoryUrl``).
+ */
+export function resolveRootCollectionId(
+  raw: string | undefined,
+  repositoryUrl: string,
+): { id: string; source: 'env' | 'known-host' | 'fallback' } {
+  const explicit = (raw ?? '').trim();
+  if (explicit) return { id: explicit, source: 'env' };
+  let host = '';
+  try { host = new URL(repositoryUrl).hostname; } catch { /* unparseable → fallback */ }
+  const known = KNOWN_ROOT_COLLECTION_IDS[host];
+  if (known) return { id: known, source: 'known-host' };
+  return { id: _WLO_ROOT_ID, source: 'fallback' };
+}
+
+/**
+ * Central/root collection nodeId of the configured repository — anchors
+ * ``get_subject_portals``, tree browsing, and the portal leg of the combined
+ * search. Repository-bound; see ``resolveRootCollectionId``.
  */
 export const WLO_ROOT_COLLECTION_ID: string = (() => {
-  const raw = (process.env['WLO_ROOT_COLLECTION_ID'] ?? '').trim();
-  return raw || '5e40e372-735c-4b17-bbf7-e827a5702b57';
+  const r = resolveRootCollectionId(process.env['WLO_ROOT_COLLECTION_ID'], WLO_REPOSITORY_URL);
+  if (r.source === 'fallback') {
+    log.warn(
+      'WLO_ROOT_COLLECTION_ID not set and the repository host is not a known WLO instance — ' +
+        'using the WLO root id, which will not exist on an unrelated repository. Set WLO_ROOT_COLLECTION_ID.',
+      { repository: WLO_REPOSITORY_URL, fallback: r.id },
+    );
+  }
+  return r.id;
 })();
 
 /**

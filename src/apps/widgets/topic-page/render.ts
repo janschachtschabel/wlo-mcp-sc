@@ -15,14 +15,20 @@ import { t, type Locale } from '../shared/strings.js';
 import type { SwimlanePayload } from '../shared/types.js';
 
 export function renderTopicPage(payload: SwimlanePayload | undefined, locale: Locale = 'de'): string {
+  // WLO-Themenseiten-Look: collection title as the page heading, its
+  // description as intro text — the variant title is only the fallback.
+  const heading = payload?.collectionTitle || payload?.variantTitle || '';
+  const title = heading ? `<h1 class="wlo-topic__title">${escapeHtml(heading)}</h1>` : '';
+  const desc = payload?.description
+    ? `<p class="wlo-topic__desc">${escapeHtml(payload.description)}</p>`
+    : '';
+  const head = title || desc ? `<header class="wlo-topic__head">${title}${desc}</header>` : '';
+
   const swimlanes = payload?.swimlanes ?? [];
   if (swimlanes.length === 0) {
-    return `<div class="wlo-topic"><p class="wlo-empty">${escapeHtml(t(locale, 'noResults'))}</p></div>`;
+    // Keep the header over the empty state so the title says WHAT is empty.
+    return `<div class="wlo-topic">${head}<p class="wlo-empty">${escapeHtml(t(locale, 'noResults'))}</p></div>`;
   }
-
-  const title = payload?.variantTitle
-    ? `<h1 class="wlo-topic__title">${escapeHtml(payload.variantTitle)}</h1>`
-    : '';
   const topicUrl = safeHref(payload?.topicPageUrl);
 
   const lanes = swimlanes
@@ -41,5 +47,5 @@ export function renderTopicPage(payload: SwimlanePayload | undefined, locale: Lo
     })
     .join('');
 
-  return `<div class="wlo-topic">${title}${lanes}</div>`;
+  return `<div class="wlo-topic">${head}${lanes}</div>`;
 }

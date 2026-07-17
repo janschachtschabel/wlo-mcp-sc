@@ -9,7 +9,103 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed (focused audit on widgets + REST, 2026-07-17)
+Deep pass over the redesigned widgets and the REST layer; three Low findings,
+all fixed test-first (no Medium+ findings; prod `npm audit` clean):
+- The detail-view CTA arrow (`↗`) is decorative — now `aria-hidden` so screen
+  readers announce only the action label (search-results widget).
+- An empty topic page kept its header hidden: the title/description now render
+  above the empty state (the title says WHAT is empty), and both empty branches
+  (MCP tool + REST) pass `collectionTitle`/`description` through.
+- `X-Content-Type-Options: nosniff` on every REST response (JSON + raw skill
+  Markdown), matching the static-asset surface.
+
+### Added (public robots.txt + repo-bound root default, 2026-07-17)
+- **`GET /robots.txt`** (permissive) joins the HTTP static allow-list: AI fetch
+  tools check robots.txt before touching the public `GET /api/*` surface, and a
+  missing file left the decision to each fetcher's default policy. Live finding
+  behind it: a Claude sandbox refused the REST API as "robots-disallowed" /
+  `host_not_allowed` (its own egress allowlist blocks the nip.io host) while
+  the same endpoints answered 200 JSON from outside — the server was never at
+  fault.
+- **Root-collection default is now resolved per repository host.** The root id
+  is repository-bound; the known WLO hosts (prod + staging) each carry an
+  explicit default — identical today, live-verified on both via node metadata
+  (2026-07-17). An unknown host without `WLO_ROOT_COLLECTION_ID` now logs a
+  startup warning instead of silently using a WLO id that cannot exist there
+  (`resolveRootCollectionId` in `src/wlo-config.ts`, pure + unit-tested).
+
+### Added (widget redesign toward the edu-sharing look, 2026-07-17)
+Patterned on the official Apps-SDK examples (pizzaz list/carousel card
+anatomy: image block, clamped title, labelled meta rows, one primary CTA) and
+the edu-sharing search page, within the ChatGPT inline-card rules (wrapping
+grids instead of nested horizontal scroll).
+- **Collection tiles (edu-sharing style):** Sammlungen/Themenseiten render as
+  colored blocks with a stack glyph, name below, and a text+icon "Themenseite"
+  badge — never colour-only. Content cards gain labelled fact rows
+  (Lizenz/Quelle).
+- **In-widget Einzelansicht:** every content card carries a "Details" button
+  (strictly opt-in per widget — no dead buttons elsewhere); the detail view
+  replaces the grid with large preview, full description, all subject/level/
+  type chips, licence/source, and Open-content / Topic-page CTAs. Zero extra
+  tool calls — the data is already in structuredContent. Focus management per
+  WCAG 2.4.3 (open → back button, close → originating card; host repaints
+  never steal focus), Escape closes, selection persists via the ChatGPT
+  widget-state extension. The i18n conformance test immediately caught a
+  hardcoded German quote pair in the new aria-label — fixed via the locale
+  table.
+- **Topic-page header:** `get_topic_page_content` now carries the owning
+  collection's title + description (optional, backward-compatible in schema
+  and REST), and the widget renders them WLO-style above the swimlanes.
+- Widget descriptions updated; content-addressed URIs roll automatically.
+  README (EN/DE), the submission checklist, and the golden prompts are synced
+  to the redesigned widgets and the widget `_meta` (description, CSP,
+  `prefersBorder`).
+
+### Fixed (Apps-SDK metadata completeness, 2026-07-17)
+- **Every tool now carries a human-readable `title`.** The 14 tools registered
+  via plain `server.tool` (a signature without a title parameter) shipped with
+  the machine name only, while the Apps SDK expects a title alongside it and
+  the submission scan reads it. Titles are stamped centrally in
+  `tool-defaults.ts` (registration-site titles win). A new conformance test
+  pins the FULL per-tool metadata set — title, the three annotation hints,
+  `securitySchemes`, invocation status strings — for all current and future
+  tools, so this class of gap cannot reappear silently. Audit result:
+  annotations 22/22, noauth 22/22, status strings 22/22 were already complete;
+  `outputSchema` remains deliberately on the 10 list-/widget-/knowledge-tools
+  (extending it to the detail tools is the documented API design pass).
+
+### Fixed (full live probe of all 22 tools, 2026-07-17)
+Every tool was called against the PRODUCTION API — the gate the mocks could
+never close, and the one that had let `fileSize` through. Two tools failed; both
+are fixed and the probe now reports **22/22**.
+- **`search_wlo_within_collection` had never worked in production.** It scoped
+  its `ngsearch` with `virtual:primaryparent_nodeid` — a criterion the backend
+  rejects with **400 Bad Request** on every call (isolated live: `ngsearchword`
+  → 1985 hits, `ccm:taxonid` → 910 hits, `virtual:primaryparent_nodeid` → 400).
+  The audit-H-A `/children` fallback never fired because it was written for an
+  *empty* result, while the call *throws*. `GET /api/collection?q=` was broken
+  the same way. The collection's own `/children` listing is now the only scope,
+  with query + vocab filters matched locally — and the result discloses when a
+  collection exceeds the sampled window instead of looking exhaustive.
+  Two test files asserted the primaryparent criterion and thus kept a
+  permanently broken tool green; they were rewritten (not quietly deleted) with
+  the reason recorded in each file.
+- **`get_related_content` died on an unreadable parent collection.** The
+  optional siblings lookup hit `403 Forbidden` on real data,
+  `getCollectionContents` threw, and the whole tool failed — discarding the
+  related results it had already fetched. It now degrades with a warning, like
+  the wiki/collections legs of `searchAll`.
+
 ### Fixed (live Claude session findings, 2026-07-17)
+- **The widget cache key now covers the whole resource.** `ui://` URIs are
+  content-addressed so hosts refetch changed widgets — but the hash covered only
+  the HTML, not the `_meta`. A metadata-only fix (the `ui.domain` removal below)
+  therefore kept the identical URI, and Claude went on serving its cached,
+  broken copy: the deployed fix silently had no effect, and the live server
+  provably emitted clean metadata while the host still reported the old value.
+  The hash now covers HTML **and** `_meta`, so any change — including an
+  env-driven one — yields a new URI.
 - **`fileSize` violated our own outputSchema (MCP conformance):** the live
   edu-sharing API serialises `node.size` as a STRING; the formatter passed it
   through while the declared schema says `number`. Spec-compliant hosts

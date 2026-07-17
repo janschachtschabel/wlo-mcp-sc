@@ -61,6 +61,8 @@ export interface SwimlanePayload {
   variantId: string;
   collectionId: string | null;
   variantTitle: string;
+  collectionTitle?: string;
+  description?: string;
   topicPageUrl: string | null;
   swimlaneCount: number;
   swimlanesTotal: number;

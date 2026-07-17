@@ -56,6 +56,8 @@ export const swimlanePayloadSchema = z.object({
   variantId: z.string(),
   collectionId: z.string().nullable(),
   variantTitle: z.string(),
+  collectionTitle: z.string().optional(),
+  description: z.string().optional(),
   topicPageUrl: z.string().nullable(),
   swimlaneCount: z.number(),
   swimlanesTotal: z.number(),

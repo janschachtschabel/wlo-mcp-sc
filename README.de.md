@@ -58,9 +58,11 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 - **OpenAI-Apps-SDK-Unterstützung** — Anzeige-Tools liefern `structuredContent`
   (Tool-`outputSchema`) mit read-only-`annotations`, der Server annonciert
   werkzeugübergreifende `instructions`, und vier Tools bringen ein inline-
-  gebündeltes `ui://`-Widget mit (Kombi-Suchergebnisse, Themenseiten-Swimlanes
-  und ein interaktiver Sammlungs-Browser) — theme-fähig, WCAG 2.2 AA, DE/EN.
-  Nicht-Apps-Clients bleiben unberührt.
+  gebündeltes `ui://`-Widget mit (Kombi-Suchergebnisse mit Detailansicht im
+  Widget, Themenseiten-Swimlanes unter einem Titel/Beschreibungs-Kopf und ein
+  interaktiver Sammlungs-Browser), jeweils mit Widget-`_meta` (Beschreibung,
+  CSP, `prefersBorder`) — theme-fähig, WCAG 2.2 AA, DE/EN. Nicht-Apps-Clients
+  bleiben unberührt.
 - **Qualitäts-Reranking** — Multi-Query-Expansion (Synonyme, Keyword, Titel,
   Stoppwort-Varianten), fusioniert mit Reciprocal Rank Fusion (RRF) und einem
   Metadaten-Qualitätsscore. Deterministische Sortierung.
@@ -107,7 +109,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | Variable | Standard | Geltungsbereich | Beschreibung |
 |---|---|---|---|
 | `WLO_REPOSITORY_URL` | `https://redaktion.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. |
-| `WLO_ROOT_COLLECTION_ID` | `5e40e372-735c-4b17-bbf7-e827a5702b57` | alle | Wurzelknoten der Sammlungshierarchie. Auf WLO-Prod und -Staging identisch. Nur für ein eigenes Repository mit abweichender Wurzel überschreiben. |
+| `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
 | `WLO_POOL_SIZE` | `25` | alle | Größe des Kandidaten-Pools **pro Suchvariante** für das Reranking (`enhancedSearch`) — **nicht** die Anzahl der zurückgegebenen Treffer (das ist `maxResults`). Kleiner = schneller/kleinere Abrufe bei minimal geringerer Recall-Quote. |
 | `WLO_FETCH_TIMEOUT_MS` | `10000` | alle | Timeout pro Anfrage (ms) für jeden Upstream-edu-sharing-Aufruf. Verhindert, dass ein hängender Backend-Socket einen Tool-Aufruf blockiert. |

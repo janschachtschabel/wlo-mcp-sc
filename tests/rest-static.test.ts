@@ -92,3 +92,22 @@ test('handleStaticRequest returns 405 for POST on a static-only path', async () 
   assert.equal(handled, true);
   assert.equal(res.rec.status, 405);
 });
+
+// ── robots.txt (AI fetch tools check it before touching /api/*) ──────────────
+
+test('resolveStaticRoute maps GET /robots.txt to the robots asset', () => {
+  const r = resolveStaticRoute('GET', '/robots.txt');
+  assert.equal(r?.status, 200);
+  assert.equal(r?.asset?.relPath, 'robots.txt');
+  assert.match(r?.asset?.contentType ?? '', /text\/plain/);
+});
+
+test('handleStaticRequest serves a permissive robots.txt', async () => {
+  const res = fakeRes();
+  const handled = await handleStaticRequest({ method: 'GET', url: '/robots.txt' }, res);
+  assert.equal(handled, true);
+  assert.equal(res.rec.status, 200);
+  const body = String(res.rec.body ?? '');
+  assert.match(body, /User-agent: \*/);
+  assert.match(body, /^Disallow:\s*$/m);
+});
