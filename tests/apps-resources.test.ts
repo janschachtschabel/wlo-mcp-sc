@@ -36,12 +36,14 @@ test('widgetResourceMeta whitelists the configured edu-sharing origin in its CSP
   // Default WLO_REPOSITORY_URL is https://redaktion.openeduhub.net/edu-sharing.
   assert.ok(meta.ui.csp.connectDomains.includes('https://redaktion.openeduhub.net'));
   assert.ok(meta.ui.csp.resourceDomains.includes('https://redaktion.openeduhub.net'));
-  // Claude's MCP-Apps host validates `ui.domain` against its OWN sandbox format
-  // and rejects the whole widget for foreign values (live-found 2026-07-17) —
-  // so the STANDARD key must stay absent unless explicitly configured for a
-  // ChatGPT plugin submission. The vendor-prefixed alias is ignored by Claude.
+  // Claude's MCP-Apps host validates the widget domain against its OWN sandbox
+  // format ({hash}.claudemcpcontent.com) and rejects the whole widget for
+  // foreign values. It NORMALISES the vendor alias onto the standard key
+  // (live-proven 2026-07-17: the rejected value existed only in
+  // `openai/widgetDomain`), so BOTH must stay absent unless explicitly
+  // configured for a ChatGPT plugin submission.
   assert.ok(!('domain' in meta.ui), 'ui.domain must be absent by default');
-  assert.equal(meta['openai/widgetDomain'], 'https://redaktion.openeduhub.net');
+  assert.ok(!('openai/widgetDomain' in meta), 'the openai alias must be absent too — Claude maps it onto ui.domain');
 });
 
 test('widgetResourceMeta carries a per-widget description (audit A-2)', () => {
@@ -80,8 +82,8 @@ test('registerWidgetResource exposes a fetchable mcp-app resource with CSP metad
   await client.close();
 });
 
-test('widgetResourceMeta: WLO_WIDGET_DOMAIN overrides the app identity domain only, not the CSP', () => {
-  // `_meta.ui.domain` is the APP identity (unique per app at submission);
+test('widgetResourceMeta: WLO_WIDGET_DOMAIN emits both domain keys, and only then', () => {
+  // The domain is the APP identity (unique per app at ChatGPT submission);
   // the CSP allowlist stays the DATA origin previews are fetched from.
   process.env['WLO_WIDGET_DOMAIN'] = 'https://mcp.wirlernenonline.de';
   try {

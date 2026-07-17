@@ -20,13 +20,19 @@ code audits.
   → 0), `WloNode.size` typed honestly (`number | string`), regression tests at
   unit and tool level. Mocks had never set `size`, which is why 394 green tests
   missed it — exactly the "live data shapes" gate the audit kept open.
-- **Standard `ui.domain` no longer breaks Claude's widget rendering:** Claude's
-  MCP-Apps host validates `ui.domain` against its own sandbox format
-  (`{hash}.claudemcpcontent.com`) and rejected our value ("Invalid ui.domain
-  format"). The standard key is now emitted only when `WLO_WIDGET_DOMAIN` is
-  explicitly set (ChatGPT plugin submission needs it); the vendor-prefixed
-  `openai/widgetDomain` alias is always emitted and ignored by other hosts.
-  Docs updated (README EN+DE, `.env.example`).
+- **The widget domain is no longer advertised unless configured.** A host
+  validates the domain against its OWN sandbox format and rejects the whole
+  widget for a foreign value — Claude expects `{hash}.claudemcpcontent.com`,
+  reported "Invalid ui.domain format" and aborted the bound tool call
+  (`search_wlo_all` surfaced as "server cannot be reached"). Both
+  `_meta.ui.domain` and its `openai/widgetDomain` alias are now emitted only
+  when `WLO_WIDGET_DOMAIN` is explicitly set (a ChatGPT plugin submission needs
+  it), and then on both keys.
+  Dropping only the standard key was NOT enough: the live payload proved Claude
+  normalises the vendor alias onto `ui.domain` — the rejected value existed
+  solely in `openai/widgetDomain`. A server cannot know a host's sandbox
+  domain, so sending neither and letting each host assign its own is the honest
+  default. Docs updated (README EN+DE, `.env.example`).
 
 ### Fixed (CI green on the runtime we ship, 2026-07-17)
 - **`npm test` no longer depends on the Node version.** The script passed a glob

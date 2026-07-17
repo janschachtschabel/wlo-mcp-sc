@@ -64,21 +64,24 @@ function eduSharingOrigin(): string {
 }
 
 /**
- * App identity domain for the ChatGPT plugin submission (`ui.domain` +
- * `openai/widgetDomain`); ChatGPT renders the widget under
+ * App identity domain for the ChatGPT plugin submission (`ui.domain` + its
+ * `openai/widgetDomain` alias); ChatGPT renders the widget under
  * `<domain>.web-sandbox.oaiusercontent.com`.
  *
- * The STANDARD `ui.domain` key is only emitted when WLO_WIDGET_DOMAIN is
- * explicitly set: Claude's MCP-Apps host validates the field against its OWN
- * sandbox format (`{hash}.claudemcpcontent.com`) and rejects the whole widget
- * for foreign values (live-found 2026-07-17). The vendor-prefixed
- * `openai/widgetDomain` alias is always emitted (non-ChatGPT hosts ignore
- * `openai/*` keys) so ChatGPT dev mode keeps working without configuration.
+ * Emitted ONLY when WLO_WIDGET_DOMAIN is explicitly set — and then on both
+ * keys. A host validates the domain against its OWN sandbox format and rejects
+ * the whole widget for a foreign value: Claude expects
+ * `{hash}.claudemcpcontent.com` and aborts the bound tool call otherwise
+ * (live-proven 2026-07-17). Crucially it NORMALISES the vendor alias onto the
+ * standard key, so dropping only `ui.domain` is not enough — the rejected value
+ * came from `openai/widgetDomain`, the sole place it still existed. A server
+ * cannot know a host's sandbox domain, so the honest default is to send
+ * neither and let each host assign its own.
+ *
  * Read at call time so per-request servers and tests see the current env.
  */
-function widgetDomain(): { explicit: string | undefined; alias: string } {
-  const explicit = (process.env['WLO_WIDGET_DOMAIN'] ?? '').trim() || undefined;
-  return { explicit, alias: explicit ?? eduSharingOrigin() };
+function widgetDomain(): string | undefined {
+  return (process.env['WLO_WIDGET_DOMAIN'] ?? '').trim() || undefined;
 }
 
 /**
@@ -95,13 +98,13 @@ export function widgetResourceMeta(name?: string): Record<string, unknown> {
   return {
     ui: {
       prefersBorder: true,
-      // Standard key only when explicitly configured (see widgetDomain).
-      ...(domain.explicit ? { domain: domain.explicit } : {}),
+      // Both domain keys only when explicitly configured (see widgetDomain).
+      ...(domain ? { domain } : {}),
       csp: { connectDomains: domains, resourceDomains: domains, frameDomains: [] },
       ...(description ? { description } : {}),
     },
     'openai/widgetPrefersBorder': true,
-    'openai/widgetDomain': domain.alias,
+    ...(domain ? { 'openai/widgetDomain': domain } : {}),
     'openai/widgetCSP': {
       connect_domains: domains,
       resource_domains: domains,
