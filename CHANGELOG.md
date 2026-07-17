@@ -9,6 +9,27 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed (CI green on the runtime we ship, 2026-07-17)
+- **`npm test` no longer depends on the Node version.** The script passed a glob
+  (`--test "tests/*.test.ts"`); glob support in the test runner only arrived
+  after Node 20, which instead takes the pattern as a literal path (`Could not
+  find 'tests/*.test.ts'`) and exits 1 — and it auto-discovers only
+  `.js/.cjs/.mjs`, never `.ts`. So the suite passed on the Node 22 dev machine
+  and had never once been green in CI, which runs Node 20 (what `engines` and
+  the `node:20-alpine` image declare). `scripts/run-tests.mjs` now expands the
+  file list itself, which also fixes Windows, where `cmd.exe` does not expand
+  globs either. It fails loudly on an empty match instead of reporting a green
+  run of zero tests. Verified in a `node:20-alpine` container: the old command
+  reproduces the CI error, the new one runs 394/394.
+- **CI actions off the deprecated Node 20 action runtime:** `actions/checkout`
+  and `actions/setup-node` pinned to v5 (`node24` runtime, SHAs verified against
+  the GitHub API), clearing GitHub's force-migration warning. `node-version`
+  deliberately stays 20 — that is our app's runtime, so CI keeps testing what we
+  ship.
+- **Lockfile back in sync with `package.json`:** the root entry lacked the
+  `npm >= 9` engines floor added earlier (one line; no dependency was
+  re-resolved).
+
 ### Fixed (Apps-SDK conformance follow-up, 2026-07-17)
 - **Widget `_meta` on the read result:** the Apps-SDK doc places the widget
   metadata (CSP/domain/prefersBorder) on the `contents[]` entry of a resource
