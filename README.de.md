@@ -144,10 +144,18 @@ bereit — dünne `GET`-Wrapper über dieselben Services wie die MCP-Tools, für
 Nicht-MCP-KI-Werkzeuge und den Prompt-Launcher. Nur lesend, `CORS *` für `GET`,
 pro IP rate-limitiert (`API_RATE_LIMIT_RPM`, Standard 30/min), Eingaben
 serverseitig validiert (Query ≤ 200 Zeichen, nodeId ≤ 50, ≤ 25 IDs). Antworten
-sind JSON; Fehler sind `{ "error": "…" }` mit `4xx`/`5xx`-Status.
+sind JSON mit `Cache-Control: no-store` + `nosniff`; Fehler sind
+`{ "error": "…" }` mit `4xx`/`5xx`-Status. Eine bewusste Ausnahme:
+`GET /api/search` **ohne Suchbegriff** liefert statt 400 ein `200`-Hinweis-
+Envelope (leere Buckets + `warnings`) — KI-Abrufschichten entfernen bei
+selbst gebauten URLs den Query-String und zeigen dem Modell nur den Status,
+die Anleitung muss also in einem lesbaren Body stehen. Die Fläche beschreibt
+sich für KI-Fetcher selbst über [`/llms.txt`](public/llms.txt) und eine
+permissive [`/robots.txt`](public/robots.txt).
 
 | Endpunkt | Query-Parameter | Liefert |
 |---|---|---|
+| `GET /api/search/<Begriff>` | Pfad-Form von `/api/search` — der Begriff steht im **Pfad**, Filter bleiben optionale Query-Parameter. Für KI-Werkzeuge bevorzugt: Manche KI-Abrufschichten entfernen bei selbst gebauten URLs den Query-String (live diagnostiziert); die Pfad-Form übersteht das — es fehlen dann höchstens die Filter, nicht die Suche. Ein explizites `q` gewinnt gegen den Pfad-Begriff. | Dasselbe Envelope wie `GET /api/search`. |
 | `GET /api/search` | `q` (Pflicht), `educationalContext`, `discipline`, `learningResourceType`, `userRole`, `publisher`, `maxContent`, `maxCollections`, `skipCount`, `include` (`content,collections,topicPages`), `includeCompendium`, `includeTextContent`, `includeWikipedia`, `includeTopicPageContent`, `maxPerSwimlane`, `includeFacets`, `fields` | Das kombinierte `search_wlo_all`-Envelope (`content` / `collections` / `topicPages`, optional `wikipedia`). Ergänzt `unresolvedFilters` (nicht auflösbare Vokabel-Filter + „Meintest du?"-Vorschläge), und — mit `includeFacets=1` — `facets` (`{label, count, uri}` je Bucket; die `discipline`-Facette löst Hochschulfächer auf, siehe unten). Optionales `fields=title,url,…` kürzt jeden Treffer auf diese Schlüssel (`nodeId` bleibt immer) — Token-Ersparnis für LLM-Clients, die das rohe JSON lesen. |
 | `GET /api/collection` | `nodeId` (Default `WLO_SKILLS_COLLECTION_ID`), `q` (optional, Suche innerhalb), `max`, `fields`, Vokabular-Filter | Die Inhalte einer Sammlung: `{ collectionId, query, total, results: [{ nodeId, title, description, learningResourceTypes, publisher, url, downloadUrl }] }`. Ohne `q` werden die direkten Datei-Kinder gelistet (zuverlässig auch für Referenz-Sammlungen); mit `q` wird darin gesucht. Optionales `fields=…` kürzt jeden Treffer (`nodeId` bleibt immer). Die **Skills**-Quelle des Launchers — je Treffer liefert `downloadUrl` das rohe Markdown. |
 | `GET /api/compendium` | `ids` (kommagetrennt) oder `nodeId`, ≤ 25 | `{ entries: [{ nodeId, title, compendiumText }] }` — der VOLLE redaktionelle Kompendiumstext. |

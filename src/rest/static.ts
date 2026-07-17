@@ -46,6 +46,9 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/launcher.html': { relPath: 'launcher.html', contentType: HTML },
   '/bookmarklet.md': { relPath: 'bookmarklet.md', contentType: MARKDOWN },
   '/robots.txt': { relPath: 'robots.txt', contentType: TEXT },
+  // llms.txt: the emerging convention for a self-describing API surface — AI
+  // fetchers read it to learn the endpoints without any prompt at all.
+  '/llms.txt': { relPath: 'llms.txt', contentType: TEXT },
 };
 
 /**

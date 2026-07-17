@@ -93,6 +93,20 @@ test('handleStaticRequest returns 405 for POST on a static-only path', async () 
   assert.equal(res.rec.status, 405);
 });
 
+// ── llms.txt (self-describing API surface for AI fetchers) ───────────────────
+
+test('resolveStaticRoute maps GET /llms.txt and the file documents the search endpoints', async () => {
+  const r = resolveStaticRoute('GET', '/llms.txt');
+  assert.equal(r?.status, 200);
+  assert.equal(r?.asset?.relPath, 'llms.txt');
+  assert.match(r?.asset?.contentType ?? '', /text\/plain/);
+  const res = fakeRes();
+  await handleStaticRequest({ method: 'GET', url: '/llms.txt' }, res);
+  const body = String(res.rec.body ?? '');
+  assert.match(body, /\/api\/search\/</, 'documents the stripping-proof path form');
+  assert.match(body, /\/api\/search\?q=/, 'documents the query alias');
+});
+
 // ── robots.txt (AI fetch tools check it before touching /api/*) ──────────────
 
 test('resolveStaticRoute maps GET /robots.txt to the robots asset', () => {

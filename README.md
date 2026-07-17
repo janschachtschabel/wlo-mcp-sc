@@ -139,11 +139,18 @@ In HTTP mode the server also exposes a small **public REST layer** — thin `GET
 wrappers over the same services the MCP tools use, for non-MCP AI tools and the
 prompt launcher. Read-only, `CORS *` for `GET`, per-IP rate-limited
 (`API_RATE_LIMIT_RPM`, default 30/min), inputs validated server-side (query ≤
-200 chars, nodeId ≤ 50, ≤ 25 ids). Responses are JSON; errors are
-`{ "error": "…" }` with a `4xx`/`5xx` status.
+200 chars, nodeId ≤ 50, ≤ 25 ids). Responses are JSON with `Cache-Control:
+no-store` + `nosniff`; errors are `{ "error": "…" }` with a `4xx`/`5xx` status.
+One deliberate exception: `GET /api/search` **without a term** returns a `200`
+guidance envelope (empty buckets + `warnings`) instead of a `400` — AI fetch
+layers strip query strings from model-built URLs and surface only the status,
+so the guidance must live in a readable body. The surface is self-describing
+for AI fetchers via [`/llms.txt`](public/llms.txt) and permissive
+[`/robots.txt`](public/robots.txt).
 
 | Endpoint | Query params | Returns |
 |---|---|---|
+| `GET /api/search/<term>` | Path form of `/api/search` — the term rides in the **path**, filters stay optional query params. Preferred for AI tools: some AI fetch layers strip the query string from model-built URLs (live-diagnosed), and the path form survives that — a stripped request only loses the filters, not the search. An explicit `q` query param wins over the path term. | Same envelope as `GET /api/search`. |
 | `GET /api/search` | `q` (required), `educationalContext`, `discipline`, `learningResourceType`, `userRole`, `publisher`, `maxContent`, `maxCollections`, `skipCount`, `include` (`content,collections,topicPages`), `includeCompendium`, `includeTextContent`, `includeWikipedia`, `includeTopicPageContent`, `maxPerSwimlane`, `includeFacets`, `fields` | The combined `search_wlo_all` envelope (`content` / `collections` / `topicPages` buckets, optional `wikipedia`). Adds `unresolvedFilters` (mistyped vocab filters + "did you mean" suggestions) when any filter doesn't resolve, and — with `includeFacets=1` — `facets` (`{label, count, uri}` per bucket; the `discipline` facet resolves university subjects, see below). Optional `fields=title,url,…` trims each result item to those keys (`nodeId` always kept) — a token saving for LLM clients reading the raw JSON. |
 | `GET /api/collection` | `nodeId` (defaults to `WLO_SKILLS_COLLECTION_ID`), `q` (optional, search within), `max`, `fields`, vocab filters | A collection's contents: `{ collectionId, query, total, results: [{ nodeId, title, description, learningResourceTypes, publisher, url, downloadUrl }] }`. Without `q` it lists the direct file children (reliable for reference collections); with `q` it searches within. Optional `fields=…` trims each result item (`nodeId` always kept). The launcher's **skills** source — each result's `downloadUrl` serves the raw Markdown. |
 | `GET /api/compendium` | `ids` (comma-separated) or `nodeId`, ≤ 25 | `{ entries: [{ nodeId, title, compendiumText }] }` — the FULL editorial compendium text. |

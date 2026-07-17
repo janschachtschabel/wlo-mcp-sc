@@ -43,16 +43,20 @@ test('handleRestRequest returns false and writes nothing for a non-/api path', a
 
 test('handleRestRequest surfaces a 400 for invalid input', async () => {
   const res = fakeRes();
-  const handled = await handleRestRequest({ method: 'GET', url: '/api/search' }, res);
+  // /api/search without q is now a 200 guidance envelope (stripped-query UX);
+  // /api/wikipedia keeps the strict contract and stays the 400 witness.
+  const handled = await handleRestRequest({ method: 'GET', url: '/api/wikipedia' }, res);
   assert.equal(handled, true);
   assert.equal(res.rec.status, 400);
 });
 
-test('handleRestRequest sends X-Content-Type-Options: nosniff on JSON and raw responses', async () => {
+test('handleRestRequest sends nosniff + no-store on JSON and raw responses', async () => {
   const res = fakeRes();
-  await handleRestRequest({ method: 'GET', url: '/api/search' }, res); // 400 JSON path, offline
+  await handleRestRequest({ method: 'GET', url: '/api/search' }, res); // guidance envelope, offline
   assert.equal(res.rec.headers?.['X-Content-Type-Options'], 'nosniff');
+  assert.equal(res.rec.headers?.['Cache-Control'], 'no-store');
   const raw = fakeRes();
   await handleRestRequest({ method: 'GET', url: '/api/skills/wlo-search' }, raw); // raw markdown path
   assert.equal(raw.rec.headers?.['X-Content-Type-Options'], 'nosniff');
+  assert.equal(raw.rec.headers?.['Cache-Control'], 'no-store');
 });

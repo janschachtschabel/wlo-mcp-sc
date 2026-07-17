@@ -51,8 +51,34 @@ const TARGET_GROUPS = new Set<string>(['teacher', 'learner', 'general']);
 // ── /api/search ──────────────────────────────────────────────────────────────
 
 export async function handleSearch(params: URLSearchParams): Promise<RestResult> {
-  const q = validateQuery(params.get('q') ?? params.get('query'));
-  if (!q.ok) return badRequest(q.error);
+  const qRaw = params.get('q') ?? params.get('query');
+  const q = validateQuery(qRaw);
+  if (!q.ok) {
+    // MISSING term (vs. invalid, which stays 400): AI fetch layers strip the
+    // query string from model-built URLs, so a bare /api/search is the most
+    // common failed call in the wild — and a 400 status is a dead end there
+    // (hosts surface the status, not the JSON body). A 200 guidance envelope
+    // in the normal response shape reaches the model: the empty `query` echo
+    // trips the launcher template's freshness check, and the warnings teach
+    // the stripping-proof path form and the paste-back recovery.
+    if (!(qRaw ?? '').trim()) {
+      const emptyBucket = { total: 0, count: 0, results: [] };
+      return {
+        status: 200,
+        json: {
+          query: '',
+          content: emptyBucket,
+          collections: emptyBucket,
+          topicPages: emptyBucket,
+          warnings: [
+            'No search term received.',
+            'If you built this URL with a query string, your fetch tool has probably stripped it. Use the path form GET /api/search/<term> (optional filters as query parameters), or ask the user to paste the full URL into the chat.',
+          ],
+        },
+      };
+    }
+    return badRequest(q.error);
+  }
 
   // Optional field projection to trim the JSON (token saving for generic clients).
   const fields = parseFields(params.get('fields'));

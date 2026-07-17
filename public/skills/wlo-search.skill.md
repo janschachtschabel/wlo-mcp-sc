@@ -23,9 +23,14 @@ fetch actual WLO hits and summarise them.
 2. **Call it now** with your web-fetch / browsing / HTTP tool.
 3. Summarise the returned hits (title, one-line description, link).
 
-Only if you genuinely have no way to fetch a URL: say so in one sentence and give
-the user the ready-to-open `{BASE}/api/search?...` URL to run themselves. Never
-reply with only filter suggestions and no query.
+Make **no test or warm-up call**. If the user has not named a topic yet, briefly
+explain the options (topic, optionally subject, educational level, resource
+type) and ask for the topic first.
+
+If you genuinely cannot fetch a URL (some chats only load links posted by the
+user): output the ready-to-open URL and ask the user to paste it into the chat —
+after that you can load it. Never reply with only filter suggestions and no
+query.
 
 ## Base URL
 
@@ -35,13 +40,16 @@ every `/api/…` call below; do not substitute or invent a different host.
 
 ## How to call
 
-Issue a single HTTP **GET** to `{BASE}/api/search`:
+Issue a single HTTP **GET**. Prefer the **path form** — the term rides in the
+path, so it survives fetch layers that strip query strings from AI-built URLs
+(a stripped request only loses the optional filters, never the search):
 
 ```
-GET {BASE}/api/search?q=<query>
+GET {BASE}/api/search/<query>
+GET {BASE}/api/search?q=<query>    (equivalent alias)
 ```
 
-Send `Accept: application/json`. The only required parameter is `q`.
+Send `Accept: application/json`. The only required input is the search term.
 
 ### Parameters
 
@@ -63,7 +71,7 @@ the rest. Query values must be URL-encoded.
 ### Example
 
 ```
-GET {BASE}/api/search?q=Photosynthese&discipline=Biologie&educationalContext=Sekundarstufe%20II
+GET {BASE}/api/search/Photosynthese?discipline=Biologie&educationalContext=Sekundarstufe%20II
 ```
 
 ## Response shape
@@ -101,9 +109,14 @@ Each result item carries:
 
 ## Failure handling
 
-- **400** — the query was missing or too long. Ask the user for a shorter term.
+- **Empty `query` + a `warnings` array** — your fetch tool stripped the query
+  string in transit. Switch to the path form `{BASE}/api/search/<query>`, or
+  output the full URL and ask the user to paste it into the chat. Do not treat
+  the empty buckets as a real "no results".
+- **400** — the term was too long (max 200 chars) or malformed. Ask the user
+  for a shorter term; do not blindly retry.
 - **429** — rate limit; wait ~60 s and retry once.
-- **Empty buckets** (`count: 0` everywhere) — tell the user nothing was found and
+- **Empty buckets with your term echoed in `query`** — genuinely nothing found;
   suggest a broader or differently-worded term.
 
 Do **not** retry aggressively; one call per user request is the norm.

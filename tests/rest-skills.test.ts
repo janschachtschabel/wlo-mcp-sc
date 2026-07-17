@@ -90,6 +90,20 @@ test('routeRestRequest POST /api/skills is a 405', async () => {
   assert.equal(r?.status, 405);
 });
 
+// Live-diagnosed 2026-07-17: AI fetch layers strip query strings from
+// model-built URLs. Both skills instruct REST calls, so both must lead with the
+// stripping-proof path form and teach the stripped-query recovery.
+test('both skills teach the path-form search and the stripped-query recovery', async () => {
+  for (const id of ['wlo-search', 'wlo-topic-launcher']) {
+    const r = await routeRestRequest('GET', `/api/skills/${id}`);
+    assert.equal(r?.status, 200, `${id} loads`);
+    const md = String(r!.raw ?? '');
+    assert.match(md, /\/api\/search\//, `${id}: path form present`);
+    assert.match(md, /strip/i, `${id}: names the stripped-query cause`);
+    assert.match(md, /paste/i, `${id}: teaches the paste-back recovery`);
+  }
+});
+
 test('handleRestRequest writes raw markdown (not JSON) for a skill body', async () => {
   const rec: { status?: number; headers?: Record<string, string>; body?: string } = {};
   const res = {

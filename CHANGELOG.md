@@ -9,6 +9,58 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added (fetcher-proof search entry, 2026-07-17)
+Root cause across all live chat tests: AI fetch layers strip the query string
+from MODEL-built URLs (anti-exfiltration), so every REST call arrived as a bare
+`/api/search` → 400 — reproduced live; the exact filtered URL returns 200 from
+a browser/curl. Server-side countermeasures (nip.io stays for now, per
+operator decision):
+- **`GET /api/search/<term>` path form** — the term rides in the path and
+  survives query-string stripping; optional filters stay query params and
+  degrade gracefully. Explicit `q` wins over the path term. Malformed
+  percent-encoding → 400 (guarded decode, like the skills route).
+- **`GET /api/search` without a term → 200 guidance envelope** (deliberate
+  contract change; over-long/bogus input still 400s). Hosts surface only the
+  status of a 4xx to the model, so the recovery instructions must live in a
+  200 body: empty buckets, empty `query` echo (trips the template's freshness
+  check), and `warnings` teaching the path form + paste-back.
+- **`/llms.txt`** (self-describing API surface for AI fetchers) on the static
+  allow-list; **`Cache-Control: no-store`** on all REST responses.
+- Launcher templates + example URL now lead with the path form (DE/EN), carry a
+  fixed URL pattern with the example term "OER" (labelled "replace with the
+  user's topic" — no warm-up call), and tell the chat to explain the options
+  (topic + optional subject/level/type filters) before asking for the topic.
+- **Both bundled skills** (`public/skills/*.skill.md`) updated the same way:
+  path-form search leads, the stripped-query failure mode is named with its
+  recovery (path form / paste-back), and the wlo-search failure table reflects
+  the new missing-term contract (empty `query` + `warnings` ≠ "no results").
+  Pinned by a content test in `tests/rest-skills.test.ts`.
+Rejected from the same proposal, with reasons: positional multi-segment paths
+(`/search/<q>/<fach>/<typ>` — ambiguous positions; filters already degrade
+gracefully), blanket never-400 fuzzy matching (filters are already lenient;
+invalid input should stay loud), HTML content negotiation (no evidence any
+fetcher needed it), `Vary: Accept` (no content negotiation exists).
+
+### Changed (launcher instruction templates, live-finding driven, 2026-07-17)
+Both language templates (`instruction_tpl` in `public/launcher.html`) now encode
+what the live chat tests showed:
+- **MCP first** when the WLO MCP is registered natively.
+- **No test/warm-up call** — without a topic the chat must ask, not invent
+  "test" (observed live).
+- **User-paste fetch fallback:** claude.ai's fetch tool restricts MODEL-built
+  URLs — live evidence indicates it strips their query string (anti-exfiltration
+  safeguard), so our API correctly answers 400 ("q is required"; reproduced:
+  bare `/api/search` → 400, the exact status every chat test saw on every
+  endpoint), while the same URL pasted by the USER is fetched intact → 200.
+  This — not a response cache — explains "first call fails, re-pasted call
+  works" AND the "cache ignores the query string" illusion. The template now
+  teaches the workaround, including "a 400 on a correctly built URL = your tool
+  stripped the query → ask for a paste-back, do not blindly retry".
+- **Query-echo self-check** (`response.query` must match the term) and honest
+  output rules: paraphrase noisy `description`, empty `license` = "licence
+  unclear", never invent hits.
+Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts`.
+
 ### Fixed (focused audit on widgets + REST, 2026-07-17)
 Deep pass over the redesigned widgets and the REST layer; three Low findings,
 all fixed test-first (no Medium+ findings; prod `npm audit` clean):

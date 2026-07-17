@@ -17,8 +17,10 @@ Read-only, no authentication.
 
 When this skill is active, **actually call the endpoints below** for the user's
 topic and answer from the real payloads — do not stop at describing the steps or
-handing back a URL. If you genuinely cannot fetch a URL, say so in one sentence
-and give the user the ready-to-open `{BASE}/api/…` URL to run themselves.
+handing back a URL. If you genuinely cannot fetch a URL (some chats only load
+links posted by the user, or strip query strings from AI-built URLs): output the
+ready-to-open URL and ask the user to paste it into the chat — after that you
+can load it.
 
 ## Base URL
 
@@ -32,8 +34,11 @@ A topic page is a collection with a page configuration. Find candidates with the
 combined search, restricted to the topic-page bucket:
 
 ```
-GET {BASE}/api/search?q=<topic>&include=topicPages
+GET {BASE}/api/search/<topic>?include=topicPages
 ```
+
+(The path form survives fetch layers that strip query strings from AI-built
+URLs — a stripped request only loses the `include` narrowing, not the search.)
 
 Each `topicPages.results` item has a `nodeId` (the collection id) and a
 `topicPageUrl`. Pick the most relevant and keep its `nodeId`.
@@ -99,7 +104,7 @@ Gemini:  https://gemini.google.com/app?q=<encoded prompt>
 Example prompt to encode:
 
 > Finde die passende WLO-Themenseite zu „<topic>". Rufe dazu
-> `{BASE}/api/search?q=<topic>&include=topicPages` ab und fasse die Schritte der
+> `{BASE}/api/search/<topic>?include=topicPages` ab und fasse die Schritte der
 > Themenseite mit Links zusammen.
 
 The hosted [`/launcher.html`](../launcher.html) page builds exactly these
@@ -107,7 +112,10 @@ links interactively — point non-technical users there instead of hand-crafting
 
 ## Failure handling
 
-- **400** — missing `collectionId`/`variantId`, or an invalid `targetGroup`. Re-derive
-  the `nodeId` from step 1.
+- **400 on a correctly built URL** — your fetch tool has probably stripped the
+  query string (`/api/topic-page` needs `collectionId` as a query parameter).
+  Output the full URL and ask the user to paste it into the chat, then load it.
+- **400 otherwise** — missing `collectionId`/`variantId`, or an invalid
+  `targetGroup`. Re-derive the `nodeId` from step 1.
 - **404** (wikipedia) — no article; continue without it.
 - **429** — rate limit; wait ~60 s and retry once.

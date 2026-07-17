@@ -1,0 +1,40 @@
+# WirLernenOnline (WLO) — public read-only REST API
+
+Open educational resources (OER) from WirLernenOnline. All responses are JSON,
+no authentication, GET only. Base URL: this host.
+
+## Search (start here)
+
+GET /api/search/<term>        ← preferred for AI tools: the term rides in the
+                                PATH, so it survives fetch layers that strip
+                                query strings from model-built URLs.
+GET /api/search?q=<term>      ← equivalent alias.
+
+Optional query parameters (graceful when missing): discipline, educationalContext,
+learningResourceType, userRole, publisher, maxContent (1-25), maxCollections,
+includeWikipedia=true, includeCompendium=true, fields=<comma list>.
+
+Response fields: query, content, collections, topicPages, optional wikipedia.
+Self-check: the response field "query" must echo your term. An empty "query"
+plus a "warnings" array means the query string was stripped in transit — switch
+to the path form or ask the user to paste the full URL into the chat.
+
+Example: /api/search/Bruchrechnung?discipline=Mathematik
+
+## More endpoints
+
+GET /api/topic-page?collectionId=<id>   Curated topic page (swimlanes of items)
+GET /api/compendium?ids=<id1,id2>       Editorial background texts per collection
+GET /api/wikipedia?q=<term>             Wikipedia summary (lang=de default)
+GET /api/collection?nodeId=<id>         List/search one collection's contents
+GET /api/skills                         Ready-made AI instructions (list)
+GET /api/skills/<id>                    One skill as raw Markdown
+
+Per hit: title, description (may contain scraping noise — paraphrase, do not
+quote), url (human page), license (empty = licence unclear, not CC).
+
+## MCP
+
+The same server speaks the Model Context Protocol at POST /mcp
+(Streamable HTTP/SSE) with 22 read-only tools incl. search_wlo_all — prefer it
+over REST when your client supports MCP connectors.

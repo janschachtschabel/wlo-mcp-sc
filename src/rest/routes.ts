@@ -22,6 +22,9 @@ import {
   handleSkillRaw,
 } from './handlers.js';
 
+/** Prefix of the path-form search route (`/api/search/<term>`). */
+const SEARCH_PREFIX = '/api/search/';
+
 const ROUTES: Record<string, (p: URLSearchParams) => Promise<RestResult>> = {
   '/api/search': handleSearch,
   '/api/collection': handleCollection,
@@ -45,6 +48,29 @@ export async function routeRestRequest(
   if (!url || !url.startsWith('/api/')) return null;
   const parsed = new URL(url, 'http://localhost');
   const path = parsed.pathname;
+
+  // Variable path: `/api/search/<term>` — the STRIPPING-PROOF search form.
+  // AI fetch layers strip the query string from model-built URLs
+  // (live-diagnosed 2026-07-17: every chat test hit our API as a bare
+  // /api/search → 400), but the path survives. The term becomes `q`; optional
+  // filters still ride the query string and degrade gracefully when stripped.
+  // An explicit `q` query param wins (it is the older, documented contract).
+  if (path.startsWith(SEARCH_PREFIX) && path.length > SEARCH_PREFIX.length) {
+    if (method !== 'GET') return { status: 405, json: { error: 'Method not allowed. Use GET.' } };
+    let term: string;
+    try {
+      term = decodeURIComponent(path.slice(SEARCH_PREFIX.length));
+    } catch {
+      return { status: 400, json: { error: 'Malformed search term (invalid percent-encoding)' } };
+    }
+    if (!parsed.searchParams.get('q')?.trim() && term.trim()) parsed.searchParams.set('q', term.trim());
+    try {
+      return await handleSearch(parsed.searchParams);
+    } catch (err) {
+      log.error('rest handler error', { path, error: err instanceof Error ? err.message : String(err) });
+      return { status: 500, json: { error: 'Internal server error' } };
+    }
+  }
 
   // Variable path: raw skill Markdown by id (`/api/skills/<id>`). Checked before
   // the exact-match table (which owns the `/api/skills` list route).
@@ -98,15 +124,21 @@ export async function handleRestRequest(req: RestReq, res: RestRes): Promise<boo
   if (!result) return false;
   // nosniff on the whole public surface: the declared Content-Type is
   // authoritative (matches rest/static.ts) — a browser must never sniff e.g.
-  // HTML out of a served markdown body.
+  // HTML out of a served markdown body. no-store keeps AI-fetch/proxy
+  // intermediaries from replaying a stale search for a different term.
   if (result.raw != null) {
     res.writeHead(result.status, {
       'Content-Type': result.contentType ?? 'text/plain; charset=utf-8',
       'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
     });
     res.end(result.raw);
   } else {
-    res.writeHead(result.status, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
+    res.writeHead(result.status, {
+      'Content-Type': 'application/json',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
     res.end(JSON.stringify(result.json));
   }
   return true;

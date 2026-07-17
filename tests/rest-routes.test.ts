@@ -84,10 +84,61 @@ test('GET /api/search returns the combined envelope', async () => {
   }
 });
 
-test('GET /api/search without q → 400', async () => {
+// DELIBERATE contract change (live-diagnosed 2026-07-17): AI fetch layers strip
+// the query string from model-built URLs, so a bare /api/search was the #1 call
+// shape in the wild — and a 400 status is a dead end there (the model never saw
+// the JSON error body, only the status). A 200 with an envelope-shaped body +
+// warnings reaches the model and teaches it the stripping-proof path form.
+// Genuinely invalid input (over-long q, bogus fields) still 400s below.
+test('GET /api/search without q → 200 guidance envelope (fetch layers strip query strings)', async () => {
   const r = await routeRestRequest('GET', '/api/search');
+  assert.equal(r?.status, 200);
+  const env = r!.json as { query: string; content: { results: unknown[] }; warnings: string[] };
+  assert.equal(env.query, '', 'empty query echo → the template query-check flags it as stale');
+  assert.equal(env.content.results.length, 0);
+  assert.ok(env.warnings.some(w => /api\/search\//.test(w)), 'warning teaches the path form');
+  assert.ok(env.warnings.some(w => /stripped/i.test(w)), 'warning names the stripped-query cause');
+});
+
+// ── path form /api/search/<term> (survives query-string stripping) ───────────
+
+test('GET /api/search/<term> (path form) returns the combined envelope', async () => {
+  const mock = installServiceMock();
+  try {
+    const r = await routeRestRequest('GET', '/api/search/optik');
+    assert.equal(r?.status, 200);
+    const env = r!.json as { query: string; content: { results: unknown[] } };
+    assert.equal(env.query, 'optik');
+    assert.equal(env.content.results.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('GET /api/search/<term> keeps optional query-param filters when present', async () => {
+  const mock = installServiceMock();
+  try {
+    const r = await routeRestRequest('GET', '/api/search/optik?discipline=Physik');
+    assert.equal(r?.status, 200);
+    assert.equal((r!.json as { query: string }).query, 'optik');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('GET /api/search/<term>?q=… lets the explicit q parameter win', async () => {
+  const mock = installServiceMock();
+  try {
+    const r = await routeRestRequest('GET', '/api/search/ignored?q=optik');
+    assert.equal((r!.json as { query: string }).query, 'optik');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('GET /api/search/%ZZ (malformed percent-escape) → 400, never a rejected promise', async () => {
+  const r = await routeRestRequest('GET', '/api/search/%ZZ');
   assert.equal(r?.status, 400);
-  assert.match((r!.json as { error: string }).error, /q/);
 });
 
 test('GET /api/search with an over-long query → 400', async () => {
