@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { WLO_REPOSITORY_URL } from '../wlo-api.js';
 
@@ -143,6 +144,23 @@ export function registerWidgetResource(server: McpServer, res: WidgetResource): 
       // contents entry; hosts may read either surface, so emit it on BOTH the
       // resources/list descriptor above and each contents entry here.
       contents: [{ uri: res.uri, mimeType: WIDGET_MIME_TYPE, text: res.html, _meta: meta }],
+    }),
+  );
+
+  // STALE-URI compatibility read (live failure 2026-07-17: ChatGPT "Failed to
+  // fetch template"): every redeploy rolls a new content-addressed URI, but a
+  // host whose connector still holds the PREVIOUS tool descriptor (ChatGPT
+  // syncs tools/list on connect, not per chat) then reads the old URI — which
+  // this server no longer registered. Like a CDN, any old hash for a KNOWN
+  // widget name must keep resolving; it serves the CURRENT build. New URIs
+  // still roll on every change (fresh hosts get fresh cache keys) — only the
+  // dead-end for stale sessions is gone.
+  server.registerResource(
+    `${res.name} (stale-uri compat)`,
+    new ResourceTemplate(`ui://widget/${res.name}-{hash}.html`, { list: undefined }),
+    { mimeType: WIDGET_MIME_TYPE, _meta: meta },
+    (uri) => ({
+      contents: [{ uri: uri.href, mimeType: WIDGET_MIME_TYPE, text: res.html, _meta: meta }],
     }),
   );
 }

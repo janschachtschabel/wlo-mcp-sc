@@ -95,6 +95,34 @@ test('registerWidgetResource exposes a fetchable mcp-app resource with CSP metad
   await client.close();
 });
 
+test('a STALE widget URI (old hash) still reads — serves the CURRENT build', async () => {
+  // Live failure 2026-07-17 (ChatGPT "Failed to fetch template"): every
+  // redeploy rolls new content-addressed URIs, but the server dropped the old
+  // ones — a host whose connector still holds the previous tool descriptor
+  // (ChatGPT syncs on connect, not per chat) then reads a dead URI. Like a CDN,
+  // old URIs must keep resolving; they serve the newest build for that widget.
+  const server = new McpServer({ name: 't', version: '0' });
+  const html = '<!doctype html><html><body><div id="wlo-root">v2</div></body></html>';
+  const uri = computeWidgetUri('search-results', html);
+  registerWidgetResource(server, { name: 'search-results', uri, html });
+  const client = await connect(server);
+
+  const stale = 'ui://widget/search-results-00000000.html';
+  assert.notEqual(stale, uri, 'test uses a genuinely different (old) hash');
+  const read = await client.readResource({ uri: stale });
+  const first = read.contents[0];
+  assert.ok(first && 'text' in first, 'stale URI resolves to a text resource');
+  assert.equal(first.text, html, 'stale URI serves the CURRENT widget build');
+  assert.equal(first.mimeType, WIDGET_MIME_TYPE);
+
+  // An unknown widget name must NOT resolve — the fallback is per known widget.
+  await assert.rejects(
+    client.readResource({ uri: 'ui://widget/not-a-widget-00000000.html' }),
+    /not found|unknown/i,
+  );
+  await client.close();
+});
+
 test('widgetResourceMeta: WLO_WIDGET_DOMAIN emits both domain keys, and only then', () => {
   // The domain is the APP identity (unique per app at ChatGPT submission);
   // the CSP allowlist stays the DATA origin previews are fetched from.

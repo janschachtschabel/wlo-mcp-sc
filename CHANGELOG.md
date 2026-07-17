@@ -82,6 +82,18 @@ what the live chat tests showed:
   unclear", never invent hits.
 Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts`.
 
+### Fixed (ChatGPT "Failed to fetch template" after redeploys, 2026-07-17)
+- **Stale widget URIs keep resolving.** Root cause: every redeploy rolls new
+  content-addressed `ui://` URIs, but the server registered ONLY the current
+  one — a host whose connector still held the previous tool descriptor
+  (ChatGPT syncs tools/list on connect, not per chat) then read a dead URI →
+  "Fehler beim Laden der App / Failed to fetch template" (the tool call itself
+  succeeded; Claude was unaffected only because fresh chats re-sync). Fix: a
+  per-widget `ResourceTemplate` (`ui://widget/<name>-{hash}.html`) now serves
+  the CURRENT build for ANY old hash of a known widget — like a CDN keeping old
+  asset paths alive. New URIs still roll (cache-busting intact); unknown widget
+  names still 404. Regression test in `tests/apps-resources.test.ts`.
+
 ### Changed (tool descriptions lead with the trigger, 2026-07-17)
 - **Every relevant tool description now LEADS with its trigger** (the user
   intent / when-to-use), well-formulated and up front, instead of opening with
