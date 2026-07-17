@@ -149,9 +149,13 @@ sind JSON mit `Cache-Control: no-store` + `nosniff`; Fehler sind
 `GET /api/search` **ohne Suchbegriff** liefert statt 400 ein `200`-Hinweis-
 Envelope (leere Buckets + `warnings`) — KI-Abrufschichten entfernen bei
 selbst gebauten URLs den Query-String und zeigen dem Modell nur den Status,
-die Anleitung muss also in einem lesbaren Body stehen. Die Fläche beschreibt
-sich für KI-Fetcher selbst über [`/llms.txt`](public/llms.txt) und eine
-permissive [`/robots.txt`](public/robots.txt).
+die Anleitung muss also in einem lesbaren Body stehen. `?format=html` auf
+`/api/search` (beide Formen) rendert dasselbe Envelope als schlichte,
+selbstständige HTML-Seite — für KI-Browsing-Pipelines, die URLs öffnen, aber
+nur Reader-Inhalte verwerten (rohes JSON fällt weg), und als menschenlesbarer
+Share-Link. Die Fläche beschreibt sich für KI-Fetcher selbst über
+[`/llms.txt`](public/llms.txt) und eine permissive
+[`/robots.txt`](public/robots.txt).
 
 | Endpunkt | Query-Parameter | Liefert |
 |---|---|---|

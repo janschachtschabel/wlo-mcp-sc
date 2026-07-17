@@ -29,8 +29,11 @@ type) and ask for the topic first.
 
 If you genuinely cannot fetch a URL (some chats only load links posted by the
 user): output the ready-to-open URL and ask the user to paste it into the chat —
-after that you can load it. Never reply with only filter suggestions and no
-query.
+after that you can load it. If you cannot fetch endpoints at all (web search
+or reader only, no HTTP): first try the URL with `?format=html` — the same hits
+as a readable web page. If that also fails, as the last resort ask the user to
+open the URL in their browser and paste the JSON response into the chat, then
+evaluate that JSON. Never reply with only filter suggestions and no query.
 
 ## Base URL
 

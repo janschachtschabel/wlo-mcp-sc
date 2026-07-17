@@ -101,6 +101,8 @@ test('both skills teach the path-form search and the stripped-query recovery', a
     assert.match(md, /\/api\/search\//, `${id}: path form present`);
     assert.match(md, /strip/i, `${id}: names the stripped-query cause`);
     assert.match(md, /paste/i, `${id}: teaches the paste-back recovery`);
+    assert.match(md, /paste the JSON/i, `${id}: teaches the JSON-paste last resort (search-only chats)`);
+    assert.match(md, /format=html/, `${id}: teaches the HTML view for reader-only chats`);
   }
 });
 

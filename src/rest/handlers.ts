@@ -33,7 +33,10 @@ import {
   parseFields,
 } from './validate.js';
 import { projectEnvelope, projectItems } from './project.js';
+import { renderSearchPage, type SearchPageData } from './search-page.js';
 import { type RestResult, badRequest } from './result.js';
+
+const HTML_TYPE = 'text/html; charset=utf-8';
 
 const INCLUDE_KEYS = ['content', 'collections', 'topicPages'] as const;
 type IncludeKey = (typeof INCLUDE_KEYS)[number];
@@ -51,6 +54,10 @@ const TARGET_GROUPS = new Set<string>(['teacher', 'learner', 'general']);
 // ── /api/search ──────────────────────────────────────────────────────────────
 
 export async function handleSearch(params: URLSearchParams): Promise<RestResult> {
+  // `format=html` renders the SAME envelope as a readable page — for AI
+  // browsing pipelines that open URLs but only consume reader content (raw
+  // JSON is dropped), and for humans clicking a shared link.
+  const wantHtml = (params.get('format') ?? '').trim().toLowerCase() === 'html';
   const qRaw = params.get('q') ?? params.get('query');
   const q = validateQuery(qRaw);
   if (!q.ok) {
@@ -63,19 +70,18 @@ export async function handleSearch(params: URLSearchParams): Promise<RestResult>
     // the stripping-proof path form and the paste-back recovery.
     if (!(qRaw ?? '').trim()) {
       const emptyBucket = { total: 0, count: 0, results: [] };
-      return {
-        status: 200,
-        json: {
-          query: '',
-          content: emptyBucket,
-          collections: emptyBucket,
-          topicPages: emptyBucket,
-          warnings: [
-            'No search term received.',
-            'If you built this URL with a query string, your fetch tool has probably stripped it. Use the path form GET /api/search/<term> (optional filters as query parameters), or ask the user to paste the full URL into the chat.',
-          ],
-        },
+      const guidance = {
+        query: '',
+        content: emptyBucket,
+        collections: emptyBucket,
+        topicPages: emptyBucket,
+        warnings: [
+          'No search term received.',
+          'If you built this URL with a query string, your fetch tool has probably stripped it. Use the path form GET /api/search/<term> (optional filters as query parameters), or ask the user to paste the full URL into the chat.',
+        ],
       };
+      if (wantHtml) return { status: 200, raw: renderSearchPage(guidance), contentType: HTML_TYPE };
+      return { status: 200, json: guidance };
     }
     return badRequest(q.error);
   }
@@ -125,6 +131,7 @@ export async function handleSearch(params: URLSearchParams): Promise<RestResult>
   const response: Record<string, unknown> = { ...projected };
   if (unresolved.length) response.unresolvedFilters = unresolved;
   if (facets && Object.keys(facets).length) response.facets = facets;
+  if (wantHtml) return { status: 200, raw: renderSearchPage(response as SearchPageData), contentType: HTML_TYPE };
   return { status: 200, json: response };
 }
 

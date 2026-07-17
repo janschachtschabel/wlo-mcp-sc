@@ -33,6 +33,8 @@ test('launcher templates forbid warm-up calls and teach the user-paste fetch fal
   assert.match(html, /frag zuerst danach/i, 'DE: ask for the topic instead of inventing one');
   assert.match(html, /in den Chat zu kopieren/i, 'DE: user-paste fallback for restricted fetch tools');
   assert.match(html, /Query-String entfernt/i, 'DE: explain the stripped-query-string 400 (live-diagnosed)');
+  assert.match(html, /JSON-Antwort in den Chat/i, 'DE: final fallback — user opens the URL and pastes the JSON (ChatGPT has no arbitrary fetch)');
+  assert.match(html, /format=html/, 'DE: reader-only chats first try the HTML view of the same search');
   assert.match(html, /api\/search\/<Suchbegriff>/, 'DE: primary search form is the stripping-proof path form');
   assert.match(html, /erkläre ihm kurz die Möglichkeiten/i, 'DE: without a topic, explain topic + filter options to the user');
   assert.match(html, /Lizenz unklar/i, 'DE: empty license must not be reported as a real licence');
@@ -45,6 +47,8 @@ test('launcher templates forbid warm-up calls and teach the user-paste fetch fal
   assert.match(html, /ask for it first/i, 'EN: ask for the topic instead of inventing one');
   assert.match(html, /paste it into the chat/i, 'EN: user-paste fallback for restricted fetch tools');
   assert.match(html, /stripped the query string/i, 'EN: explain the stripped-query-string 400 (live-diagnosed)');
+  assert.match(html, /paste the JSON response/i, 'EN: final fallback — user opens the URL and pastes the JSON (ChatGPT has no arbitrary fetch)');
+  assert.ok((html.match(/format=html/g) ?? []).length >= 2, 'both templates teach the HTML view for reader-only chats');
   assert.match(html, /api\/search\/<search term>/, 'EN: primary search form is the stripping-proof path form');
   assert.match(html, /briefly explain the options/i, 'EN: without a topic, explain topic + filter options to the user');
   // The fixed "OER" URL pattern must appear in BOTH language templates.

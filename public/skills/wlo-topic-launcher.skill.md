@@ -20,7 +20,11 @@ topic and answer from the real payloads — do not stop at describing the steps 
 handing back a URL. If you genuinely cannot fetch a URL (some chats only load
 links posted by the user, or strip query strings from AI-built URLs): output the
 ready-to-open URL and ask the user to paste it into the chat — after that you
-can load it.
+can load it. If you cannot fetch endpoints at all (web search or reader only,
+no HTTP): for the search, first try `?format=html` — the same hits as a
+readable web page. If that also fails, as the last resort ask the user to open
+the URL in their browser and paste the JSON response into the chat, then
+evaluate that JSON.
 
 ## Base URL
 

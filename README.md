@@ -144,9 +144,12 @@ no-store` + `nosniff`; errors are `{ "error": "…" }` with a `4xx`/`5xx` status
 One deliberate exception: `GET /api/search` **without a term** returns a `200`
 guidance envelope (empty buckets + `warnings`) instead of a `400` — AI fetch
 layers strip query strings from model-built URLs and surface only the status,
-so the guidance must live in a readable body. The surface is self-describing
-for AI fetchers via [`/llms.txt`](public/llms.txt) and permissive
-[`/robots.txt`](public/robots.txt).
+so the guidance must live in a readable body. `?format=html` on `/api/search`
+(both forms) renders the same envelope as a minimal, self-contained HTML page —
+for AI browsing pipelines that open URLs but only consume reader content (raw
+JSON is dropped), and as the human-friendly share link. The surface is
+self-describing for AI fetchers via [`/llms.txt`](public/llms.txt) and
+permissive [`/robots.txt`](public/robots.txt).
 
 | Endpoint | Query params | Returns |
 |---|---|---|

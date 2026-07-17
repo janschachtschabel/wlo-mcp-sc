@@ -19,7 +19,11 @@ Self-check: the response field "query" must echo your term. An empty "query"
 plus a "warnings" array means the query string was stripped in transit — switch
 to the path form or ask the user to paste the full URL into the chat.
 
-Example: /api/search/Bruchrechnung?discipline=Mathematik
+Add format=html to render the SAME search as a readable HTML page — use it when
+your tooling can only consume web pages (reader pipelines), not raw JSON.
+
+Examples: /api/search/Bruchrechnung?discipline=Mathematik
+          /api/search/Bruchrechnung?format=html
 
 ## More endpoints
 

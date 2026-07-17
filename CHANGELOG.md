@@ -35,11 +35,19 @@ operator decision):
   recovery (path form / paste-back), and the wlo-search failure table reflects
   the new missing-term contract (empty `query` + `warnings` ≠ "no results").
   Pinned by a content test in `tests/rest-skills.test.ts`.
+- **`?format=html` on `/api/search` (both forms)** — renders the same envelope
+  as a minimal, escaped, self-contained HTML page (`src/rest/search-page.ts`,
+  reusing the widgets' `escapeHtml`). Evidence arrived after the first pass:
+  ChatGPT's browsing DID retrieve a user-pasted API URL but could not use the
+  body ("keine WLO-JSON-Suchantwort") — its reader pipeline consumes HTML, not
+  raw JSON. Templates + skills teach reader-only chats to try `?format=html`
+  before falling back to the JSON paste. Doubles as the human share link.
 Rejected from the same proposal, with reasons: positional multi-segment paths
 (`/search/<q>/<fach>/<typ>` — ambiguous positions; filters already degrade
 gracefully), blanket never-400 fuzzy matching (filters are already lenient;
-invalid input should stay loud), HTML content negotiation (no evidence any
-fetcher needed it), `Vary: Accept` (no content negotiation exists).
+invalid input should stay loud), HTML via `Accept`-header content negotiation
+(invisible and fragile — superseded by the explicit `?format=html` view once
+live evidence arrived), `Vary: Accept` (no content negotiation exists).
 
 ### Changed (launcher instruction templates, live-finding driven, 2026-07-17)
 Both language templates (`instruction_tpl` in `public/launcher.html`) now encode
