@@ -19,12 +19,8 @@ const BREAKDOWN_LABELS: Record<string, string> = {
 export function registerCollectionStatsTool(server: McpServer): void {
   server.tool(
     'get_collection_stats',
-    `Summarize a WLO collection's composition: how many files (Inhalte) and sub-collections
-it contains, plus a breakdown of its files by learning-resource type, subject, and
-educational level.
-Use this for a quick overview of a Sammlung before browsing it, or to understand what a
-collection is mostly made of. The breakdown is a tally over up to 100 DIRECT child files
-(a sample, not the whole subtree); the output flags when the collection is larger.`,
+    `Verschaffe dir einen Überblick, WORAUS eine WLO-Sammlung besteht — wie viele Dateien (Inhalte) und Unter-Sammlungen, plus Aufschlüsselung der Dateien nach Materialtyp, Fach und Bildungsstufe. Nutze dies für einen schnellen Überblick vor dem Stöbern.
+Die Aufschlüsselung zählt über bis zu 100 DIREKTE Kind-Dateien (Stichprobe, nicht der ganze Unterbaum); die Ausgabe weist darauf hin, wenn die Sammlung größer ist.`,
     {
       nodeId: z.string().describe('Collection node ID to profile.'),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),

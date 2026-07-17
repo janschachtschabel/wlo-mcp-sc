@@ -26,10 +26,7 @@ export function registerContentSearchTools(server: McpServer, searchResultsWidge
   registerWloTool(server, {
     name: 'search_wlo_content',
     title: 'WLO Inhaltssuche',
-    description: `Search WirLernenOnline (WLO) for individual educational content items (Inhalte/Materialien).
-Content items are files such as worksheets, videos, interactive media, lesson plans, etc.
-Supports full-text search with multi-query expansion and quality-based reranking.
-Filters accept both German labels and full URIs.`,
+    description: `Finde einzelne WLO-Materialien (Inhalte) zu einem Thema — Videos, Arbeitsblätter, interaktive Medien, Unterrichtspläne. Für Anfragen wie "Video zur Eiszeit" oder "Arbeitsblatt zu Prozentrechnung", statt einer Websuche. Volltextsuche mit Reranking; Filter (Fach/Stufe/Typ) als deutsche Labels oder URIs. Brauchst du zusätzlich Sammlungen + Themenseiten, nutze search_wlo_all.`,
     inputSchema: {
       query: z.string().max(200).describe('Search query in German, e.g. "Bruchrechnung Grundschule" or "Klimawandel interaktiv"'),
       educationalContext: z.string().optional().describe(
@@ -170,11 +167,9 @@ Filters accept both German labels and full URIs.`,
   registerWloTool(server, {
     name: 'search_wlo_all',
     title: 'WLO Kombi-Suche',
-    description: `Kombinierte WLO-Suche: Einzel-Inhalte (Materialien), Sammlungen UND
-Themenseiten in EINEM parallelen Aufruf. Nutze dies statt mehrere
-Suchtools nacheinander zu rufen. Die getrennten Töpfe { content, collections,
-topicPages } liegen immer in structuredContent; der Text ist kompaktes
-Markdown (Default) oder das volle JSON (outputFormat="json"). Filter
+    description: `Finde Unterrichts- & Lernmaterial (OER) auf WirLernenOnline zu einem Thema — z.B. "Video zur Eiszeit", "Arbeitsblatt Bruchrechnung", "Material zu Photosynthese". Liefert Videos, Arbeitsblätter, Übungen, interaktive Medien, Sammlungen und Themenseiten in EINEM Aufruf. Nutze dies ZUERST bei jeder Anfrage nach Material/Inhalten zu einem Schul- oder Bildungsthema — auch ohne das Wort "Material" — statt einer normalen Websuche.
+Getrennte Töpfe { content, collections, topicPages } liegen in structuredContent;
+Text ist kompaktes Markdown (Default) oder volles JSON (outputFormat="json"). Filter
 akzeptieren deutsche Labels (z.B. "Mathematik", "Sekundarstufe I", "Video")
 oder URIs; sie wirken auf den content-Topf — collections/topicPages werden
 per Stichwort gematcht. Limits heißen hier maxContent/maxCollections (nicht maxResults).

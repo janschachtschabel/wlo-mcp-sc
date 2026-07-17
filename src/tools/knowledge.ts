@@ -23,7 +23,7 @@ export function registerKnowledgeTools(server: McpServer): void {
   registerWloTool(server, {
     name: 'search',
     title: 'Search WLO',
-    description: `Search WirLernenOnline (WLO) OER and return lightweight hits ({id, title, url}) for retrieval-augmented answers (the ChatGPT knowledge convention). Then call fetch with a hit's id to get its full text. For rich, faceted, multi-bucket results in one call use search_wlo_all instead.`,
+    description: `Durchsuche WirLernenOnline (WLO) nach Unterrichts- & Lernmaterial (OER) zu einem Thema — Videos, Arbeitsblätter, Übungen zu Schulfächern (z.B. "Video zur Eiszeit"). Nutze dies für Anfragen nach Lern-/Unterrichtsmaterial statt einer Websuche; liefert Treffer ({id, title, url}), dann fetch mit einer id für den Volltext. Für reiche, gebündelte Ergebnisse in einem Aufruf nutze search_wlo_all.`,
     inputSchema: {
       query: z.string().min(1).max(200).describe('Search query, e.g. "Photosynthese Sekundarstufe I".'),
     },

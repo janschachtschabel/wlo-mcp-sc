@@ -54,10 +54,14 @@ body {
   font-size: 1.05rem;
   font-weight: 600;
 }
-.wlo-section--emphasis {
-  padding-left: 12px;
-  border-inline-start: 3px solid var(--wlo-accent);
+/* Collections + topic pages grouped in a lightly separated band above the
+ * material grid (edu-sharing look): a subtle divider + spacing, no heavy box. */
+.wlo-results__coll-band {
+  margin: 0 0 18px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--wlo-border);
 }
+.wlo-results__coll-band .wlo-section:last-child { margin-bottom: 0; }
 .wlo-results__query {
   margin: 0 0 16px;
   font-size: 1.2rem;

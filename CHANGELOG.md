@@ -82,6 +82,66 @@ what the live chat tests showed:
   unclear", never invent hits.
 Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts`.
 
+### Changed (tool descriptions lead with the trigger, 2026-07-17)
+- **Every relevant tool description now LEADS with its trigger** (the user
+  intent / when-to-use), well-formulated and up front, instead of opening with
+  architecture or mechanics — so the model picks the right WLO tool from a
+  natural teacher query.
+- The primary search tools carry concrete, teacher-phrased triggers in the
+  first ~256 chars (where ChatGPT/OpenAI weights tool selection): a query like
+  "Video zur Eiszeit" now fires WLO instead of a generic web search.
+  `search_wlo_all`, `search_wlo_content`, `search_wlo_collections`, the ChatGPT
+  `search` tool and `get_topic_page_content` name concrete material types
+  (Video/Arbeitsblatt/Übung) + example queries up front and say "statt einer
+  Websuche".
+- The drill/browse/detail tools were reordered trigger-first too:
+  `get_subject_portals`, `browse_collection_tree`, `get_collection_contents`,
+  `search_wlo_within_collection`, `get_related_content`, `get_node_breadcrumb`,
+  `get_collection_stats`, `get_compendium_text` now open with the natural
+  request they serve (e.g. "mehr wie dieses", "welche Fächer gibt es?", "was
+  steckt in dieser Sammlung?"). Behaviour and parameters unchanged.
+- Left as-is (already capability/trigger-first): `get_node_details`,
+  `get_nodes_details`, `lookup_wlo_vocabulary`, `lookup_wlo_publishers`,
+  `find_wlo_skills`, `fetch`, `wlo_health_check`. `get_wikipedia_summary` keeps
+  its explicit "do NOT use for WLO material" guard so it does not steal
+  material queries.
+- Pinned by `tests/tool-triggers.test.ts` (concrete trigger + example query in
+  the first 256 chars of the primary search tools).
+
+### Added (get_topic_page_content one-step topic path, 2026-07-17)
+- **`get_topic_page_content` now accepts a `query`** (topic name) and resolves
+  the best-matching Themenseite itself, returning render-ready swimlanes in a
+  SINGLE call. Root cause it fixes: the swimlane widget only triggered via the
+  two-step chain `search_wlo_topic_pages` → `get_topic_page_content`, which the
+  model broke in practice, so the swimlane view "never triggered" (live-observed
+  2026-07-17; the tool itself resolves swimlanes correctly — proven by a live
+  probe). A direct request ("zeig die Themenseite zu Optik") now renders in one
+  step; `variantId`/`collectionId` still work for the post-search path.
+- The topic→collection resolution (search_wlo_topic_pages Mode B) is extracted
+  to `services/topic-page.findTopicPagesByQuery` and shared by both tools (no
+  duplication); Mode B behaviour is unchanged (its 3 characterization tests
+  stay green). A query that matches nothing returns the empty-payload contract,
+  not an error. 3 new tests in `tests/tools-topic-page-content.test.ts`.
+
+### Changed (search-results: collection band above content, 2026-07-17)
+- The topic-page + collection tiles now sit in one lightly separated band above
+  the material grid (edu-sharing look), replacing the per-section left-border
+  accent with a single subtle divider + spacing. The band (and its divider) is
+  dropped entirely for content-only results, so there is never a stray
+  separator. `wlo-section--emphasis` removed as dead. Tests updated to pin the
+  band + the no-band case.
+
+### Fixed (browse tree flicker / viewport jump in ChatGPT, 2026-07-17)
+- **`focus()` no longer scroll-jerks the host iframe.** Expanding a subcategory
+  in the browse tree made the widget flicker and the view jump in ChatGPT. Root
+  cause: `paint()` re-focuses the toggle with `element.focus()`, which
+  scroll-into-views by default — and an expand repaints twice (loading → loaded),
+  so the iframe scrolled twice per click. Fix: `focus({ preventScroll: true })`
+  keeps the a11y focus restore (WCAG 2.4.3) without the scroll. Same pattern +
+  fix in the search-results detail view (open/close). Pinned at source level
+  (`tests/widgets-focus-scroll.test.ts`) since these main.ts files are DOM/host
+  glue, verified live rather than unit-tested.
+
 ### Fixed (focused audit on widgets + REST, 2026-07-17)
 Deep pass over the redesigned widgets and the REST layer; three Low findings,
 all fixed test-first (no Medium+ findings; prod `npm audit` clean):

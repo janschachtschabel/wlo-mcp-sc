@@ -158,11 +158,9 @@ export function registerCollectionTools(server: McpServer): void {
   registerWloTool(server, {
     name: 'search_wlo_collections',
     title: 'WLO Sammlungssuche',
-    description: `Search WirLernenOnline (WLO) for Sammlungen (= Themenseiten).
-In WLO, a "Sammlung" is the same as a "Themenseite": a curated thematic page that bundles
-educational content items in swimlanes (Schwimmlinien/Karussells) grouped by topic, subject or level.
-Users may ask for "Themenseite Algebra", "Sammlung Klimawandel" or "Portal Mathematik" – these all refer to collections.
-Use the returned nodeId with get_collection_contents to retrieve the actual content items.
+    description: `Finde WLO-Sammlungen und Themenseiten zu einem Thema — kuratierte thematische Seiten, die Materialien in Schwimmlinien (Karussells) nach Thema/Fach/Stufe bündeln. Für Anfragen wie "Themenseite Algebra", "Sammlung Klimawandel", "Portal Mathematik". Für einzelne Materialien (Videos/Arbeitsblätter) nutze stattdessen search_wlo_content oder search_wlo_all.
+In WLO ist eine "Sammlung" dasselbe wie eine "Themenseite".
+Use the returned nodeId with get_topic_page_content (Schwimmlinien) or get_collection_contents to retrieve the actual content items.
 Filters (discipline, educationalContext) accept German labels (e.g. "Mathematik", "Grundschule")
 or full URIs and are applied against each collection's own metadata — collections that do not
 carry a matching subject/level tag are excluded.`,
@@ -277,12 +275,8 @@ carry a matching subject/level tag are excluded.`,
 
   server.tool(
     'get_collection_contents',
-    `Retrieve content items and/or sub-collections from a WLO Sammlung (Themenseite) by its nodeId.
-In WLO, Sammlungen are displayed as Themenseiten: thematic pages that bundle content in swimlanes.
-This tool fetches what is inside those swimlanes.
-The nodeId is returned by search_wlo_collections.
-Use contentFilter="files" (default) for learning materials, "folders" for sub-collections (Unter-Themenseiten),
-or "both" for everything. Set includeSubcollections=true to traverse the full sub-tree recursively.`,
+    `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections) und zeigen willst, was konkret drinsteckt.
+contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen (Unter-Themenseiten), "both" = alles. includeSubcollections=true durchläuft den gesamten Unterbaum rekursiv.`,
     {
       nodeId: z.string().describe('Collection node ID from search_wlo_collections results'),
       query: z.string().optional().describe(
@@ -361,15 +355,9 @@ or "both" for everything. Set includeSubcollections=true to traverse the full su
 
   server.tool(
     'search_wlo_within_collection',
-    `Search for content items INSIDE one specific WLO collection (Sammlung/Themenseite)
-by its nodeId, with optional full-text query and the usual vocab filters
-(discipline/level/type). Use this when the user already has a collection and wants
-to narrow it down ("welche Videos zu Zellteilung gibt es in dieser Sammlung?").
-For an unscoped search across all of WLO use search_wlo_content instead; to list a
-collection's raw contents without filtering use get_collection_contents.
-NOTE: matching runs over the collection's direct contents (a bounded sample of up
-to 100 items, examined locally — the backend offers no collection-scoped search).
-The output says so when the collection is larger.`,
+    `Durchsuche/filtere die Inhalte INNERHALB einer bestimmten WLO-Sammlung — z.B. "welche Videos zu Zellteilung gibt es in dieser Sammlung?". Nutze dies, wenn du bereits eine Sammlung (nodeId) hast und sie per Volltext und Filtern (Fach/Stufe/Typ) eingrenzen willst.
+Für eine ungebundene Suche über ganz WLO nutze search_wlo_content; um Inhalte ungefiltert zu listen get_collection_contents.
+NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.`,
     {
       nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),

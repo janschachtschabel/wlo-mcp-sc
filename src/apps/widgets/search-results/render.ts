@@ -24,7 +24,9 @@ export interface SearchResultsState {
 
 function section(titleKey: StringKey, nodes: WidgetNode[], locale: Locale, opts: { coll?: boolean; detail?: boolean } = {}): string {
   if (nodes.length === 0) return '';
-  const cls = opts.coll ? 'wlo-section wlo-section--emphasis' : 'wlo-section';
+  // Collection/topic-page sections are grouped in a separated band (see below),
+  // so the section itself carries no extra emphasis; only its grid differs.
+  const cls = 'wlo-section';
   const gridCls = opts.coll ? 'wlo-grid wlo-grid--coll' : 'wlo-grid';
   const tiles = nodes.map(n => renderTile(n, { locale, detailButton: opts.detail })).join('');
   return (
@@ -115,10 +117,18 @@ export function renderSearchResults(
     ? `<h1 class="wlo-results__query">${escapeHtml(t(locale, 'resultsFor'))} ${t(locale, 'quoteOpen')}${query}${t(locale, 'quoteClose')}</h1>`
     : '';
 
+  // edu-sharing look: the topic-page + collection tiles sit in one lightly
+  // separated band ABOVE the material grid. The band (and its divider) is
+  // dropped entirely when both are empty, so content-only results show no
+  // stray separator.
+  const topicPagesHtml = section('sectionTopicPages', topicPages, locale, { coll: true });
+  const collectionsHtml = section('sectionCollections', collections, locale, { coll: true });
+  const band = topicPagesHtml || collectionsHtml
+    ? `<div class="wlo-results__coll-band">${topicPagesHtml}${collectionsHtml}</div>`
+    : '';
+
   return (
-    `<div class="wlo-results">${heading}` +
-    section('sectionTopicPages', topicPages, locale, { coll: true }) +
-    section('sectionCollections', collections, locale, { coll: true }) +
+    `<div class="wlo-results">${heading}${band}` +
     section('sectionContent', content, locale, { detail: true }) +
     `</div>`
   );

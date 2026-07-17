@@ -13,7 +13,6 @@ import {
   WLO_REPOSITORY_URL,
   buildTopicPageUrl,
   getNodeMetadata,
-  searchCollectionsByKeyword,
   stripStoreRef,
 } from '../wlo-api.js';
 import type { TargetGroup, ThemePageInfo } from '../topic-page-api.js';
@@ -22,9 +21,7 @@ import {
   getTopicPageContent,
   resolveVariantCollection,
   searchPageVariants,
-  searchTopicPageCollections,
 } from '../topic-page-api.js';
-import { rerankNodes } from '../reranker.js';
 import { labelFromUri, resolveVocab } from '../vocabs.js';
 
 // Mode B bound: each candidate costs one metadata fetch (plus one children
@@ -32,7 +29,7 @@ import { labelFromUri, resolveVocab } from '../vocabs.js';
 const MODE_B_CANDIDATE_MAX = 12;
 import type { LabeledCriterion } from './shared.js';
 import { mapPool, queryMetaContent, toolError } from './shared.js';
-import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
+import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import type { PresentedThemePage } from './topic-pages-present.js';
 import { mergeThemePages, renderThemePages } from './topic-pages-present.js';
 
@@ -111,32 +108,11 @@ async function collectThemePages(
     return { results, queryType: 'topic_pages_by_collection' };
   }
   // ── Mode B: Topic-based search (collection → page_config_ref) ────────
+  // The resolution core is shared with get_topic_page_content's one-step topic
+  // path (services/topic-page.findTopicPagesByQuery).
   if (params.query?.trim()) {
-    const q = params.query;
-    // The keyword-collections endpoint returns a FIXED reduced projection
-    // WITHOUT ccm:page_config_ref, and the subject portals do not appear in
-    // its hits at all (live-verified 2026-07-17). So: match the portals
-    // locally (their /children projection carries the config ref) AND
-    // metadata-check every keyword hit via getCollectionThemePages instead of
-    // pre-filtering on a property the projection can never deliver.
-    const [portals, keywordHits] = await Promise.all([
-      searchTopicPageCollections(q).catch(() => [] as WloNode[]),
-      searchCollectionsByKeyword(q, 10),
-    ]);
-    // Portal copies first: on an id collision they are the ones carrying the
-    // config ref. Dedup, rerank by relevance, cap the metadata fan-out.
-    const seen = new Set<string>();
-    const merged = [...portals, ...keywordHits].filter(c => {
-      const id = c.ref?.id;
-      if (!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-    const candidateIds = rerankNodes(merged, q)
-      .flatMap(c => (c.ref?.id ? [c.ref.id] : []))
-      .slice(0, MODE_B_CANDIDATE_MAX);
-    const pages = await mapPool(candidateIds, 4, (cId) => getCollectionThemePages(cId, tg));
-    for (const p of pages) if (p) results.push(...p);
+    const pages = await findTopicPagesByQuery(params.query, tg, MODE_B_CANDIDATE_MAX);
+    results.push(...pages);
     return { results: results.slice(0, (params.maxResults ?? 5) * 3), queryType: 'topic_pages_by_keyword' };
   }
   // ── Mode C: List all Themenseiten (page_variant API) ─────────────────

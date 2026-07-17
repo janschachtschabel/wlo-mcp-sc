@@ -14,11 +14,7 @@ import { toolError } from './shared.js';
 export function registerCompendiumTool(server: McpServer): void {
   server.tool(
     'get_compendium_text',
-    `Get the FULL editorial compendium text (curated prose overview) of one or
-more WLO collections. Use this when a collection result shows a truncated
-"Kompendium: …" preview and you need the complete text, or to summarize what a
-collection covers. Provide a "Sammlung-nodeId" (or several). Do NOT use this for
-files/materials — it only applies to collections that have an editorial text.`,
+    `Hole den VOLLSTÄNDIGEN redaktionellen Kompendiumstext (kuratierte Übersichts-Prosa) einer oder mehrerer WLO-Sammlungen. Nutze dies, wenn ein Sammlungsergebnis nur einen gekürzten "Kompendium: …"-Auszug zeigt und du den ganzen Text brauchst, oder um zusammenzufassen, worum es in einer Sammlung geht. Gib eine "Sammlung-nodeId" (oder mehrere). NICHT für Dateien/Materialien — gilt nur für Sammlungen mit redaktionellem Text.`,
     {
       nodeId: z.string().optional().describe('A single collection nodeId.'),
       nodeIds: z.array(z.string()).max(25).optional().describe('Up to 25 collection nodeIds for a bulk fetch.'),

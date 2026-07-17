@@ -10,7 +10,7 @@ import { z } from 'zod';
 
 import type { TargetGroup } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-api.js';
-import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
+import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { swimlanePayloadSchema } from '../apps/outputSchemas.js';
@@ -24,15 +24,19 @@ export function registerTopicPageContentTool(server: McpServer, topicPageWidgetU
     name: 'get_topic_page_content',
     widgetUri: topicPageWidgetUri,
     title: 'WLO Themenseiten-Inhalt',
-    description: `Get the CONTENT STRUCTURE of a Themenseite (topic page): its sections
-(swimlanes) — each with a heading and the nodeIds of the materials/collections
-embedded in it. Use this AFTER search_wlo_topic_pages to see what is actually ON
-a topic page (search_wlo_topic_pages only returns its URL). Resolve the returned
-nodeIds to human titles with get_nodes_details.
+    description: `Zeige eine WLO-Themenseite zu einem Thema mit ihren Schwimmlinien (swimlanes) — z.B. "zeig die Themenseite zu Optik". Liefert die render-fertigen Abschnitte mit echten Inhaltskarten (die Schwimmlinien-Ansicht der Themenseite).
 
-Provide EITHER variantId (a "Variante-ID" from search_wlo_topic_pages — fastest)
-OR collectionId (a "Sammlung-nodeId"). At least one is required.`,
+Gib EINES an:
+- query: ein Themenname (z.B. "Optik") — das Tool findet die passende Themenseite
+  selbst und liefert ihre Schwimmlinien in EINEM Aufruf. Nutze dies für eine
+  direkte Anfrage wie "zeig die Themenseite zu Optik"; kein vorheriges
+  search_wlo_topic_pages nötig.
+- variantId (eine "Variante-ID") oder collectionId (eine "Sammlung-nodeId") aus
+  search_wlo_topic_pages, wenn du diese Suche schon ausgeführt hast.`,
     inputSchema: {
+      query: z.string().optional().describe(
+        'Topic name (German), e.g. "Optik". Resolves the best matching Themenseite internally and renders its swimlanes in ONE call — no prior search_wlo_topic_pages needed. Alternative to variantId/collectionId.'
+      ),
       collectionId: z.string().optional().describe(
         'Owning collection nodeId of the Themenseite (the "Sammlung-nodeId" from search_wlo_topic_pages).'
       ),
@@ -53,20 +57,34 @@ OR collectionId (a "Sammlung-nodeId"). At least one is required.`,
     annotations: { readOnlyHint: true },
     handler: async (params) => {
       try {
-        if (!params.collectionId && !params.variantId) {
-          return { content: [{ type: 'text' as const, text: 'Bitte collectionId oder variantId angeben.' }], isError: true };
+        const tg = params.targetGroup as TargetGroup | undefined;
+        let collectionId = params.collectionId;
+        let variantId = params.variantId;
+
+        if (!collectionId && !variantId) {
+          if (!params.query?.trim()) {
+            return { content: [{ type: 'text' as const, text: 'Bitte query, collectionId oder variantId angeben.' }], isError: true };
+          }
+          // One-step topic path: resolve the best Themenseite for the topic so
+          // the swimlane widget triggers without a prior search_wlo_topic_pages
+          // call. Prefer the resolved collectionId (it carries the page header).
+          // No match falls through to the empty-payload path below.
+          const found = await findTopicPagesByQuery(params.query, tg);
+          if (found.length) {
+            collectionId = found[0].collectionId ?? undefined;
+            if (!collectionId) variantId = found[0].variantId;
+          }
         }
-        const struct = await getTopicPageContent({
-          collectionId: params.collectionId,
-          variantId: params.variantId,
-          targetGroup: params.targetGroup as TargetGroup | undefined,
-        });
+
+        const struct = (collectionId || variantId)
+          ? await getTopicPageContent({ collectionId, variantId, targetGroup: tg })
+          : null;
         if (!struct || struct.swimlanes.length === 0) {
           // A valid-but-empty payload keeps the structuredContent contract even
           // when no variant / an empty config is found (this is not an error).
           const empty = {
-            variantId: struct?.variantId ?? params.variantId ?? '',
-            collectionId: struct?.collectionId ?? params.collectionId ?? null,
+            variantId: struct?.variantId ?? variantId ?? '',
+            collectionId: struct?.collectionId ?? collectionId ?? null,
             variantTitle: struct?.variantTitle ?? '',
             // Header fields survive the empty case so the widget can still say
             // WHAT is empty (schema-optional; undefined is valid and dropped).

@@ -15,13 +15,8 @@ import { toolError } from './shared.js';
 export function registerNodeRelationTools(server: McpServer): void {
   server.tool(
     'get_related_content',
-    `Find WLO content related to a given node — other materials that share its subject(s)
-and educational level(s).
-Give the nodeId of a content item or collection; the tool reads that node's disciplines
-and educational contexts and searches for other material with the same profile (the seed
-itself is excluded). Optionally also return \`siblings\` — the other contents of the seed's
-primary parent collection.
-Use this for "more like this" / "was passt noch dazu" after a search or a detail view.`,
+    `Finde ähnliche WLO-Materialien zu einem Inhalt — "mehr wie dieses" / "was passt noch dazu" nach einer Suche oder Detailansicht. Andere Materialien mit gleichem Fach und gleicher Bildungsstufe.
+Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/Stufen und sucht Material mit gleichem Profil (der Ausgangsknoten wird ausgeschlossen). Optional \`siblings\` — die weiteren Inhalte der Eltern-Sammlung.`,
     {
       nodeId: z.string().describe('Seed node ID (content item or collection) to find related material for.'),
       maxResults: z.number().int().min(1).max(30).optional().default(8).describe(
@@ -72,11 +67,8 @@ Use this for "more like this" / "was passt noch dazu" after a search or a detail
 
   server.tool(
     'get_node_breadcrumb',
-    `Return the breadcrumb path of a collection node — its ancestors ordered from the WLO
-root down to the node itself.
-Use this to show where a Sammlung sits in the content tree, or to orient the user after a
-deep drill-down. Note: this works for collection nodes; file/content nodes (ccm:io) have no
-breadcrumb here and return an empty path.`,
+    `Zeige, WO eine WLO-Sammlung im Themenbaum sitzt — der Pfad von der WLO-Wurzel bis zum Knoten (Breadcrumb). Nutze dies zur Orientierung nach einem tiefen Drilldown.
+Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Breadcrumb und liefern einen leeren Pfad.`,
     {
       nodeId: z.string().describe('Collection node ID to build the breadcrumb for.'),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),

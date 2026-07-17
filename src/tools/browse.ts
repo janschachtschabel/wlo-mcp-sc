@@ -56,15 +56,8 @@ export function registerBrowseTools(server: McpServer, browseWidgetUri?: string)
     name: 'get_subject_portals',
     title: 'WLO Fachportale',
     widgetUri: browseWidgetUri,
-    description: `Lists the WLO Fachportale — the first-level Sammlungen directly under the WLO root collection.
-Fachportale are the top-level subject hubs (Mathematik, Informatik, Deutsch, …) that anchor the
-content tree. Each portal has an associated Themenseite when ccm:page_config_ref is set.
-
-Use this when the user wants an overview of what subjects/topics are covered, or as the natural
-entry point for guided drill-downs ("Zeig mir Mathe" → portal → sub-Sammlungen → Inhalte).
-
-Returns deterministic alphabetical ordering, with portal nodeId, name, description, optional
-Themenseiten-URL, and the disciplines/educational contexts associated with the portal.`,
+    description: `Zeige, WELCHE Fächer/Themen es auf WirLernenOnline gibt — die WLO-Fachportale (Mathematik, Informatik, Deutsch, …), die obersten Fach-Hubs des Inhaltsbaums. Nutze dies für Anfragen wie "welche Fächer gibt es?" oder als Einstieg für geführtes Stöbern ("zeig mir Mathe" → Portal → Unter-Sammlungen → Inhalte).
+Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Beschreibung, optional Themenseiten-URL und die zugeordneten Fächer/Bildungsstufen.`,
     inputSchema: {
       educationalContext: z.string().optional().describe(
         'Filter by educational level (e.g. "Sekundarstufe I"). Most portals span multiple levels — '+
@@ -157,17 +150,8 @@ Themenseiten-URL, and the disciplines/educational contexts associated with the p
     widgetUri: browseWidgetUri,
     // The browse widget calls this tool from inside the iframe for drill-down.
     widgetAccessible: true,
-    description: `Drill into the sub-collection tree below a given collection.
-Returns the direct sub-Sammlungen at \`depth=1\` (default) or two levels at \`depth=2\`.
-Optionally enriches each node with the count of files (Lernmaterialien) it contains.
-
-Give EITHER a \`nodeId\` (any collection) OR a \`subject\` name (a Fachportal like
-"Mathematik" / "Mathe") — the subject is resolved to its portal nodeId server-side,
-so you don't need to call get_subject_portals first.
-
-Use this for guided exploration: pick a Fachportal or Themenseite, then let the user
-choose a sub-area before fetching individual content items. Output is deterministic
-(alphabetical by name, nodeId tie-breaker).`,
+    description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig.
+Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth=2), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).`,
     inputSchema: {
       nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
       subject: z.string().optional().describe('Subject/Fachportal NAME (e.g. "Mathematik" or "Mathe"), resolved to its portal nodeId server-side. Alternative to nodeId.'),

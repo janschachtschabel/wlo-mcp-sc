@@ -8,13 +8,54 @@
  * search_wlo_topic_pages can reuse the exact same resolution.
  */
 
-import type { SearchCriterion } from '../wlo-api.js';
-import { buildTopicPageUrl, getNodesMetadata, ngsearch, stripStoreRef } from '../wlo-api.js';
-import type { TopicPageStructure } from '../topic-page-api.js';
+import type { SearchCriterion, WloNode } from '../wlo-api.js';
+import { buildTopicPageUrl, getNodesMetadata, ngsearch, searchCollectionsByKeyword, stripStoreRef } from '../wlo-api.js';
+import type { ThemePageInfo, TargetGroup, TopicPageStructure } from '../topic-page-api.js';
+import { getCollectionThemePages, searchTopicPageCollections } from '../topic-page-api.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes } from '../formatter.js';
+import { rerankNodes } from '../reranker.js';
 import { log } from '../logger.js';
 import { mapPool } from '../tools/shared.js';
+
+/**
+ * Resolve a topic QUERY to the Themenseiten of the best-matching collections —
+ * the shared core of search_wlo_topic_pages Mode B, reused by
+ * get_topic_page_content's one-step topic path.
+ *
+ * The keyword-collections endpoint returns a reduced projection WITHOUT
+ * ccm:page_config_ref and never surfaces the subject portals (live-verified
+ * 2026-07-17), so match the portals locally AND metadata-check every keyword
+ * hit via getCollectionThemePages. Results keep the reranked (relevance) order.
+ */
+export async function findTopicPagesByQuery(
+  query: string,
+  targetGroup?: TargetGroup,
+  maxCandidates = 12,
+): Promise<ThemePageInfo[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const [portals, keywordHits] = await Promise.all([
+    searchTopicPageCollections(q).catch(() => [] as WloNode[]),
+    searchCollectionsByKeyword(q, 10),
+  ]);
+  // Portal copies first: on an id collision they carry the config ref. Dedup,
+  // rerank by relevance, cap the per-candidate metadata fan-out.
+  const seen = new Set<string>();
+  const merged = [...portals, ...keywordHits].filter(c => {
+    const id = c.ref?.id;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  const candidateIds = rerankNodes(merged, q)
+    .flatMap(c => (c.ref?.id ? [c.ref.id] : []))
+    .slice(0, maxCandidates);
+  const pages = await mapPool(candidateIds, 4, (cId) => getCollectionThemePages(cId, targetGroup));
+  const results: ThemePageInfo[] = [];
+  for (const p of pages) if (p) results.push(...p);
+  return results;
+}
 
 /** One swimlane with its resolved content cards. */
 export interface ResolvedSwimlane {

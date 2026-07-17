@@ -42,9 +42,23 @@ test('renderSearchResults shows all three buckets with their headings and tiles'
   assert.match(html, /Inhalt A/);
 });
 
-test('renderSearchResults emphasizes the collections section', () => {
+test('renderSearchResults groups collections + topic pages in a separated band above the content', () => {
   const html = renderSearchResults(payload(), 'de');
-  assert.match(html, /wlo-section--emphasis/);
+  // edu-sharing look: the collection/topic-page tiles sit in one lightly
+  // separated band ABOVE the material grid (user request 2026-07-17).
+  assert.match(html, /wlo-results__coll-band/, 'collection sections live in the separated band');
+  const bandIdx = html.indexOf('wlo-results__coll-band');
+  const contentIdx = html.indexOf('sectionContent' /* placeholder */) >= 0 ? html.indexOf('sectionContent') : html.indexOf('Inhalte');
+  assert.ok(bandIdx >= 0 && bandIdx < contentIdx, 'the band comes before the content section');
+});
+
+test('renderSearchResults renders no empty band when there are no collections or topic pages', () => {
+  const html = renderSearchResults(
+    payload({ collections: { total: 0, count: 0, results: [] }, topicPages: { total: 0, count: 0, results: [] } }),
+    'de',
+  );
+  assert.doesNotMatch(html, /wlo-results__coll-band/, 'no band (and no divider) when nothing goes above the content');
+  assert.match(html, /Inhalt A/, 'content still renders');
 });
 
 test('renderSearchResults: collections render as a coll-tile row, content as detail-capable cards', () => {

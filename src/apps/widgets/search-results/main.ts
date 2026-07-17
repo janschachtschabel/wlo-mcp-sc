@@ -29,10 +29,12 @@ function paint(): void {
   document.documentElement.lang = locale;
   root.innerHTML = renderSearchResults(host.toolOutput() as SearchAllPayload | undefined, locale, { selectedId });
 
+  // preventScroll: keep the a11y focus move (WCAG 2.4.3) without the default
+  // scroll-into-view, which would jerk the host iframe on open/close.
   if (focusTarget === 'detail') {
-    (root.querySelector('.wlo-detail__back') as HTMLElement | null)?.focus();
+    (root.querySelector('.wlo-detail__back') as HTMLElement | null)?.focus({ preventScroll: true });
   } else if (focusTarget) {
-    (root.querySelector(`.wlo-tile__details[data-node-id="${CSS.escape(focusTarget)}"]`) as HTMLElement | null)?.focus();
+    (root.querySelector(`.wlo-tile__details[data-node-id="${CSS.escape(focusTarget)}"]`) as HTMLElement | null)?.focus({ preventScroll: true });
   }
   focusTarget = null; // one-shot: host-driven repaints must not steal focus
 }

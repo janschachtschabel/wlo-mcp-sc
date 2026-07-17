@@ -38,7 +38,10 @@ function paint(): void {
     const buttons = root.querySelectorAll('.wlo-tree__toggle');
     for (let i = 0; i < buttons.length; i++) {
       if (buttons[i].getAttribute('data-node-id') === focusNodeId) {
-        (buttons[i] as HTMLElement).focus();
+        // preventScroll: focus restores the a11y position (WCAG 2.4.3) but must
+        // NOT scroll-into-view — the default scroll jerks the host iframe on
+        // every expand (flicker + viewport jump, live-observed in ChatGPT).
+        (buttons[i] as HTMLElement).focus({ preventScroll: true });
         break;
       }
     }
