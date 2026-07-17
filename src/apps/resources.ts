@@ -64,16 +64,21 @@ function eduSharingOrigin(): string {
 }
 
 /**
- * App identity domain advertised as `_meta.ui.domain` / `openai/widgetDomain`.
- * Required and unique per app at plugin submission; ChatGPT renders the widget
- * under `<domain>.web-sandbox.oaiusercontent.com`. Defaults to the edu-sharing
- * origin (single-operator deployment) and is overridable via WLO_WIDGET_DOMAIN
- * when the app identity differs from the data host (e.g. a dedicated
- * mcp.wirlernenonline.de). Read at call time so per-request servers and tests
- * see the current environment.
+ * App identity domain for the ChatGPT plugin submission (`ui.domain` +
+ * `openai/widgetDomain`); ChatGPT renders the widget under
+ * `<domain>.web-sandbox.oaiusercontent.com`.
+ *
+ * The STANDARD `ui.domain` key is only emitted when WLO_WIDGET_DOMAIN is
+ * explicitly set: Claude's MCP-Apps host validates the field against its OWN
+ * sandbox format (`{hash}.claudemcpcontent.com`) and rejects the whole widget
+ * for foreign values (live-found 2026-07-17). The vendor-prefixed
+ * `openai/widgetDomain` alias is always emitted (non-ChatGPT hosts ignore
+ * `openai/*` keys) so ChatGPT dev mode keeps working without configuration.
+ * Read at call time so per-request servers and tests see the current env.
  */
-function widgetDomain(): string {
-  return (process.env['WLO_WIDGET_DOMAIN'] ?? '').trim() || eduSharingOrigin();
+function widgetDomain(): { explicit: string | undefined; alias: string } {
+  const explicit = (process.env['WLO_WIDGET_DOMAIN'] ?? '').trim() || undefined;
+  return { explicit, alias: explicit ?? eduSharingOrigin() };
 }
 
 /**
@@ -90,12 +95,13 @@ export function widgetResourceMeta(name?: string): Record<string, unknown> {
   return {
     ui: {
       prefersBorder: true,
-      domain,
+      // Standard key only when explicitly configured (see widgetDomain).
+      ...(domain.explicit ? { domain: domain.explicit } : {}),
       csp: { connectDomains: domains, resourceDomains: domains, frameDomains: [] },
       ...(description ? { description } : {}),
     },
     'openai/widgetPrefersBorder': true,
-    'openai/widgetDomain': domain,
+    'openai/widgetDomain': domain.alias,
     'openai/widgetCSP': {
       connect_domains: domains,
       resource_domains: domains,

@@ -1,9 +1,34 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { connectedClient, installFetchMock, makeNode } from './fetchMock.js';
+import { connectedClient, installFetchMock, makeNode, toolText } from './fetchMock.js';
 
 const EMPTY_SEARCH = () => ({ json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } });
+
+test('search_wlo_content: a string fileSize from the live API must not fail output validation', async () => {
+  // Regression (live Claude session 2026-07-17): edu-sharing sends `size` as a
+  // string; structuredContent then violated the declared outputSchema and the
+  // host rejected the ENTIRE tool result ("Expected number, received string").
+  const node = { ...makeNode('sized-1', 'PDF Arbeitsblatt'), size: '82944' as unknown as number };
+  const mock = installFetchMock((url) => {
+    if (url.includes('/ngsearch')) return { json: { nodes: [node], pagination: { total: 1, from: 0, count: 1 } } };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'search_wlo_content',
+      arguments: { query: 'arbeitsblatt', maxResults: 3 },
+    });
+    assert.notEqual(result.isError, true, `tool must not fail: ${toolText(result)}`);
+    const sc = result.structuredContent as { results: Array<{ fileSize: number }> };
+    assert.equal(sc.results[0].fileSize, 82944);
+    assert.equal(typeof sc.results[0].fileSize, 'number');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
 
 function queryMetaOf(result: unknown): any {
   const parts = (result as { content?: Array<{ type: string; text?: string }> }).content ?? [];

@@ -132,8 +132,9 @@ export interface WloNode {
   mimetype?: string;
   /** Coarse mediatype label, e.g. `file-pdf`, `file-video`. */
   mediatype?: string;
-  /** File size in bytes (only on file nodes with binary content). */
-  size?: number;
+  /** File size in bytes (only on file nodes with binary content). The live
+   *  API serialises this as a STRING — consumers must coerce (formatter). */
+  size?: number | string;
   /** Direct binary download URL — works without auth; null if no binary content. */
   downloadUrl?: string | null;
   properties?: Record<string, string[]>;

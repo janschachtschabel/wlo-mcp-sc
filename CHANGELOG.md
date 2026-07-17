@@ -9,6 +9,25 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed (live Claude session findings, 2026-07-17)
+- **`fileSize` violated our own outputSchema (MCP conformance):** the live
+  edu-sharing API serialises `node.size` as a STRING; the formatter passed it
+  through while the declared schema says `number`. Spec-compliant hosts
+  (Claude) validate `structuredContent` against `outputSchema` and rejected the
+  ENTIRE tool result ("Expected number, received string") whenever a hit
+  carried a binary size — `search_wlo_content`/`search_wlo_all` failed on real
+  data. Root-cause fix in the formatter (coerce once at the source; unparseable
+  → 0), `WloNode.size` typed honestly (`number | string`), regression tests at
+  unit and tool level. Mocks had never set `size`, which is why 394 green tests
+  missed it — exactly the "live data shapes" gate the audit kept open.
+- **Standard `ui.domain` no longer breaks Claude's widget rendering:** Claude's
+  MCP-Apps host validates `ui.domain` against its own sandbox format
+  (`{hash}.claudemcpcontent.com`) and rejected our value ("Invalid ui.domain
+  format"). The standard key is now emitted only when `WLO_WIDGET_DOMAIN` is
+  explicitly set (ChatGPT plugin submission needs it); the vendor-prefixed
+  `openai/widgetDomain` alias is always emitted and ignored by other hosts.
+  Docs updated (README EN+DE, `.env.example`).
+
 ### Fixed (CI green on the runtime we ship, 2026-07-17)
 - **`npm test` no longer depends on the Node version.** The script passed a glob
   (`--test "tests/*.test.ts"`); glob support in the test runner only arrived

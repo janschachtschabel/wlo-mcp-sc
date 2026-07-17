@@ -30,12 +30,18 @@ test('computeWidgetUri is content-addressed (stable per content, changes on edit
 
 test('widgetResourceMeta whitelists the configured edu-sharing origin in its CSP', () => {
   const meta = widgetResourceMeta() as {
-    ui: { domain: string; csp: { connectDomains: string[]; resourceDomains: string[] } };
+    ui: { domain?: string; csp: { connectDomains: string[]; resourceDomains: string[] } };
+    'openai/widgetDomain'?: string;
   };
   // Default WLO_REPOSITORY_URL is https://redaktion.openeduhub.net/edu-sharing.
-  assert.equal(meta.ui.domain, 'https://redaktion.openeduhub.net');
   assert.ok(meta.ui.csp.connectDomains.includes('https://redaktion.openeduhub.net'));
   assert.ok(meta.ui.csp.resourceDomains.includes('https://redaktion.openeduhub.net'));
+  // Claude's MCP-Apps host validates `ui.domain` against its OWN sandbox format
+  // and rejects the whole widget for foreign values (live-found 2026-07-17) —
+  // so the STANDARD key must stay absent unless explicitly configured for a
+  // ChatGPT plugin submission. The vendor-prefixed alias is ignored by Claude.
+  assert.ok(!('domain' in meta.ui), 'ui.domain must be absent by default');
+  assert.equal(meta['openai/widgetDomain'], 'https://redaktion.openeduhub.net');
 });
 
 test('widgetResourceMeta carries a per-widget description (audit A-2)', () => {

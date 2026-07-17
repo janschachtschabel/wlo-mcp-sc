@@ -68,6 +68,19 @@ export interface FormattedNode {
   compendiumText?: string;
 }
 
+/**
+ * `node.size` arrives as a STRING from the live edu-sharing API (the JSON
+ * serialises byte counts quoted) while the declared outputSchema — and every
+ * consumer — expects a number. MCP hosts (Claude) validate structuredContent
+ * against the schema and reject the whole tool result on a mismatch, so the
+ * coercion must happen here at the source. Unparseable → 0 ("unknown", the
+ * existing absent-value semantics), never NaN.
+ */
+function toFileSize(size: number | string | undefined): number {
+  const n = typeof size === 'string' ? Number(size) : size ?? 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
 function first(arr: string[] | undefined): string {
   return arr?.[0] ?? '';
 }
@@ -172,7 +185,7 @@ export function formatNode(node: WloNode): FormattedNode {
     previewUrl:           node.preview?.url ?? '',
     previewIsIcon:        node.preview?.isIcon ?? false,
     mimeType:             node.mimetype ?? '',
-    fileSize:             node.size ?? 0,
+    fileSize:             toFileSize(node.size),
     // Licenses don't have a server-side _DISPLAYNAME — keep local map.
     license:              labelFromUri(first(p['ccm:commonlicense_key']), 'license') || '',
     publisher:            first(p['ccm:oeh_publisher_combined']) || '',

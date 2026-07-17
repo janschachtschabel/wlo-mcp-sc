@@ -20,6 +20,24 @@ const contentNode: WloNode = {
   },
 };
 
+test('formatNode: fileSize is always a NUMBER, even when the live API sends a string', () => {
+  // Live edu-sharing serialises `size` as a string ("82944"); the declared
+  // outputSchema says z.number(), and MCP hosts (Claude) reject the whole tool
+  // result when structuredContent violates the schema (live-found 2026-07-17).
+  const stringSize = formatNode({ ...contentNode, size: '82944' as unknown as number });
+  assert.equal(stringSize.fileSize, 82944);
+  assert.equal(typeof stringSize.fileSize, 'number');
+
+  const numberSize = formatNode({ ...contentNode, size: 1024 });
+  assert.equal(numberSize.fileSize, 1024);
+
+  const garbage = formatNode({ ...contentNode, size: 'kaputt' as unknown as number });
+  assert.equal(garbage.fileSize, 0, 'unparseable size degrades to 0, never NaN/string');
+
+  const absent = formatNode(contentNode);
+  assert.equal(absent.fileSize, 0);
+});
+
 test('formatNode: maps content node fields', () => {
   const f = formatNode(contentNode);
   assert.equal(f.nodeId, 'node-1');

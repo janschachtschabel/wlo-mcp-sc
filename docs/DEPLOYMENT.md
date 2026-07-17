@@ -21,7 +21,7 @@ a correctly configured reverse proxy matters.
 ## 2. Quick start
 
 ```bash
-git clone <your fork> && cd wlo-mcp-server
+git clone https://github.com/janschachtschabel/wlo-mcp-sc.git && cd wlo-mcp-sc
 cp .env.example .env          # optional — defaults work without it
 docker compose up -d --build
 curl localhost:3000/health    # -> {"status":"ok","server":"wlo-mcp","version":"1.0.0"}
@@ -41,7 +41,7 @@ tracked compose file. The full list with defaults is in
 |----------|---------|---------|
 | `WLO_REPOSITORY_URL` | `https://redaktion.openeduhub.net/edu-sharing` | Upstream edu-sharing repository (prod; set to the staging host if needed). |
 | `MCP_SSE` | `1` | `1` = real SSE streaming (needed by ChatGPT). `0` = single-JSON responses. |
-| `TRUST_PROXY` | `1` | Trust the first `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
+| `TRUST_PROXY` | `1` | Take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
 | `RATE_LIMIT_RPM` | `120` | Per-IP requests/min on `/mcp` (`0` disables). |
 | `API_RATE_LIMIT_RPM` | `30` | Per-IP requests/min on the public `/api/*` surface. |
 | `WLO_FETCH_TIMEOUT_MS` | `10000` | Per-upstream-request timeout. |
