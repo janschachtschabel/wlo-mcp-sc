@@ -11,7 +11,7 @@
  * (DOM globals + host bridge); behaviour pinned by source-level tests.
  */
 
-import { renderBrowse } from './render.js';
+import { renderBrowse, askFollowUpPrompt } from './render.js';
 import { browseReducer, initialBrowseState, type BrowseState } from './state.js';
 import { resolveLocale, t } from '../shared/strings.js';
 import { createHost } from '../shared/host.js';
@@ -77,9 +77,11 @@ document.addEventListener('click', event => {
   // calls the tool and renders a fresh card (no in-widget fetch).
   const ask = el?.closest?.('.wlo-tree__ask');
   if (ask) {
+    // Pass the nodeId (not just the title): the content tools resolve a
+    // collection by id — a title-only prompt made the model ask for a Node ID.
+    const id = ask.getAttribute('data-node-id') ?? '';
     const title = ask.getAttribute('data-node-title') ?? '';
-    const locale = resolveLocale(host.locale());
-    host.sendFollowUp(`${t(locale, 'askPromptPrefix')} ${t(locale, 'quoteOpen')}${title}${t(locale, 'quoteClose')}`);
+    host.sendFollowUp(askFollowUpPrompt(title, id, resolveLocale(host.locale())));
     return;
   }
 

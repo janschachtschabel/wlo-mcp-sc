@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderBrowse } from '../src/apps/widgets/browse/render.js';
+import { renderBrowse, askFollowUpPrompt } from '../src/apps/widgets/browse/render.js';
 import { initialBrowseState } from '../src/apps/widgets/browse/state.js';
 
 function coll(id: string, title = id): any {
@@ -42,13 +42,22 @@ test('renderBrowse renders loaded children under an expanded node with aria-expa
   assert.match(html, /<div class="wlo-tree__children" id="wlo-region-a">/);
 });
 
-test('renderBrowse offers a follow-up button on childless collections — only when the host supports it', () => {
-  const state = { ...initialBrowseState(), roots: [coll('b', 'Biologie')] };
+test('renderBrowse offers a follow-up button carrying BOTH id and title (id is what the tool needs)', () => {
+  const state = { ...initialBrowseState(), roots: [coll('b-123', 'Biologie')] };
   const withFollowUp = renderBrowse(state, 'de', { canFollowUp: true });
   assert.match(withFollowUp, /wlo-tree__ask/, 'follow-up button rendered');
-  assert.match(withFollowUp, /data-node-title="Biologie"/, 'button carries the title for the follow-up prompt');
+  assert.match(withFollowUp, /data-node-title="Biologie"/, 'button carries the title');
+  assert.match(withFollowUp, /data-node-id="b-123"/, 'button carries the nodeId — the tool resolves by id, not title');
   // Without host support the button would be dead — it must not render.
   assert.doesNotMatch(renderBrowse(state, 'de'), /wlo-tree__ask/);
+});
+
+test('askFollowUpPrompt embeds the nodeId and names the tool so the model can act without asking for an id', () => {
+  const p = askFollowUpPrompt('Biologie', 'b-123', 'de');
+  assert.match(p, /Biologie/, 'human title for context');
+  assert.match(p, /b-123/, 'the nodeId the tool needs (the bug: it was missing)');
+  assert.match(p, /get_collection_contents/, 'names the tool that resolves the collection by nodeId');
+  assert.match(askFollowUpPrompt('X', 'y', 'en'), /get_collection_contents/, 'EN variant too');
 });
 
 test('renderBrowse drops dangerous URL schemes in open and leaf links', () => {

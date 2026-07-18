@@ -93,6 +93,14 @@ Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts
   `loading`/`loadError` removed from both locales (zero usages verified) —
   all three widget bundles shrank measurably.
 
+### Fixed (browse "Inhalte anzeigen" asked for a Node ID, 2026-07-17)
+- The follow-up button injected a title-only message ("Zeige mir die Inhalte der
+  WLO-Sammlung „X""), so the model had no nodeId and answered that it needs one
+  (live). The prompt now embeds the nodeId and names the tool
+  (`askFollowUpPrompt`, pure + unit-tested): "… (nodeId: <id>). Rufe dazu
+  get_collection_contents mit dieser nodeId auf." The button already carried
+  `data-node-id`; the click handler now passes it through.
+
 ### Changed (browse widget redesigned as a STATIC pre-expanded tree, 2026-07-17)
 - **No more in-widget tool calls — the flicker class is eliminated by design**
   (user-approved). ChatGPT mirrors widget-initiated `callTool` results back as

@@ -21,6 +21,19 @@ export interface BrowseRenderOptions {
   canFollowUp?: boolean;
 }
 
+/**
+ * The follow-up user message the "Inhalte anzeigen" button injects. It MUST
+ * carry the nodeId (the tools resolve a collection by id, not title) and name
+ * the tool, else the model answers "I need a Node ID" (live 2026-07-17). The
+ * title is only human context.
+ */
+export function askFollowUpPrompt(title: string, nodeId: string, locale: Locale): string {
+  return (
+    `${t(locale, 'askPromptPrefix')} ${t(locale, 'quoteOpen')}${title}${t(locale, 'quoteClose')} ` +
+    `(nodeId: ${nodeId}). ${t(locale, 'askPromptTool')}`
+  );
+}
+
 function openLink(node: BrowseNode, locale: Locale): string {
   const href = safeHref(node.url || node.topicPageUrl || node.contentUrl);
   if (!href) return '';

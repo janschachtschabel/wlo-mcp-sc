@@ -1,0 +1,3 @@
+cd ~/wlo-mcp-sc
+git pull
+docker compose up -d --build

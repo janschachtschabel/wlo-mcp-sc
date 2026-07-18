@@ -31,6 +31,7 @@ const STRINGS = {
     openTopicPage: 'Zur Themenseite',
     askContents: 'Inhalte anzeigen',
     askPromptPrefix: 'Zeige mir die Inhalte der WLO-Sammlung',
+    askPromptTool: 'Rufe dazu get_collection_contents mit dieser nodeId auf.',
   },
   en: {
     quoteOpen: '“',
@@ -54,6 +55,7 @@ const STRINGS = {
     openTopicPage: 'Open topic page',
     askContents: 'Show contents',
     askPromptPrefix: 'Show me the contents of the WLO collection',
+    askPromptTool: 'Call get_collection_contents with this nodeId.',
   },
 } as const;
 
