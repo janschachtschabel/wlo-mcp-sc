@@ -192,6 +192,23 @@ function loadWidgets(): WidgetResource[] {
 }
 
 /**
+ * Deploy fingerprint: `widget name → 8-hex content hash` of the loaded builds.
+ * Exposed on `/health` so "is the fix actually deployed?" is one curl — the
+ * content-addressed hash changes with every widget/meta change, which made it
+ * the de-facto deploy marker during live debugging (2026-07-17: two test
+ * rounds ran against stale builds before this existed). Empty when widgets
+ * are not built.
+ */
+export function widgetBuildIds(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const res of loadWidgets()) {
+    const m = res.uri.match(/-([0-9a-f]{8})\.html$/);
+    if (m?.[1]) out[res.name] = m[1];
+  }
+  return out;
+}
+
+/**
  * Register every built widget resource and return a `name → uri` map for the
  * tool seam. A widget whose HTML has not been built (e.g. tests that skip
  * `npm run build:widgets`) is skipped gracefully: its tool simply omits the

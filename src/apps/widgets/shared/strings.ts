@@ -20,8 +20,6 @@ const STRINGS = {
     noResults: 'Keine Treffer gefunden.',
     resultsFor: 'Ergebnisse für',
     subjectPortals: 'Fachportale',
-    loading: 'Wird geladen …',
-    loadError: 'Inhalt konnte nicht geladen werden.',
     back: 'Zurück',
     open: 'Öffnen',
     badgeTopicPage: 'Themenseite',
@@ -31,6 +29,8 @@ const STRINGS = {
     sourceLabel: 'Quelle',
     openContent: 'Inhalt öffnen',
     openTopicPage: 'Zur Themenseite',
+    askContents: 'Inhalte anzeigen',
+    askPromptPrefix: 'Zeige mir die Inhalte der WLO-Sammlung',
   },
   en: {
     quoteOpen: '“',
@@ -43,8 +43,6 @@ const STRINGS = {
     noResults: 'No results found.',
     resultsFor: 'Results for',
     subjectPortals: 'Subject portals',
-    loading: 'Loading …',
-    loadError: 'Content could not be loaded.',
     back: 'Back',
     open: 'Open',
     badgeTopicPage: 'Topic page',
@@ -54,6 +52,8 @@ const STRINGS = {
     sourceLabel: 'Source',
     openContent: 'Open content',
     openTopicPage: 'Open topic page',
+    askContents: 'Show contents',
+    askPromptPrefix: 'Show me the contents of the WLO collection',
   },
 } as const;
 

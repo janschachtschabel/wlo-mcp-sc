@@ -16,6 +16,7 @@ import { readBodyWithLimit } from './read-body.js';
 import type { streamableHttpOptions } from './mcp-transport.js';
 import { handleRestRequest } from './rest/routes.js';
 import { handleStaticRequest } from './rest/static.js';
+import { widgetBuildIds } from './apps/resources.js';
 
 export interface HttpAppOptions {
   /** Per-IP limiter for the MCP endpoint (RATE_LIMIT_RPM). */
@@ -48,10 +49,12 @@ export function createHttpRequestHandler(
       return;
     }
 
-    // Health check
+    // Health check — carries the widget build hashes as the DEPLOY FINGERPRINT
+    // (content-addressed → changes with every widget/meta change), so whether
+    // a fix is actually live is one curl instead of a byte-diff probe.
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: '1.0.0' }));
+      res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: '1.0.0', widgets: widgetBuildIds() }));
       return;
     }
 

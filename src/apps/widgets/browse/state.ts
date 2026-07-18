@@ -1,11 +1,15 @@
 /**
- * browse/state.ts – Pure state reducer for the W2 interactive browse widget.
+ * browse/state.ts – Pure state for the STATIC browse tree.
  *
- * The widget lazily drills into the collection tree: expanding a not-yet-loaded
- * node marks it `loading`, which signals the browser entry (`main.ts`) to call
- * `browse_collection_tree` and dispatch `loaded` (or `error`) with the result.
- * Keeping this logic pure makes the drill-down deterministic and unit-testable;
- * `main.ts` owns only the DOM + `window.openai` glue. DOM-free.
+ * Redesigned 2026-07-17 (user-approved): the widget no longer fetches inside
+ * the iframe. ChatGPT mirrors widget-initiated `callTool` results back as new
+ * toolOutput (and may re-mount the frame), which reset the tree on every
+ * drill-down — live-observed as flicker + vanishing expansions, and not
+ * fixable without depending on undocumented host behaviour. Instead the tree
+ * renders PRE-EXPANDED from the data the tool call already delivered
+ * (nested `children`, e.g. browse_collection_tree depth=2); toggles are purely
+ * local, and deeper levels are reached via a follow-up-message button so the
+ * MODEL runs the next tool call and renders a fresh card. DOM-free.
  */
 
 import type { BrowseNode } from '../shared/types.js';
@@ -15,84 +19,52 @@ export interface BrowseState {
   rootLabel: string;
   /** Top-level nodes currently shown. */
   roots: BrowseNode[];
-  /** nodeIds on the open path. */
+  /** nodeIds currently open (local UI state only). */
   expanded: string[];
-  /** Lazily fetched children, keyed by parent nodeId. */
+  /** Children per parent nodeId, seeded once from the nested tool output. */
   childrenById: Record<string, BrowseNode[]>;
-  /** nodeId whose children are being fetched (drives the spinner + the fetch). */
-  loadingId: string | null;
 }
 
 export type BrowseAction =
-  | { type: 'init'; roots: BrowseNode[]; rootLabel?: string }
-  | { type: 'expand'; nodeId: string }
-  | { type: 'collapse'; nodeId: string }
-  | { type: 'loaded'; nodeId: string; children: BrowseNode[] }
-  | { type: 'error'; nodeId: string };
+  | { type: 'init'; roots: BrowseNode[]; rootLabel?: string; savedExpanded?: string[] }
+  | { type: 'toggle'; nodeId: string };
 
 export function initialBrowseState(): BrowseState {
-  return { rootLabel: '', roots: [], expanded: [], childrenById: {}, loadingId: null };
+  return { rootLabel: '', roots: [], expanded: [], childrenById: {} };
 }
 
-/**
- * True when a toolOutput update is the ECHO of a drill-down THIS widget
- * requested itself. ChatGPT mirrors a widget-initiated `callTool` result back
- * as a new toolOutput (openai:set_globals, live-observed 2026-07-17); treating
- * that echo as a fresh seed re-initialised — and visibly reset — the whole
- * tree. `browse_collection_tree` output carries `parent` = the requested
- * nodeId, so an output whose parent is in the widget's own-loads set is an
- * echo: keep the tree state, never re-init.
- */
-export function isOwnDrilldownEcho(output: unknown, selfLoaded: ReadonlySet<string>): boolean {
-  const parent = (output as { parent?: unknown } | undefined)?.parent;
-  return typeof parent === 'string' && selfLoaded.has(parent);
+/** Walk nested `children` into the flat map; returns every parent id found. */
+function collectChildren(nodes: BrowseNode[], into: Record<string, BrowseNode[]>): string[] {
+  const parents: string[] = [];
+  for (const n of nodes) {
+    const kids = n.children ?? [];
+    if (kids.length && n.nodeId) {
+      into[n.nodeId] = kids;
+      parents.push(n.nodeId, ...collectChildren(kids, into));
+    }
+  }
+  return parents;
 }
 
 export function browseReducer(state: BrowseState, action: BrowseAction): BrowseState {
   switch (action.type) {
-    case 'init':
-      return {
-        rootLabel: action.rootLabel ?? '',
-        roots: action.roots,
-        expanded: [],
-        childrenById: {},
-        loadingId: null,
-      };
-
-    case 'expand': {
-      const expanded = state.expanded.includes(action.nodeId)
-        ? state.expanded
-        : [...state.expanded, action.nodeId];
-      // Only trigger a fetch when this node's children are not cached yet.
-      const needsLoad = state.childrenById[action.nodeId] === undefined;
-      return { ...state, expanded, loadingId: needsLoad ? action.nodeId : state.loadingId };
+    case 'init': {
+      const childrenById: Record<string, BrowseNode[]> = {};
+      const parents = collectChildren(action.roots, childrenById);
+      // Pre-expanded by default (an opened tree, per the design decision); the
+      // user's own saved collapse choices (widget state) win when present.
+      const expanded = action.savedExpanded
+        ? action.savedExpanded.filter(id => parents.includes(id))
+        : parents;
+      return { rootLabel: action.rootLabel ?? '', roots: action.roots, expanded, childrenById };
     }
 
-    case 'collapse':
-      return {
-        ...state,
-        expanded: state.expanded.filter(id => id !== action.nodeId),
-        loadingId: state.loadingId === action.nodeId ? null : state.loadingId,
-      };
-
-    case 'loaded': {
+    case 'toggle': {
       const expanded = state.expanded.includes(action.nodeId)
-        ? state.expanded
+        ? state.expanded.filter(id => id !== action.nodeId)
         : [...state.expanded, action.nodeId];
-      return {
-        ...state,
-        childrenById: { ...state.childrenById, [action.nodeId]: action.children },
-        loadingId: state.loadingId === action.nodeId ? null : state.loadingId,
-        expanded,
-      };
+      return { ...state, expanded };
     }
-
-    case 'error':
-      return {
-        ...state,
-        expanded: state.expanded.filter(id => id !== action.nodeId),
-        loadingId: state.loadingId === action.nodeId ? null : state.loadingId,
-      };
 
     default:
       return state;

@@ -24,7 +24,11 @@ a correctly configured reverse proxy matters.
 git clone https://github.com/janschachtschabel/wlo-mcp-sc.git && cd wlo-mcp-sc
 cp .env.example .env          # optional — defaults work without it
 docker compose up -d --build
-curl localhost:3000/health    # -> {"status":"ok","server":"wlo-mcp","version":"1.0.0"}
+curl localhost:3000/health    # -> {"status":"ok",...,"widgets":{"browse":"<hash>",...}}
+# `widgets` is the DEPLOY FINGERPRINT: the content-addressed build hash per
+# widget. After a deploy, compare it with the local build (the hash in each
+# dist-widgets file's ui:// URI, printed by `npm run build`) — if they match,
+# the new code is provably live; no byte-diff probing needed.
 ```
 
 The container listens on port 3000 inside; compose publishes it on

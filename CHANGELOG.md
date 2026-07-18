@@ -82,6 +82,36 @@ what the live chat tests showed:
   unclear", never invent hits.
 Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts`.
 
+### Added (deploy fingerprint on /health + audit quick wins, 2026-07-17)
+- **`/health` now carries `widgets: { <name>: <8-hex build hash> }`** — the
+  content-addressed widget hashes as a deploy fingerprint (self-hosted AND
+  Vercel handler). Whether a fix is actually live is now one curl compared
+  against the local build, replacing the manual byte-diff probe that two live
+  test rounds were lost without (audit roadmap #3). Tolerant when widgets are
+  not built (empty map).
+- Audit quick wins: dead `.wlo-tree__loading` CSS removed; orphaned i18n keys
+  `loading`/`loadError` removed from both locales (zero usages verified) —
+  all three widget bundles shrank measurably.
+
+### Changed (browse widget redesigned as a STATIC pre-expanded tree, 2026-07-17)
+- **No more in-widget tool calls — the flicker class is eliminated by design**
+  (user-approved). ChatGPT mirrors widget-initiated `callTool` results back as
+  new toolOutput (and may re-mount the frame); the earlier echo-guard fix never
+  got a valid live test (byte-probes showed the old build was still deployed),
+  and rather than keep fighting undocumented host behaviour the widget now
+  renders PRE-EXPANDED from the data the tool call already delivered (nested
+  `children`, e.g. `browse_collection_tree` depth=2). Toggles are purely local;
+  collapse choices persist via widget state.
+- **Deeper levels via follow-up buttons:** childless collections render an
+  "Inhalte anzeigen" button that injects a follow-up user message
+  (`sendFollowUpMessage`, ChatGPT extension) — the MODEL runs the next tool
+  call and renders a fresh card. Capability-gated: hosts without the API
+  (standard MCP-Apps bridge) get no dead buttons, the ↗ links remain.
+- Reducer shrank to init/toggle (loading/error states gone); `isOwnDrilldownEcho`
+  removed as dead. Old drill-down tests deliberately replaced by the new
+  contract's tests + source pins (`no callTool in browse main.ts` is now a
+  hard regression guard; focus({preventScroll}) pin unchanged).
+
 ### Fixed (browse tree reset/flicker on expand in ChatGPT, 2026-07-17)
 - **Expanding a subcategory no longer resets the tree.** Root cause: ChatGPT
   mirrors a WIDGET-initiated `callTool` result back as a new toolOutput

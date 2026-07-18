@@ -12,14 +12,19 @@ function coll(id: string, title = id): any {
   };
 }
 
-test('renderBrowse shows the label and a collapsed disclosure toggle per root collection', () => {
-  const state = { ...initialBrowseState(), rootLabel: 'Fachportale', roots: [coll('a', 'Mathematik'), coll('b', 'Biologie')] };
+test('renderBrowse shows the label; only nodes WITH children get a disclosure toggle', () => {
+  const state = {
+    ...initialBrowseState(),
+    rootLabel: 'Fachportale',
+    roots: [coll('a', 'Mathematik'), coll('b', 'Biologie')],
+    childrenById: { a: [coll('a1', 'Algebra')] },
+  };
   const html = renderBrowse(state, 'de');
   assert.match(html, /Fachportale/);
-  assert.match(html, /data-node-id="a"/);
-  assert.match(html, /data-node-id="b"/);
-  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, /class="wlo-tree__toggle"[^>]*aria-expanded="false"[^>]*data-node-id="a"/, 'child-bearing node gets a collapsed toggle');
+  assert.doesNotMatch(html, /wlo-tree__toggle"[^>]*data-node-id="b"/, 'childless node gets NO toggle (nothing local to expand)');
   assert.match(html, /Mathematik/);
+  assert.match(html, /Biologie/);
 });
 
 test('renderBrowse renders loaded children under an expanded node with aria-expanded=true', () => {
@@ -37,9 +42,13 @@ test('renderBrowse renders loaded children under an expanded node with aria-expa
   assert.match(html, /<div class="wlo-tree__children" id="wlo-region-a">/);
 });
 
-test('renderBrowse shows a loading indicator while a node is fetching', () => {
-  const state = { ...initialBrowseState(), roots: [coll('a')], expanded: ['a'], loadingId: 'a' };
-  assert.match(renderBrowse(state, 'de'), /Wird geladen/);
+test('renderBrowse offers a follow-up button on childless collections — only when the host supports it', () => {
+  const state = { ...initialBrowseState(), roots: [coll('b', 'Biologie')] };
+  const withFollowUp = renderBrowse(state, 'de', { canFollowUp: true });
+  assert.match(withFollowUp, /wlo-tree__ask/, 'follow-up button rendered');
+  assert.match(withFollowUp, /data-node-title="Biologie"/, 'button carries the title for the follow-up prompt');
+  // Without host support the button would be dead — it must not render.
+  assert.doesNotMatch(renderBrowse(state, 'de'), /wlo-tree__ask/);
 });
 
 test('renderBrowse drops dangerous URL schemes in open and leaf links', () => {

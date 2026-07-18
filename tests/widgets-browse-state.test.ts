@@ -1,79 +1,56 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { initialBrowseState, browseReducer, isOwnDrilldownEcho } from '../src/apps/widgets/browse/state.js';
+import { initialBrowseState, browseReducer } from '../src/apps/widgets/browse/state.js';
 
-function coll(id: string): any {
+// REDESIGN 2026-07-17 (user-approved): the browse widget no longer fetches
+// inside the iframe. ChatGPT mirrors widget-initiated callTool results back as
+// new toolOutput (and may re-mount the frame), which reset the tree on every
+// drill-down — live-observed as flicker + vanishing expansions across several
+// fixes. The tree now renders PRE-EXPANDED from the data the tool call already
+// delivered (nested `children`, e.g. browse_collection_tree depth=2); toggles
+// are purely local; deeper levels go through a follow-up-message button that
+// lets the MODEL run the next tool call and render a fresh card.
+
+function coll(id: string, title = id, children?: any[]): any {
   return {
-    nodeId: id, title: id, description: '', disciplines: [], educationalContexts: [],
+    nodeId: id, title, description: '', disciplines: [], educationalContexts: [],
     learningResourceTypes: [], url: '', contentUrl: '', previewUrl: '', previewIsIcon: true,
     license: '', publisher: '', nodeType: 'collection', topicPageUrl: '',
+    ...(children ? { children } : {}),
   };
 }
 
-// Live failure 2026-07-17 (ChatGPT): expanding a node made the tree flicker
-// and reset. ChatGPT mirrors a WIDGET-initiated callTool result back as a new
-// toolOutput (openai:set_globals); onUpdate treated it as a fresh seed and
-// re-initialised the whole tree. An output whose `parent` is a nodeId THIS
-// widget loaded itself is an echo — keep the tree state, never re-init.
-test('isOwnDrilldownEcho: recognises the echo of an own drill-down, not a fresh seed', () => {
-  const self = new Set(['node-1']);
-  assert.equal(isOwnDrilldownEcho({ parent: 'node-1', results: [] }, self), true, 'own drill-down echo');
-  assert.equal(isOwnDrilldownEcho({ parent: 'other', results: [] }, self), false, 'foreign drill-down = new seed');
-  assert.equal(isOwnDrilldownEcho({ results: [] }, self), false, 'portal list (no parent) = new seed');
-  assert.equal(isOwnDrilldownEcho(undefined, self), false, 'no output');
-});
-
-test('browse main.ts wires the echo guard (source pin — main.ts is DOM glue, verified live)', () => {
-  const src = readFileSync(fileURLToPath(new URL('../src/apps/widgets/browse/main.ts', import.meta.url)), 'utf8');
-  assert.match(src, /isOwnDrilldownEcho/, 'onUpdate must consult the echo guard before re-initialising');
-});
-
-test('init seeds roots + label and clears any drill-down state', () => {
-  const dirty = { ...initialBrowseState(), expanded: ['x'], loadingId: 'x', childrenById: { x: [] } };
-  const s = browseReducer(dirty, { type: 'init', roots: [coll('a'), coll('b')], rootLabel: 'Fachportale' });
-  assert.deepEqual(s.roots.map(r => r.nodeId), ['a', 'b']);
+test('init seeds nested children into the flat map and PRE-EXPANDS every parent', () => {
+  const roots = [coll('a', 'Mathematik', [coll('a1', 'Algebra', [coll('a1x', 'Terme')]), coll('a2', 'Geometrie')])];
+  const s = browseReducer(initialBrowseState(), { type: 'init', roots, rootLabel: 'Fachportale' });
   assert.equal(s.rootLabel, 'Fachportale');
-  assert.deepEqual(s.expanded, []);
-  assert.equal(s.loadingId, null);
-  assert.deepEqual(s.childrenById, {});
-});
-
-test('expanding an unloaded node marks it expanded AND loading (main.ts then fetches)', () => {
-  const s = browseReducer(initialBrowseState(), { type: 'expand', nodeId: 'a' });
-  assert.deepEqual(s.expanded, ['a']);
-  assert.equal(s.loadingId, 'a');
-});
-
-test('loaded stores children, clears loading, keeps the node expanded', () => {
-  let s = browseReducer(initialBrowseState(), { type: 'expand', nodeId: 'a' });
-  s = browseReducer(s, { type: 'loaded', nodeId: 'a', children: [coll('a1'), coll('a2')] });
   assert.deepEqual(s.childrenById['a']?.map(c => c.nodeId), ['a1', 'a2']);
-  assert.equal(s.loadingId, null);
-  assert.ok(s.expanded.includes('a'));
+  assert.deepEqual(s.childrenById['a1']?.map(c => c.nodeId), ['a1x']);
+  assert.ok(s.expanded.includes('a') && s.expanded.includes('a1'), 'tree opens expanded by default');
 });
 
-test('re-expanding an already-loaded node does not trigger another load', () => {
-  let s = browseReducer(initialBrowseState(), { type: 'expand', nodeId: 'a' });
-  s = browseReducer(s, { type: 'loaded', nodeId: 'a', children: [coll('a1')] });
-  s = browseReducer(s, { type: 'collapse', nodeId: 'a' });
-  s = browseReducer(s, { type: 'expand', nodeId: 'a' });
-  assert.ok(s.expanded.includes('a'));
-  assert.equal(s.loadingId, null, 'children already cached → no reload');
+test('init honours saved collapse choices (widget state) over the pre-expanded default', () => {
+  const roots = [coll('a', 'Mathematik', [coll('a1', 'Algebra')]), coll('b', 'Physik', [coll('b1', 'Optik')])];
+  const s = browseReducer(initialBrowseState(), { type: 'init', roots, savedExpanded: ['b'] });
+  assert.deepEqual(s.expanded, ['b'], 'only the saved node stays open');
 });
 
-test('collapse removes the node from the open path', () => {
-  let s = browseReducer(initialBrowseState(), { type: 'expand', nodeId: 'a' });
-  s = browseReducer(s, { type: 'collapse', nodeId: 'a' });
-  assert.deepEqual(s.expanded, []);
-});
-
-test('error on a load clears the spinner and collapses the node so it can be retried', () => {
-  let s = browseReducer(initialBrowseState(), { type: 'expand', nodeId: 'a' });
-  s = browseReducer(s, { type: 'error', nodeId: 'a' });
-  assert.equal(s.loadingId, null);
+test('toggle collapses and re-expands locally — no fetch involved', () => {
+  const roots = [coll('a', 'Mathematik', [coll('a1', 'Algebra')])];
+  let s = browseReducer(initialBrowseState(), { type: 'init', roots });
+  s = browseReducer(s, { type: 'toggle', nodeId: 'a' });
   assert.ok(!s.expanded.includes('a'));
+  s = browseReducer(s, { type: 'toggle', nodeId: 'a' });
+  assert.ok(s.expanded.includes('a'));
+  assert.deepEqual(s.childrenById['a']?.map(c => c.nodeId), ['a1'], 'children stay cached throughout');
+});
+
+// Source pins — main.ts is DOM glue (excluded from tsc, verified live):
+test('browse main.ts makes NO in-widget tool calls and wires the follow-up path', () => {
+  const src = readFileSync(fileURLToPath(new URL('../src/apps/widgets/browse/main.ts', import.meta.url)), 'utf8');
+  assert.doesNotMatch(src, /callTool/, 'in-widget drill-down is the flicker root cause — it must not come back');
+  assert.match(src, /sendFollowUp/, 'deeper levels go through the host follow-up message');
 });

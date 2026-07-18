@@ -40,12 +40,23 @@ const INITIALIZE = JSON.stringify({
   params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dispatch-test', version: '0.0.0' } },
 });
 
-test('http dispatch: GET /health → 200 ok (no rate limit)', async () => {
+test('http dispatch: GET /health → 200 ok with the deployed widget build fingerprint', async () => {
   const { server, base } = await startServer();
   try {
     const r = await fetch(`${base}/health`);
     assert.equal(r.status, 200);
-    assert.equal((await r.json() as { status: string }).status, 'ok');
+    const body = await r.json() as { status: string; widgets?: Record<string, string> };
+    assert.equal(body.status, 'ok');
+    // Deploy fingerprint (audit roadmap #3): the content-addressed widget
+    // hashes identify the running build, so "is the fix actually deployed?"
+    // is one curl instead of a byte-diff probe — two live test rounds were
+    // wasted on stale builds before this existed (2026-07-17). Tolerant when
+    // widgets are not built (fresh checkout): the field is present and every
+    // entry, if any, is an 8-hex hash.
+    assert.equal(typeof body.widgets, 'object');
+    for (const [name, hash] of Object.entries(body.widgets ?? {})) {
+      assert.match(hash, /^[0-9a-f]{8}$/, `${name} carries its build hash`);
+    }
   } finally { await close(server); }
 });
 

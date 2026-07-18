@@ -6,6 +6,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from '../src/server.js';
+import { widgetBuildIds } from '../src/apps/resources.js';
 import { log } from '../src/logger.js';
 
 /**
@@ -35,7 +36,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
 
   if (req.method === 'GET') {
-    res.status(200).json({ status: 'ok', server: 'wlo-mcp', version: '1.0.0' });
+    // Same deploy fingerprint as the self-hosted /health (widget build hashes).
+    res.status(200).json({ status: 'ok', server: 'wlo-mcp', version: '1.0.0', widgets: widgetBuildIds() });
     return;
   }
 

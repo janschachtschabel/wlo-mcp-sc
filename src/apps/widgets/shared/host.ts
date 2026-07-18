@@ -33,6 +33,10 @@ export interface WidgetHost {
   callTool(name: string, args: Record<string, unknown>): Promise<{ structuredContent?: unknown; results?: unknown }>;
   /** Persist widget-scoped state across re-renders / reloads. */
   setWidgetState(state: unknown): void;
+  /** Whether the host can inject a follow-up user message (ChatGPT extension). */
+  canFollowUp(): boolean;
+  /** Ask the host to send a follow-up user message; no-op when unsupported. */
+  sendFollowUp(prompt: string): void;
 }
 
 interface OpenAi {
@@ -41,6 +45,7 @@ interface OpenAi {
   locale?: string;
   callTool?: (name: string, args: Record<string, unknown>) => Promise<{ structuredContent?: unknown; results?: unknown }>;
   setWidgetState?: (state: unknown) => void;
+  sendFollowUpMessage?: (args: { prompt: string }) => unknown;
 }
 
 export function createHost(): WidgetHost {
@@ -106,6 +111,15 @@ export function createHost(): WidgetHost {
       // The standard MCP-Apps bridge has no state method — ui/update-model-context
       // expects model-visible `{content: […]}`, not widget state — so this is a
       // deliberate no-op there: UI state simply lives in memory for the mount.
+    },
+    canFollowUp: () => typeof oai()?.sendFollowUpMessage === 'function',
+    sendFollowUp: (prompt) => {
+      // ChatGPT-only extension: inject a follow-up USER message so the model
+      // runs the next tool call itself (the stable alternative to in-widget
+      // callTool, whose result echo reset widget state — live 2026-07-17).
+      // The standard MCP-Apps bridge has no such method → deliberate no-op;
+      // render layers must gate their buttons on canFollowUp().
+      try { oai()?.sendFollowUpMessage?.({ prompt }); } catch { /* host without support */ }
     },
     callTool: (name, args) => {
       const api = oai();
