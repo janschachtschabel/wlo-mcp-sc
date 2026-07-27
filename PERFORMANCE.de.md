@@ -160,17 +160,41 @@ Zusätzlich fragt der Eltern-Walk statt `-all-` (~59 Felder je Knoten der
 gesamten Ahnenkette) nur noch die drei tatsächlich gelesenen Felder ab, und
 `WLO_TOPIC_POOL` macht die Nebenläufigkeit dieses Fan-outs einstellbar.
 
+**Der eigentliche Fund kam beim Nachprofilieren der verbliebenen Sekunden:**
+`/parents` antwortet anonym mit **500 (AccessDenied)** für page_config-Ordner.
+`getNodeParents` stuft eine Fehlerantwort auf `[]` herunter — die
+Besitzer-Auflösung scheiterte also bei jeder Variante lautlos. Die Liste zeigte
+lauter identische „Fachportalstartseite"-Titel, keine Themenseiten-URLs, und
+als `collectionId` in Wahrheit die Varianten-ID. Mode C war nicht nur langsam,
+sondern unbrauchbar — und bezahlte dafür ~1,1 s je Variante.
+
+Ersetzt durch zwei `/metadata`-Abrufe entlang `virtual:primaryparent_nodeid`
+(Variante → page_config-Ordner → Sammlung). Dieser Endpunkt funktioniert anonym
+und kostet ~0,19 s. Zusätzlich Pool-Faktor 3 → 2, weil die Daten im Mittel nur
+1,10 Varianten je Seite tragen (108 Varianten auf 98 Seiten).
+
+Eine Eingrenzung auf eine einzelne Zielgruppen-Variante wurde geprüft und
+verworfen: 98 der 108 Varianten tragen gar keine Zielgruppe, ein serverseitiger
+`teacher`-Filter liefert 3 Varianten für 3 von 98 Seiten.
+
 Gemessen (lokal gegen Produktions-Repository, `scripts/measure-topic-pages.mjs`):
 
-| Aufruf | `WLO_TOPIC_POOL=10` | `WLO_TOPIC_POOL=20` |
-|---|---|---|
-| `{maxResults: 20}` | 9,9 s | 6,3 s |
-| `{maxResults: 10}` | 4,5 s | 3,0 s |
-| `{maxResults: 5}`  | 2,8 s | 1,8 s |
+| Aufruf | ursprünglich gemeldet | nach Pool/Projektion | nach `/metadata`-Fix |
+|---|---|---|---|
+| `{maxResults: 20}` | 17–19 s | 9,9 s | **3,2 s** |
+| `{maxResults: 10}` | 8,5 s | 4,5 s | **1,4 s** |
+| `{maxResults: 5}`  | 8,2 s | 2,8 s | **0,66 s** |
+| `{maxResults: 20, educationalContext}` | 3,4 s | 1,5 s | **0,55 s** |
 
-Antwortgrößen sind dabei unverändert. Dass 10 und 5 jetzt unterschiedlich viel
-kosten (vorher gemessen: 8,5 s vs. 8,2 s — beide auf der Untergrenze 50), ist
-der direkte Beleg, dass die Untergrenze weg ist.
+Alle Werte bei `WLO_TOPIC_POOL=10`; die Nutzlast ist dabei **gewachsen**, weil
+erstmals echte Titel und Links enthalten sind. Dass 10 und 5 überhaupt
+unterschiedlich viel kosten (vorher: 8,5 s vs. 8,2 s — beide auf der
+Untergrenze 50), belegt zusätzlich den Wegfall der Untergrenze.
+
+Reichweite des `/parents`-Defekts: Bei normalen Sammlungen antwortet der
+Endpunkt korrekt (200, ~0,4 s), bei Inhaltsknoten (`ccm:io`) scheitert er
+ebenfalls — was `getNodeBreadcrumb` bereits dokumentiert und abfängt. Nur der
+page_config-Fall war unentdeckt.
 
 ## Offenes Optimierungspotenzial
 

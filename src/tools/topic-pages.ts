@@ -34,14 +34,17 @@ import type { PresentedThemePage } from './topic-pages-present.js';
 import { mergeThemePages, renderThemePages } from './topic-pages-present.js';
 
 /**
- * Mode C candidate pool. Variants of ONE Themenseite (teacher / learner /
- * general) merge into a single entry, so the pool must exceed maxResults — but
- * a page carries at most those three, which bounds it at `maxResults * 3`.
+ * Mode C candidate pool. Variants of ONE Themenseite merge into a single entry,
+ * so the pool must exceed maxResults. The theoretical bound is three (one per
+ * target group), but the live data is far leaner: 108 variants across 98 pages
+ * — 92 pages carry exactly one variant, five carry two, one carries six
+ * (measured 2026-07-27, prod). Factor 2 therefore leaves ~80 % headroom over
+ * the 1.10 average, and the one-shot top-up below covers the outliers.
  * The former `max(50, maxResults * 5)` charged a 5-result request 50 variant
- * enrichments (~8 s measured, client latency report 2026-07-27); it survives
- * as the one-shot top-up for data that merges harder than the bound predicts.
+ * enrichments (~8 s measured, client latency report); it survives as that
+ * top-up for data that merges harder than the bound predicts.
  */
-const MODE_C_POOL_FACTOR = 3;
+const MODE_C_POOL_FACTOR = 2;
 const MODE_C_POOL_MIN = 10;
 const modeCTopUpPool = (maxResults: number): number => Math.max(50, maxResults * 5);
 

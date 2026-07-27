@@ -157,17 +157,40 @@ The parent walk also asks for the three fields it reads instead of `-all-` (~59
 properties for every node of the ancestor chain), and `WLO_TOPIC_POOL` makes the
 concurrency of this fan-out configurable.
 
+**The real finding surfaced while profiling the remaining seconds:** `/parents`
+answers **500 (AccessDenied)** for anonymous callers on page-config folders.
+`getNodeParents` degrades a failed response to `[]`, so the owner resolution
+failed silently for every variant. The listing showed identical
+"Fachportalstartseite" titles, no topic-page URLs, and a `collectionId` that was
+really the variant id. Mode C was not just slow but unusable — and paid ~1.1 s
+per variant for it.
+
+Replaced with two `/metadata` reads along `virtual:primaryparent_nodeid`
+(variant → page-config folder → collection). That endpoint works anonymously at
+~0.19 s. Pool factor also 3 → 2, because the data averages just 1.10 variants
+per page (108 variants across 98 pages).
+
+Narrowing the listing to a single target-group variant was evaluated and
+rejected: 98 of 108 variants carry no target group at all, and a server-side
+`teacher` filter returns 3 variants covering 3 of 98 pages.
+
 Measured (locally against the production repository, `scripts/measure-topic-pages.mjs`):
 
-| Call | `WLO_TOPIC_POOL=10` | `WLO_TOPIC_POOL=20` |
-|---|---|---|
-| `{maxResults: 20}` | 9.9 s | 6.3 s |
-| `{maxResults: 10}` | 4.5 s | 3.0 s |
-| `{maxResults: 5}`  | 2.8 s | 1.8 s |
+| Call | originally reported | after pool/projection | after the `/metadata` fix |
+|---|---|---|---|
+| `{maxResults: 20}` | 17–19 s | 9.9 s | **3.2 s** |
+| `{maxResults: 10}` | 8.5 s | 4.5 s | **1.4 s** |
+| `{maxResults: 5}`  | 8.2 s | 2.8 s | **0.66 s** |
+| `{maxResults: 20, educationalContext}` | 3.4 s | 1.5 s | **0.55 s** |
 
-Response sizes are unchanged. That 10 and 5 now cost different amounts
-(previously measured: 8.5 s vs 8.2 s — both sitting on the floor of 50) is the
-direct evidence that the floor is gone.
+All at `WLO_TOPIC_POOL=10`; the payload actually **grew**, because it now
+carries real titles and links. That 10 and 5 differ at all (previously 8.5 s vs
+8.2 s — both on the floor of 50) is additional evidence the floor is gone.
+
+Scope of the `/parents` defect: the endpoint is fine for ordinary collections
+(200, ~0.4 s) and also fails for content nodes (`ccm:io`), which
+`getNodeBreadcrumb` already documents and tolerates. Only the page-config case
+was undiagnosed.
 
 ## Open optimization potential
 

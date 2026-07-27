@@ -3,6 +3,35 @@
 Status: **implemented 2026-07-27** — P0–P5 done, P6 not built (see below).
 Trigger: latency report from the WLO-Chatbot backend (Python MCP client).
 
+## Addendum 2026-07-27 — the listing was broken, not just slow
+
+Profiling the residual ~7 s (deployed) turned up the real defect: `/parents`
+answers **500 AccessDeniedException** anonymously on page-config folders, and
+`getNodeParents` degrades that to `[]`. Every owner resolution had been failing
+silently — identical "Fachportalstartseite" titles, no `topicPageUrl`, and a
+`collectionId` that was really the variant id — while costing ~1.1 s per
+variant. Two `/metadata` reads along `virtual:primaryparent_nodeid` replace the
+walk at ~0.19 s each and actually resolve the collection.
+
+Two data findings shaped the fix:
+- A collection may own **several** page-config folders while its own
+  `ccm:page_config_ref` names only the active one (5 of 25 sampled). Requiring
+  the folder to match that ref would silently drop those pages, so ownership is
+  established by the collection carrying the property at all — the pre-existing
+  rule.
+- Variants per page average **1.10** (108 across 98 pages), so the candidate
+  pool factor dropped 3 → 2. Restricting the listing to one target group was
+  evaluated and rejected: 98 of 108 variants carry no target group, and a
+  server-side `teacher` filter covers 3 of 98 pages.
+
+Measured at `WLO_TOPIC_POOL=10`: `{maxResults: 20}` **3.2 s**,
+`{maxResults: 10}` **1.4 s**, `{maxResults: 5}` **0.66 s**, with
+`educationalContext` **0.55 s** — against 17–19 s originally reported, with a
+larger payload because the results finally carry titles and links. The
+in-memory index (option B) was consequently **not** built: the fan-out scales
+with `maxResults`, not with repository size, so it stays fast on larger
+repositories without a cache and its staleness.
+
 ## Outcome (measured, not predicted)
 
 `scripts/measure-topic-pages.mjs` against the production repository, same

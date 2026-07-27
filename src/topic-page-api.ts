@@ -17,7 +17,6 @@ import {
   buildTopicPageUrl,
   getChildCollections,
   getNodeMetadata,
-  getNodeParents,
   stripStoreRef,
 } from './wlo-api.js';
 import { logUpstreamMiss } from './wlo-config.js';
@@ -123,9 +122,9 @@ export interface TopicPageOwner {
   id: string;
   name: string;
   /**
-   * The owner's `ccm:page_config_ref`, carried out of the parent walk that
-   * already had to read it to identify this node as the owner. Saves the
-   * caller a second full metadata fetch per owner (Mode-C latency, 2026-07-27).
+   * The owner's own (active) `ccm:page_config_ref`, carried out of the read
+   * that already had to check it to identify this node as an owner — so the
+   * caller needs no further metadata fetch (Mode-C latency, 2026-07-27).
    */
   pageConfigRef: string;
 }
@@ -133,16 +132,22 @@ export interface TopicPageOwner {
 /** Per-batch memo of parent-id → owner resolution (see resolveVariantCollection). */
 export type TopicPageOwnerCache = Map<string, Promise<TopicPageOwner | null>>;
 
-/**
- * The only fields the owner walk reads. `/parents` returns the whole ancestor
- * chain, so the default `-all-` projection multiplies ~59 properties by the
- * chain depth on a path that needs three of them.
- */
-const OWNER_WALK_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:name'];
+/** Enough to hop one level up the containment chain. */
+const PARENT_REF_PROPS: string[] = ['virtual:primaryparent_nodeid'];
+
+/** The only fields read off the owning collection. */
+const OWNER_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:name'];
+
+/** One containment hop: the node's primary parent id, or '' when unavailable. */
+async function primaryParentOf(nodeId: string): Promise<string> {
+  const node = await getNodeMetadata(nodeId, PARENT_REF_PROPS);
+  return stripStoreRef(node?.properties?.['virtual:primaryparent_nodeid']?.[0]);
+}
 
 /**
- * Resolve a page-variant node back to its owning collection by walking
- * parent → page_config → collection. Returns the owner or null.
+ * Resolve a page-variant node back to its owning collection, hopping
+ * variant → page_config folder → collection via `virtual:primaryparent_nodeid`.
+ * Returns the owner or null.
  *
  * This is needed for Mode C of search_wlo_topic_pages where we list all
  * variants but don't yet know which collection each belongs to.
@@ -152,32 +157,40 @@ export async function resolveVariantCollection(
   parentCache?: TopicPageOwnerCache,
   knownParentId?: string,
 ): Promise<TopicPageOwner | null> {
-  // Resolve ONE page_config parent → its owning collection (the node that
-  // carries `ccm:page_config_ref`). Memoized by parent-id: sibling variants
-  // of the same topic page share the same parent, so the (expensive) walk
-  // runs only once per parent across a whole Mode-C batch.
+  // Resolve ONE page_config folder → its owning collection (the node that
+  // carries `ccm:page_config_ref`). Memoized by folder-id: sibling variants of
+  // the same topic page share the folder, so the resolution runs only once per
+  // folder across a whole Mode-C batch.
+  //
+  // Two `/metadata` reads, deliberately NOT `/parents`: that endpoint answers
+  // 500 (AccessDeniedException) for anonymous callers on page-config folders,
+  // so every walk returned an empty chain — no collection title, no topic-page
+  // URL — while costing ~1.1 s each. `/metadata` works anonymously at ~0.19 s
+  // (live-verified 2026-07-27 against the production repository).
   //
   // The cache holds the in-flight PROMISE, not the resolved value: variants are
   // enriched concurrently, so caching only the result let every sibling miss
-  // the cache and fire its own walk before the first one returned (stampede).
+  // the cache and fire its own resolution before the first one returned.
   const resolveParent = (pid: string): Promise<TopicPageOwner | null> => {
     const cached = parentCache?.get(pid);
     if (cached) return cached;
     const pending = (async (): Promise<TopicPageOwner | null> => {
-      for (const g of await getNodeParents(pid, OWNER_WALK_PROPS)) {
-        const gprops = g.properties ?? {};
-        if (gprops['ccm:page_config_ref']?.length) {
-          const id = g.ref?.id ?? '';
-          if (id) {
-            return {
-              id,
-              name: gprops['cclom:title']?.[0] ?? gprops['cm:name']?.[0] ?? g.name ?? '',
-              pageConfigRef: gprops['ccm:page_config_ref'][0] ?? '',
-            };
-          }
-        }
-      }
-      return null;
+      const ownerId = await primaryParentOf(pid);
+      if (!ownerId) return null;
+      const owner = await getNodeMetadata(ownerId, OWNER_PROPS);
+      const props = owner?.properties ?? {};
+      // Carrying `ccm:page_config_ref` at all is what makes this collection a
+      // Themenseite owner. It is deliberately NOT compared against `pid`: a
+      // collection may hold several page-config folders while its own ref names
+      // only the ACTIVE one (5 of 25 sampled pages), and requiring a match
+      // would drop those pages entirely. The owner's own ref is the right one
+      // to carry forward — it points at the page that is actually published.
+      if (!props['ccm:page_config_ref']?.length) return null;
+      return {
+        id: ownerId,
+        name: props['cclom:title']?.[0] ?? props['cm:name']?.[0] ?? owner?.name ?? '',
+        pageConfigRef: props['ccm:page_config_ref'][0] ?? '',
+      };
     })();
     parentCache?.set(pid, pending);
     return pending;
@@ -188,12 +201,8 @@ export async function resolveVariantCollection(
   // (virtual:primaryparent_nodeid, present on every page_variant search hit)
   // is authoritative — use it directly and skip the variant→parents round-
   // trip entirely. We only fetch the parents list when no parent is known.
-  const pids: string[] = knownParentId
-    ? [knownParentId]
-    : (await getNodeParents(variantId, OWNER_WALK_PROPS))
-        .map(p => p.ref?.id)
-        .filter((x): x is string => !!x);
-  if (pids.length === 0) return null;
+  const pids: string[] = knownParentId ? [knownParentId] : [await primaryParentOf(variantId)];
+  if (!pids[0]) return null;
   // Parents resolved in parallel (usually one), each memoized by parent-id.
   const resolved = await Promise.all(pids.map(resolveParent));
   return resolved.find(r => r !== null) ?? null;

@@ -9,6 +9,40 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed (topic-page owner resolution was silently broken, 2026-07-27)
+Follow-up to the latency work below: profiling the remaining 7 s revealed that
+Mode C was not merely slow but **wrong**, and had been for as long as the
+`/parents` walk existed.
+- **`/parents` answers 500 (AccessDeniedException) for anonymous callers on
+  page-config folders.** `getNodeParents` degrades a non-OK response to `[]`,
+  so every owner resolution failed silently: the listing showed identical
+  "Fachportalstartseite" titles, no `topicPageUrl`, and a `collectionId` that
+  was really the variant id. Live-verified against production; `-all-` and a
+  narrow projection fail alike, so this predates the projection change.
+- **Replaced the walk with two `/metadata` reads** along
+  `virtual:primaryparent_nodeid` (variant → page-config folder → collection).
+  That endpoint works anonymously and costs ~0.19 s instead of ~1.1 s.
+- A collection may own **several** page-config folders while its own
+  `ccm:page_config_ref` names only the active one (5 of 25 sampled pages), so
+  the folder is deliberately not required to match that ref — requiring it
+  would drop those pages. Carrying `ccm:page_config_ref` at all is what marks a
+  collection as a Themenseite owner, exactly as before.
+- **Candidate pool factor 3 → 2.** The theoretical bound was three variants per
+  page (one per target group); the live data averages 1.10 (108 variants across
+  98 pages: 92 with one, five with two, one with six), so factor 2 keeps ample
+  headroom and the one-shot top-up covers outliers.
+- Filtering the listing to a single target group was evaluated and rejected:
+  98 of 108 variants carry no target group at all, and a server-side `teacher`
+  filter returns 3 variants covering 3 of 98 pages.
+- Measured against the production repository at the default `WLO_TOPIC_POOL=10`:
+  `{maxResults: 20}` 9.9 s → **3.2 s**, `{maxResults: 10}` 4.5 s → **1.4 s**,
+  `{maxResults: 5}` 2.8 s → **0.66 s**, with `educationalContext` **0.55 s** —
+  while the payload grew (real titles and URLs where there had been none).
+  Against the originally reported 17–19 s that is roughly a factor of six.
+- Scope check: `/parents` is fine for ordinary collections (200, ~0.4 s) and
+  fails for content nodes (`ccm:io`), which `getNodeBreadcrumb` already
+  documents and tolerates. Only the page-config case was undiagnosed.
+
 ### Security (dependency advisories, 2026-07-27)
 The CI `npm audit --omit=dev --audit-level=high` gate failed; both advisories
 came from the single runtime dependency `@modelcontextprotocol/sdk`.
