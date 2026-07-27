@@ -9,6 +9,30 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Security (dependency advisories, 2026-07-27)
+The CI `npm audit --omit=dev --audit-level=high` gate failed; both advisories
+came from the single runtime dependency `@modelcontextprotocol/sdk`.
+- **`@modelcontextprotocol/sdk` 1.29.0 → 1.30.0.** The moderate
+  `@hono/node-server` advisory (GHSA-frvp-7c67-39w9, path traversal in
+  `serve-static` on Windows via encoded `%5C`) was unreachable under 1.29.0,
+  which pinned `^1.19.9`; 1.30.0 declares `^1.19.9 || ^2.0.5` and the patched
+  2.x becomes installable. Resolved: `@hono/node-server` 1.19.14 → 2.0.12.
+- **`fast-uri` 3.1.3 → 3.1.4** (high, GHSA-v2hh-gcrm-f6hx, host confusion via a
+  literal backslash authority delimiter), reached through `ajv`, whose `^3.0.1`
+  range already allowed the fix — only the lockfile was holding it back.
+- No `overrides` were needed; every version stays inside the range its parent
+  declares. `npm audit --omit=dev --audit-level=high` now reports 0
+  vulnerabilities.
+- Verified beyond the suite because `@hono/node-server` crossed a major version
+  and it builds the Web Request the transport sees: over a real socket, `POST
+  /mcp` with `Accept: application/json` only, and with no `Accept` header at
+  all, both still return 200 with all 22 tools — the `rawHeaders` Accept patch
+  in `http-app.ts` survives the bump. Tool latencies and response sizes are
+  unchanged.
+- Re-checked the standing follow-up: SDK 1.30.0 still has zero occurrences of
+  `securitySchemes`, so the `_meta.securitySchemes` fallback in
+  `apps/tool-defaults.ts` remains the maximum this SDK can emit.
+
 ### Fixed (topic-page listing latency, 2026-07-27)
 A client measured **17–19 s** for `search_wlo_topic_pages` without a `query`
 (Mode C) while every other tool answered in 1.3–6.5 s. Analysis and plan:

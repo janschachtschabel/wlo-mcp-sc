@@ -7,10 +7,10 @@
  *   1. `_meta.securitySchemes: [{ type: 'noauth' }]` — the "callable
  *      anonymously" declaration (F6). The Apps-SDK auth doc shows a top-level
  *      `securitySchemes` descriptor field, but the SDK does not know or
- *      serialise that field (verified against the LATEST published
- *      @modelcontextprotocol/sdk 1.29.0 on 2026-07-17 — zero occurrences in the
- *      package), so `_meta.securitySchemes` is the maximum this SDK can emit.
- *      Re-check and emit the top-level field on the next SDK bump.
+ *      serialise that field (re-verified against @modelcontextprotocol/sdk
+ *      1.30.0 on 2026-07-27 — still zero occurrences in the package), so
+ *      `_meta.securitySchemes` is the maximum this SDK can emit. Re-check and
+ *      emit the top-level field on the next SDK bump.
  *   2. The required tool annotations `destructiveHint` and `openWorldHint` — the
  *      Apps-SDK reference marks `readOnlyHint`/`destructiveHint`/`openWorldHint`
  *      as required (omitting them is a validation error). Every tool already
