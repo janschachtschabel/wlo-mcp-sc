@@ -8,9 +8,14 @@ Potenzial liegt.
 
 ## Kontext
 Ein Such-Turn im Chatbot dauerte gemessen **9–18 s** (Faktenfrage ohne Suche ~4 s).
-Hauptkosten: die edu-sharing-Suchen (Vercel-Cold-Starts + mehrere edu-sharing-
-REST-Calls je Tool) und mehrere sequenzielle LLM-Calls im Backend. Die folgenden
-MCP-Änderungen senken Anzahl + Größe der edu-sharing-Calls.
+Hauptkosten: die edu-sharing-Suchen (mehrere edu-sharing-REST-Calls je Tool) und
+mehrere sequenzielle LLM-Calls im Backend. Die folgenden MCP-Änderungen senken
+Anzahl + Größe der edu-sharing-Calls.
+
+> **Betriebsart:** Zielbetrieb ist der **selbst gehostete, persistente**
+> HTTP-Modus (Docker auf dem vServer). Der mitgelieferte Vercel-Pfad
+> (`api/mcp.ts`, `vercel.json`) wird **nicht** produktiv genutzt; Aussagen zu
+> serverless Cold-Starts sind für den aktuellen Betrieb gegenstandslos.
 
 ## Umgesetzte Optimierungen (2026-06-01)
 
@@ -133,21 +138,58 @@ content-teaser → echte Inhalte („Wie funktioniert das Internet?"), collectio
 *Backend-/Frontend-Verdrahtung (Intent/Pattern + Swimlane-Boxen mit „(Auszug)" +
 Absprung-Button) steht noch aus — Backend ruft das Tool noch nicht.*
 
+## O8 — Themenseiten-Listung (Mode C)  *(umgesetzt 2026-07-27)*
+Ein Client meldete **17–19 s** für `search_wlo_topic_pages` ohne `query`
+(Analyse: `docs/plans/2026-07-27-topic-pages-latency.md`). Drei Ursachen, alle
+behoben:
+- **Toter Upstream-Call:** je Variante wurden die Metadaten der besitzenden
+  Sammlung geholt, nur um `ccm:page_config_ref` zu lesen — ein Wert, den der
+  Eltern-Walk schon kennt (er wählt die Sammlung genau deswegen aus) und den
+  `buildTopicPageUrl` ohnehin nur auf Wahrheitswert prüft. Ersatzlos entfernt
+  → halbe Rundreisenzahl.
+- **Cache-Stampede:** der Eltern-Cache speicherte den *Wert* statt der
+  *laufenden Anfrage*, also verfehlten gleichzeitig verarbeitete
+  Geschwister-Varianten ihn und starteten denselben Abruf erneut. Jetzt wird
+  die Promise gecacht (Muster wie beim früheren `ownerMetaCache`).
+- **Kandidaten-Untergrenze:** `max(50, maxResults * 5)` ließ eine Anfrage über
+  5 Ergebnisse 50 Varianten bezahlen. Jetzt `max(10, maxResults * 3)` (drei =
+  die maximale Variantenzahl je Themenseite) mit einmaligem Nachladen auf den
+  alten Pool, falls die Zusammenführung zu wenig übrig lässt.
+
+Zusätzlich fragt der Eltern-Walk statt `-all-` (~59 Felder je Knoten der
+gesamten Ahnenkette) nur noch die drei tatsächlich gelesenen Felder ab, und
+`WLO_TOPIC_POOL` macht die Nebenläufigkeit dieses Fan-outs einstellbar.
+
+Gemessen (lokal gegen Produktions-Repository, `scripts/measure-topic-pages.mjs`):
+
+| Aufruf | `WLO_TOPIC_POOL=10` | `WLO_TOPIC_POOL=20` |
+|---|---|---|
+| `{maxResults: 20}` | 9,9 s | 6,3 s |
+| `{maxResults: 10}` | 4,5 s | 3,0 s |
+| `{maxResults: 5}`  | 2,8 s | 1,8 s |
+
+Antwortgrößen sind dabei unverändert. Dass 10 und 5 jetzt unterschiedlich viel
+kosten (vorher gemessen: 8,5 s vs. 8,2 s — beide auf der Untergrenze 50), ist
+der direkte Beleg, dass die Untergrenze weg ist.
+
 ## Offenes Optimierungspotenzial
 
-### O7 — Persistenter Betrieb + In-Process-Cache  *(NICHT umgesetzt)*
-**Größter verbliebener Hebel.** Der MCP läuft aktuell **stateless serverless**
-(`api/mcp.ts`: ein Server je Request, `server.close()` danach) → Vercel-**Cold-
-Starts** (~1–3 s/Call) **und** kein Caching über Requests hinweg.
-- Ein **persistenter Prozess** (vorhandener `Dockerfile`/stdio-Modus oder Vercel
-  „fluid"/keep-warm) eliminiert Cold-Starts und ermöglicht erst einen
-  **In-Process-Result-Cache** (Suchergebnisse, Node-Metadaten, Vokabular mit TTL).
-- Auf serverless wäre ein solcher Cache ein No-op (überlebt Requests nicht).
-- Code-seitig könnte der Cache hinter einem Env-Flag vorbereitet werden; er greift
-  aber erst mit einem persistenten Deployment. **Daher an die Betriebsart-
-  Entscheidung gekoppelt.**
-- Workaround ohne Umbau: **Keep-Warm-Cron** (alle ~5 min `/mcp` pingen) gegen
-  Cold-Starts.
+### O7 — In-Process-Cache  *(NICHT umgesetzt)*
+**Größter verbliebener Hebel.** Der Server läuft im Zielbetrieb **persistent**
+(Docker auf dem vServer), pro Request wird lediglich ein MCP-Server-Objekt
+erzeugt und wieder geschlossen — der Prozess selbst bleibt bestehen. Ein
+**In-Process-Result-Cache** (Suchergebnisse, Node-Metadaten, Vokabular mit TTL)
+wäre also wirksam, anders als in einem serverless Betrieb, wo er Requests nicht
+überlebt.
+- Besonders lohnend für Themenseiten: Eltern-Walk und Sammlungs-Metadaten
+  ändern sich selten und dominieren die Listung.
+- **Vor einer Umsetzung mit dem Auth-Vorhaben abgleichen**
+  (`docs/plans/2026-07-25-wlo-mcp-optional-auth.md`): sobald Antworten von den
+  Rechten des angemeldeten Nutzers abhängen, muss der Cache-Schlüssel die
+  Identität enthalten — sonst bekäme Nutzer B das rechte-gefilterte Ergebnis
+  von Nutzer A.
+- Reihenfolge-Empfehlung: erst O8 im Betrieb nachmessen, dann entscheiden, ob
+  O7 überhaupt noch nötig ist.
 
 ### Kleinere, optionale Hebel
 - `POOL_SIZE` weiter senken (25→15) — minimal weniger Recall.

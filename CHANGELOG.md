@@ -9,6 +9,61 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed (topic-page listing latency, 2026-07-27)
+A client measured **17–19 s** for `search_wlo_topic_pages` without a `query`
+(Mode C) while every other tool answered in 1.3–6.5 s. Analysis and plan:
+`docs/plans/2026-07-27-topic-pages-latency.md`.
+- **Removed a dead upstream call per variant.** Mode C fetched the owning
+  collection's full metadata only to read `ccm:page_config_ref` — a value the
+  parent walk already holds (it selects that collection *because* the property
+  is set) and that `buildTopicPageUrl` only truthiness-checks. The resolver now
+  returns it (`TopicPageOwner.pageConfigRef`), halving the round-trips. This
+  also removes a silent failure path: a failed metadata fetch used to yield an
+  empty `topicPageUrl`.
+- **Fixed a cache stampede in the parent walk.** `resolveVariantCollection`
+  cached the *resolved value*, so sibling variants enriched concurrently all
+  missed the cache and re-ran the same walk (proven by a call-count test: three
+  siblings of one page cost three walks). It now caches the in-flight promise.
+- **Replaced the candidate floor.** `max(50, maxResults * 5)` charged a
+  5-result request for 50 variant enrichments; now `max(10, maxResults * 3)`
+  (three = the maximum variants per topic page), with a single top-up to the
+  former pool size when the merge falls short — and none when upstream already
+  returned everything it had.
+- **Narrowed the projection on the hot path.** `getNodeParents` and
+  `getNodeMetadata` accept an optional property list (default stays `-all-`);
+  the owner walk now requests the three fields it reads instead of ~59 per node
+  of the whole ancestor chain.
+- Measured with the new `scripts/measure-topic-pages.mjs` against the production
+  repository: `{maxResults: 20}` 9.9 s, `{maxResults: 10}` 4.5 s,
+  `{maxResults: 5}` 2.8 s — and 6.3 / 3.0 / 1.8 s at `WLO_TOPIC_POOL=20`, at
+  unchanged response sizes. That 10 and 5 now differ at all is the direct
+  evidence the floor is gone (the client measured 8.5 s vs 8.2 s before).
+
+### Added (topic-page diagnostics & tuning, 2026-07-27)
+- **`WLO_TOPIC_POOL`** (default 10) — concurrency of the Mode-C owner
+  resolution, the server's most fan-out-heavy path. Ships inert; raising it
+  trades upstream load for wall-clock.
+- **`reason` on empty topic-page results** — `get_topic_page_content` and
+  `GET /api/topic-page` now report *which* of five causes produced an empty
+  payload (`no_match`, `node_not_found`, `no_page_config_ref`, `no_variant`,
+  `empty_config`). The reporting client was probing three candidate collections
+  in sequence because every miss looked identical.
+- **`outputFormat: json` is now honoured on the empty path too.** It previously
+  returned German prose in the text block while the success path returned JSON,
+  so clients parsing that field broke on exactly the case they needed to inspect.
+- `search_wlo_topic_pages` states that it has **no `discipline` filter** and
+  points at `educationalContext`/`targetGroup` (unknown arguments are dropped
+  silently by schema validation — the client sent `discipline` for months
+  without any signal). Its `sort` description no longer implies that `alpha` is
+  a global A–Z index; it sorts the fetched candidate set.
+
+### Changed (deployment scope, 2026-07-27)
+- Documented that production runs **self-hosted and persistent** (Docker on the
+  vServer). The Vercel entry point (`api/mcp.ts`, `vercel.json`) is retained but
+  not operated; serverless cold-start reasoning no longer applies. `PERFORMANCE`
+  O7 (in-process cache) was re-scoped accordingly and now carries the constraint
+  that its cache key must include the identity once optional auth lands.
+
 ### Added (fetcher-proof search entry, 2026-07-17)
 Root cause across all live chat tests: AI fetch layers strip the query string
 from MODEL-built URLs (anti-exfiltration), so every REST call arrived as a bare

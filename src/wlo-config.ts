@@ -146,15 +146,34 @@ export const WLO_ROOT_COLLECTION_ID: string = (() => {
 export const WLO_SKILLS_COLLECTION_ID: string = (process.env['WLO_SKILLS_COLLECTION_ID'] ?? '').trim();
 
 /**
+ * Read a positive integer from a raw env value, falling back to ``fallback``
+ * for anything unset, non-numeric, zero or negative. Pure, so the parsing
+ * rules are unit-testable (the module constants below are resolved at import
+ * time and cannot be re-read per test).
+ */
+export function resolvePositiveInt(raw: string | undefined, fallback: number): number {
+  const v = parseInt((raw ?? '').trim(), 10);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+/**
  * Per-request upstream timeout in milliseconds. Without it a hung
- * edu-sharing socket would block the MCP tool call indefinitely (stdio /
- * self-hosted) or until the serverless platform kills it. Override via
+ * edu-sharing socket would block the MCP tool call indefinitely. Override via
  * ``WLO_FETCH_TIMEOUT_MS``; default 10s.
  */
-export const WLO_FETCH_TIMEOUT_MS: number = (() => {
-  const v = parseInt(process.env['WLO_FETCH_TIMEOUT_MS'] ?? '', 10);
-  return Number.isFinite(v) && v > 0 ? v : 10_000;
-})();
+export const WLO_FETCH_TIMEOUT_MS: number =
+  resolvePositiveInt(process.env['WLO_FETCH_TIMEOUT_MS'], 10_000);
+
+/**
+ * Concurrent upstream fetches while resolving Themenseiten-Varianten to their
+ * owning collections (search_wlo_topic_pages Mode C). This listing is the
+ * server's most fan-out-heavy path, so its wall-clock scales inversely with
+ * this number — while the number itself bounds the load a single tool call may
+ * put on edu-sharing. Raise it on a well-provisioned repository and watch the
+ * upstream error rate. Override via ``WLO_TOPIC_POOL``; default 10.
+ */
+export const WLO_TOPIC_POOL: number =
+  resolvePositiveInt(process.env['WLO_TOPIC_POOL'], 10);
 
 export interface SearchCriterion {
   property: string;

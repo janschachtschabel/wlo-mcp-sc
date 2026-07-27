@@ -72,8 +72,11 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 - Runtime deps: `@modelcontextprotocol/sdk` (MCP server + stdio/HTTP transports),
   `zod` (tool input schemas). Deliberately minimal — no web framework.
 - Dev: `tsx` (run TS directly), `typescript` (build), `esbuild` (widget bundle). No `@vercel/node` — `api/mcp.ts` uses local `node:http` request/response types.
-- Deploy targets: Vercel serverless (`api/mcp.ts`), self-hosted HTTP (`src/http.ts`),
-  stdio for local/Docker (`src/stdio.ts`).
+- Deploy target in production: **self-hosted persistent HTTP** (`src/http.ts`,
+  Docker on the vServer); stdio (`src/stdio.ts`) for local use. The Vercel
+  serverless entry point (`api/mcp.ts`, `vercel.json`) is kept but **NOT used** —
+  do not optimize for or reason about serverless constraints (cold starts,
+  per-request statelessness as a platform limit) unless it is revived.
 
 ## Commands
 
@@ -106,7 +109,8 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 - `src/server.ts` — transport-agnostic `createMcpServer()` factory; the only place
   tools are wired up. Three thin entry points connect a transport to it:
   `stdio.ts` (local/Docker), `http.ts` (self-hosted Streamable HTTP + rate limit +
-  body cap), `api/mcp.ts` (Vercel serverless, stateless one-server-per-request).
+  body cap — the production path), `api/mcp.ts` (Vercel serverless, stateless
+  one-server-per-request; retained but not deployed).
 - `src/tools/*` — the 22 MCP tools, grouped by responsibility (collections,
   content-search, node-details, node-relations, vocabulary, topic-pages,
   topic-pages-present, topic-page-content, browse, compendium, wikipedia,

@@ -166,14 +166,15 @@ export async function handleTopicPage(params: URLSearchParams): Promise<RestResu
   }
   const maxPerSwimlane = clampInt(params.get('maxPerSwimlane'), 1, 10, 3);
 
-  const struct = await getTopicPageContent({
+  const { structure: struct, reason } = await getTopicPageContent({
     collectionId,
     variantId,
     targetGroup: tgRaw as TargetGroup | undefined,
   });
   if (!struct || struct.swimlanes.length === 0) {
     // A valid-but-empty payload keeps the response shape stable when no variant
-    // or an empty config is found (mirrors the get_topic_page_content tool).
+    // or an empty config is found (mirrors the get_topic_page_content tool),
+    // and `reason` names which case it was instead of leaving callers guessing.
     return {
       status: 200,
       json: {
@@ -188,6 +189,7 @@ export async function handleTopicPage(params: URLSearchParams): Promise<RestResu
         swimlaneCount: 0,
         swimlanesTotal: struct?.swimlanes.length ?? 0,
         swimlanes: [],
+        reason,
       },
     };
   }

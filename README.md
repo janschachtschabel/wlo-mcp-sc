@@ -458,13 +458,10 @@ Paths are identical across edu-sharing instances.
 
 ## Deployment
 
-### Vercel (serverless)
+Production runs **self-hosted and persistent** (Docker, below). The Vercel path
+is still in the repository but is not operated.
 
-`api/mcp.ts` is a Streamable-HTTP handler; `vercel.json` rewrites `/mcp` and `/`
-to it. Set `WLO_REPOSITORY_URL` as a project env var. Rate/body limits are not
-applied here — the platform provides them.
-
-### Docker
+### Docker (the production path)
 
 ```bash
 docker compose up -d --build          # build + run detached (recommended)
@@ -498,6 +495,12 @@ npm install && npm run build
 node dist/http.js                                                        # prod default
 WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node dist/http.js
 ```
+
+### Vercel (retained, not operated)
+
+`api/mcp.ts` plus `vercel.json` still provide a serverless Streamable-HTTP entry
+point, kept so the option stays open. It is **not** the deployed path, applies no
+rate/body limits of its own, and cannot benefit from process-level caching.
 
 ### Apps-SDK submission & privacy
 

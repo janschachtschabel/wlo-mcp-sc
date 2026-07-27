@@ -183,8 +183,8 @@ async function enrichCompendium(nodes: FormattedNode[]): Promise<void> {
 /** Attach resolved swimlane content to each topic page (bounded, capped). */
 async function enrichTopicPageContent(pages: TopicPageResult[], maxPerSwimlane: number): Promise<void> {
   await mapPool(pages, 5, async (page) => {
-    const struct = await getTopicPageContent({ collectionId: page.nodeId });
-    if (struct) page.topicPageContent = await resolveTopicPageSwimlanes(struct, maxPerSwimlane);
+    const { structure } = await getTopicPageContent({ collectionId: page.nodeId });
+    if (structure) page.topicPageContent = await resolveTopicPageSwimlanes(structure, maxPerSwimlane);
     return null;
   });
 }

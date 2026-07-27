@@ -118,37 +118,69 @@ export async function searchTopicPageCollections(query: string, maxItems = 10): 
     .slice(0, maxItems);
 }
 
+/** The collection that owns a Themenseite, as resolved from a page variant. */
+export interface TopicPageOwner {
+  id: string;
+  name: string;
+  /**
+   * The owner's `ccm:page_config_ref`, carried out of the parent walk that
+   * already had to read it to identify this node as the owner. Saves the
+   * caller a second full metadata fetch per owner (Mode-C latency, 2026-07-27).
+   */
+  pageConfigRef: string;
+}
+
+/** Per-batch memo of parent-id → owner resolution (see resolveVariantCollection). */
+export type TopicPageOwnerCache = Map<string, Promise<TopicPageOwner | null>>;
+
+/**
+ * The only fields the owner walk reads. `/parents` returns the whole ancestor
+ * chain, so the default `-all-` projection multiplies ~59 properties by the
+ * chain depth on a path that needs three of them.
+ */
+const OWNER_WALK_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:name'];
+
 /**
  * Resolve a page-variant node back to its owning collection by walking
- * parent → page_config → collection. Returns { id, name } or null.
+ * parent → page_config → collection. Returns the owner or null.
  *
  * This is needed for Mode C of search_wlo_topic_pages where we list all
  * variants but don't yet know which collection each belongs to.
  */
 export async function resolveVariantCollection(
   variantId: string,
-  parentCache?: Map<string, { id: string; name: string } | null>,
+  parentCache?: TopicPageOwnerCache,
   knownParentId?: string,
-): Promise<{ id: string; name: string } | null> {
+): Promise<TopicPageOwner | null> {
   // Resolve ONE page_config parent → its owning collection (the node that
   // carries `ccm:page_config_ref`). Memoized by parent-id: sibling variants
   // of the same topic page share the same parent, so the (expensive) walk
   // runs only once per parent across a whole Mode-C batch.
-  const resolveParent = async (pid: string): Promise<{ id: string; name: string } | null> => {
-    if (parentCache?.has(pid)) return parentCache.get(pid)!;
-    let result: { id: string; name: string } | null = null;
-    for (const g of await getNodeParents(pid)) {
-      const gprops = g.properties ?? {};
-      if (gprops['ccm:page_config_ref']?.length) {
-        const id = g.ref?.id ?? '';
-        if (id) {
-          result = { id, name: gprops['cclom:title']?.[0] ?? gprops['cm:name']?.[0] ?? g.name ?? '' };
-          break;
+  //
+  // The cache holds the in-flight PROMISE, not the resolved value: variants are
+  // enriched concurrently, so caching only the result let every sibling miss
+  // the cache and fire its own walk before the first one returned (stampede).
+  const resolveParent = (pid: string): Promise<TopicPageOwner | null> => {
+    const cached = parentCache?.get(pid);
+    if (cached) return cached;
+    const pending = (async (): Promise<TopicPageOwner | null> => {
+      for (const g of await getNodeParents(pid, OWNER_WALK_PROPS)) {
+        const gprops = g.properties ?? {};
+        if (gprops['ccm:page_config_ref']?.length) {
+          const id = g.ref?.id ?? '';
+          if (id) {
+            return {
+              id,
+              name: gprops['cclom:title']?.[0] ?? gprops['cm:name']?.[0] ?? g.name ?? '',
+              pageConfigRef: gprops['ccm:page_config_ref'][0] ?? '',
+            };
+          }
         }
       }
-    }
-    parentCache?.set(pid, result);
-    return result;
+      return null;
+    })();
+    parentCache?.set(pid, pending);
+    return pending;
   };
 
   // Determine which parent(s) to resolve. A page variant lives under exactly
@@ -158,7 +190,7 @@ export async function resolveVariantCollection(
   // trip entirely. We only fetch the parents list when no parent is known.
   const pids: string[] = knownParentId
     ? [knownParentId]
-    : (await getNodeParents(variantId))
+    : (await getNodeParents(variantId, OWNER_WALK_PROPS))
         .map(p => p.ref?.id)
         .filter((x): x is string => !!x);
   if (pids.length === 0) return null;
@@ -275,23 +307,48 @@ function parsePageVariantConfig(raw: string | undefined): Swimlane[] {
 }
 
 /**
+ * Why a Themenseite has no renderable content. Reported to callers so they can
+ * act instead of guessing: a client was probing three candidate collections in
+ * sequence because every miss looked identical (client report 2026-07-27).
+ *   - `no_match`            — nothing to resolve from (no id, no query hit)
+ *   - `node_not_found`      — the id does not resolve to a node
+ *   - `no_page_config_ref`  — a real collection, but it has no Themenseite
+ *   - `no_variant`          — the page config holds no usable (non-template) variant
+ *   - `empty_config`        — a variant exists but configures zero swimlanes
+ */
+export type TopicPageMiss =
+  | 'no_match'
+  | 'node_not_found'
+  | 'no_page_config_ref'
+  | 'no_variant'
+  | 'empty_config';
+
+export interface TopicPageContentResult {
+  structure: TopicPageStructure | null;
+  /** Absent on success; set whenever there is nothing (renderable) to show. */
+  reason?: TopicPageMiss;
+}
+
+/**
  * Resolve the CONTENT STRUCTURE of a Themenseite — its swimlane sections plus
  * the node IDs embedded in each. Pass a ``variantId`` directly (fast: one
  * fetch) or a ``collectionId`` (resolves the owning collection's page config
  * to a variant). ``targetGroup`` picks a specific variant when resolving by
- * collection. Returns null when nothing resolvable.
+ * collection. On a miss the structure is null (or empty) and ``reason`` says
+ * which of the five distinct causes it was.
  */
 export async function getTopicPageContent(
   opts: { collectionId?: string; variantId?: string; targetGroup?: TargetGroup },
-): Promise<TopicPageStructure | null> {
+): Promise<TopicPageContentResult> {
   const seedId = opts.variantId || opts.collectionId;
-  if (!seedId) return null;
+  if (!seedId) return { structure: null, reason: 'no_match' };
 
   // Fetch the seed node. It may already be the page variant itself (carries
   // ccm:page_variant_config) or the owning collection (carries
   // ccm:page_config_ref pointing at the config folder). Handling both makes
   // the tool robust regardless of which id the caller passes.
   let variantNode: WloNode | null = await getNodeMetadata(seedId);
+  if (!variantNode) return { structure: null, reason: 'node_not_found' };
   const hasVariantConfig = (n: WloNode | null) => !!n?.properties?.['ccm:page_variant_config']?.[0];
 
   // Page header data: when the seed is the OWNING collection, its title and
@@ -300,14 +357,14 @@ export async function getTopicPageContent(
   let collectionTitle: string | undefined;
   let description: string | undefined;
 
-  if (variantNode && !hasVariantConfig(variantNode)) {
+  if (!hasVariantConfig(variantNode)) {
     const cProps = variantNode.properties ?? {};
     collectionTitle = nodeTitle(variantNode) || undefined;
     description = cProps['cclom:general_description']?.[0]
       || variantNode.collection?.description
       || undefined;
     const ref = cProps['ccm:page_config_ref']?.[0];
-    if (!ref) return null;
+    if (!ref) return { structure: null, reason: 'no_page_config_ref' };
     // The page variants ARE the child collections of the page_config_ref folder:
     // they THEMSELVES carry ``ccm:page_variant_config`` (title e.g. "Variante_Ideal"
     // / "PAGE_VARIANT_…"). Previously their CONTENTS were searched by mistake —
@@ -328,7 +385,7 @@ export async function getTopicPageContent(
     ) ?? variants[0] ?? null;
   }
 
-  if (!variantNode) return null;
+  if (!variantNode) return { structure: null, reason: 'no_variant' };
 
   const vProps = variantNode.properties ?? {};
   const swimlanes = parsePageVariantConfig(vProps['ccm:page_variant_config']?.[0]);
@@ -337,7 +394,7 @@ export async function getTopicPageContent(
       swimlanes.flatMap(s => s.items.map(i => i.nodeId).filter((x): x is string => !!x)),
     ),
   ];
-  return {
+  const structure: TopicPageStructure = {
     collectionId: opts.collectionId,
     variantId: variantNode.ref?.id ?? opts.variantId ?? '',
     variantTitle: vProps['cclom:title']?.[0] || vProps['cm:title']?.[0] || '',
@@ -346,4 +403,7 @@ export async function getTopicPageContent(
     swimlanes,
     referencedNodeIds,
   };
+  // The variant resolved but configures nothing renderable — a distinct case
+  // from "no variant at all", and the header fields still travel with it.
+  return swimlanes.length === 0 ? { structure, reason: 'empty_config' } : { structure };
 }

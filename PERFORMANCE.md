@@ -8,9 +8,14 @@ potential still remains.
 
 ## Context
 A search turn in the chatbot took a measured **9–18 s** (a factual question without
-search ~4 s). Main costs: the edu-sharing searches (Vercel cold starts + several
-edu-sharing REST calls per tool) and several sequential LLM calls in the backend.
-The following MCP changes reduce the number + size of the edu-sharing calls.
+search ~4 s). Main costs: the edu-sharing searches (several edu-sharing REST calls
+per tool) and several sequential LLM calls in the backend. The following MCP
+changes reduce the number + size of the edu-sharing calls.
+
+> **Operating mode:** the target deployment is the **self-hosted, persistent**
+> HTTP mode (Docker on the vServer). The bundled Vercel path (`api/mcp.ts`,
+> `vercel.json`) is **not** used in production; statements about serverless cold
+> starts do not apply to the current deployment.
 
 ## Implemented optimizations (2026-06-01)
 
@@ -133,21 +138,53 @@ content-teaser → real content ("Wie funktioniert das Internet?"), collection-c
 *Backend/frontend wiring (intent/pattern + swimlane boxes with "(Auszug)" +
 jump-off button) is still outstanding — the backend does not yet call the tool.*
 
+## O8 — Topic-page listing (Mode C)  *(implemented 2026-07-27)*
+A client reported **17–19 s** for `search_wlo_topic_pages` without a `query`
+(analysis: `docs/plans/2026-07-27-topic-pages-latency.md`). Three causes, all
+fixed:
+- **Dead upstream call:** every variant fetched its owning collection's metadata
+  just to read `ccm:page_config_ref` — a value the parent walk already holds (it
+  picks that collection precisely because of it) and that `buildTopicPageUrl`
+  only truthiness-checks. Removed outright → half the round-trips.
+- **Cache stampede:** the parent cache stored the resolved *value* instead of the
+  in-flight *promise*, so concurrently enriched sibling variants all missed it
+  and re-ran the same walk. It now caches the promise.
+- **Candidate floor:** `max(50, maxResults * 5)` charged a 5-result request for
+  50 variants. Now `max(10, maxResults * 3)` (three = the maximum variants per
+  topic page) with a single top-up to the former pool if the merge falls short.
+
+The parent walk also asks for the three fields it reads instead of `-all-` (~59
+properties for every node of the ancestor chain), and `WLO_TOPIC_POOL` makes the
+concurrency of this fan-out configurable.
+
+Measured (locally against the production repository, `scripts/measure-topic-pages.mjs`):
+
+| Call | `WLO_TOPIC_POOL=10` | `WLO_TOPIC_POOL=20` |
+|---|---|---|
+| `{maxResults: 20}` | 9.9 s | 6.3 s |
+| `{maxResults: 10}` | 4.5 s | 3.0 s |
+| `{maxResults: 5}`  | 2.8 s | 1.8 s |
+
+Response sizes are unchanged. That 10 and 5 now cost different amounts
+(previously measured: 8.5 s vs 8.2 s — both sitting on the floor of 50) is the
+direct evidence that the floor is gone.
+
 ## Open optimization potential
 
-### O7 — Persistent operation + in-process cache  *(NOT implemented)*
-**Largest remaining lever.** The MCP currently runs **stateless serverless**
-(`api/mcp.ts`: one server per request, `server.close()` afterwards) → Vercel **cold
-starts** (~1–3 s/call) **and** no caching across requests.
-- A **persistent process** (the existing `Dockerfile`/stdio mode or Vercel
-  "fluid"/keep-warm) eliminates cold starts and is the prerequisite for an
-  **in-process result cache** (search results, node metadata, vocabulary with TTL).
-- On serverless such a cache would be a no-op (does not survive requests).
-- On the code side the cache could be prepared behind an env flag; but it only
-  takes effect with a persistent deployment. **Therefore coupled to the operating-mode
-  decision.**
-- Workaround without a rebuild: **keep-warm cron** (ping `/mcp` every ~5 min) against
-  cold starts.
+### O7 — In-process cache  *(NOT implemented)*
+**Largest remaining lever.** In its target deployment the server runs
+**persistently** (Docker on the vServer); only a per-request MCP server object is
+created and closed, the process itself stays up. An **in-process result cache**
+(search results, node metadata, vocabulary with TTL) would therefore take effect,
+unlike in a serverless deployment where it does not survive requests.
+- Most valuable for topic pages: the parent walk and collection metadata rarely
+  change and dominate the listing.
+- **Reconcile with the auth work before building it**
+  (`docs/plans/2026-07-25-wlo-mcp-optional-auth.md`): once responses depend on the
+  logged-in user's rights, the cache key must include the identity — otherwise
+  user B receives user A's rights-filtered result.
+- Suggested order: measure O8 in production first, then decide whether O7 is
+  still needed at all.
 
 ### Smaller, optional levers
 - Lower `POOL_SIZE` further (25→15) — minimally less recall.

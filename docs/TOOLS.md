@@ -16,10 +16,27 @@ Chat-Trigger (natürliche Formulierung, die das Tool/Widget auslöst).
 | `search_wlo_collections` | Sammlungen/Themenseiten zu einem Thema | *„Gibt es eine WLO-Sammlung zum Klimawandel?"* |
 | `search_wlo_topic_pages` | Themenseiten suchen (liefert deren URLs/Varianten) | *„Welche WLO-Themenseiten gibt es zu Optik?"* |
 
+> **Praxis-Hinweis zu `search_wlo_topic_pages`:** Ohne `query` listet das Tool
+> Themenseiten auf und muss dafür jede gefundene Seiten-Variante ihrer
+> Sammlung zuordnen — der aufwendigste Pfad des Servers. `maxResults` klein
+> halten und, wenn möglich, `educationalContext` mitgeben: beides verkleinert
+> die Kandidatenmenge und verkürzt die Antwortzeit deutlich. Einen
+> `discipline`-Filter gibt es hier **nicht** (unbekannte Parameter werden still
+> verworfen) — fachlich filtern über `search_wlo_collections` /
+> `search_wlo_content`. Betreiber-Stellschraube: `WLO_TOPIC_POOL`.
+
 ### Themenseiten (Schwimmlinien)
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
 | `get_topic_page_content` | Render-fertige Schwimmlinien einer Themenseite — jetzt in einem Schritt per Thema | *„Zeig mir die Themenseite zu Optik mit den Schwimmlinien"* |
+
+> **Leeres Ergebnis lesen:** Findet sich nichts Darstellbares, kommt kein
+> Fehler, sondern eine gültige leere Antwort mit `reason` — `no_match` (Thema
+> ohne Treffer), `node_not_found` (ID existiert nicht), `no_page_config_ref`
+> (Sammlung ohne Themenseite), `no_variant` (nur Vorlagen vorhanden) oder
+> `empty_config` (Variante ohne Schwimmlinien). Damit muss ein Client keine
+> weiteren Kandidaten blind durchprobieren. Bei `outputFormat: "json"` steht
+> die Antwort auch im Leerfall als JSON im Textblock.
 
 ### Stöbern & Navigieren
 | Tool | Funktion | Bester Chat-Trigger |
@@ -81,7 +98,7 @@ Chat-Trigger (natürliche Formulierung, die das Tool/Widget auslöst).
 | `GET /api/search/<Begriff>` | Suche, Pfad-Form (übersteht Query-Stripping) | `…/api/search/Bruchrechnung?discipline=Mathematik` |
 | `GET /api/search?q=<Begriff>` | Suche, Query-Form (Alias) — ohne Begriff: 200-Hinweis-Envelope | `…/api/search?q=Eiszeit&learningResourceType=Video` |
 | `…&format=html` | Dieselbe Suche als lesbare HTML-Seite (für Reader-KIs/Menschen) | `…/api/search/Bruchrechnung?format=html` |
-| `GET /api/topic-page?collectionId=…` | Schwimmlinien einer Themenseite | `…/api/topic-page?collectionId=<id>` |
+| `GET /api/topic-page?collectionId=…` | Schwimmlinien einer Themenseite (leeres Ergebnis trägt `reason`, s. o.) | `…/api/topic-page?collectionId=<id>` |
 | `GET /api/compendium?ids=…` | Kompendiumstexte | `…/api/compendium?ids=<id1,id2>` |
 | `GET /api/wikipedia?q=…` | Wikipedia-Zusammenfassung | `…/api/wikipedia?q=Zellatmung` |
 | `GET /api/collection?nodeId=…` | Inhalte einer Sammlung (Skills-Quelle des Launchers) | `…/api/collection?nodeId=<id>` |

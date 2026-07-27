@@ -11,11 +11,11 @@ import { z } from 'zod';
 import type { WloNode } from '../wlo-api.js';
 import {
   WLO_REPOSITORY_URL,
+  WLO_TOPIC_POOL,
   buildTopicPageUrl,
-  getNodeMetadata,
   stripStoreRef,
 } from '../wlo-api.js';
-import type { TargetGroup, ThemePageInfo } from '../topic-page-api.js';
+import type { TargetGroup, ThemePageInfo, TopicPageOwnerCache } from '../topic-page-api.js';
 import {
   getCollectionThemePages,
   getTopicPageContent,
@@ -34,44 +34,76 @@ import type { PresentedThemePage } from './topic-pages-present.js';
 import { mergeThemePages, renderThemePages } from './topic-pages-present.js';
 
 /**
+ * Mode C candidate pool. Variants of ONE Themenseite (teacher / learner /
+ * general) merge into a single entry, so the pool must exceed maxResults — but
+ * a page carries at most those three, which bounds it at `maxResults * 3`.
+ * The former `max(50, maxResults * 5)` charged a 5-result request 50 variant
+ * enrichments (~8 s measured, client latency report 2026-07-27); it survives
+ * as the one-shot top-up for data that merges harder than the bound predicts.
+ */
+const MODE_C_POOL_FACTOR = 3;
+const MODE_C_POOL_MIN = 10;
+const modeCTopUpPool = (maxResults: number): number => Math.max(50, maxResults * 5);
+
+/** Entries the merge step will produce from these variants. */
+function entryCount(pages: ThemePageInfo[], merge: boolean): number {
+  if (!merge) return pages.length;
+  return new Set(pages.map(p => p.collectionId ?? p.variantId)).size;
+}
+
+/**
  * Mode C of search_wlo_topic_pages: list all Themenseiten via the page_variant
  * API and resolve each variant's owning collection to a readable title. A
- * per-batch owner/metadata cache dedupes resolution across sibling variants of
- * the same Themenseite, the variant's known primary parent skips a round-trip,
- * and a bounded pool caps concurrent upstream fetches.
+ * per-batch owner cache dedupes resolution across sibling variants of the same
+ * Themenseite, the variant's known primary parent skips a round-trip, and a
+ * bounded pool caps concurrent upstream fetches.
  */
 async function listThemePageVariants(
   tg: TargetGroup | undefined,
   educationalContext: string | undefined,
   maxResults: number,
+  merge: boolean,
 ): Promise<ThemePageInfo[]> {
   const eduCtxUri = educationalContext
     ? resolveVocab(educationalContext, 'educationalContext') ?? educationalContext
     : undefined;
-  // Fetch more variants than maxResults so the dedup/merge step still has enough
-  // candidates after grouping by collection.
-  const variants = await searchPageVariants({
+  const search = (maxItems: number) => searchPageVariants({
     isTemplate: false,
     targetGroup: tg,
     educationalContext: eduCtxUri,
-  }, Math.max(50, maxResults * 5));
+  }, maxItems);
 
-  const parentCache = new Map<string, { id: string; name: string } | null>();
-  const ownerMetaCache = new Map<string, Promise<WloNode | null>>();
-  const enriched = await mapPool(variants, 10, async (v) => {
+  const parentCache: TopicPageOwnerCache = new Map();
+  const poolSize = Math.max(MODE_C_POOL_MIN, maxResults * MODE_C_POOL_FACTOR);
+  const variants = await search(poolSize);
+  const enriched = await enrichVariants(variants, parentCache);
+
+  // A short response means upstream is exhausted, so a wider retry cannot add
+  // anything — only top up when the pool was actually filled AND the merge
+  // still left us short of what the caller asked for.
+  if (entryCount(enriched, merge) >= maxResults || variants.length < poolSize) return enriched;
+
+  const wider = await search(modeCTopUpPool(maxResults));
+  const seen = new Set(enriched.map(r => r.variantId));
+  const extra = wider.filter(v => !seen.has(v.ref?.id ?? ''));
+  return enriched.concat(await enrichVariants(extra, parentCache));
+}
+
+/** Resolve each page variant to its owning collection (shared owner cache). */
+async function enrichVariants(
+  variants: WloNode[],
+  parentCache: TopicPageOwnerCache,
+): Promise<ThemePageInfo[]> {
+  const enriched = await mapPool(variants, WLO_TOPIC_POOL, async (v) => {
     const vProps = v.properties ?? {};
     const variantId = v.ref?.id ?? '';
     if (!variantId) return null;
     const knownParentId = stripStoreRef(vProps['virtual:primaryparent_nodeid']?.[0]) || undefined;
+    // The parent walk already yields the owner's page_config_ref — re-fetching
+    // the owner's metadata just to read it back was one dead upstream call per
+    // variant, i.e. half of Mode C's latency (client report 2026-07-27).
     const owner = await resolveVariantCollection(variantId, parentCache, knownParentId);
-    let ownerNode: WloNode | null = null;
-    if (owner) {
-      if (!ownerMetaCache.has(owner.id)) ownerMetaCache.set(owner.id, getNodeMetadata(owner.id));
-      ownerNode = await ownerMetaCache.get(owner.id)!;
-    }
-    const ownerProps = ownerNode?.properties ?? {};
-    const pageConfigRef = ownerProps['ccm:page_config_ref']?.[0];
-    const topicPageUrl = owner ? buildTopicPageUrl(owner.id, pageConfigRef) ?? '' : '';
+    const topicPageUrl = owner ? buildTopicPageUrl(owner.id, owner.pageConfigRef) ?? '' : '';
 
     return {
       variantId,
@@ -98,6 +130,7 @@ async function listThemePageVariants(
 async function collectThemePages(
   params: { collectionId?: string; query?: string; educationalContext?: string; maxResults?: number },
   tg: TargetGroup | undefined,
+  merge: boolean,
 ): Promise<{ results: ThemePageInfo[]; queryType: string }> {
   const results: ThemePageInfo[] = [];
 
@@ -116,7 +149,7 @@ async function collectThemePages(
     return { results: results.slice(0, (params.maxResults ?? 5) * 3), queryType: 'topic_pages_by_keyword' };
   }
   // ── Mode C: List all Themenseiten (page_variant API) ─────────────────
-  results.push(...await listThemePageVariants(tg, params.educationalContext, params.maxResults ?? 5));
+  results.push(...await listThemePageVariants(tg, params.educationalContext, params.maxResults ?? 5, merge));
   return { results, queryType: 'page_variant' };
 }
 
@@ -168,6 +201,12 @@ Output:
 - Multiple variants of the same Themenseite (different target groups) are merged into one entry.
 - Target groups are returned as readable labels ("Lehrkräfte"), not slugs.
 
+Filters: this tool has NO "discipline" (Fach) parameter — narrow by
+educationalContext and targetGroup here, or use search_wlo_collections /
+search_wlo_content for subject filtering. Unknown parameters are ignored.
+Passing educationalContext also makes this call markedly faster, because it
+narrows the candidate set upstream.
+
 Order: deterministic. With a query, results default to relevance order (reranked);
 without a query they are sorted alphabetically by collection name with nodeId as tie-breaker.`,
     {
@@ -191,7 +230,8 @@ without a query they are sorted alphabetically by collection name with nodeId as
       ),
       sort: z.enum(['relevance', 'alpha']).optional().describe(
         'Default: "relevance" when a query is given (keeps the reranked search order), ' +
-        '"alpha" otherwise (deterministic sort by collection name).'
+        '"alpha" otherwise. NOTE: "alpha" sorts the fetched candidate set, not the ' +
+        'whole catalogue — it is a deterministic order, not a global A-Z index.'
       ),
       maxResults: z.number().int().min(1).max(20).optional().default(5),
       includeContent: z.boolean().optional().default(false).describe(
@@ -215,7 +255,7 @@ without a query they are sorted alphabetically by collection name with nodeId as
       const merge = params.mergeVariants !== false;
 
       try {
-        const { results, queryType } = await collectThemePages(params, tg);
+        const { results, queryType } = await collectThemePages(params, tg, merge);
 
         if (results.length === 0) {
           const hint = params.query
@@ -231,8 +271,8 @@ without a query they are sorted alphabetically by collection name with nodeId as
         // flight so a wide result set can't fan out into an upstream avalanche.
         if (params.includeContent && params.outputFormat === 'json') {
           await mapPool(out, 5, async (p: PresentedThemePage) => {
-            const struct = await getTopicPageContent({ collectionId: p.collectionId });
-            if (struct) p.content = await resolveTopicPageSwimlanes(struct, params.maxPerSwimlane ?? 3);
+            const { structure } = await getTopicPageContent({ collectionId: p.collectionId });
+            if (structure) p.content = await resolveTopicPageSwimlanes(structure, params.maxPerSwimlane ?? 3);
             return null;
           });
         }

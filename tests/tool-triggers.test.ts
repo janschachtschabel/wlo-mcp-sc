@@ -35,3 +35,19 @@ test('primary search tools lead with concrete triggers in the first 256 chars', 
     await client.close();
   }
 });
+
+test('search_wlo_topic_pages names the subject filter it does NOT have', async () => {
+  // Unknown arguments are stripped silently by the schema parse, so a client
+  // sent `discipline` here for months and got byte-identical results without
+  // any signal (client report 2026-07-27). Until a generic warning exists, the
+  // description must say so and point at the filters that do work.
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    const desc = tools.find(t => t.name === 'search_wlo_topic_pages')?.description ?? '';
+    assert.match(desc, /discipline/, 'names the parameter clients wrongly assume');
+    assert.match(desc, /educationalContext/, 'points at a filter that actually narrows this search');
+  } finally {
+    await client.close();
+  }
+});

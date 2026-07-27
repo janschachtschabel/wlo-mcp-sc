@@ -100,13 +100,20 @@ export async function getChildCollections(
 }
 
 /**
- * GET /node/v1/nodes/-home-/{nodeId}/metadata?propertyFilter=-all-
+ * GET /node/v1/nodes/-home-/{nodeId}/metadata
  * Fetch metadata for a single node (FILE or COLLECTION).
+ *
+ * @param props optional narrow projection; omitted/empty keeps the full
+ *   `-all-` set (~59 properties). Pass an explicit list on hot paths that read
+ *   only a handful of fields.
  */
 export async function getNodeMetadata(
   nodeId: string,
+  props?: string[],
 ): Promise<WloNode | null> {
-  const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/metadata?propertyFilter=-all-`;
+  const params = new URLSearchParams();
+  appendPropertyFilter(params, props);
+  const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/metadata?${params}`;
   const res = await wloFetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) { logUpstreamMiss('getNodeMetadata', res); return null; }
   const data = await res.json() as { node?: WloNode };
@@ -212,17 +219,23 @@ export async function getNodeDownloadText(
 }
 
 /**
- * GET /node/v1/nodes/-home-/{nodeId}/parents?propertyFilter=-all-
+ * GET /node/v1/nodes/-home-/{nodeId}/parents
  * Returns the parent nodes (collections) of a given node.
  *
  * For collection nodes this endpoint returns the WHOLE ancestor chain in one
  * call, ordered self-first (`[self, …ancestors…, root]`) — verified live. For
  * file nodes (`ccm:io`) it can 500; then this returns `[]` (graceful).
+ *
+ * @param props optional narrow projection; omitted/empty keeps `-all-`. The
+ *   full set is expensive here because it applies to EVERY node of the chain.
  */
 export async function getNodeParents(
   nodeId: string,
+  props?: string[],
 ): Promise<WloNode[]> {
-  const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/parents?propertyFilter=-all-`;
+  const params = new URLSearchParams();
+  appendPropertyFilter(params, props);
+  const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/parents?${params}`;
   const res = await wloFetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) { logUpstreamMiss('getNodeParents', res); return []; }
   const data = await res.json() as { nodes?: WloNode[]; parents?: WloNode[] };

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveRootCollectionId } from '../src/wlo-config.js';
+import { resolvePositiveInt, resolveRootCollectionId } from '../src/wlo-config.js';
 
 // The WLO root ("Portale") — live-verified identical on prod and staging
 // (2026-07-17): both hosts resolve this id to the same level-0 collection.
@@ -31,4 +31,21 @@ test('resolveRootCollectionId: unknown repository host falls back and says so', 
 test('resolveRootCollectionId: whitespace-only env value is treated as unset', () => {
   const r = resolveRootCollectionId('   ', 'https://redaktion.openeduhub.net/edu-sharing');
   assert.deepEqual(r, { id: WLO_ROOT, source: 'known-host' });
+});
+
+test('resolvePositiveInt: unset, empty and non-numeric values keep the default', () => {
+  assert.equal(resolvePositiveInt(undefined, 10), 10);
+  assert.equal(resolvePositiveInt('', 10), 10);
+  assert.equal(resolvePositiveInt('abc', 10), 10);
+});
+
+test('resolvePositiveInt: zero and negative values keep the default', () => {
+  // A pool size of 0 would stall every fan-out — never accept it from env.
+  assert.equal(resolvePositiveInt('0', 10), 10);
+  assert.equal(resolvePositiveInt('-5', 10), 10);
+});
+
+test('resolvePositiveInt: a valid value wins', () => {
+  assert.equal(resolvePositiveInt('20', 10), 20);
+  assert.equal(resolvePositiveInt(' 25 ', 10), 25);
 });

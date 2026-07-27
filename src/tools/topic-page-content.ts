@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 import type { TargetGroup } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-api.js';
+import type { SwimlanePayload } from '../services/topic-page.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
@@ -76,13 +77,15 @@ Gib EINES an:
           }
         }
 
-        const struct = (collectionId || variantId)
+        const { structure: struct, reason } = (collectionId || variantId)
           ? await getTopicPageContent({ collectionId, variantId, targetGroup: tg })
-          : null;
+          : { structure: null, reason: 'no_match' as const };
         if (!struct || struct.swimlanes.length === 0) {
           // A valid-but-empty payload keeps the structuredContent contract even
           // when no variant / an empty config is found (this is not an error).
-          const empty = {
+          // `reason` names WHICH of the five causes it was, so a caller can act
+          // instead of blind-probing further candidates.
+          const empty: SwimlanePayload = {
             variantId: struct?.variantId ?? variantId ?? '',
             collectionId: struct?.collectionId ?? collectionId ?? null,
             variantTitle: struct?.variantTitle ?? '',
@@ -94,9 +97,16 @@ Gib EINES an:
             swimlaneCount: 0,
             swimlanesTotal: struct?.swimlanes.length ?? 0,
             swimlanes: [],
+            ...(reason ? { reason } : {}),
           };
+          // Honour outputFormat here too: the success path emits JSON in this
+          // text block, so emitting prose only on the empty path broke every
+          // client that parses it (client report 2026-07-27).
+          const text = params.outputFormat === 'json'
+            ? JSON.stringify(empty)
+            : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
           return {
-            content: [{ type: 'text' as const, text: 'Keine Themenseiten-Inhaltsstruktur gefunden (keine Variante oder leere Konfiguration).' }],
+            content: [{ type: 'text' as const, text }],
             structuredContent: empty,
           };
         }

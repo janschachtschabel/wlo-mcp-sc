@@ -473,13 +473,10 @@ edu-sharing-Instanzen hinweg identisch.
 
 ## Deployment
 
-### Vercel (serverless)
+Produktiv läuft der Server **selbst gehostet und persistent** (Docker, siehe
+unten). Der Vercel-Pfad ist weiterhin im Repository, wird aber nicht betrieben.
 
-`api/mcp.ts` ist ein Streamable-HTTP-Handler; `vercel.json` leitet `/mcp` und `/`
-darauf um. Setzen Sie `WLO_REPOSITORY_URL` als Projekt-Umgebungsvariable. Rate-/
-Body-Limits werden hier nicht angewendet — die Plattform stellt sie bereit.
-
-### Docker
+### Docker (Produktionsweg)
 
 ```bash
 docker compose up -d --build          # Build + Start im Hintergrund (empfohlen)
@@ -515,6 +512,13 @@ npm install && npm run build
 node dist/http.js                                                        # prod default
 WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node dist/http.js
 ```
+
+### Vercel (vorhanden, nicht betrieben)
+
+`api/mcp.ts` und `vercel.json` bieten weiterhin einen serverless
+Streamable-HTTP-Einstieg, damit die Option offen bleibt. Er ist **nicht** der
+betriebene Pfad, wendet keine eigenen Rate-/Body-Limits an und kann nicht von
+prozessweitem Caching profitieren.
 
 ### Apps-SDK-Einreichung & Datenschutz
 

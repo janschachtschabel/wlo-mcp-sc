@@ -62,6 +62,8 @@ export const swimlanePayloadSchema = z.object({
   swimlaneCount: z.number(),
   swimlanesTotal: z.number(),
   swimlanes: z.array(resolvedSwimlaneSchema),
+  /** Only on an empty result: which of the five miss causes it was. */
+  reason: z.string().optional(),
 });
 
 /** Mirrors `WikiSummary` (wikipedia-api.ts). */

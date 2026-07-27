@@ -79,6 +79,8 @@ export interface SwimlanePayload {
   /** Total swimlanes on the page (may exceed swimlaneCount when capped). */
   swimlanesTotal: number;
   swimlanes: ResolvedSwimlane[];
+  /** Only on an empty payload: why there is nothing to render (TopicPageMiss). */
+  reason?: string;
 }
 
 /** Cap on resolved swimlanes per call → bounded upstream call count. */
