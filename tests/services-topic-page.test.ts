@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveTopicPageSwimlanes } from '../src/services/topic-page.js';
-import type { TopicPageStructure } from '../src/topic-page-api.js';
+import type { TopicPageStructure } from '../src/topic-page-structure.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
 const DISC_URI = 'http://w3id.org/openeduhub/vocabs/discipline/380';

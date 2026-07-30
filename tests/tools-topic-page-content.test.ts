@@ -32,6 +32,15 @@ function topicPageHandler(url: string): { json: unknown } {
       'cclom:title': ['Variante Ideal'],
     })] } };
   }
+  // The variant is a real node in its own right: the query path passes its id
+  // alongside the collection so both can be read in parallel.
+  if (url.includes('var-1/metadata')) {
+    return { json: { node: makeNode('var-1', 'Variante', {
+      'ccm:page_variant_config': [rawConfig],
+      'ccm:page_variant_profiling_target_group': ['teacher'],
+      'cclom:title': ['Variante Ideal'],
+    }) } };
+  }
   return { json: {} };
 }
 

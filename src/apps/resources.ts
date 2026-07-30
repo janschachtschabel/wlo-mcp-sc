@@ -32,7 +32,7 @@ export const WIDGET_MIME_TYPE: string =
   (process.env['WLO_WIDGET_MIME'] ?? '').trim() || 'text/html;profile=mcp-app';
 
 /** Renderable widgets shipped as resources (the tile is a shared component, not a resource). */
-const WIDGET_NAMES = ['search-results', 'topic-page', 'browse'] as const;
+const WIDGET_NAMES = ['search-results', 'topic-page', 'browse', 'reading'] as const;
 export type WidgetName = (typeof WIDGET_NAMES)[number];
 
 /**
@@ -44,6 +44,7 @@ const WIDGET_DESCRIPTIONS: Record<string, string> = {
   'search-results': 'WLO-Suchergebnisse: Sammlungs-Kacheln und Material-Karten mit aufklappbarer Detailansicht',
   'topic-page': 'WLO-Themenseite: Titel und Beschreibung über den Swimlanes mit ihren Inhalten',
   'browse': 'Interaktiver WLO-Sammlungsbaum zum Stöbern',
+  'reading': 'WLO-Lesetext: Volltext eines Materials mit Herkunftsangabe und Buttons zum Weiterarbeiten',
 };
 
 /**

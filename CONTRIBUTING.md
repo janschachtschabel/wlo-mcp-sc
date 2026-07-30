@@ -60,3 +60,19 @@ npm test        # offline suite (node:test), no network required
 
 Always document a new env variable in **both** `README.md` (table) **and**
 `.env.example`.
+
+## Dependencies
+
+The runtime surface is deliberately two packages (`@modelcontextprotocol/sdk`,
+`zod`). Before adding a third, check whether the standard library, an existing
+dependency, or existing project code already covers it.
+
+In-range updates (`npm update`) are routine. Three majors are held back on
+purpose — reopen them as their own change with its own test run, not as a
+side effect of unrelated work:
+
+| Package | Held at | Why |
+|---|---|---|
+| `@types/node` | 20.x | Must describe the OLDEST supported runtime (`engines.node: ">=20"`). Newer types would let code typecheck against APIs Node 20 does not have. |
+| `typescript` | 5.x | A compiler major; upgrade it deliberately, with the full suite and the build as the gate. |
+| `zod` | 3.x | Every tool's input schema is written against zod 3. The MCP SDK accepts `^3.25 \|\| ^4.0`, so the SDK is not the blocker — the migration itself is the work. |

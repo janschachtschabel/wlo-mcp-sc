@@ -28,6 +28,15 @@ function topicPageMockHandler(url: string): { json: unknown } {
       'cclom:title': ['Variante Ideal'],
     })] } };
   }
+  // The variant is independently readable; callers that already know its id
+  // pass it alongside the collection so both are fetched in parallel.
+  if (url.includes('var-1/metadata')) {
+    return { json: { node: makeNode('var-1', 'Variante', {
+      'ccm:page_variant_config': [rawConfig],
+      'ccm:page_variant_profiling_target_group': ['teacher'],
+      'cclom:title': ['Variante Ideal'],
+    }) } };
+  }
   return { json: {} };
 }
 

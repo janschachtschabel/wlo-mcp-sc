@@ -1,0 +1,102 @@
+/* reading/styles.css – W5 specifics (base.css carries tokens, focus ring, empty state). */
+
+.wlo-reading {
+  max-width: 68ch;              /* a measure that stays readable; not a fixed px width */
+}
+
+.wlo-reading__title {
+  margin: 0 0 4px;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.wlo-reading__origin,
+.wlo-reading__note {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: var(--wlo-muted);
+}
+
+/* Truncation is a state the reader must notice, so it carries a visible marker
+   in addition to the wording — never colour alone. */
+.wlo-reading__note {
+  border-inline-start: 3px solid var(--wlo-border);
+  padding-inline-start: 8px;
+}
+
+.wlo-reading__body {
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── Markdown subset ─────────────────────────────────────────────────────── */
+
+.wlo-md__h {
+  margin: 18px 0 6px;
+  line-height: 1.3;
+}
+.wlo-md__p { margin: 0 0 10px; }
+.wlo-md__list { margin: 0 0 10px; padding-inline-start: 22px; }
+.wlo-md__list li { margin-bottom: 4px; }
+
+.wlo-md__quote {
+  margin: 0 0 10px;
+  padding: 6px 12px;
+  border-inline-start: 3px solid var(--wlo-accent);
+  background: var(--wlo-surface-2);
+}
+
+.wlo-md__code {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--wlo-surface-2);
+  border-radius: var(--wlo-radius);
+  /* Long code lines scroll inside their own box instead of widening the page. */
+  overflow-x: auto;
+  white-space: pre;
+}
+.wlo-md__code code { font-size: 0.85rem; }
+
+.wlo-md__rule {
+  border: 0;
+  border-top: 1px solid var(--wlo-border);
+  margin: 16px 0;
+}
+
+/* ── Follow-up actions ───────────────────────────────────────────────────── */
+
+.wlo-reading__actions {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--wlo-border);
+}
+
+.wlo-reading__actionsTitle {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.wlo-reading__actionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;          /* reflows at 320px instead of overflowing */
+  gap: 8px;
+}
+
+.wlo-reading__action {
+  /* ≥ 24px target (WCAG 2.2 SC 2.5.8); 36px here for comfortable tapping. */
+  min-height: 36px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--wlo-surface);
+  background: var(--wlo-accent);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.wlo-reading__action:hover { filter: brightness(1.08); }
+.wlo-reading__action:active { filter: brightness(0.94); }

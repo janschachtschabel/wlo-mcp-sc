@@ -17,7 +17,8 @@ import {
 import { getCompendiumTexts } from '../services/compendium.js';
 import { buildFilterCriteria } from '../tools/shared.js';
 import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
-import { getTopicPageContent, type TargetGroup } from '../topic-page-api.js';
+import type { TargetGroup } from '../topic-page-api.js';
+import { getTopicPageContent } from '../topic-page-structure.js';
 import { fetchWikipediaSummary } from '../wikipedia-api.js';
 import { WLO_SKILLS_COLLECTION_ID } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';

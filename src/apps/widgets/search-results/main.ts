@@ -11,23 +11,48 @@
  */
 
 import { renderSearchResults } from './render.js';
+import { selectionFollowUpPrompt, type SelectedMaterial } from './selection.js';
+import { followUpPrompt, type FollowUpAction } from '../shared/follow-up.js';
 import { resolveLocale } from '../shared/strings.js';
 import { createHost } from '../shared/host.js';
 import type { SearchAllPayload } from '../shared/types.js';
 
 const host = createHost();
 
-let selectedId: string | null =
-  ((host.widgetState() as { selectedId?: string | null } | undefined)?.selectedId) ?? null;
+const saved = host.widgetState() as { selectedId?: string | null; selectedIds?: string[] } | undefined;
+let selectedId: string | null = saved?.selectedId ?? null;
+/** Ticked materials, kept in widget state so a host re-mount does not lose them. */
+const picked = new Map<string, string>(
+  (saved?.selectedIds ?? []).map(id => [id, '']),
+);
 /** One-shot focus target after the next paint (null = leave focus alone). */
 let focusTarget: 'detail' | string | null = null;
+
+function persist(): void {
+  host.setWidgetState({ selectedId, selectedIds: [...picked.keys()] });
+}
 
 function paint(): void {
   const root = document.getElementById('wlo-root');
   if (!root) return;
   const locale = resolveLocale(host.locale());
   document.documentElement.lang = locale;
-  root.innerHTML = renderSearchResults(host.toolOutput() as SearchAllPayload | undefined, locale, { selectedId });
+  root.innerHTML = renderSearchResults(host.toolOutput() as SearchAllPayload | undefined, locale, {
+    selectedId,
+    selectedIds: [...picked.keys()],
+    canSelect: host.canFollowUp(),
+  });
+
+  // Widget state carries only the ids, so a selection restored after a host
+  // re-mount has no titles. Backfill them from the tiles now on screen; ids the
+  // current payload no longer contains keep their empty title and travel as the
+  // id alone, which is still actionable.
+  for (const box of root.querySelectorAll('.wlo-tile__pickbox')) {
+    const id = box.getAttribute('data-node-id') ?? '';
+    if (id && picked.has(id) && !picked.get(id)) {
+      picked.set(id, box.getAttribute('data-node-title') ?? '');
+    }
+  }
 
   // preventScroll: keep the a11y focus move (WCAG 2.4.3) without the default
   // scroll-into-view, which would jerk the host iframe on open/close.
@@ -44,14 +69,60 @@ function select(id: string | null): void {
   selectedId = id;
   focusTarget = id ? 'detail' : restoreTo;
   paint();
-  host.setWidgetState({ selectedId });
+  persist();
 }
+
+/** Ticking a box must not repaint: that would destroy the checkbox's focus. */
+document.addEventListener('change', (event) => {
+  const box = (event.target as HTMLElement | null)?.closest?.('.wlo-tile__pickbox') as HTMLInputElement | null;
+  if (!box) return;
+  const id = box.getAttribute('data-node-id') ?? '';
+  if (!id) return;
+  if (box.checked) picked.set(id, box.getAttribute('data-node-title') ?? '');
+  else picked.delete(id);
+  paint();
+  persist();
+  // Restore focus to the box the user just used (WCAG 2.4.3); preventScroll
+  // keeps the host iframe still, as elsewhere in this widget.
+  const again = document.querySelector(`.wlo-tile__pickbox[data-node-id="${CSS.escape(id)}"]`) as HTMLElement | null;
+  again?.focus({ preventScroll: true });
+});
 
 document.addEventListener('click', (event) => {
   const el = event.target as HTMLElement | null;
+
+  // Continue-the-flow buttons on collection tiles and in the detail view: hand
+  // the conversation a request naming the node id and the tool for the job.
+  const followUp = el?.closest?.('[data-follow-up]');
+  if (followUp) {
+    const action = followUp.getAttribute('data-follow-up') as FollowUpAction | null;
+    const id = followUp.getAttribute('data-node-id') ?? '';
+    if (action && id) {
+      host.sendFollowUp(followUpPrompt(
+        action,
+        followUp.getAttribute('data-node-title') ?? '',
+        id,
+        resolveLocale(host.locale()),
+      ));
+    }
+    return;
+  }
+
   const detailsBtn = el?.closest?.('.wlo-tile__details[data-node-id]');
   if (detailsBtn) { select(detailsBtn.getAttribute('data-node-id')); return; }
-  if (el?.closest?.('[data-action="back"]')) select(null);
+  if (el?.closest?.('[data-action="back"]')) { select(null); return; }
+
+  if (el?.closest?.('[data-action="clear-selection"]')) {
+    picked.clear();
+    paint();
+    persist();
+    return;
+  }
+  if (el?.closest?.('[data-action="use-selection"]')) {
+    const items: SelectedMaterial[] = [...picked].map(([nodeId, title]) => ({ nodeId, title }));
+    const prompt = selectionFollowUpPrompt(items, resolveLocale(host.locale()));
+    if (prompt) host.sendFollowUp(prompt);
+  }
 });
 
 document.addEventListener('keydown', (event) => {

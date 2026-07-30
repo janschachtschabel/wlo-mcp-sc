@@ -26,7 +26,11 @@ const TEXT_CONTENT_MARKDOWN_CAP = 2000;
 export function registerNodeDetailTools(server: McpServer): void {
   server.tool(
     'get_node_details',
-    `Retrieve detailed metadata, stored full-text content, and/or parent collections for a specific WLO node.
+    `Retrieve detailed METADATA (and optionally the stored text and/or parent collections) for a specific WLO node.
+Fast by default (~0.3 s): metadata only. The full text of the material is a
+SEPARATE, slower concern — use get_wlo_content_text when you actually need the
+content itself (it also falls back to the linked page and reports why a text is
+missing). \`includeTextContent\` here is the quick variant without that fallback.
 
 Returns the SAME field structure as search tools (formatNode):
 title, description, keywords, disciplines (labels), educationalContexts (labels),

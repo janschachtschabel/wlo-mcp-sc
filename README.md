@@ -7,7 +7,7 @@ AI agents **search and retrieve open educational resources (OER)** from
 [WirLernenOnline (WLO)](https://wirlernenonline.de) via the public
 edu-sharing REST API.
 
-It exposes **22 tools** for full-text search, collection/topic-page browsing,
+It exposes **23 tools** for full-text search, collection/topic-page browsing,
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. No authentication, no writes.
 
@@ -48,7 +48,7 @@ stateless proxy in front of edu-sharing.
 
 ## Features
 
-- **22 MCP tools** — content search, collection search, combined search, topic
+- **23 MCP tools** — content search, collection search, combined search, topic
   pages and their swimlane content, subject portals, tree browsing, node
   details (single & bulk), vocabulary lookup, publisher lookup, health check,
   Wikipedia summary, full compendium text, scoped in-collection search, related
@@ -56,9 +56,10 @@ stateless proxy in front of edu-sharing.
   the ChatGPT `search`/`fetch` knowledge tools.
 - **OpenAI Apps SDK support** — display tools return `structuredContent`
   (per-tool `outputSchema`) with read-only `annotations`, the server advertises
-  cross-tool `instructions`, and four tools ship an inlined `ui://` widget
-  (combined search results with an in-widget detail view, topic-page swimlanes
-  under a title/description header, and an interactive collection browser),
+  cross-tool `instructions`, and five tools ship an inlined `ui://` widget
+  (combined search results with an in-widget detail view and per-tile follow-up
+  actions, topic-page swimlanes under a title/description header, an interactive
+  collection browser, and a reading view for a material's full text),
   each described by widget `_meta` (description, CSP, `prefersBorder`) —
   theme-aware, WCAG 2.2 AA, DE/EN. Non-Apps clients are unaffected.
 - **Quality reranking** — multi-query expansion (synonyms, keyword, title,
@@ -109,6 +110,9 @@ else has sensible defaults.
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it. Unset → callers pass an explicit `?nodeId=`. |
 | `WLO_POOL_SIZE` | `25` | all | Candidate pool size **per search variant** for reranking (`enhancedSearch`) — **not** the number of returned hits (that is `maxResults`). Smaller = faster/smaller fetches at minimally lower recall. |
 | `WLO_FETCH_TIMEOUT_MS` | `10000` | all | Per-request timeout (ms) for every upstream edu-sharing call. Prevents a hung backend socket from blocking a tool call. |
+| `WLO_TEXT_EXTRACTION_URL` | `https://text-extraction.staging.openeduhub.net` | all | Base URL of the text-extraction service `get_wlo_content_text` falls back to for externally linked material (`ccm:wwwurl`) whose text the repository has not stored. Each instance normally runs its own. **Empty disables** the external path — the repository's own `/textContent` then remains the only source. A value that cannot serve as a base (no scheme, not http(s), or carrying a query/fragment) also disables it and logs a warning; it deliberately does **not** fall back to the default, so a typo cannot redirect material URLs to a host you did not choose. |
+| `WLO_TEXT_TIMEOUT_MS` | `25000` | all | Timeout (ms) for full-text reads — both `/textContent` and the extraction service. Deliberately larger than `WLO_FETCH_TIMEOUT_MS`: `/textContent` was measured at a 4.6 s median and a 9.2 s maximum, which the 10 s default would cut off, losing a text that exists. |
+| `WLO_TOPIC_POOL` | `10` | all | Fan-out width for topic-page candidate enrichment (metadata reads issued in parallel). Higher = fewer sequential waves at more simultaneous upstream load. |
 | `PORT` | `3000` | HTTP mode | Port for the standalone HTTP server. |
 | `MCP_SSE` | `false` | HTTP mode | When truthy (`1`/`true`/`yes`), serve `POST /mcp` as a real Server-Sent-Events stream (required by ChatGPT developer mode). Default is single-JSON responses (maximal client compatibility). Behind a reverse proxy, buffering **must** be disabled for the `/mcp` location — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). The Docker image defaults this to `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | all | MIME type for the inlined Apps-SDK widget resources. Default is the MCP-Apps standard (portable). Set to `text/html+skybridge` if a legacy ChatGPT runtime does not render the widgets with the standard value. |
@@ -222,6 +226,7 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 20 | `get_node_breadcrumb` | A collection's ancestor path (root → node) in the content tree | markdown / json |
 | 21 | `get_collection_stats` | A collection's composition: file/sub-collection counts + type/subject/level breakdown | markdown / json |
 | 22 | `find_wlo_skills` | Find WLO "skills" (reusable instruction Markdown curated in a WLO collection) matching a task and return their instructions to apply | markdown / json |
+| 23 | `get_wlo_content_text` | A material's OWN full text (worksheet, article), not its metadata — repository first, linked page as fallback | markdown / json |
 
 The display/search tools also return `structuredContent` (validated against a
 per-tool `outputSchema`) and carry `annotations` (`readOnlyHint`; `openWorldHint`
@@ -376,6 +381,18 @@ collection — that match a task, and returns their raw instructions to apply.
 available skills. Each result's title/description says what the skill does and
 when to use it. Shares its listing/fetch logic with `GET /api/collection`, so
 native MCP clients get the same skills capability as the launcher/REST path.
+
+**23. `get_wlo_content_text`** — `nodeId`, `maxChars?` (500–50000, default 8000),
+`outputFormat?`. Returns the material's **own text**, not its metadata, so the
+content can be summarized, simplified or turned into exercises. The repository's
+`/textContent` is the primary source — it already holds converted text for ~90 %
+of records, including PDF, DOCX and PPTX; only a record that stores nothing and
+is externally linked (`ccm:wwwurl`) falls back to the text-extraction service
+(`WLO_TEXT_EXTRACTION_URL`, empty disables it). `source` names which path was
+taken. A missing text is not an error but a `reason`: `access_denied` (exists but
+is not public — no converter helps, only rights), `no_text_no_url`,
+`extraction_failed`, `node_not_found`. Long texts are cut and flagged
+(`truncated`).
 
 ## Output formats
 
@@ -546,7 +563,7 @@ rate/body limits of its own, and cannot benefit from process-level caching.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 22 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 23 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, filter builder, mapPool, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
@@ -586,7 +603,8 @@ wlo-mcp-server/
 │   ├── wlo-config.ts         #   env config + shared types + wloFetch + DISPLAY_PROPS
 │   ├── wlo-search.ts         #   search endpoints (ngsearch, collection keyword search)
 │   ├── wlo-node.ts           #   node endpoints (children/metadata/text/download/breadcrumb) + URL builders
-│   ├── topic-page-api.ts     # topic-page API (page_variant, swimlane parsing, variant→collection)
+│   ├── topic-page-api.ts     # topic-page discovery (page_variant search, variant→collection)
+│   ├── topic-page-structure.ts # one page's content: variant → swimlanes
 │   ├── wikipedia-api.ts      # Wikipedia REST summary client (opensearch title fallback)
 │   ├── reranker.ts           # RRF merge + quality scoring (pure)
 │   ├── query-expand.ts       # query → weighted backend variants (synonyms, stopwords)
@@ -643,14 +661,20 @@ the code), grouped by module.
 | `buildTopicPageUrl` / `buildRenderUrl` | Build frontend links |
 | `appendPropertyFilter` | Append the repeated `propertyFilter` params |
 
-**`topic-page-api.ts` — topic pages**
+**`topic-page-api.ts` — finding topic pages**
 
 | Function | What it does |
 |---|---|
 | `searchPageVariants` | Search `page_variant` nodes |
+| `searchTopicPageCollections` | Collections that own a topic page, matched against a query |
 | `resolveVariantCollection` | Resolve a variant back to its owning collection |
 | `getCollectionThemePages` | Topic-page variants of a collection |
-| `getTopicPageContent` | Parse a topic page's swimlane structure |
+
+**`topic-page-structure.ts` — what one topic page shows**
+
+| Function | What it does |
+|---|---|
+| `getTopicPageContent` | Resolve a variant and parse its swimlane structure |
 
 **Ranking, formatting, vocabulary**
 

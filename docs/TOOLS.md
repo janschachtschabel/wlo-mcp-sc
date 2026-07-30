@@ -1,12 +1,12 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: 22 MCP-Tools,
-3 interaktive Widgets und die öffentlichen REST-Endpunkte — je mit dem besten
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: 23 MCP-Tools,
+4 interaktive Widgets und die öffentlichen REST-Endpunkte — je mit dem besten
 Chat-Trigger (natürliche Formulierung, die das Tool/Widget auslöst).
 
 ---
 
-## 1. MCP-Tools (22) — mit Chat-Trigger
+## 1. MCP-Tools (23) — mit Chat-Trigger
 
 ### Suchen & Finden
 | Tool | Funktion | Bester Chat-Trigger |
@@ -24,6 +24,26 @@ Chat-Trigger (natürliche Formulierung, die das Tool/Widget auslöst).
 > `discipline`-Filter gibt es hier **nicht** (unbekannte Parameter werden still
 > verworfen) — fachlich filtern über `search_wlo_collections` /
 > `search_wlo_content`. Betreiber-Stellschraube: `WLO_TOPIC_POOL`.
+
+### Inhalte im Volltext
+| Tool | Funktion | Bester Chat-Trigger |
+|---|---|---|
+| `get_wlo_content_text` | Der **eigentliche Text** eines Materials (Arbeitsblatt, Artikel), nicht nur die Metadaten | *„Fasse dieses Arbeitsblatt zusammen"* · *„Mach daraus Aufgaben für Klasse 7"* |
+
+> Der Text kommt bevorzugt aus dem WLO-Repository — dort liegt er bei rund 90 %
+> der Inhalte bereits konvertiert, **auch für PDF, DOCX und PPTX**. Nur wenn
+> nichts hinterlegt und das Material extern verlinkt ist, wird der Text von der
+> verlinkten Seite geholt; `source` sagt, welcher Weg es war.
+>
+> Kein Text ist kein Fehler, sondern ein `reason`: `access_denied` (Material
+> existiert, ist aber nicht öffentlich — daran ändert keine Konvertierung etwas,
+> nur Rechte), `no_text_no_url`, `extraction_failed`, `node_not_found`. Lange
+> Texte werden gekürzt (`truncated`, Grenze über `maxChars`).
+>
+> **Wann welches Werkzeug:** Für Titel, Fach, Lizenz oder Link genügt
+> `get_node_details` (~0,3 s). `get_wlo_content_text` dauert 1–3 s und lohnt
+> erst, wenn der Inhalt selbst gebraucht wird — zum Zusammenfassen, Umschreiben
+> oder Aufgaben-Ableiten.
 
 ### Themenseiten (Schwimmlinien)
 | Tool | Funktion | Bester Chat-Trigger |
@@ -43,6 +63,14 @@ Chat-Trigger (natürliche Formulierung, die das Tool/Widget auslöst).
 |---|---|---|
 | `get_subject_portals` | Übersicht aller Fachportale (Mathe, Bio, Deutsch …) | *„Welche Fächer gibt es bei WLO?"* |
 | `browse_collection_tree` | Themenbaum / Unterthemen eines Fachs oder einer Sammlung | *„Zeig mir den Themenbaum zu Mathematik"* |
+
+> **Der Baum ist bewusst begrenzt:** höchstens zwei Ebenen und eine gedeckelte
+> Breite je Knoten. Zweige mit mehr Inhalt tragen `hasMoreChildren`, die Antwort
+> insgesamt `truncated`, und die Markdown-Ausgabe nennt den Folgeaufruf
+> (`browse_collection_tree mit nodeId=…`). So bleibt die Übersicht schnell und
+> lesbar, und tiefer geht es gezielt auf Nachfrage — die Nutzerin/der Nutzer
+> erfährt dabei, dass es mehr gibt. `includeContentPreview` kostet einen Abruf
+> je Knoten (Sekunden auf breiten Bäumen) und ist standardmäßig aus.
 | `get_collection_contents` | Inhalte einer konkreten Sammlung auflisten | *„Was ist in der Sammlung Bruchrechnung drin?"* |
 | `search_wlo_within_collection` | Innerhalb einer Sammlung suchen/filtern | *„Welche Videos zu Zellteilung gibt es in dieser Sammlung?"* |
 | `get_collection_stats` | Zusammensetzung einer Sammlung (Anzahl, Typen, Fächer) | *„Woraus besteht diese Sammlung?"* |
@@ -81,13 +109,21 @@ Chat-Trigger (natürliche Formulierung, die das Tool/Widget auslöst).
 
 ---
 
-## 2. Widgets (3 interaktive Oberflächen)
+## 2. Widgets (4 interaktive Oberflächen)
 
 | Widget | Ausgelöst durch | Trigger-Beispiel | Was man sieht |
 |---|---|---|---|
-| **search-results** | `search_wlo_all` | *„Ich suche Material zur Bruchrechnung"* | Sammlungs-/Themenseiten-Band oben, Material-Karten darunter, „Details"-Button → Einzelansicht |
+| **reading** | `get_wlo_content_text` | *„Fasse dieses Arbeitsblatt zusammen"* | Der Volltext lesbar formatiert, mit Herkunftsangabe und Buttons zum Weiterarbeiten („Zusammenfassen", „Einfacher formulieren", „Aufgaben ableiten") |
+| **search-results** | `search_wlo_all` | *„Ich suche Material zur Bruchrechnung"* | Sammlungs-/Themenseiten-Band oben, gleich große Material-Kacheln darunter, „Details"-Button → Einzelansicht; Kacheln lassen sich ankreuzen und über „Ausgewählte weiterverwenden" mit ihren nodeIds in den Chat übernehmen |
 | **topic-page** | `get_topic_page_content` | *„Zeig die Themenseite zu Optik"* | Titel + Beschreibung, darunter Schwimmlinien mit Karten |
-| **browse** | `get_subject_portals`, `browse_collection_tree` | *„Zeig mir den Themenbaum zu Mathematik"* | Statisch vor-aufgeklappter Baum; Auf-/Zuklappen lokal; „Inhalte anzeigen"-Button lädt tiefere Ebenen als neue Karte |
+| **browse** | `get_subject_portals`, `browse_collection_tree` | *„Zeig mir den Themenbaum zu Mathematik"* | Statisch vor-aufgeklappter Baum; Auf-/Zuklappen lokal; „Inhalte anzeigen" an **jedem** Knoten (auch solchen mit Unterordnern) lädt dessen Inhalte als neue Karte |
+
+> **Klicken statt tippen:** Jede Kachel trägt die Aktion, die den Ablauf
+> fortsetzt — Sammlung → „Inhalte anzeigen", Themenseite → „Themenseite öffnen",
+> Einzelansicht → „Volltext anzeigen" und „Ähnliche Inhalte". Jeder Button
+> schickt eine Nachricht in den Chat, die **nodeId und passendes Werkzeug**
+> nennt, damit das nachfolgende Tool direkt arbeiten kann. Kann der Host keine
+> Nachricht einspeisen, erscheinen die Buttons gar nicht erst.
 
 ---
 

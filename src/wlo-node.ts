@@ -160,15 +160,39 @@ export async function getNodesMetadata(
 /**
  * GET /node/v1/nodes/-home-/{nodeId}/textContent
  * Returns the stored full-text content of a node (web page text, PDF extract, etc.).
+ *
+ * @param timeoutMs optional override. This endpoint is slow — median 4.6 s,
+ *   maximum 9.2 s across a 32-record live sample (2026-07-28) — which the
+ *   default 10 s budget would cut off, losing a text that exists. Callers whose
+ *   purpose IS the full text pass the larger `WLO_TEXT_TIMEOUT_MS`.
  */
 export async function getNodeTextContent(
   nodeId: string,
+  timeoutMs?: number,
 ): Promise<string | null> {
+  return (await readNodeTextContent(nodeId, timeoutMs)).text;
+}
+
+/**
+ * Same read, but reporting the HTTP status alongside the text.
+ *
+ * "Nothing stored" and "you may not read this" are different answers with
+ * different remedies, and the plain accessor above collapses both to null.
+ * Live-verified 2026-07-28: 4 of 9 edu-sharing-hosted binaries answer 403 here
+ * AND on their download URL — no converter can help with those, only rights can.
+ */
+export async function readNodeTextContent(
+  nodeId: string,
+  timeoutMs?: number,
+): Promise<{ text: string | null; status: number }> {
   const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/textContent`;
-  const res = await wloFetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) return null;
+  const res = await wloFetch(url, {
+    headers: { Accept: 'application/json' },
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+  });
+  if (!res.ok) return { text: null, status: res.status };
   const data = await res.json() as { content?: string; text?: string };
-  return data.content ?? data.text ?? null;
+  return { text: data.content ?? data.text ?? null, status: res.status };
 }
 
 /**

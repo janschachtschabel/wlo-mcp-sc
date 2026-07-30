@@ -54,6 +54,7 @@ const TOOL_TITLES: Readonly<Record<string, string>> = {
   wlo_health_check: 'WLO Verbindungstest',
   get_wikipedia_summary: 'Wikipedia-Zusammenfassung',
   get_compendium_text: 'WLO Kompendiumtext',
+  get_wlo_content_text: 'WLO Volltext',
   lookup_wlo_publishers: 'WLO Anbieter',
   get_related_content: 'WLO Verwandte Inhalte',
   get_node_breadcrumb: 'WLO Pfadnavigation',

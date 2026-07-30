@@ -165,6 +165,54 @@ export const WLO_FETCH_TIMEOUT_MS: number =
   resolvePositiveInt(process.env['WLO_FETCH_TIMEOUT_MS'], 10_000);
 
 /**
+ * Base URL of the text-extraction service used to read the full text of a
+ * material that is only LINKED (`ccm:wwwurl`) and whose text the repository has
+ * not stored. Each edu-sharing instance normally runs its own, so the address is
+ * configuration, not code. An empty value disables the external path entirely —
+ * the repository's own `/textContent` then remains the only source.
+ * Trailing slashes are stripped so callers can append a path safely.
+ *
+ * A value that cannot serve as a base for `${url}/from-url` — no scheme, not
+ * http(s), or carrying a query/fragment — disables the service and warns. It
+ * deliberately does NOT fall back to the default: a typo must not redirect
+ * material URLs to a host the operator never chose.
+ */
+export function resolveExtractionUrl(raw: string | undefined): string {
+  const s = (raw ?? '').trim();
+  if (raw !== undefined && s === '') return '';   // explicitly disabled
+  const candidate = (s || 'https://text-extraction.staging.openeduhub.net').replace(/\/+$/, '');
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    log.warn('text-extraction service disabled: WLO_TEXT_EXTRACTION_URL is not a URL', { value: candidate });
+    return '';
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    log.warn('text-extraction service disabled: expected an http(s) URL', { protocol: parsed.protocol });
+    return '';
+  }
+  if (parsed.search || parsed.hash) {
+    log.warn('text-extraction service disabled: base URL must carry no query or fragment', { value: candidate });
+    return '';
+  }
+  return candidate;
+}
+
+export const WLO_TEXT_EXTRACTION_URL: string = resolveExtractionUrl(process.env['WLO_TEXT_EXTRACTION_URL']);
+
+/**
+ * Timeout for full-text reads, both from the repository and from the extraction
+ * service. Deliberately larger than ``WLO_FETCH_TIMEOUT_MS``: `/textContent` was
+ * measured at a median of 4.6 s and a maximum of 9.2 s (2026-07-28), which the
+ * 10 s default would cut off — losing a text that exists. The extraction service
+ * renders pages and is slow for the same reason. Override via ``WLO_TEXT_TIMEOUT_MS``.
+ */
+export const WLO_TEXT_TIMEOUT_MS: number =
+  resolvePositiveInt(process.env['WLO_TEXT_TIMEOUT_MS'], 25_000);
+
+/**
  * Concurrent upstream fetches while resolving Themenseiten-Varianten to their
  * owning collections (search_wlo_topic_pages Mode C). This listing is the
  * server's most fan-out-heavy path, so its wall-clock scales inversely with

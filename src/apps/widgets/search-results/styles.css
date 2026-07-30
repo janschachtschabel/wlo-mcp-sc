@@ -1,2 +1,43 @@
 /* search-results/styles.css – W1 specifics (base.css carries the shared tile/grid). */
 .wlo-results { max-width: 960px; }
+
+/* Action bar for the tile selection. Sticky at the bottom so it stays reachable
+   while scrolling a long result list, and wrapping so it reflows at 320px
+   instead of overflowing. */
+.wlo-selection {
+  position: sticky;
+  inset-block-end: 0;
+  margin-top: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  background: var(--wlo-surface);
+  border: 1px solid var(--wlo-border);
+  border-radius: var(--wlo-radius);
+}
+
+.wlo-selection__count { font-size: 0.88rem; font-weight: 600; }
+
+.wlo-selection__use,
+.wlo-selection__clear {
+  min-height: 36px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 0.88rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.wlo-selection__use {
+  color: var(--wlo-surface);
+  background: var(--wlo-accent);
+  border: 1px solid transparent;
+}
+.wlo-selection__use:hover { filter: brightness(1.08); }
+.wlo-selection__clear {
+  color: var(--wlo-accent);
+  background: transparent;
+  border: 1px solid var(--wlo-accent);
+}
+.wlo-selection__clear:hover { background: var(--wlo-surface-2); }

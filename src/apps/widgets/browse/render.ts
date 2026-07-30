@@ -10,6 +10,7 @@
  */
 
 import { escapeHtml } from '../shared/escape.js';
+import { followUpPrompt } from '../shared/follow-up.js';
 import { safeHref } from '../shared/safe-url.js';
 import { t, type Locale } from '../shared/strings.js';
 import type { BrowseNode } from '../shared/types.js';
@@ -22,16 +23,12 @@ export interface BrowseRenderOptions {
 }
 
 /**
- * The follow-up user message the "Inhalte anzeigen" button injects. It MUST
- * carry the nodeId (the tools resolve a collection by id, not title) and name
- * the tool, else the model answers "I need a Node ID" (live 2026-07-17). The
- * title is only human context.
+ * The follow-up user message the "Inhalte anzeigen" button injects. Delegates
+ * to the shared builder, which carries the nodeId (the tools resolve a
+ * collection by id, not title), names the tool, and sanitises the title.
  */
 export function askFollowUpPrompt(title: string, nodeId: string, locale: Locale): string {
-  return (
-    `${t(locale, 'askPromptPrefix')} ${t(locale, 'quoteOpen')}${title}${t(locale, 'quoteClose')} ` +
-    `(nodeId: ${nodeId}). ${t(locale, 'askPromptTool')}`
-  );
+  return followUpPrompt('contents', title, nodeId, locale);
 }
 
 function openLink(node: BrowseNode, locale: Locale): string {
@@ -78,12 +75,14 @@ function renderNode(node: BrowseNode, state: BrowseState, locale: Locale, opts: 
 
   const expanded = state.expanded.includes(id);
   const regionId = `wlo-region-${id}`;
+  // A branch node could only be unfolded, never opened: its own materials were
+  // unreachable without typing. It now carries the same ask-button as a leaf.
   const row =
     `<div class="wlo-tree__row">` +
     `<button class="wlo-tree__toggle" type="button" aria-expanded="${expanded ? 'true' : 'false'}"` +
     `${expanded ? ` aria-controls="${escapeHtml(regionId)}"` : ''} data-node-id="${escapeHtml(id)}">` +
     `<span class="wlo-tree__caret" aria-hidden="true">${expanded ? '▾' : '▸'}</span>${title}` +
-    `</button>${openLink(node, locale)}` +
+    `</button>${opts.canFollowUp ? askButton(node, locale) : ''}${openLink(node, locale)}` +
     `</div>`;
 
   const region = expanded

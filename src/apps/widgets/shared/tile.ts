@@ -12,8 +12,9 @@
  */
 
 import { escapeHtml } from './escape.js';
+import type { ToolFollowUpAction } from './follow-up.js';
 import { safeHref } from './safe-url.js';
-import { t, type Locale } from './strings.js';
+import { t, type Locale, type StringKey } from './strings.js';
 import type { WidgetNode } from './types.js';
 
 export interface TileOptions {
@@ -24,9 +25,45 @@ export interface TileOptions {
    * may set this, otherwise the card ships a dead button.
    */
   detailButton?: boolean;
+  /**
+   * Render a selection checkbox — opt-in for the same reason, and additionally
+   * gated on the host being able to take a follow-up message: without that the
+   * selection could not be used for anything.
+   */
+  selectable?: boolean;
+  /** Current checked state of that checkbox. */
+  selected?: boolean;
+  /**
+   * Render the action button that continues this node's flow (collections:
+   * open contents / open topic page). Gated on the host being able to inject a
+   * follow-up message, otherwise the button could do nothing.
+   */
+  followUp?: boolean;
 }
 
 const DESC_MAX = 160;
+
+/** Action label per follow-up type — the button's visible text. */
+const ACTION_LABEL: Readonly<Record<ToolFollowUpAction, StringKey>> = {
+  contents: 'actionContents',
+  topicPage: 'actionTopicPage',
+  text: 'actionText',
+  related: 'actionRelated',
+};
+
+/**
+ * A button that continues this node's flow. It carries the id and title as data
+ * attributes; the widget's main.ts turns them into a chat message via
+ * `followUpPrompt`. Never an `<a>`: this triggers an action, not navigation.
+ */
+export function followUpButton(action: ToolFollowUpAction, node: WidgetNode, locale: Locale): string {
+  const label = t(locale, ACTION_LABEL[action]);
+  return (
+    `<button type="button" class="wlo-tile__followup" data-follow-up="${action}" ` +
+    `data-node-id="${escapeHtml(node.nodeId)}" data-node-title="${escapeHtml(node.title || '')}" ` +
+    `aria-label="${escapeHtml(`${label}: ${node.title || ''}`)}">${escapeHtml(label)}</button>`
+  );
+}
 
 /** Truncate at a word boundary near the limit, appending an ellipsis. */
 function truncate(text: string, max: number): string {
@@ -55,11 +92,17 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
     const collDesc = node.description
       ? `<p class="wlo-tile__desc">${escapeHtml(truncate(node.description, 90))}</p>`
       : '';
+    // ONE clear primary action per card: a collection with a Themenseite opens
+    // that (the curated view); a plain one lists its contents. Offering both
+    // would make the card ask a question instead of answering one.
+    const collAction = options.followUp
+      ? followUpButton(node.topicPageUrl ? 'topicPage' : 'contents', node, locale)
+      : '';
     return (
       `<li class="wlo-tile wlo-tile--coll">` +
       `<div class="wlo-coll__block"><span class="wlo-coll__glyph" aria-hidden="true">⧉</span></div>` +
       `<div class="wlo-tile__body">` +
-      `<h3 class="wlo-tile__title">${titleHtml}</h3>${badge}${collDesc}` +
+      `<h3 class="wlo-tile__title">${titleHtml}</h3>${badge}${collDesc}${collAction}` +
       `</div>` +
       `</li>`
     );
@@ -89,8 +132,14 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
 
   // edu-sharing style labelled fact rows (license / source) instead of a
   // joined one-liner — plain text, never colour-only.
+  //
+  // The licence row is ALWAYS rendered, even when the record carries none:
+  // teachers must be able to tell "free to reuse" from "no licence stated", and
+  // an omitted row reads like the former while meaning the latter. Many WLO
+  // records genuinely have no `ccm:commonlicense_key` (verified 2026-07-28).
+  const licenseText = node.license || t(locale, 'licenseUnknown');
   const facts = [
-    node.license ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'licenseLabel'))}</dt><dd>${escapeHtml(node.license)}</dd></div>` : '',
+    `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'licenseLabel'))}</dt><dd>${escapeHtml(licenseText)}</dd></div>`,
     node.publisher ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'sourceLabel'))}</dt><dd>${escapeHtml(node.publisher)}</dd></div>` : '',
   ].join('');
   const factsHtml = facts ? `<dl class="wlo-tile__facts">${facts}</dl>` : '';
@@ -100,9 +149,20 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
       `aria-label="${escapeHtml(`${t(locale, 'detailsFor')} ${t(locale, 'quoteOpen')}${node.title || ''}${t(locale, 'quoteClose')}`)}">${escapeHtml(t(locale, 'details'))}</button>`
     : '';
 
+  // A native checkbox: keyboard-operable and announced correctly without any
+  // ARIA gymnastics. `aria-label` names WHICH material it selects, so a screen
+  // reader user hearing it out of context still knows.
+  const pick = options.selectable
+    ? `<label class="wlo-tile__pick">` +
+      `<input type="checkbox" class="wlo-tile__pickbox" data-node-id="${escapeHtml(node.nodeId)}" ` +
+      `data-node-title="${escapeHtml(node.title || '')}"${options.selected ? ' checked' : ''} ` +
+      `aria-label="${escapeHtml(`${t(locale, 'selectLabel')}: ${node.title || ''}`)}" />` +
+      `</label>`
+    : '';
+
   return (
     `<li class="wlo-tile">` +
-    `<div class="wlo-tile__thumb">${thumb}</div>` +
+    `<div class="wlo-tile__thumb">${pick}${thumb}</div>` +
     `<div class="wlo-tile__body">` +
     `<h3 class="wlo-tile__title">${titleHtml}</h3>${desc}${chipsHtml}${factsHtml}${detailBtn}` +
     `</div>` +

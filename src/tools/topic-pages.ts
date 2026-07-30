@@ -18,20 +18,20 @@ import {
 import type { TargetGroup, ThemePageInfo, TopicPageOwnerCache } from '../topic-page-api.js';
 import {
   getCollectionThemePages,
-  getTopicPageContent,
   resolveVariantCollection,
   searchPageVariants,
 } from '../topic-page-api.js';
+import { getTopicPageContent } from '../topic-page-structure.js';
 import { labelFromUri, resolveVocab } from '../vocabs.js';
-
-// Mode B bound: each candidate costs one metadata fetch (plus one children
-// fetch when it has a page config), so cap the merged portal+keyword set.
-const MODE_B_CANDIDATE_MAX = 12;
 import type { LabeledCriterion } from './shared.js';
 import { mapPool, queryMetaContent, toolError } from './shared.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import type { PresentedThemePage } from './topic-pages-present.js';
 import { mergeThemePages, renderThemePages } from './topic-pages-present.js';
+
+// Mode B bound: each candidate costs one metadata fetch (plus one children
+// fetch when it has a page config), so cap the merged portal+keyword set.
+const MODE_B_CANDIDATE_MAX = 12;
 
 /**
  * Mode C candidate pool. Variants of ONE Themenseite merge into a single entry,
@@ -274,7 +274,13 @@ without a query they are sorted alphabetically by collection name with nodeId as
         // flight so a wide result set can't fan out into an upstream avalanche.
         if (params.includeContent && params.outputFormat === 'json') {
           await mapPool(out, 5, async (p: PresentedThemePage) => {
-            const { structure } = await getTopicPageContent({ collectionId: p.collectionId });
+            // The variant id is already in hand from the merge — passing it lets
+            // getTopicPageContent read variant and collection in parallel
+            // instead of walking the page-config folder (measured 1238 → 774 ms).
+            const { structure } = await getTopicPageContent({
+              collectionId: p.collectionId,
+              variantId: p.variants[0]?.variantId || undefined,
+            });
             if (structure) p.content = await resolveTopicPageSwimlanes(structure, params.maxPerSwimlane ?? 3);
             return null;
           });

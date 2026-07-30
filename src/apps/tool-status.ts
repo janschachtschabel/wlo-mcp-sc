@@ -38,6 +38,7 @@ export const TOOL_STATUS: Readonly<Record<string, ToolStatus>> = {
   lookup_wlo_vocabulary: { invoking: 'Vokabular wird geladen…', invoked: 'Vokabular geladen' },
   lookup_wlo_publishers: { invoking: 'Anbieter werden ermittelt…', invoked: 'Anbieter ermittelt' },
   get_compendium_text: { invoking: 'Kompendiumtext wird geladen…', invoked: 'Text geladen' },
+  get_wlo_content_text: { invoking: 'Volltext wird geladen…', invoked: 'Volltext geladen' },
   get_wikipedia_summary: { invoking: 'Wikipedia wird abgefragt…', invoked: 'Zusammenfassung bereit' },
   find_wlo_skills: { invoking: 'Skills werden gesucht…', invoked: 'Skills gefunden' },
   wlo_health_check: { invoking: 'Verbindung wird geprüft…', invoked: 'Status geprüft' },

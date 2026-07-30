@@ -13,22 +13,41 @@
 
 import { escapeHtml } from '../shared/escape.js';
 import { safeHref } from '../shared/safe-url.js';
-import { renderTile } from '../shared/tile.js';
+import { followUpButton, renderTile } from '../shared/tile.js';
 import { t, type Locale, type StringKey } from '../shared/strings.js';
 import type { SearchAllPayload, WidgetNode } from '../shared/types.js';
 
 /** Ephemeral UI state owned by main.ts (see the Apps-SDK state guide). */
 export interface SearchResultsState {
   selectedId?: string | null;
+  /** nodeIds ticked for "use these" — only meaningful when `canSelect`. */
+  selectedIds?: string[];
+  /** Host can inject a follow-up message; without it selection is pointless. */
+  canSelect?: boolean;
 }
 
-function section(titleKey: StringKey, nodes: WidgetNode[], locale: Locale, opts: { coll?: boolean; detail?: boolean } = {}): string {
+interface SectionOptions {
+  coll?: boolean;
+  detail?: boolean;
+  selectable?: boolean;
+  selectedIds?: string[];
+  followUp?: boolean;
+}
+
+function section(titleKey: StringKey, nodes: WidgetNode[], locale: Locale, opts: SectionOptions = {}): string {
   if (nodes.length === 0) return '';
   // Collection/topic-page sections are grouped in a separated band (see below),
   // so the section itself carries no extra emphasis; only its grid differs.
   const cls = 'wlo-section';
   const gridCls = opts.coll ? 'wlo-grid wlo-grid--coll' : 'wlo-grid';
-  const tiles = nodes.map(n => renderTile(n, { locale, detailButton: opts.detail })).join('');
+  const picked = new Set(opts.selectedIds ?? []);
+  const tiles = nodes.map(n => renderTile(n, {
+    locale,
+    detailButton: opts.detail,
+    selectable: opts.selectable,
+    selected: picked.has(n.nodeId),
+    followUp: opts.followUp,
+  })).join('');
   return (
     `<section class="${cls}">` +
     `<h2 class="wlo-section__title">${escapeHtml(t(locale, titleKey))}</h2>` +
@@ -46,7 +65,7 @@ function allNodes(payload: SearchAllPayload | undefined): WidgetNode[] {
 }
 
 /** The Einzelansicht: full metadata of one hit, replacing the grid. */
-function renderDetail(node: WidgetNode, locale: Locale): string {
+function renderDetail(node: WidgetNode, locale: Locale, canFollowUp: boolean): string {
   const title = escapeHtml(node.title || '');
   const previewSrc = (!!node.previewUrl && !node.previewIsIcon) ? safeHref(node.previewUrl) : '';
   const thumb = previewSrc
@@ -80,12 +99,22 @@ function renderDetail(node: WidgetNode, locale: Locale): string {
   ].join('');
   const linksHtml = links ? `<p class="wlo-detail__links">${links}</p>` : '';
 
+  // The detail view is where someone decides what to DO with a hit. Opening the
+  // material externally leaves the chat; these two continue it — reading the
+  // material's text (which nothing else routed to) and finding more like it.
+  const actions = canFollowUp
+    ? `<p class="wlo-detail__actions">` +
+      (node.nodeType === 'content' ? followUpButton('text', node, locale) : '') +
+      followUpButton('related', node, locale) +
+      `</p>`
+    : '';
+
   return (
     `<article class="wlo-detail">` +
     `<button type="button" class="wlo-detail__back" data-action="back">← ${escapeHtml(t(locale, 'back'))}</button>` +
     `<div class="wlo-detail__thumb">${thumb}</div>` +
     `<h1 class="wlo-detail__title">${title}</h1>` +
-    `${chipsHtml}${desc}${factsHtml}${linksHtml}` +
+    `${chipsHtml}${desc}${factsHtml}${actions}${linksHtml}` +
     `</article>`
   );
 }
@@ -100,7 +129,7 @@ export function renderSearchResults(
   // must never go blank after a data refresh.
   if (state.selectedId) {
     const node = allNodes(payload).find(n => n.nodeId === state.selectedId);
-    if (node) return `<div class="wlo-results">${renderDetail(node, locale)}</div>`;
+    if (node) return `<div class="wlo-results">${renderDetail(node, locale, !!state.canSelect)}</div>`;
   }
 
   const topicPages = payload?.topicPages?.results ?? [];
@@ -121,15 +150,35 @@ export function renderSearchResults(
   // separated band ABOVE the material grid. The band (and its divider) is
   // dropped entirely when both are empty, so content-only results show no
   // stray separator.
-  const topicPagesHtml = section('sectionTopicPages', topicPages, locale, { coll: true });
-  const collectionsHtml = section('sectionCollections', collections, locale, { coll: true });
+  // Collection and topic-page tiles were dead ends: a link out to edu-sharing
+  // and nothing that continued the conversation. Each now carries the one
+  // action that does (open its contents / open its Themenseite).
+  const topicPagesHtml = section('sectionTopicPages', topicPages, locale, { coll: true, followUp: state.canSelect });
+  const collectionsHtml = section('sectionCollections', collections, locale, { coll: true, followUp: state.canSelect });
   const band = topicPagesHtml || collectionsHtml
     ? `<div class="wlo-results__coll-band">${topicPagesHtml}${collectionsHtml}</div>`
     : '';
 
+  // The bar only exists once something is ticked: an always-present "0 selected"
+  // strip is noise. `aria-live="polite"` announces the changing count without
+  // interrupting, since the number updates as boxes are ticked.
+  const picked = (state.selectedIds ?? []).filter(id => content.some(n => n.nodeId === id));
+  const selectionBar = state.canSelect && picked.length > 0
+    ? `<div class="wlo-selection" aria-live="polite">` +
+      `<span class="wlo-selection__count">${picked.length} ${escapeHtml(t(locale, 'selectionCount'))}</span>` +
+      `<button type="button" class="wlo-selection__use" data-action="use-selection">${escapeHtml(t(locale, 'selectionUse'))}</button>` +
+      `<button type="button" class="wlo-selection__clear" data-action="clear-selection">${escapeHtml(t(locale, 'selectionClear'))}</button>` +
+      `</div>`
+    : '';
+
   return (
     `<div class="wlo-results">${heading}${band}` +
-    section('sectionContent', content, locale, { detail: true }) +
+    section('sectionContent', content, locale, {
+      detail: true,
+      selectable: state.canSelect,
+      selectedIds: state.selectedIds,
+    }) +
+    selectionBar +
     `</div>`
   );
 }

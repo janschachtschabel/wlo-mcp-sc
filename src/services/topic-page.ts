@@ -9,9 +9,10 @@
  */
 
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
-import { buildTopicPageUrl, getNodesMetadata, ngsearch, searchCollectionsByKeyword, stripStoreRef } from '../wlo-api.js';
-import type { ThemePageInfo, TargetGroup, TopicPageStructure } from '../topic-page-api.js';
+import { WLO_TOPIC_POOL, buildTopicPageUrl, getNodesMetadata, ngsearch, searchCollectionsByKeyword, stripStoreRef } from '../wlo-api.js';
+import type { ThemePageInfo, TargetGroup } from '../topic-page-api.js';
 import { getCollectionThemePages, searchTopicPageCollections } from '../topic-page-api.js';
+import type { TopicPageStructure } from '../topic-page-structure.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes } from '../formatter.js';
 import { rerankNodes } from '../reranker.js';
@@ -51,7 +52,13 @@ export async function findTopicPagesByQuery(
   const candidateIds = rerankNodes(merged, q)
     .flatMap(c => (c.ref?.id ? [c.ref.id] : []))
     .slice(0, maxCandidates);
-  const pages = await mapPool(candidateIds, 4, (cId) => getCollectionThemePages(cId, targetGroup));
+  // Each candidate costs a metadata read plus, when it owns a page config, a
+  // children read. At a hard-coded width of 4 those 12 candidates took three to
+  // four sequential waves (~1.8 s measured against production, ~0.8 s in one
+  // wave) — the dominant cost of both callers. Share WLO_TOPIC_POOL with the
+  // Mode-C fan-out instead of adding a second knob: it is the same kind of
+  // work, bounded by the same upstream.
+  const pages = await mapPool(candidateIds, WLO_TOPIC_POOL, (cId) => getCollectionThemePages(cId, targetGroup));
   const results: ThemePageInfo[] = [];
   for (const p of pages) if (p) results.push(...p);
   return results;

@@ -7,7 +7,7 @@ KI-Agenten das **Suchen und Abrufen offener Bildungsressourcen (OER)** aus
 [WirLernenOnline (WLO)](https://wirlernenonline.de) über die öffentliche
 edu-sharing-REST-API ermöglicht.
 
-Er stellt **22 Tools** für Volltextsuche, Sammlungs-/Themenseiten-Navigation,
+Er stellt **23 Tools** für Volltextsuche, Sammlungs-/Themenseiten-Navigation,
 Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen die anonyme,
 nur lesende öffentliche API. Keine Authentifizierung, keine Schreibzugriffe.
 
@@ -48,7 +48,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 
 ## Funktionen
 
-- **22 MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
+- **23 MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
   Themenseiten und deren Swimlane-Inhalte, Fachportale, Baum-Navigation,
   Node-Details (einzeln & im Bulk), Vokabular-Abfrage, Anbieter-Abfrage,
   Health-Check, Wikipedia-Zusammenfassung, voller Kompendiumstext, Suche
@@ -57,7 +57,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   ChatGPT-`search`/`fetch`-Knowledge-Tools.
 - **OpenAI-Apps-SDK-Unterstützung** — Anzeige-Tools liefern `structuredContent`
   (Tool-`outputSchema`) mit read-only-`annotations`, der Server annonciert
-  werkzeugübergreifende `instructions`, und vier Tools bringen ein inline-
+  werkzeugÃ¼bergreifende `instructions`, und fünf Tools bringen ein inline-
   gebündeltes `ui://`-Widget mit (Kombi-Suchergebnisse mit Detailansicht im
   Widget, Themenseiten-Swimlanes unter einem Titel/Beschreibungs-Kopf und ein
   interaktiver Sammlungs-Browser), jeweils mit Widget-`_meta` (Beschreibung,
@@ -113,6 +113,9 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
 | `WLO_POOL_SIZE` | `25` | alle | Größe des Kandidaten-Pools **pro Suchvariante** für das Reranking (`enhancedSearch`) — **nicht** die Anzahl der zurückgegebenen Treffer (das ist `maxResults`). Kleiner = schneller/kleinere Abrufe bei minimal geringerer Recall-Quote. |
 | `WLO_FETCH_TIMEOUT_MS` | `10000` | alle | Timeout pro Anfrage (ms) für jeden Upstream-edu-sharing-Aufruf. Verhindert, dass ein hängender Backend-Socket einen Tool-Aufruf blockiert. |
+| `WLO_TEXT_EXTRACTION_URL` | `https://text-extraction.staging.openeduhub.net` | alle | Basis-URL des Text-Extraktionsdienstes, auf den `get_wlo_content_text` bei extern verlinktem Material (`ccm:wwwurl`) zurückfällt, dessen Text das Repository nicht gespeichert hat. Jede Instanz betreibt üblicherweise einen eigenen. **Leer schaltet** den externen Weg **ab** — dann bleibt `/textContent` des Repositories die einzige Quelle. Ein Wert, der nicht als Basis taugt (kein Schema, kein http(s), oder mit Query/Fragment), schaltet ihn ebenfalls ab und loggt eine Warnung; es wird bewusst **nicht** auf den Default zurückgefallen, damit ein Tippfehler keine Material-URLs an einen nicht gewählten Host schickt. |
+| `WLO_TEXT_TIMEOUT_MS` | `25000` | alle | Timeout (ms) für Volltext-Abrufe — sowohl `/textContent` als auch den Extraktionsdienst. Bewusst größer als `WLO_FETCH_TIMEOUT_MS`: `/textContent` wurde mit 4,6 s Median und 9,2 s Maximum gemessen, was der 10-s-Default abschneiden würde — ein vorhandener Text ginge verloren. |
+| `WLO_TOPIC_POOL` | `10` | alle | Fächerbreite für die Anreicherung von Themenseiten-Kandidaten (parallel abgesetzte Metadaten-Abrufe). Höher = weniger sequenzielle Wellen bei mehr gleichzeitiger Upstream-Last. |
 | `PORT` | `3000` | HTTP-Modus | Port für den eigenständigen HTTP-Server. |
 | `MCP_SSE` | `false` | HTTP-Modus | Bei wahrem Wert (`1`/`true`/`yes`) wird `POST /mcp` als echter Server-Sent-Events-Stream ausgeliefert (vom ChatGPT-Entwicklermodus benötigt). Standard sind Einzel-JSON-Antworten (maximale Client-Kompatibilität). Hinter einem Reverse-Proxy **muss** das Buffering für die `/mcp`-Location deaktiviert sein — siehe [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Das Docker-Image setzt dies standardmäßig auf `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | alle | MIME-Type der inline-Apps-SDK-Widget-Ressourcen. Standard ist der MCP-Apps-Standard (portabel). Auf `text/html+skybridge` setzen, falls eine Legacy-ChatGPT-Runtime die Widgets mit dem Standardwert nicht rendert. |
@@ -229,6 +232,7 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 20 | `get_node_breadcrumb` | Ahnenpfad einer Sammlung (Wurzel → Node) im Inhaltsbaum | markdown / json |
 | 21 | `get_collection_stats` | Zusammensetzung einer Sammlung: Datei-/Untersammlungs-Zahlen + Typ/Fach/Stufe-Aufschlüsselung | markdown / json |
 | 22 | `find_wlo_skills` | WLO-„Skills" (wiederverwendbare Instruktions-Markdown in einer WLO-Sammlung) zu einer Aufgabe finden und ihre Instruktionen zum Anwenden liefern | markdown / json |
+| 23 | `get_wlo_content_text` | Der **eigentliche Volltext** eines Materials (Arbeitsblatt, Artikel), nicht dessen Metadaten — Repository zuerst, verlinkte Seite als Rückfallebene | markdown / json |
 
 Die Anzeige-/Such-Tools liefern zusätzlich `structuredContent` (gegen ein
 Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
@@ -386,6 +390,19 @@ ihre rohen Instruktionen zum Anwenden zurück. `nodeId` defaultet auf
 Titel/Beschreibung sagen, was der Skill tut und wann. Teilt die Listing-/Abruf-Logik
 mit `GET /api/collection`, sodass native MCP-Clients dieselbe Skill-Funktion wie
 der Launcher/REST-Pfad erhalten.
+
+**23. `get_wlo_content_text`** — `nodeId`, `maxChars?` (500–50000, Standard 8000),
+`outputFormat?`. Liefert den **eigenen Text** des Materials, nicht dessen
+Metadaten, damit der Inhalt zusammengefasst, vereinfacht oder in Aufgaben
+überführt werden kann. Primärquelle ist `/textContent` des Repositories — dort
+liegt bereits konvertierter Text für rund 90 % der Datensätze, einschließlich
+PDF, DOCX und PPTX; nur ein Datensatz, der selbst nichts speichert und extern
+verlinkt ist (`ccm:wwwurl`), fällt auf den Text-Extraktionsdienst zurück
+(`WLO_TEXT_EXTRACTION_URL`, leer schaltet ihn ab). `source` benennt den
+genommenen Weg. Ein fehlender Text ist kein Fehler, sondern ein `reason`:
+`access_denied` (vorhanden, aber nicht öffentlich — da hilft kein Konverter,
+nur Rechte), `no_text_no_url`, `extraction_failed`, `node_not_found`. Lange
+Texte werden gekürzt und als solche markiert (`truncated`).
 
 ## Ausgabeformate
 
@@ -569,7 +586,7 @@ prozessweitem Caching profitieren.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 22 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 23 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, filter builder, mapPool, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
@@ -609,7 +626,8 @@ wlo-mcp-server/
 │   ├── wlo-config.ts         #   env config + shared types + wloFetch + DISPLAY_PROPS
 │   ├── wlo-search.ts         #   search endpoints (ngsearch, collection keyword search)
 │   ├── wlo-node.ts           #   node endpoints (children/metadata/text/download/breadcrumb) + URL builders
-│   ├── topic-page-api.ts     # topic-page API (page_variant, swimlane parsing, variant→collection)
+│   ├── topic-page-api.ts     # topic-page discovery (page_variant search, variant→collection)
+│   ├── topic-page-structure.ts # one page's content: variant → swimlanes
 │   ├── wikipedia-api.ts      # Wikipedia REST summary client (opensearch title fallback)
 │   ├── reranker.ts           # RRF-Merge + Quality-Scoring (pure)
 │   ├── query-expand.ts       # Query → gewichtete Backend-Varianten (Synonyme, Stoppwörter)
@@ -666,14 +684,20 @@ Codes), gruppiert nach Modul.
 | `buildTopicPageUrl` / `buildRenderUrl` | Frontend-Links bauen |
 | `appendPropertyFilter` | Die wiederholten `propertyFilter`-Params anhängen |
 
-**`topic-page-api.ts` — Themenseiten**
+**`topic-page-api.ts` — Themenseiten finden**
 
 | Funktion | Was sie tut |
 |---|---|
 | `searchPageVariants` | `page_variant`-Knoten suchen |
+| `searchTopicPageCollections` | Sammlungen mit Themenseite, gegen eine Query gematcht |
 | `resolveVariantCollection` | Eine Variante zur besitzenden Sammlung auflösen |
 | `getCollectionThemePages` | Themenseiten-Varianten einer Sammlung |
-| `getTopicPageContent` | Swimlane-Struktur einer Themenseite parsen |
+
+**`topic-page-structure.ts` — was eine Themenseite zeigt**
+
+| Funktion | Was sie tut |
+|---|---|
+| `getTopicPageContent` | Eine Variante auflösen und ihre Swimlane-Struktur parsen |
 
 **Ranking, Formatierung, Vokabular**
 

@@ -682,3 +682,40 @@ the same day** under better-coding-workflow (see the report's "Resolution status
 +3: download ×2, browse-depth ×1); live-smoked `POST /mcp` 200 + `405` wrong-verb;
 `docker compose config` valid; prod `npm audit` 0. Docs synced (CHANGELOG,
 audit report resolution, this file). Not committed.
+
+
+## Pre-deploy audit remediation (2026-07-30)
+
+All findings from the pre-deploy audit resolved under better-coding-workflow.
+
+- **Follow-up prompts** — `sanitizeTitle` (control characters flattened,
+  whitespace collapsed, 120-char cap) and the three remaining prompt builders
+  consolidated into `src/apps/widgets/shared/follow-up.ts`; the `as never`
+  casts in the reading widget replaced by explicit key maps.
+- **`src/topic-page-api.ts` split** (448 lines → 265 + 190). Discovery stays;
+  `src/topic-page-structure.ts` owns variant → swimlanes. Pure move, no logic
+  change — 7 import sites updated.
+- **`resolveExtractionUrl` guard** — a value that cannot serve as a base for
+  `<url>/from-url` disables the service and warns instead of falling back to
+  the default (a typo must not redirect material URLs to an unchosen host).
+  TDD: RED on 5 cases, then GREEN.
+- **Docs** — `get_wlo_content_text` added to README.de.md (table + detail);
+  three undocumented env vars (`WLO_TEXT_EXTRACTION_URL`,
+  `WLO_TEXT_TIMEOUT_MS`, `WLO_TOPIC_POOL`) added to both README tables;
+  historical 22-tool counts (O9 benchmark, MCP Inspector cross-check) marked as
+  historical rather than left to read as current; dependency-deferral rationale
+  recorded in CONTRIBUTING (both languages).
+- **Dependencies** — in-range `npm update` (`@types/node` 20.19.43, `tsx`
+  4.23.1) cleared the low-severity esbuild advisory carried in through tsx.
+
+**Also repaired:** five documentation files that a PowerShell
+`Get-Content`/`Set-Content` round-trip in this session had double-encoded
+(UTF-8 read as CP1252) and given a BOM. Repaired line-wise via a strict
+round-trip test, because the files mixed damaged and correctly-encoded lines.
+Line endings are LF, matching the rest of the repo.
+
+**Verification:** `npm run typecheck` exit 0 · `npm test` **548 pass / 0
+fail** (547 → +1: the extraction-URL guard) · `npm run build` exit 0, four
+widget bundles emitted · `npm audit --omit=dev --audit-level=high` and
+`npm audit --audit-level=low` both 0 vulnerabilities · encoding check 0
+damaged lines / no BOM across 12 files. Not committed (user manages git).

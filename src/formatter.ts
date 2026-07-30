@@ -272,7 +272,10 @@ export function renderToText(nodes: FormattedNode[], totalHits?: number): string
     if (n.contentUrl && n.contentUrl !== n.url) parts.push(`Render-URL: ${n.contentUrl}`);
     if (n.previewUrl)                  parts.push(`Vorschaubild: ${n.previewUrl}${n.previewIsIcon ? ' (Icon)' : ''}`);
     if (n.mimeType)                    parts.push(`MIME-Typ: ${n.mimeType}${n.fileSize ? ` (${Math.round(n.fileSize/1024)} KB)` : ''}`);
-    if (n.license)                     parts.push(`Lizenz: ${n.license}`);
+    // Always stated, never omitted: a missing licence is itself the decisive
+    // fact for a teacher (do NOT treat as free to reuse), and an absent line
+    // reads like an unremarkable one. Matches the tile and the REST page.
+    parts.push(`Lizenz: ${n.license || 'nicht angegeben'}`);
     if (n.publisher)                   parts.push(`Anbieter: ${n.publisher}`);
     if (n.topicPageUrl)                parts.push(`Themenseite: ${n.topicPageUrl}`);
     if (n.compendiumText)              parts.push(`Kompendium: ${n.compendiumText.slice(0, 500)}${n.compendiumText.length > 500 ? '…' : ''}`);

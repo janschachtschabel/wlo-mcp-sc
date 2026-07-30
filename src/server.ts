@@ -19,6 +19,7 @@ import { registerBrowseTools } from './tools/browse.js';
 import { registerHealthTool } from './tools/health.js';
 import { registerWikipediaTool } from './tools/wikipedia.js';
 import { registerCompendiumTool } from './tools/compendium.js';
+import { registerContentTextTool } from './tools/content-text.js';
 import { registerKnowledgeTools } from './tools/knowledge.js';
 import { registerNodeRelationTools } from './tools/node-relations.js';
 import { registerCollectionStatsTool } from './tools/collection-stats.js';
@@ -64,6 +65,7 @@ export function createMcpServer(): McpServer {
   registerTopicPageContentTool(server, widgets['topic-page']); // get_topic_page_content (W4)
   registerWikipediaTool(server);        // get_wikipedia_summary
   registerCompendiumTool(server);       // get_compendium_text
+  registerContentTextTool(server, widgets['reading']); // get_wlo_content_text (W5)
   registerKnowledgeTools(server);       // search, fetch (ChatGPT knowledge convention)
   registerPublisherTool(server);        // lookup_wlo_publishers
   registerNodeRelationTools(server);    // get_related_content, get_node_breadcrumb

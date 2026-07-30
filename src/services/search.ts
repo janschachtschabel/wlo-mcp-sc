@@ -21,7 +21,8 @@ import { log } from '../logger.js';
 import { getCompendiumTexts } from './compendium.js';
 import type { SwimlanePayload } from './topic-page.js';
 import { resolveTopicPageSwimlanes } from './topic-page.js';
-import { getTopicPageContent, searchTopicPageCollections } from '../topic-page-api.js';
+import { searchTopicPageCollections } from '../topic-page-api.js';
+import { getTopicPageContent } from '../topic-page-structure.js';
 
 export interface SearchWithinCollectionOptions {
   nodeId: string;

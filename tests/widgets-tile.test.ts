@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { renderTile } from '../src/apps/widgets/shared/tile.js';
 import { resolveLocale, t } from '../src/apps/widgets/shared/strings.js';
@@ -29,6 +30,64 @@ function node(overrides: Record<string, unknown> = {}): any {
     ...overrides,
   };
 }
+
+/**
+ * Teachers must be able to tell "free to reuse" from "no licence stated" — and
+ * many WLO records genuinely carry no `ccm:commonlicense_key` (all six sampled
+ * Tutory worksheets, even at the full `-all-` projection, 2026-07-28). Omitting
+ * the row made those indistinguishable from an unread one, which is the one
+ * reading that is unsafe to act on.
+ */
+test('a content tile states the licence when there is one', () => {
+  const html = renderTile(node(), { locale: 'de' });
+  assert.match(html, /Lizenz/, 'licence label');
+  assert.match(html, /CC BY 4\.0/, 'the licence itself');
+});
+
+test('a content tile says so explicitly when NO licence is stated', () => {
+  const html = renderTile(node({ license: '' }), { locale: 'de' });
+  assert.match(html, /Lizenz/, 'the row must not disappear');
+  assert.match(html, /nicht angegeben/i, 'and must name the gap, not leave it blank');
+});
+
+test('the missing-licence wording is localized', () => {
+  const html = renderTile(node({ license: '' }), { locale: 'en' });
+  assert.match(html, /not stated/i);
+});
+
+/**
+ * Tiles in a row must be interchangeable in size. Live, they were not: a taller
+ * preview image or a longer description pushed the licence rows and the Details
+ * button to a different height in every card, so the grid read as ragged
+ * (user report 2026-07-28). Portrait tiles are wanted — inconsistent ones are
+ * not. The fix is structural, so it is pinned structurally.
+ */
+test('the preview box is a fixed portrait format, identical in every tile', () => {
+  const css = readFileSync('src/apps/widgets/shared/base.css', 'utf8');
+  const thumb = /\.wlo-tile__thumb\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(thumb, /aspect-ratio:\s*3\s*\/\s*4/, 'one portrait ratio for all previews');
+  const img = /\.wlo-tile__img\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(img, /object-fit:\s*cover/, 'images fill the box instead of resizing it');
+  assert.match(img, /width:\s*100%/);
+  assert.match(img, /height:\s*100%/);
+});
+
+test('title and description are clamped to a fixed number of lines', () => {
+  const css = readFileSync('src/apps/widgets/shared/base.css', 'utf8');
+  const desc = /\.wlo-tile__desc\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(desc, /line-clamp:\s*3/, 'the description never grows past three lines');
+  assert.match(desc, /min-height/, 'and reserves that height even when shorter');
+  const title = /\.wlo-tile__title\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(title, /line-clamp:\s*2/);
+});
+
+test('the fact rows and the details button sit at the bottom of every tile', () => {
+  const css = readFileSync('src/apps/widgets/shared/base.css', 'utf8');
+  const body = /\.wlo-tile__body\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(body, /flex:\s*1/, 'the body fills the tile so the footer can be pushed down');
+  const facts = /\.wlo-tile__facts\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(facts, /margin-top:\s*auto/, 'footer anchored to the bottom, not floating after the text');
+});
 
 test('resolveLocale defaults to German, honours an English locale hint', () => {
   assert.equal(resolveLocale(undefined), 'de');

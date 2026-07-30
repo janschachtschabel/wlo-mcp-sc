@@ -9,6 +9,249 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed (pre-deploy audit follow-up, 2026-07-30)
+Every finding from the pre-deploy audit, resolved.
+- **Follow-up prompts sanitize the title.** A control character or a runaway
+  title from repository metadata went into the message verbatim;
+  `sanitizeTitle` now flattens control characters, collapses whitespace and caps
+  the title at 120 characters. The three remaining prompt builders collapsed
+  into the one in `shared/follow-up.ts`.
+- **`src/topic-page-api.ts` split in two** (448 lines, two reasons to change).
+  Discovery — searching page variants, resolving a variant to its owning
+  collection — stays; parsing what a page SHOWS moved to
+  `src/topic-page-structure.ts`. A pure move: 547/547 tests unchanged.
+- **A broken `WLO_TEXT_EXTRACTION_URL` now disables the service instead of
+  building an unusable request target.** No scheme, a non-http(s) scheme, or a
+  query/fragment → the external path is off and a warning is logged. It
+  deliberately does **not** fall back to the default: a typo must not redirect
+  material URLs to a host the operator never chose.
+- **Three env variables were missing from the README table** —
+  `WLO_TEXT_EXTRACTION_URL`, `WLO_TEXT_TIMEOUT_MS`, `WLO_TOPIC_POOL` — although
+  `CONTRIBUTING.md` requires both places. Added in both languages.
+- **`get_wlo_content_text` was missing from README.de.md** (tool table and
+  detail section) while the English README documented it.
+- **Historical tool counts are now marked as historical** rather than silently
+  read as current: the O9 benchmark covered the 22 tools registered that day,
+  and the MCP Inspector cross-check ran against those same 22 — the 23rd is
+  covered by the conformance test, not by that Inspector run.
+- **Dev dependencies updated in range** (`@types/node` 20.19.43, `tsx` 4.23.1),
+  clearing the low-severity esbuild advisory that came in through `tsx`.
+  `npm audit` is clean at every level. `CONTRIBUTING.md` now records why
+  `@types/node` 26, TypeScript 7 and zod 4 are held back.
+
+### Added (every tile continues a flow, 2026-07-28)
+An audit of all four widgets found the same gap repeatedly: cards that showed
+something but offered no way to *do* anything with it, so the user had to type
+what a button could have carried.
+- **Collection and topic-page tiles were dead ends** — a link out to
+  edu-sharing and nothing else. Each now carries the one action that continues
+  the conversation: a collection with a Themenseite opens that, a plain one
+  lists its contents. One primary action per card, never two competing ones.
+- **The detail view now leads to the full text** (`get_wlo_content_text`) and to
+  similar materials (`get_related_content`). The reading widget and its tool
+  existed but nothing in the UI routed to them.
+- **Branch nodes in the browse tree could only be unfolded, never opened.** They
+  now carry the same "Inhalte anzeigen" button as leaf nodes, so a subject with
+  sub-topics no longer hides its own materials behind typing.
+- **`shared/follow-up.ts` is the single place a button becomes a message.** Two
+  properties are pinned by test for every action: the message names the NODE ID
+  (the content tools resolve by id; a title-only prompt made the model ask for
+  one) and the TOOL that does the job, so the model continues the flow instead
+  of guessing. Keeping the mapping in one module stops the four widgets' wording
+  from drifting apart.
+- Every action button is a real `<button>` with an accessible name that includes
+  the material, and none is rendered unless the host can take a follow-up
+  message — a control that cannot work is worse than no control.
+
+### Fixed (tiles are uniform, and selectable, 2026-07-28)
+Cards in a row were interchangeable in purpose but not in size: a tall document
+scan next to a wide video thumbnail, or a terse description next to a verbose
+one, moved the licence rows and the Details button to a different height in
+every card (user report 2026-07-28). Portrait tiles are wanted — ragged ones
+are not.
+- **One preview format for all tiles** (`3 / 4`, portrait, `object-fit: cover`),
+  so the image fills a fixed box instead of dictating the card's height.
+- **Title and description clamped to a fixed line count** (2 and 3) with that
+  height reserved up front, so a one-line description and a four-line one leave
+  the card the same size. The full text stays in the DOM for screen readers and
+  the title still links to the complete resource.
+- **The fact rows and the Details button are anchored to the bottom**
+  (`margin-top: auto` on a `flex: 1` body), so licence and source line up across
+  a row rather than floating wherever the text happened to end.
+
+### Added (pick materials and carry them into the chat, 2026-07-28)
+A teacher who finds three fitting worksheets wants to work with *those three*.
+- **A selection checkbox per content tile** — a native `<input type="checkbox">`
+  (keyboard-operable and announced without ARIA gymnastics), named per material
+  so it is unambiguous out of context, on a 32 px hit area over the preview.
+- **An action bar** appears once something is ticked (never a "0 selected"
+  strip), sticky so it stays reachable in a long list, and `aria-live="polite"`
+  so the changing count is announced without interrupting.
+- **"Ausgewählte weiterverwenden"** injects a user message listing each material
+  **with its nodeId**, so the model can load them — the lesson from the browse
+  widget, whose title-only prompt made it ask for an id. Widget state persists
+  the ids; titles are backfilled from the rendered tiles after a re-mount, and a
+  material whose title cannot be recovered travels as its id alone rather than
+  as empty quotes.
+- Selection is gated on `canFollowUp()`: without a host that can take the
+  message, no checkboxes and no bar ship — a selection nothing can act on is
+  worse than none. As everywhere else, the widget calls no tool itself.
+
+### Added (W5 reading widget + Markdown subset renderer, 2026-07-28)
+A 41 000-character full text is unreadable as a wall of plain text, and a reader
+who sees a material wants to *do* something with it. W5 renders the text and
+hands the conversation the next step.
+- **`shared/markdown.ts` — a deliberately narrow Markdown subset**, not a
+  parser: headings, paragraphs, lists, blockquotes, fenced code, rules, bold,
+  italic, inline code and http(s) links. The source is escaped FIRST and only
+  the recognised subset is turned back into markup, because the text comes from
+  third-party publishers and an external conversion service. No package was
+  added: a general parser widens the attack surface for no benefit and would
+  dwarf the 7–9 kB widget bundles, and a pure function also serves the REST
+  layer, which a browser-only package could not. A whitelist test asserts that
+  eight hostile inputs (`<script>`, `<iframe>`, `<svg onload>`, `data:` links,
+  markup inside headings/lists/quotes) can produce no element outside the
+  renderer's own tag set.
+- **Widget W5 `reading`**, attached to `get_wlo_content_text`. Shows the text,
+  states its provenance as a visible fact (repository vs. linked page, with the
+  link), flags truncation, and gives each empty cause its own wording instead of
+  a blank panel — `access_denied` reads "not publicly accessible", not "no text".
+- **Follow-up actions**: "Zusammenfassen", "Einfacher formulieren", "Aufgaben
+  ableiten". They inject a user message that names the material AND its nodeId,
+  so downstream tools can resolve it — the lesson from the browse widget, whose
+  title-only prompt made the model ask for an id. Like the tree, the widget
+  never calls a tool itself: ChatGPT mirrors a widget-initiated result back as
+  new toolOutput and may re-mount the frame. Rendered only when the host can
+  inject a message (`canFollowUp`), so no dead controls ship.
+- Document headings render one level down (`#` → `h2`): the widget title owns
+  the page's only `h1`, and two competing top-level headings would break the
+  outline screen readers navigate by.
+- **Every button now gets a visible focus ring by default.** The shared
+  stylesheet declared focus rings per class, so each new control shipped without
+  one until someone remembered — an accessibility floor that depended on memory.
+  The existing per-class rules are left in place (now redundant, harmless).
+
+### Added (`get_wlo_content_text` — the material's own text, 2026-07-28)
+Until now every tool returned metadata *about* a material; none returned the
+material. A teacher could be told a worksheet exists but not work with it.
+Plan: `docs/plans/2026-07-28-content-text-and-widget-actions.md`.
+- **New tool `get_wlo_content_text`** (23rd tool): full text by `nodeId`, with
+  `source`, `charCount`, `truncated` and — on a miss — a `reason`
+  (`no_text_no_url`, `extraction_failed`, `node_not_found`), matching the
+  convention `get_topic_page_content` established.
+- **The repository is the primary source.** Measured across 32 live records:
+  edu-sharing's own `/textContent` already holds usable text for **29 of them**,
+  for externally linked pages as well as attached files. The external
+  text-extraction service is the fallback for the remaining link-only records —
+  it offers *only* `POST /from-url` and answers **424** for an edu-sharing
+  download URL, so it cannot serve repository-hosted files at all.
+- **No in-process conversion** (no PDF parser, no Markitdown). Both paths are
+  remote HTTP, i.e. asynchronous I/O; a CPU-bound converter would block the
+  single Node thread for every other user — the explicit reason for this design.
+- Node metadata and the text are read **in parallel**: the text read is the slow
+  one (median 4.6 s live), so fetching the title and fallback URL alongside it
+  costs no extra wall time.
+- `WLO_TEXT_EXTRACTION_URL` (default the staging service, **empty disables the
+  external path**) — every edu-sharing instance runs its own, so the address is
+  configuration. Only public material URLs are ever sent there.
+- `WLO_TEXT_TIMEOUT_MS` (default 25000) for both full-text paths.
+  `getNodeTextContent` accepts the override: `/textContent` was measured at a
+  maximum of 9.2 s, which the 10 s default would cut off — losing a text that
+  exists.
+- **edu-sharing converts PDF/DOCX/PPTX itself.** Of 10 real binaries found in a
+  250-record sample, 9 are repository-hosted, and `/textContent` returns their
+  text — 115 834 characters from one PDF, 44 764 from another, 37 940 from a
+  PPTX, 13 083 from a DOCX. No local converter is needed for hosted files
+  either; the question was never conversion.
+- **`access_denied` as its own reason.** The remaining hosted files answer
+  **403 on both** `/textContent` and their download URL: they exist but are not
+  public. Reporting that as "no text stored" (or, worse, as `node_not_found` —
+  such a node refuses its metadata too) points at the wrong problem. A refused
+  read is now checked before the not-found branch and reported as
+  `access_denied`; no converter can help there, only rights can. `wlo-node.ts`
+  gained `readNodeTextContent`, which reports the HTTP status alongside the
+  text; `getNodeTextContent` delegates to it and keeps its signature, so the
+  five other call sites are untouched.
+- Tool descriptions now state the cost trade-off explicitly: `get_node_details`
+  is the fast metadata read (~0.3 s), `get_wlo_content_text` the slower content
+  read (1–3 s). Both remain available; the model is told which to reach for.
+- Verified live: worksheet records returned their actual text from the
+  repository in 1.5–2.2 s with truncation and provenance reported, a
+  permission-restricted DOCX returned `access_denied`, and an unknown id
+  returned `node_not_found`.
+
+### Fixed (licence is stated, never omitted, 2026-07-28)
+A missing licence and a permissive one looked identical: the tile and the
+Markdown output simply dropped the row. For a teacher that is the reading that
+is unsafe to act on — "no licence stated" means *do not* treat it as free.
+- The licence row is now always rendered; absent data reads "nicht angegeben"
+  (`not stated` in English), matching the REST page's existing "Lizenz unklar".
+- The property itself was never missing on our side: `ccm:commonlicense_key` is
+  in `DISPLAY_PROPS` and reaches `FormattedNode.license`. It is genuinely unset
+  upstream on many records — all six sampled Tutory worksheets lack it even at
+  the full `-all-` projection, where edu-sharing itself reports a "none" licence
+  icon.
+
+### Changed (bounded, self-disclosing browse tree, 2026-07-27)
+Measuring the tools' **opt-in modes** — which the first sweep had not covered —
+exposed the real outlier: `browse_collection_tree` at depth 2 with
+`includeContentPreview` took **11.7 s and returned 460 kB**. The tree fetched up
+to 30 sub-collections per node with no overall bound (a 15-node portal yields
+~100 nodes) and every enrichment then cost one upstream call per node — up to
+1500 upstream calls from a single tool call in the worst case.
+- **The tree is now bounded and says so.** The slice per parent is derived from
+  a total node budget (150) and capped at 10, computed *before* the walk so
+  every parent gets the same size — a counter drained by concurrent workers
+  would have made the output nondeterministic. Depth stays capped at 2.
+- **Truncation is disclosed, not silent.** A node whose children were cut
+  carries `hasMoreChildren`, the envelope carries `truncated`, and the Markdown
+  output names the exact follow-up call (`browse_collection_tree mit
+  nodeId=…`). The tool description instructs the model to tell the user and
+  open a branch deliberately instead of presenting a slice as the whole tree.
+  Detecting "there is more" costs nothing: the walk fetches one child more than
+  it shows rather than spending a round-trip on a count.
+- The preview pass now runs at the level-1 width instead of 5.
+- Measured against the production repository: depth 2 with preview 11.7 s →
+  **6.5 s** (460 kB → 362 kB), with counts 5.1 s → **4.0 s** (103 kB → 84 kB),
+  depth 1 with counts 2.0 s → **1.5 s**.
+- Still expensive by nature: `includeContentPreview` costs one upstream call per
+  tree node. It is opt-in, off by default, and now bounded — but a caller that
+  enables it on a wide tree should expect seconds, not milliseconds.
+
+### Changed (fan-out sweep across every tool, 2026-07-27)
+All 22 tools were benchmarked live with realistic arguments (two runs each) to
+find where time actually goes instead of guessing. Result: most tools already
+answer in under a second; three call sites carried avoidable waiting.
+- **Mode-B candidate check now uses `WLO_TOPIC_POOL`** instead of a hard-coded
+  width of 4. `findTopicPagesByQuery` examines up to 12 candidate collections,
+  each costing a metadata read plus (when it owns a page config) a children
+  read — three to four sequential waves. Measured in isolation against
+  production: 1797 ms at width 4, 788 ms in one wave. No second knob: it is the
+  same class of work as the Mode-C fan-out, bounded by the same upstream.
+- **`getTopicPageContent` gained a both-ids fast path.** Given a collectionId
+  *and* a variantId it now reads both nodes in parallel instead of walking
+  collection → page-config folder → variant. `findTopicPagesByQuery` returns
+  both, so the query path and `search_wlo_topic_pages`'s `includeContent` leg
+  now pass them through; the collection is still read, so the page header
+  survives. Measured: 1238 ms → 774 ms for that stage.
+- **`browse_collection_tree` level-1 fan-out 5 → 10.** At depth 2 each level-1
+  node costs exactly one `/children` call and level-2 nodes do not recurse, so
+  the width was four sequential waves for a 20-child portal. The nested pool is
+  now a separate, deliberately narrow constant (4), because it only performs
+  I/O on the opt-in `includeContentCounts` path — that keeps the worst case
+  bounded at 40 concurrent calls rather than squaring the wider level-1 width.
+- Also narrowed the candidate metadata read in `getCollectionThemePages` to the
+  three owner fields it actually uses (it ran `-all-` on the Mode-B hot path).
+- Measured locally against the production repository, best of two runs:
+  `get_topic_page_content(query)` 3253 → **2175 ms**, `browse_collection_tree`
+  depth 2 2899 → **1968 ms** and depth 1 1378 → **943 ms**,
+  `search_wlo_topic_pages(query)` 1621 → **1191 ms**. Every other tool was
+  already at or below ~1.2 s and was left alone.
+- Concurrency was verified empirically rather than assumed: against the live
+  server, five simultaneous tool calls cost the same per call as a single one
+  (factor 0.96) and ten cost 1.65× — far from the factor 10 that serialization
+  would produce. The limit that appears at ten is edu-sharing, not this server.
+
 ### Fixed (topic-page owner resolution was silently broken, 2026-07-27)
 Follow-up to the latency work below: profiling the remaining 7 s revealed that
 Mode C was not merely slow but **wrong**, and had been for as long as the

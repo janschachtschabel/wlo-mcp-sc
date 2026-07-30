@@ -24,12 +24,12 @@ render to confirm · ⬜ operator action.
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
 | Clear tool names + "Use this when… / Do not use for…" descriptions | ✅ | tool registrations in `src/tools/*`; disambiguation asserted in `tests/server.test.ts` |
-| `annotations.readOnlyHint` on every tool | ✅ | asserted for all 22 tools in `tests/server.test.ts` |
+| `annotations.readOnlyHint` on every tool | ✅ | asserted for all 23 tools in `tests/server.test.ts` |
 | `annotations.openWorldHint` where a tool leaves WLO | ✅ | `get_wikipedia_summary` (`src/tools/wikipedia.ts`) |
 | `outputSchema` + `structuredContent` on display tools | ✅ | `src/apps/register.ts` seam + `src/apps/outputSchemas.ts`; `tests/apps-structured-content.test.ts` |
 | ChatGPT `search` + `fetch` tools with the fixed shapes | ✅ | `src/tools/knowledge.ts`; `tests/tools-knowledge.test.ts` |
-| Tool-invocation status strings (`openai/toolInvocation/*`) on all 22 tools | ✅ | `src/apps/tool-status.ts` via `tool-defaults.ts`; pinned by the conformance test in `tests/apps-tool-defaults.test.ts` |
-| Human-readable `title` on every tool (the submission scan reads it) | ✅ | seam titles + `TOOL_TITLES` in `src/apps/tool-defaults.ts`; conformance test pins title + hints + noauth + status for all current AND future tools; cross-checked with the official MCP Inspector CLI (22/22) |
+| Tool-invocation status strings (`openai/toolInvocation/*`) on all 23 tools | ✅ | `src/apps/tool-status.ts` via `tool-defaults.ts`; pinned by the conformance test in `tests/apps-tool-defaults.test.ts` |
+| Human-readable `title` on every tool (the submission scan reads it) | ✅ | seam titles + `TOOL_TITLES` in `src/apps/tool-defaults.ts`; conformance test pins title + hints + noauth + status for all current AND future tools (23/23 today); the one-off cross-check with the official MCP Inspector CLI was clean at 22/22, against the 22 tools registered on 2026-07-17 — the 23rd (`get_wlo_content_text`) is covered by the conformance test but has not been re-run through the Inspector |
 
 ## Widgets
 
@@ -99,7 +99,7 @@ render to confirm · ⬜ operator action.
 | Publicly accessible domain, no local/testing endpoint | ⬜ | ⚠️ **Choose the FINAL domain before the first submission.** The MCP server origin (scheme/host/port) is LOCKED across versions — changing it later means a brand-new app + review. A `nip.io`/raw-IP URL is a testing endpoint in reviewers' eyes AND would chain the app to that IP forever. Use e.g. `mcp.wirlernenonline.de` from the start |
 | CSP declared for the exact fetch domains | ✅ | `_meta.ui.csp` = the edu-sharing origin only (`src/apps/resources.ts`) |
 | Scan Tools imports the advertised metadata as a locked snapshot | ✅ | Everything it reads is complete: names, titles, descriptions, schemas, `_meta.securitySchemes`, annotations, UI-resource CSP, server `instructions` (verified with the MCP Inspector CLI 2026-07-17) |
-| Annotation justifications match server-advertised values | ⬜ | All 22 tools are `readOnlyHint:true`, `destructiveHint:false`. `get_wikipedia_summary` carries `openWorldHint:true` in the MCP-spec sense (queries an open external source); justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state* |
+| Annotation justifications match server-advertised values | ⬜ | All 23 tools are `readOnlyHint:true`, `destructiveHint:false`. `get_wikipedia_summary` carries `openWorldHint:true` in the MCP-spec sense (queries an open external source); justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state* |
 | Response minimization (no telemetry/session/trace IDs in tool output) | ✅ | Responses carry only content metadata; the `_queryMeta` block is subject-matter context (search term, resolved criteria, pagination, repository URL) — no user identifiers, no session/request IDs |
 | Test prompts + expected responses for the form | ✅ | [`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md); must pass on ChatGPT web AND mobile |
 | Screenshots | ⬜ | Optional and only because the app HAS a UI — capture the three rendered widgets in developer mode |

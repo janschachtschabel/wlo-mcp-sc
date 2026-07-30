@@ -18,6 +18,7 @@ const EXPECTED_TOOLS = [
   'get_topic_page_content',
   'get_wikipedia_summary',
   'get_compendium_text',
+  'get_wlo_content_text',
   'search_wlo_within_collection',
   'search',
   'fetch',
@@ -28,7 +29,7 @@ const EXPECTED_TOOLS = [
   'find_wlo_skills',
 ];
 
-test('createMcpServer registers exactly the 22 expected tools', async () => {
+test('createMcpServer registers exactly the 23 expected tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS].sort());

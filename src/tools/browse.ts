@@ -151,7 +151,8 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
     // The browse widget calls this tool from inside the iframe for drill-down.
     widgetAccessible: true,
     description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig.
-Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth=2), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).`,
+Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth=2), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).
+Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
     inputSchema: {
       nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
       subject: z.string().optional().describe('Subject/Fachportal NAME (e.g. "Mathematik" or "Mathe"), resolved to its portal nodeId server-side. Alternative to nodeId.'),
@@ -209,6 +210,8 @@ Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth
           children?: TreeNode[];
           /** First N content items, only when includeContentPreview is set. */
           contentPreview?: FormattedNode[];
+          /** Upstream holds more sub-collections than this listing shows. */
+          hasMoreChildren?: boolean;
         };
 
         // Bound the tree walk: recurse only while the current level is below the
@@ -216,7 +219,31 @@ Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth
         // subtree), cap concurrency with mapPool, and guard against cyclic
         // collection references with a visited set — so one call can never fan
         // out unbounded or fail to terminate.
-        const TREE_CONCURRENCY = 5;
+        // Width of the level-1 fan-out — one `/children` call per node, the
+        // dominant cost at depth 2 (four waves at width 5, ~2.9 s measured for
+        // a 20-child portal). Level-2 nodes do not recurse, so widening this
+        // does NOT multiply with the nested pool in the default case.
+        const TREE_CONCURRENCY = 10;
+        // The nested pool only performs I/O when includeContentCounts is set;
+        // kept narrow so that opt-in path stays bounded (10 × 4 = 40 in flight)
+        // rather than squaring the width above.
+        const TREE_CHILD_CONCURRENCY = 4;
+
+        // A depth-2 tree used to pull up to 30 sub-collections per node with no
+        // overall bound: a 15-node portal returned ~100 nodes, and every opt-in
+        // enrichment then cost one upstream call per node (11.7 s / 460 kB
+        // measured). The slice per parent is therefore derived from a total
+        // budget, DETERMINISTICALLY (same size for every parent, computed
+        // before the walk) rather than by a counter that concurrent workers
+        // would drain in arbitrary order. Nodes whose children were cut say so,
+        // so the model can offer a targeted drill-down instead of a silent slice.
+        const TREE_NODE_BUDGET = 150;
+        const TREE_CHILDREN_MAX = 10;
+        const TREE_CHILDREN_MIN = 3;
+        const childSlice = depth > 1
+          ? Math.max(TREE_CHILDREN_MIN, Math.min(TREE_CHILDREN_MAX, Math.floor(TREE_NODE_BUDGET / Math.max(1, sorted1.length))))
+          : 0;
+
         const visited = new Set<string>();
         const enrichOne = async (n: WloNode, level: number): Promise<TreeNode> => {
           const f = formatNode(n) as TreeNode;
@@ -227,20 +254,23 @@ Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth
             f.fileCount = filesResp.pagination.total;
           }
           if (level < depth && id) {
-            const children = await getChildCollections(id, 30);
+            // Fetch one more than shown: the extra hit proves there IS more
+            // without spending a second round-trip on a count.
+            const fetched = await getChildCollections(id, childSlice + 1);
+            if (fetched.length > childSlice) f.hasMoreChildren = true;
             // Claim each child in `visited` at SCHEDULING time (synchronously in
             // this filter), not when its own enrichOne starts — otherwise two
             // parents sharing a child could both pass the check before either
             // marks it, emitting the same subtree twice. Claiming here makes the
             // placement deterministic (first parent in traversal order wins).
-            const sortedChildren = sortByTitle(children).filter(c => {
+            const sortedChildren = sortByTitle(fetched).slice(0, childSlice).filter(c => {
               const cid = c.ref?.id;
               if (!cid) return true;
               if (visited.has(cid)) return false;
               visited.add(cid);
               return true;
             });
-            const enriched = await mapPool(sortedChildren, TREE_CONCURRENCY, c => enrichOne(c, level + 1));
+            const enriched = await mapPool(sortedChildren, TREE_CHILD_CONCURRENCY, c => enrichOne(c, level + 1));
             f.children = enriched.filter((c): c is TreeNode => c !== null);
           }
           return f;
@@ -258,20 +288,26 @@ Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth
             for (const n of nodes) { flat.push(n); if (n.children) collect(n.children); }
           };
           collect(tree);
-          await mapPool(flat, 5, async (node) => {
+          // One call per node in the (now bounded) tree — the widest fan-out
+          // this tool can produce, so it runs at the level-1 width rather than 5.
+          await mapPool(flat, TREE_CONCURRENCY, async (node) => {
             const resp = await getCollectionContents(node.nodeId, 'files', previewN, 0);
             node.contentPreview = formatNodes(resp.nodes).slice(0, previewN);
             return null;
           });
         }
 
+        // Disclose the cut so the caller can offer a targeted drill-down rather
+        // than presenting a slice as the whole tree.
+        const anyTruncated = (nodes: TreeNode[]): boolean =>
+          nodes.some(n => n.hasMoreChildren || anyTruncated(n.children ?? []));
+        const truncated = anyTruncated(tree);
+        const payload = { parent: parentId, depth, total: tree.length, results: tree, truncated };
+
         if (params.outputFormat === 'json') {
           return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({ parent: parentId, depth, total: tree.length, results: tree }),
-            }],
-            structuredContent: { parent: parentId, depth, total: tree.length, results: tree },
+            content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+            structuredContent: payload,
           };
         }
 
@@ -285,12 +321,19 @@ Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth
               lines.push(`${pad}    · ${p.title}`);
             }
             if (n.children?.length) renderTree(n.children, indent + 1);
+            if (n.hasMoreChildren) {
+              lines.push(`${pad}  … weitere Unterthemen vorhanden — zum Öffnen: browse_collection_tree mit nodeId=${n.nodeId}`);
+            }
           }
         };
         renderTree(tree, 0);
+        if (truncated) {
+          lines.push('');
+          lines.push('Hinweis: Diese Übersicht zeigt zwei Ebenen in begrenzter Breite. Zweige mit dem Hinweis oben lassen sich gezielt einzeln öffnen.');
+        }
         return {
           content: [{ type: 'text' as const, text: lines.join('\n').trim() }],
-          structuredContent: { parent: parentId, depth, total: tree.length, results: tree },
+          structuredContent: payload,
         };
       } catch (err) {
         return toolError('Fehler beim Sub-Sammlungs-Abruf', err);

@@ -9,7 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { TargetGroup } from '../topic-page-api.js';
-import { getTopicPageContent } from '../topic-page-api.js';
+import { getTopicPageContent } from '../topic-page-structure.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { toolError } from './shared.js';
@@ -68,12 +68,14 @@ Gib EINES an:
           }
           // One-step topic path: resolve the best Themenseite for the topic so
           // the swimlane widget triggers without a prior search_wlo_topic_pages
-          // call. Prefer the resolved collectionId (it carries the page header).
+          // call. Pass BOTH ids on: the collection carries the page header, the
+          // variant lets getTopicPageContent skip the page-config walk and read
+          // the two nodes in parallel instead.
           // No match falls through to the empty-payload path below.
           const found = await findTopicPagesByQuery(params.query, tg);
           if (found.length) {
             collectionId = found[0].collectionId ?? undefined;
-            if (!collectionId) variantId = found[0].variantId;
+            variantId = found[0].variantId || undefined;
           }
         }
 

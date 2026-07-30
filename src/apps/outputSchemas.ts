@@ -66,6 +66,20 @@ export const swimlanePayloadSchema = z.object({
   reason: z.string().optional(),
 });
 
+/** Mirrors `ContentText` (services/content-text.ts) — get_wlo_content_text. */
+export const contentTextSchema = z.object({
+  nodeId: z.string(),
+  title: z.string(),
+  text: z.string(),
+  source: z.enum(['repository', 'external-extraction', 'none']),
+  sourceUrl: z.string().nullable(),
+  /** Length BEFORE truncation, so the caller sees what it is missing. */
+  charCount: z.number(),
+  truncated: z.boolean(),
+  /** Only when there is no text: which of the three causes it was. */
+  reason: z.string().optional(),
+});
+
 /** Mirrors `WikiSummary` (wikipedia-api.ts). */
 const wikiSummarySchema = z.object({
   title: z.string(),
@@ -97,6 +111,8 @@ export type BrowseTreeNode = z.infer<typeof formattedNodeSchema> & {
   fileCount?: number;
   contentPreview?: z.infer<typeof formattedNodeSchema>[];
   children?: BrowseTreeNode[];
+  /** Upstream holds more sub-collections than this listing shows. */
+  hasMoreChildren?: boolean;
 };
 
 const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
@@ -104,15 +120,18 @@ const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
     fileCount: z.number().optional(),
     contentPreview: z.array(formattedNodeSchema).optional(),
     children: z.array(browseTreeNodeSchema).optional(),
+    hasMoreChildren: z.boolean().optional(),
   }),
 );
 
-/** `{ parent, depth, total, results }` — browse_collection_tree. */
+/** `{ parent, depth, total, results, truncated }` — browse_collection_tree. */
 export const browseTreeSchema = z.object({
   parent: z.string(),
   depth: z.number(),
   total: z.number(),
   results: z.array(browseTreeNodeSchema),
+  /** True when any branch holds more sub-collections than shown. */
+  truncated: z.boolean().optional(),
 });
 
 /** `{ total, results }` — get_subject_portals (portals carry an optional count). */
