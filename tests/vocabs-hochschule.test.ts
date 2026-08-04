@@ -120,3 +120,11 @@ test('suggestUniversitySubjects does NOT affect INPUT resolution (still school-o
   // Stage 2 is discovery-only; the conflict-free invariant from Stage 1 holds.
   assert.equal(resolveVocab('Maschinenbau/Verfahrenstechnik', 'discipline'), null);
 });
+
+test('suggestUniversitySubjects tolerates a typo in a label containing "ß"', () => {
+  // The word splitter treated "ß" as a separator (it sits outside the à-ÿ
+  // range), so "Gießereiwesen" was tokenised as "Gie"/"ereiwesen" and the
+  // edit-distance tier could never match it.
+  const out = suggestUniversitySubjects('Gießereiwsen');
+  assert.ok(out.some(o => o.label === 'Hütten- und Gießereiwesen'), JSON.stringify(out));
+});

@@ -138,3 +138,128 @@ test('fetchWikipediaSummary: treats a disambiguation page as no article', async 
     mock.restore();
   }
 });
+
+test('fetchWikipediaSummary: a 200 that is not JSON returns null instead of throwing', async () => {
+  // The module documents "returns null when no article matches", and its
+  // callers rely on that: services/search.ts wraps every call in .catch(() =>
+  // null) precisely because a parse failure used to escape. A Wikimedia CDN
+  // interstitial answers 200 with HTML — that must be a miss, not an error
+  // surfacing as HTTP 500 from /api/wikipedia.
+  const mock = installFetchMock(() => ({ text: '<html>Request blocked</html>' }));
+  try {
+    assert.equal(await fetchWikipediaSummary('Merkur', 'de'), null);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('fetchWikipediaSummary: a malformed opensearch body returns null instead of throwing', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/w/api.php')) return { text: 'not json at all' };
+    return { status: 404, json: {} };
+  });
+  try {
+    assert.equal(await fetchWikipediaSummary('Mrekur', 'de'), null);
+  } finally {
+    mock.restore();
+  }
+});
+
+// ── Relevance of the opensearch fallback (2026-08-02) ───────────────────────
+// Live-measured: every wrong article came from this fallback, never from the
+// direct lookup, and for "Dreiecke" the RIGHT article sat at position 5 while
+// the wrong one was first. See src/wikipedia-relevance.ts.
+
+/** Serve the opensearch list for any query; 404 every direct summary but `have`. */
+function fuzzyMock(candidates: string[], have: Record<string, string> = {}) {
+  return installFetchMock((url) => {
+    if (url.includes('action=opensearch')) {
+      return { json: ['q', candidates, candidates.map(() => ''), candidates.map(() => '')] };
+    }
+    const m = url.match(/\/page\/summary\/(.+)$/);
+    const title = m ? decodeURIComponent(m[1]!) : '';
+    if (title in have) return { json: summaryPayload(title, have[title]!) };
+    return { status: 404, json: {} };
+  });
+}
+
+test('fetchWikipediaSummary: picks the relevant candidate, not the first one', async () => {
+  const mock = fuzzyMock(
+    ['Dreiecker', 'Dreiecketer', 'Dreieck Essen-Ost', 'Dreieck', 'Dreiecks-Fettspinne'],
+    { 'Dreieck': 'Ein Dreieck ist ein Polygon.' },
+  );
+  try {
+    const result = await fetchWikipediaSummary('Dreiecke', 'de');
+    assert.equal(result?.title, 'Dreieck', 'the base concept, not the Allgäu mountain');
+    assert.equal(result?.match, 'fuzzy', 'a resolved-by-search hit must say so');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('fetchWikipediaSummary: returns nothing when no candidate is about the query', async () => {
+  const mock = fuzzyMock(
+    ['Stadt Bern', 'Stadtbergen', 'Stabi Berlin'],
+    { 'Stadt Bern': 'Bern ist die Bundesstadt der Schweiz.' },
+  );
+  try {
+    assert.equal(await fetchWikipediaSummary('Stadt Berlin', 'de'), null,
+      'a wrong article is worse than none — it gets cited as the source');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('fetchWikipediaSummary: a direct hit is never relevance-checked', async () => {
+  // "Bruchrechnen" → "Bruchrechnung" is a curated Wikipedia REDIRECT. No rule
+  // short of a stemmer relates the two, so checking it would only ever reject
+  // a correct answer.
+  const mock = installFetchMock((url) => {
+    if (url.includes('/page/summary/')) {
+      return { json: summaryPayload('Bruchrechnung', 'Die Bruchrechnung behandelt Brüche.') };
+    }
+    return { json: ['q', [], [], []] };
+  });
+  try {
+    const result = await fetchWikipediaSummary('Bruchrechnen', 'de');
+    assert.equal(result?.title, 'Bruchrechnung');
+    assert.equal(result?.match, 'exact', 'a direct/redirect hit is an exact resolution');
+    assert.equal(mock.calls.filter(c => c.url.includes('opensearch')).length, 0,
+      'no fallback search is needed when the direct lookup answers');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('fetchWikipediaSummary: asks opensearch for a list, not a single candidate', async () => {
+  const mock = fuzzyMock(['Feinoptiker'], { 'Feinoptiker': 'Ein Feinoptiker fertigt Optik.' });
+  try {
+    const result = await fetchWikipediaSummary('Feinoptik', 'de');
+    assert.equal(result?.title, 'Feinoptiker');
+    const search = mock.calls.find(c => c.url.includes('action=opensearch'));
+    const limit = new URL(search!.url).searchParams.get('limit');
+    assert.ok(Number(limit) > 1, `limit must leave room for a better candidate, got ${limit}`);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('fetchWikipediaSummary: a disambiguation page is not fetched twice', async () => {
+  // The picked title equals the query, and the direct lookup for exactly that
+  // name already failed above — asking again would spend a round trip to reach
+  // the same null. This is the branch behind the "disambiguation ends the
+  // search" limitation in docs/plans/2026-08-02-wikipedia-relevance.md.
+  const mock = installFetchMock((url) => {
+    if (url.includes('action=opensearch')) {
+      return { json: ['Bruch', ['Bruch', 'Bruchsal'], [], []] };
+    }
+    return { json: { type: 'disambiguation', title: 'Bruch', extract: 'Bruch steht für …', lang: 'de' } };
+  });
+  try {
+    assert.equal(await fetchWikipediaSummary('Bruch', 'de'), null);
+    assert.equal(mock.calls.filter(c => c.url.includes('/page/summary/')).length, 1,
+      'the same title must not be fetched a second time');
+  } finally {
+    mock.restore();
+  }
+});

@@ -61,20 +61,29 @@ function renderNode(node: BrowseNode, state: BrowseState, locale: Locale, opts: 
   }
 
   const children = state.childrenById[id] ?? [];
+  // The server capped this branch. Say so in the tree, not only in the text the
+  // model reads — an unmarked branch reads as "this is everything".
+  const more = node.hasMoreChildren
+    ? `<span class="wlo-tree__more">${escapeHtml(t(locale, 'treeMore'))}</span>`
+    : '';
 
   // Childless collection: no local toggle — offer the follow-up button (when
   // the host supports it) plus the external open link.
   if (children.length === 0) {
     return (
       `<li class="wlo-tree__node"><div class="wlo-tree__row">` +
-      `<span class="wlo-tree__label">${title}</span>` +
+      `<span class="wlo-tree__label">${title}</span>${more}` +
       `${opts.canFollowUp ? askButton(node, locale) : ''}${openLink(node, locale)}` +
       `</div></li>`
     );
   }
 
   const expanded = state.expanded.includes(id);
-  const regionId = `wlo-region-${id}`;
+  // `aria-controls` is a SPACE-SEPARATED list of ids, so a node id carrying
+  // whitespace (or any other character an id may not hold) would silently point
+  // the toggle at two elements that do not exist. Escaping it for HTML is not
+  // enough — the id has to be reduced to id-safe characters on both sides.
+  const regionId = `wlo-region-${id.replace(/[^\w-]/g, '_')}`;
   // A branch node could only be unfolded, never opened: its own materials were
   // unreachable without typing. It now carries the same ask-button as a leaf.
   const row =
@@ -82,7 +91,7 @@ function renderNode(node: BrowseNode, state: BrowseState, locale: Locale, opts: 
     `<button class="wlo-tree__toggle" type="button" aria-expanded="${expanded ? 'true' : 'false'}"` +
     `${expanded ? ` aria-controls="${escapeHtml(regionId)}"` : ''} data-node-id="${escapeHtml(id)}">` +
     `<span class="wlo-tree__caret" aria-hidden="true">${expanded ? '▾' : '▸'}</span>${title}` +
-    `</button>${opts.canFollowUp ? askButton(node, locale) : ''}${openLink(node, locale)}` +
+    `</button>${more}${opts.canFollowUp ? askButton(node, locale) : ''}${openLink(node, locale)}` +
     `</div>`;
 
   const region = expanded

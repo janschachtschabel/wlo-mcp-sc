@@ -9,7 +9,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { fetchWikipediaSummary } from '../wikipedia-api.js';
-import { toolError } from './shared.js';
+import { oneLine } from '../formatter.js';
+import { toolError, wikiResolutionNotice } from './shared.js';
 
 export function registerWikipediaTool(server: McpServer): void {
   server.tool(
@@ -48,7 +49,12 @@ search_wlo_all for that.`,
         if (!summary) {
           return { content: [{ type: 'text' as const, text: `Kein Wikipedia-Artikel gefunden für "${params.query}".` }] };
         }
-        const lines = [`# ${summary.title}`, '', summary.extract, '', `[Wikipedia](${summary.url})`];
+        // oneLine on the heading for the same reason as every other record
+        // renderer: this text is line-oriented and the value is foreign.
+        const lines = [oneLine(`# ${summary.title}`), ''];
+        const notice = wikiResolutionNotice(params.query, summary.title, summary.match);
+        if (notice) lines.push(notice, '');
+        lines.push(summary.extract, '', `[Wikipedia](${summary.url})`);
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (err) {
         return toolError('Fehler beim Abruf der Wikipedia-Zusammenfassung', err);

@@ -95,3 +95,41 @@ test('renderTopicPage escapes the heading and renders an empty state when there 
   assert.match(renderTopicPage(empty, 'de'), /Keine Treffer gefunden/);
   assert.match(renderTopicPage(undefined, 'en'), /No results found/);
 });
+
+// ── Every card continues the flow (audit finding 2026-07-30) ────────────────
+// The topic-page widget was the only one whose cards did nothing: no Details,
+// no follow-up, no selection — just an external link out of the chat. That made
+// the most curated view the one where a click replaces no typing.
+
+test('a swimlane card offers Details, so a topic page is not a dead end', () => {
+  const html = renderTopicPage(payload(), 'de', { canFollowUp: true });
+  assert.match(html, /class="wlo-tile__details" data-node-id="a"/, 'the first card opens a detail view');
+  assert.match(html, /data-node-id="b"/, 'and so does the second');
+});
+
+test('selecting a card replaces the lanes with its detail view', () => {
+  const html = renderTopicPage(payload(), 'de', { canFollowUp: true, selectedId: 'a' });
+  assert.match(html, /wlo-detail/, 'the detail view renders');
+  assert.match(html, /Video Bruch/, 'for the selected card');
+  assert.doesNotMatch(html, /wlo-section__title/, 'the lanes are replaced, not stacked below');
+  assert.match(html, /data-action="back"/, 'and it can be left again');
+});
+
+test('the detail view of a swimlane card offers the same follow-ups as in search', () => {
+  const html = renderTopicPage(payload(), 'de', { canFollowUp: true, selectedId: 'a' });
+  assert.match(html, /data-follow-up="text"/, 'read its full text');
+  assert.match(html, /data-follow-up="related"/, 'find similar material');
+});
+
+test('a selected id the payload no longer holds falls back to the lanes', () => {
+  // A host update can replace the payload while a detail view is open; the
+  // widget must never go blank.
+  const html = renderTopicPage(payload(), 'de', { canFollowUp: true, selectedId: 'gone' });
+  assert.match(html, /wlo-section__title/, 'the lanes render again');
+});
+
+test('without host follow-up support no dead follow-up controls are rendered', () => {
+  const html = renderTopicPage(payload(), 'de', { selectedId: 'a' });
+  assert.doesNotMatch(html, /data-follow-up/, 'no button the host cannot honour');
+  assert.match(html, /data-action="back"/, 'but the local back button stays — it needs no host');
+});

@@ -1,13 +1,16 @@
 /* search-results/styles.css – W1 specifics (base.css carries the shared tile/grid). */
 .wlo-results { max-width: 960px; }
 
-/* Action bar for the tile selection. Sticky at the bottom so it stays reachable
-   while scrolling a long result list, and wrapping so it reflows at 320px
-   instead of overflowing. */
+/* Action bar for the tile selection. It is rendered ABOVE the grid (see
+   render.ts): the widget document has no scrollport of its own — the host sizes
+   the iframe — so `position: sticky` has nothing to stick to and silently
+   degrades to static. Below the grid that put it behind every result. Sticking
+   to the TOP is kept as a no-cost bonus for any host that does give the frame a
+   scrollport. Wrapping so it reflows at 320px instead of overflowing. */
 .wlo-selection {
   position: sticky;
-  inset-block-end: 0;
-  margin-top: 14px;
+  inset-block-start: 0;
+  margin-bottom: 14px;
   padding: 10px 12px;
   display: flex;
   flex-wrap: wrap;

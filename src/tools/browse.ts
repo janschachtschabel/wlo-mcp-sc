@@ -10,14 +10,16 @@ import { z } from 'zod';
 import type { WloNode } from '../wlo-api.js';
 import {
   WLO_ROOT_COLLECTION_ID,
-  getChildCollections,
-  getCollectionContents,
+  getChildCollectionsResult,
 } from '../wlo-api.js';
 import { sortByTitle } from '../reranker.js';
-import type { FormattedNode } from '../formatter.js';
-import { formatNode, formatNodes } from '../formatter.js';
+import { formatNode, oneLine } from '../formatter.js';
+import type { CollectionTreeNode } from '../services/collection-traversal.js';
+import { buildCollectionTree } from '../services/collection-traversal.js';
 import { resolveVocab } from '../vocabs.js';
-import { mapPool, toolError } from './shared.js';
+import { log } from '../logger.js';
+import { mapPool } from '../concurrency.js';
+import { toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas.js';
 
@@ -72,7 +74,12 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
     annotations: { readOnlyHint: true },
     handler: async (params) => {
       try {
-        const portals = await getChildCollections(WLO_ROOT_COLLECTION_ID, 100);
+        const listing = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, 100);
+        // "No portals" is a statement about WLO; an unread listing is a
+        // statement about the server. Fail loudly rather than answering
+        // "WLO Fachportale: 0" — that reads as a fact and is acted on as one.
+        if (!listing.reachable) throw new Error('Die Fachportal-Liste ist derzeit nicht abrufbar.');
+        const portals = listing.nodes;
 
         // Optional educational-context filter
         let filtered = portals;
@@ -97,8 +104,10 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
           await mapPool(sorted, 5, async (p) => {
             const id = p.ref?.id;
             if (!id) return null;
-            const subs = await getChildCollections(id, 100);
-            counts[id] = subs.length;
+            const subs = await getChildCollectionsResult(id, 100);
+            // Only record a count we actually learned: a 0 that came from a
+            // failed listing would read as "this portal is empty".
+            if (subs.reachable) counts[id] = subs.nodes.length;
             return null;
           });
         }
@@ -107,7 +116,7 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
           const f = formatNode(p);
           return {
             ...f,
-            subCollectionCount: params.includeContentCounts ? (counts[f.nodeId] ?? 0) : undefined,
+            subCollectionCount: params.includeContentCounts ? counts[f.nodeId] : undefined,
           };
         });
 
@@ -131,7 +140,10 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
           if (p.educationalContexts.length) parts.push(`Bildungsstufe: ${p.educationalContexts.join(', ')}`);
           if (p.topicPageUrl) parts.push(`Themenseite: ${p.topicPageUrl}`);
           if (p.subCollectionCount !== undefined) parts.push(`Sub-Sammlungen: ${p.subCollectionCount}`);
-          lines.push(parts.join('\n'));
+          // Same record format and same reason as renderToText: every part is
+          // one logical line, and a repository title carrying a newline would
+          // otherwise open a second portal entry with a nodeId of its choosing.
+          lines.push(parts.map(oneLine).join('\n'));
           lines.push('');
         }
         return {
@@ -173,135 +185,51 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
     annotations: { readOnlyHint: true },
     handler: async (params) => {
       const depth = params.depth ?? 1;
-      const previewN = params.includeContentPreview;
 
       try {
         // Resolve the parent node: an explicit nodeId wins; otherwise resolve a
         // subject NAME to its Fachportal (saves a get_subject_portals round-trip).
         let parentId = params.nodeId;
         if (!parentId && params.subject) {
-          const portals = await getChildCollections(WLO_ROOT_COLLECTION_ID, 100);
+          const listing = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, 100);
+          // Without the portal list there is no "not found" to report — only an
+          // unanswered question. Saying "Verfügbar: ." would invent an answer.
+          if (!listing.reachable) throw new Error('Die Fachportal-Liste ist derzeit nicht abrufbar.');
+          const portals = listing.nodes;
           const hit = matchSubjectPortal(portals, params.subject);
           if (!hit?.ref?.id) {
             const available = sortByTitle(portals)
-              .map(p => formatNode(p).title)
+              .map(p => oneLine(formatNode(p).title))
               .filter(Boolean)
               .join(', ');
+            log.warn('no subject portal matched', { subject: params.subject });
             return {
               content: [{ type: 'text' as const, text:
-                `Kein Fachportal für "${params.subject}" gefunden. Verfügbar: ${available}.` }],
+                `Kein Fachportal für "${oneLine(params.subject)}" gefunden. Verfügbar: ${available}.` }],
               isError: true,
             };
           }
           parentId = hit.ref.id;
         }
         if (!parentId) {
+          log.warn('browse_collection_tree called without nodeId or subject');
           return {
             content: [{ type: 'text' as const, text: 'Bitte nodeId oder subject angeben.' }],
             isError: true,
           };
         }
 
-        const level1 = await getChildCollections(parentId, params.maxResults ?? 50);
-        const sorted1 = sortByTitle(level1);
-
-        type TreeNode = ReturnType<typeof formatNode> & {
-          fileCount?: number;
-          children?: TreeNode[];
-          /** First N content items, only when includeContentPreview is set. */
-          contentPreview?: FormattedNode[];
-          /** Upstream holds more sub-collections than this listing shows. */
-          hasMoreChildren?: boolean;
-        };
-
-        // Bound the tree walk: recurse only while the current level is below the
-        // requested depth (a closure-constant check would descend the WHOLE
-        // subtree), cap concurrency with mapPool, and guard against cyclic
-        // collection references with a visited set — so one call can never fan
-        // out unbounded or fail to terminate.
-        // Width of the level-1 fan-out — one `/children` call per node, the
-        // dominant cost at depth 2 (four waves at width 5, ~2.9 s measured for
-        // a 20-child portal). Level-2 nodes do not recurse, so widening this
-        // does NOT multiply with the nested pool in the default case.
-        const TREE_CONCURRENCY = 10;
-        // The nested pool only performs I/O when includeContentCounts is set;
-        // kept narrow so that opt-in path stays bounded (10 × 4 = 40 in flight)
-        // rather than squaring the width above.
-        const TREE_CHILD_CONCURRENCY = 4;
-
-        // A depth-2 tree used to pull up to 30 sub-collections per node with no
-        // overall bound: a 15-node portal returned ~100 nodes, and every opt-in
-        // enrichment then cost one upstream call per node (11.7 s / 460 kB
-        // measured). The slice per parent is therefore derived from a total
-        // budget, DETERMINISTICALLY (same size for every parent, computed
-        // before the walk) rather than by a counter that concurrent workers
-        // would drain in arbitrary order. Nodes whose children were cut say so,
-        // so the model can offer a targeted drill-down instead of a silent slice.
-        const TREE_NODE_BUDGET = 150;
-        const TREE_CHILDREN_MAX = 10;
-        const TREE_CHILDREN_MIN = 3;
-        const childSlice = depth > 1
-          ? Math.max(TREE_CHILDREN_MIN, Math.min(TREE_CHILDREN_MAX, Math.floor(TREE_NODE_BUDGET / Math.max(1, sorted1.length))))
-          : 0;
-
-        const visited = new Set<string>();
-        const enrichOne = async (n: WloNode, level: number): Promise<TreeNode> => {
-          const f = formatNode(n) as TreeNode;
-          const id = n.ref?.id;
-          if (id) visited.add(id);
-          if (params.includeContentCounts && id) {
-            const filesResp = await getCollectionContents(id, 'files', 1, 0);
-            f.fileCount = filesResp.pagination.total;
-          }
-          if (level < depth && id) {
-            // Fetch one more than shown: the extra hit proves there IS more
-            // without spending a second round-trip on a count.
-            const fetched = await getChildCollections(id, childSlice + 1);
-            if (fetched.length > childSlice) f.hasMoreChildren = true;
-            // Claim each child in `visited` at SCHEDULING time (synchronously in
-            // this filter), not when its own enrichOne starts — otherwise two
-            // parents sharing a child could both pass the check before either
-            // marks it, emitting the same subtree twice. Claiming here makes the
-            // placement deterministic (first parent in traversal order wins).
-            const sortedChildren = sortByTitle(fetched).slice(0, childSlice).filter(c => {
-              const cid = c.ref?.id;
-              if (!cid) return true;
-              if (visited.has(cid)) return false;
-              visited.add(cid);
-              return true;
-            });
-            const enriched = await mapPool(sortedChildren, TREE_CHILD_CONCURRENCY, c => enrichOne(c, level + 1));
-            f.children = enriched.filter((c): c is TreeNode => c !== null);
-          }
-          return f;
-        };
-
-        const tree = (await mapPool(sorted1, TREE_CONCURRENCY, n => enrichOne(n, 1)))
-          .filter((n): n is TreeNode => n !== null);
-
-        // Optional content preview: attach the first N files of each collection
-        // in the tree. A single bounded pass (≤5 in flight) over the flattened
-        // node list caps upstream concurrency even for a wide depth-2 tree.
-        if (previewN) {
-          const flat: TreeNode[] = [];
-          const collect = (nodes: TreeNode[]) => {
-            for (const n of nodes) { flat.push(n); if (n.children) collect(n.children); }
-          };
-          collect(tree);
-          // One call per node in the (now bounded) tree — the widest fan-out
-          // this tool can produce, so it runs at the level-1 width rather than 5.
-          await mapPool(flat, TREE_CONCURRENCY, async (node) => {
-            const resp = await getCollectionContents(node.nodeId, 'files', previewN, 0);
-            node.contentPreview = formatNodes(resp.nodes).slice(0, previewN);
-            return null;
-          });
-        }
-
-        // Disclose the cut so the caller can offer a targeted drill-down rather
-        // than presenting a slice as the whole tree.
-        const anyTruncated = (nodes: TreeNode[]): boolean =>
-          nodes.some(n => n.hasMoreChildren || anyTruncated(n.children ?? []));
-        const truncated = anyTruncated(tree);
+        // The bounded, cycle-guarded walk itself lives in services/ — a tool
+        // module holds its schema and its rendering, never an algorithm.
+        // `truncated` is disclosed below so the caller can offer a targeted
+        // drill-down rather than presenting a slice as the whole tree.
+        const { nodes: tree, truncated } = await buildCollectionTree({
+          parentId,
+          depth,
+          maxResults: params.maxResults ?? 50,
+          includeContentCounts: params.includeContentCounts ?? false,
+          contentPreview: params.includeContentPreview,
+        });
         const payload = { parent: parentId, depth, total: tree.length, results: tree, truncated };
 
         if (params.outputFormat === 'json') {
@@ -312,13 +240,16 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
         }
 
         const lines: string[] = [`Sub-Sammlungen unter ${parentId}: ${tree.length} (Tiefe ${depth})\n`];
-        const renderTree = (nodes: TreeNode[], indent: number) => {
+        const renderTree = (nodes: CollectionTreeNode[], indent: number) => {
           for (const n of nodes) {
             const pad = '  '.repeat(indent);
             const cnt = n.fileCount !== undefined ? ` [${n.fileCount} Inhalte]` : '';
-            lines.push(`${pad}- **${n.title}** (${n.nodeId})${cnt}`);
+            // oneLine per rendered value: this listing is line-oriented, so a
+            // title carrying a newline would add a branch with a nodeId that
+            // exists nowhere in the tree (same rule as renderToText).
+            lines.push(oneLine(`${pad}- **${n.title}** (${n.nodeId})${cnt}`));
             for (const p of n.contentPreview ?? []) {
-              lines.push(`${pad}    · ${p.title}`);
+              lines.push(oneLine(`${pad}    · ${p.title}`));
             }
             if (n.children?.length) renderTree(n.children, indent + 1);
             if (n.hasMoreChildren) {

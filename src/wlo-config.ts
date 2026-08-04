@@ -8,9 +8,9 @@
  * (``/rest/search/v1/...``, ``/rest/node/v1/...``, ``/components/render/<id>``,
  * ``/components/topic-pages?...``) are identical across instances, so the only
  * difference between prod and staging is the base URL. This module owns the
- * resolved config, the shared node/response types, the timeout-enforcing
- * ``wloFetch`` wrapper, and the ``propertyFilter`` helpers that both the search
- * and node clients use.
+ * resolved config and the ``propertyFilter`` helpers that both the search and
+ * node clients use. The node/response types live in ``wlo-types.ts`` and the
+ * fetch wrapper with its credential boundary in ``wlo-fetch.ts``.
  */
 
 import { log } from './logger.js';
@@ -146,41 +146,111 @@ export const WLO_ROOT_COLLECTION_ID: string = (() => {
 export const WLO_SKILLS_COLLECTION_ID: string = (process.env['WLO_SKILLS_COLLECTION_ID'] ?? '').trim();
 
 /**
- * Read a positive integer from a raw env value, falling back to ``fallback``
- * for anything unset, non-numeric, zero or negative. Pure, so the parsing
- * rules are unit-testable (the module constants below are resolved at import
- * time and cannot be re-read per test).
+ * nodeId of the shared inbox new records land in when the server writes under
+ * the SERVICE account (a personal login writes to `-userhome-` instead).
+ *
+ * Deliberately without a default. Node ids are repository-bound, so a hardcoded
+ * one would write into whatever node happens to carry that id on the configured
+ * instance — a different collection on staging than on production, or nothing
+ * at all elsewhere. Unset means service-account creation is refused with a
+ * message naming this variable, which is a better outcome than a record filed
+ * somewhere nobody looks.
  */
-export function resolvePositiveInt(raw: string | undefined, fallback: number): number {
-  const v = parseInt((raw ?? '').trim(), 10);
-  return Number.isFinite(v) && v > 0 ? v : fallback;
+export const WLO_INBOX_ID: string = (process.env['WLO_INBOX_ID'] ?? '').trim();
+
+/**
+ * Read an integer from a raw env value, refusing anything that is not a plain
+ * run of digits at or above ``min``. ``name`` identifies the variable in the
+ * warning, which is the point of the check: ``parseInt`` stops at the first
+ * non-digit, so ``WLO_FETCH_TIMEOUT_MS=20s`` used to resolve to a 20 ms timeout
+ * — a deployment where every upstream call fails, with nothing in the log
+ * pointing at the cause. Same shape, same trap: ``MAX_BODY_BYTES=1MB`` becomes a
+ * one-byte cap that answers every request with 413. A value we cannot fully
+ * parse is refused, and saying so is more useful than half-accepting it.
+ *
+ * Unset and empty stay silent: not configuring an optional variable is normal.
+ */
+function resolveInt(raw: string | undefined, fallback: number, name: string, min: number): number {
+  const s = (raw ?? '').trim();
+  if (!s) return fallback;
+  if (/^\d+$/.test(s)) {
+    const v = parseInt(s, 10);
+    if (v >= min) return v;
+  }
+  log.warn('env value is not an integer in the accepted range — using the default', {
+    variable: name, value: s, fallback, minimum: min,
+  });
+  return fallback;
 }
+
+/** `resolveInt` with a floor of 1 — for a value where 0 would break the server. */
+export function resolvePositiveInt(raw: string | undefined, fallback: number, name: string): number {
+  return resolveInt(raw, fallback, name, 1);
+}
+
+/**
+ * `resolveInt` with a floor of 0 — for the rate limits, where `0` is documented
+ * and meaningful ("disable the limiter, a WAF sits in front"). Using the
+ * positive parser for those would quietly turn "off" back into the default,
+ * which is the opposite of what the operator asked for.
+ */
+export function resolveNonNegativeInt(raw: string | undefined, fallback: number, name: string): number {
+  return resolveInt(raw, fallback, name, 0);
+}
+
+/**
+ * Default per-request upstream timeout, in milliseconds.
+ *
+ * Measured on staging 2026-08-02, per call, not per pipeline:
+ *
+ *   creating a `ccm:io`   4.2 – 8.0 s   (18 samples — by far the slowest)
+ *   writing metadata      0.5 – 0.9 s
+ *   reading a node        0.3 – 0.4 s
+ *   search (ngsearch)     0.5 – 2.4 s   (production: max 1.1 s)
+ *
+ * The previous 10 s left 28 % headroom over the slowest of those, and that was
+ * not enough: a create timed out in real use while the repository had already
+ * made the record, so the tool reported a failure about a record that exists.
+ * 20 s is ~2.8× the measured worst case and still bounds a hung socket to
+ * something a caller can wait out.
+ */
+export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 
 /**
  * Per-request upstream timeout in milliseconds. Without it a hung
  * edu-sharing socket would block the MCP tool call indefinitely. Override via
- * ``WLO_FETCH_TIMEOUT_MS``; default 10s.
+ * ``WLO_FETCH_TIMEOUT_MS``.
  */
 export const WLO_FETCH_TIMEOUT_MS: number =
-  resolvePositiveInt(process.env['WLO_FETCH_TIMEOUT_MS'], 10_000);
+  resolvePositiveInt(process.env['WLO_FETCH_TIMEOUT_MS'], DEFAULT_FETCH_TIMEOUT_MS, 'WLO_FETCH_TIMEOUT_MS');
 
 /**
  * Base URL of the text-extraction service used to read the full text of a
  * material that is only LINKED (`ccm:wwwurl`) and whose text the repository has
  * not stored. Each edu-sharing instance normally runs its own, so the address is
- * configuration, not code. An empty value disables the external path entirely —
- * the repository's own `/textContent` then remains the only source.
- * Trailing slashes are stripped so callers can append a path safely.
+ * configuration, not code — and there is deliberately NO default.
+ *
+ * A default used to point at the staging service, which meant any deploy that
+ * had not set the variable shipped the URLs of its material to a host in a
+ * different environment. Unset therefore disables the external path entirely,
+ * with a warning naming the variable; the repository's own `/textContent` then
+ * remains the only source. Trailing slashes are stripped so callers can append
+ * a path safely.
  *
  * A value that cannot serve as a base for `${url}/from-url` — no scheme, not
- * http(s), or carrying a query/fragment — disables the service and warns. It
- * deliberately does NOT fall back to the default: a typo must not redirect
- * material URLs to a host the operator never chose.
+ * http(s), or carrying a query/fragment — disables the service and warns too: a
+ * typo must not redirect material URLs to a host the operator never chose.
  */
 export function resolveExtractionUrl(raw: string | undefined): string {
   const s = (raw ?? '').trim();
-  if (raw !== undefined && s === '') return '';   // explicitly disabled
-  const candidate = (s || 'https://text-extraction.staging.openeduhub.net').replace(/\/+$/, '');
+  if (s === '') {
+    log.warn('text-extraction service disabled: WLO_TEXT_EXTRACTION_URL is not set', {
+      variable: 'WLO_TEXT_EXTRACTION_URL',
+      effect: 'full text comes from the repository /textContent only',
+    });
+    return '';
+  }
+  const candidate = s.replace(/\/+$/, '');
 
   let parsed: URL;
   try {
@@ -204,13 +274,17 @@ export const WLO_TEXT_EXTRACTION_URL: string = resolveExtractionUrl(process.env[
 
 /**
  * Timeout for full-text reads, both from the repository and from the extraction
- * service. Deliberately larger than ``WLO_FETCH_TIMEOUT_MS``: `/textContent` was
- * measured at a median of 4.6 s and a maximum of 9.2 s (2026-07-28), which the
- * 10 s default would cut off — losing a text that exists. The extraction service
- * renders pages and is slow for the same reason. Override via ``WLO_TEXT_TIMEOUT_MS``.
+ * service. Deliberately larger than ``DEFAULT_FETCH_TIMEOUT_MS``: `/textContent`
+ * was measured at a median of 4.6 s and a maximum of 9.2 s (2026-07-28), and the
+ * extraction service renders pages, which is slow for the same reason. The gap
+ * between the two is the point — full text is the one call allowed to take
+ * longer than everything else.
  */
+export const DEFAULT_TEXT_TIMEOUT_MS = 25_000;
+
+/** Override via ``WLO_TEXT_TIMEOUT_MS``. */
 export const WLO_TEXT_TIMEOUT_MS: number =
-  resolvePositiveInt(process.env['WLO_TEXT_TIMEOUT_MS'], 25_000);
+  resolvePositiveInt(process.env['WLO_TEXT_TIMEOUT_MS'], DEFAULT_TEXT_TIMEOUT_MS, 'WLO_TEXT_TIMEOUT_MS');
 
 /**
  * Concurrent upstream fetches while resolving Themenseiten-Varianten to their
@@ -221,79 +295,7 @@ export const WLO_TEXT_TIMEOUT_MS: number =
  * upstream error rate. Override via ``WLO_TOPIC_POOL``; default 10.
  */
 export const WLO_TOPIC_POOL: number =
-  resolvePositiveInt(process.env['WLO_TOPIC_POOL'], 10);
-
-export interface SearchCriterion {
-  property: string;
-  values: string[];
-}
-
-export interface WloNode {
-  ref?: { id: string; repo: string };
-  name?: string;
-  title?: string;
-  isDirectory?: boolean;
-  /** edu-sharing object type — `ccm:io` (file) or `ccm:map` (collection). */
-  type?: string;
-  /** MIME type, e.g. `application/pdf` (only on `ccm:io` nodes). */
-  mimetype?: string;
-  /** Coarse mediatype label, e.g. `file-pdf`, `file-video`. */
-  mediatype?: string;
-  /** File size in bytes (only on file nodes with binary content). The live
-   *  API serialises this as a STRING — consumers must coerce (formatter). */
-  size?: number | string;
-  /** Direct binary download URL — works without auth; null if no binary content. */
-  downloadUrl?: string | null;
-  properties?: Record<string, string[]>;
-  preview?: {
-    url?: string;
-    /** `true` = generic mediatype icon, `false` = real generated thumbnail */
-    isIcon?: boolean;
-    isGenerated?: boolean;
-  };
-  /**
-   * In-repo viewer URL (PDF/video preview component). Null when the node
-   * has no binary attachment (e.g. external link nodes via `ccm:wwwurl`).
-   */
-  content?: { url?: string; originalUrl?: string; hash?: string; version?: string };
-  collection?: { description?: string; title?: string; childCollectionsCount?: number };
-}
-
-export interface SearchResponse {
-  nodes: WloNode[];
-  pagination: { total: number; from: number; count: number };
-  /**
-   * Facet aggregation buckets, only present when `ngsearch` was called with
-   * `facets`. Values are property URIs with their document counts (no
-   * server-side labels — resolve via `resolveFacetCounts`).
-   */
-  facets?: { property: string; values: { value: string; count: number }[] }[];
-}
-
-export const HEADERS = {
-  'Accept': 'application/json',
-  'Content-Type': 'application/json',
-};
-
-/**
- * ``fetch`` wrapper that enforces the upstream timeout. Every call to the
- * edu-sharing API goes through here so no request can hang forever. A
- * caller-supplied ``signal`` is respected as-is; otherwise a
- * ``WLO_FETCH_TIMEOUT_MS`` abort signal is attached.
- */
-export function wloFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const signal = init.signal ?? AbortSignal.timeout(WLO_FETCH_TIMEOUT_MS);
-  return fetch(url, { ...init, signal });
-}
-
-/**
- * Log a non-OK upstream response before a caller degrades gracefully (returns
- * `[]`/`null`). Without this an outage is invisible — indistinguishable from a
- * legitimately empty result — so on-call can't tell "broken" from "empty".
- */
-export function logUpstreamMiss(context: string, res: Response): void {
-  log.warn('upstream returned non-OK', { context, status: res.status });
-}
+  resolvePositiveInt(process.env['WLO_TOPIC_POOL'], 10, 'WLO_TOPIC_POOL');
 
 // ── Property filter (O2: request only fields that are actually used) ──────────
 //

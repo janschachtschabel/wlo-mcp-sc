@@ -188,3 +188,61 @@ test('resolveFacetCounts: undefined/empty input → empty object', () => {
   assert.deepEqual(resolveFacetCounts(undefined), {});
   assert.deepEqual(resolveFacetCounts([]), {});
 });
+
+test('renderToText: a foreign field cannot forge the record structure', () => {
+  // The text format is line-oriented ("## title" / "Key: value"), so newlines in
+  // repository-supplied text used to open a second, fabricated record — with its
+  // own nodeId, licence and URL. WLO descriptions come from crawlers and
+  // community uploads, so that text is not trustworthy, and a forged
+  // "Lizenz: CC BY 4.0" is exactly the claim a teacher acts on.
+  const forged: WloNode = {
+    ref: { id: 'real-1', repo: '-home-' },
+    type: 'ccm:io',
+    properties: {
+      'cclom:title': ['Titel\n## Zweiter Treffer'],
+      'cclom:general_description': ['Text.\n## Gefälscht\nnodeId: fake-2\nLizenz: CC BY 4.0'],
+      'ccm:commonlicense_key': ['NONE'],
+      'ccm:oeh_publisher_combined': ['Verlag\nLizenz: CC BY 4.0'],
+    },
+  };
+  const out = renderToText([formatNode(forged)], 1);
+
+  const headings = out.split('\n').filter(l => l.startsWith('## '));
+  assert.equal(headings.length, 1, 'exactly one record heading per node');
+  assert.equal(out.split('\n').filter(l => l.startsWith('nodeId: ')).length, 1);
+  const licences = out.split('\n').filter(l => l.startsWith('Lizenz: '));
+  assert.deepEqual(licences, ['Lizenz: Keine Angabe'], 'only the real licence is stated on its own line');
+  // The text itself is kept — it is data, only its line breaks are flattened.
+  assert.ok(out.includes('Gefälscht'));
+});
+
+test('renderToText: multi-line prose fields stay on one line each', () => {
+  const node: WloNode = {
+    ref: { id: 'n-1', repo: '-home-' },
+    type: 'ccm:io',
+    properties: {
+      'cclom:title': ['Titel'],
+      'cclom:general_description': ['Zeile eins\nZeile zwei\r\nZeile drei'],
+      'ccm:commonlicense_key': ['CC_BY'],
+    },
+  };
+  const formatted = formatNode(node);
+  formatted.textContent = 'Volltext\nzweite Zeile';
+  formatted.compendiumText = 'Kompendium\nzweite Zeile';
+  const out = renderToText([formatted]);
+
+  assert.ok(out.includes('Beschreibung: Zeile eins Zeile zwei Zeile drei'));
+  assert.ok(out.includes('Volltext (Auszug): Volltext zweite Zeile'));
+  assert.ok(out.includes('Kompendium: Kompendium zweite Zeile'));
+});
+
+test('formatNode: field values keep their line breaks — only the renderer flattens', () => {
+  // JSON consumers get the text as stored; the flattening belongs to the text
+  // format that would otherwise be forgeable, not to the data.
+  const node: WloNode = {
+    ref: { id: 'n-2', repo: '-home-' },
+    type: 'ccm:io',
+    properties: { 'cclom:general_description': ['a\nb'] },
+  };
+  assert.equal(formatNode(node).description, 'a\nb');
+});

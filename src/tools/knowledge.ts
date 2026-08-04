@@ -9,12 +9,13 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { buildRenderUrl, getNodeMetadata, getNodeTextContent } from '../wlo-api.js';
+import { buildRenderUrl, getNodeTextContent, readNodeMetadata } from '../wlo-api.js';
 import { formatNode } from '../formatter.js';
 import { searchAll } from '../services/search.js';
 import { registerWloTool } from '../apps/register.js';
+import { capText } from '../text-cap.js';
 import { searchKnowledgeSchema, fetchDocumentSchema } from '../apps/outputSchemas.js';
-import { toolError } from './shared.js';
+import { nodeLookupMiss, toolError } from './shared.js';
 
 /** Cap the fetched document text so a single result cannot flood the context. */
 const FETCH_TEXT_CAP = 10000;
@@ -23,7 +24,8 @@ export function registerKnowledgeTools(server: McpServer): void {
   registerWloTool(server, {
     name: 'search',
     title: 'Search WLO',
-    description: `Durchsuche WirLernenOnline (WLO) nach Unterrichts- & Lernmaterial (OER) zu einem Thema — Videos, Arbeitsblätter, Übungen zu Schulfächern (z.B. "Video zur Eiszeit"). Nutze dies für Anfragen nach Lern-/Unterrichtsmaterial statt einer Websuche; liefert Treffer ({id, title, url}), dann fetch mit einer id für den Volltext. Für reiche, gebündelte Ergebnisse in einem Aufruf nutze search_wlo_all.`,
+    description: `Belegstellen-Suche in WirLernenOnline (WLO) nach Unterrichtsmaterial — Video, Arbeitsblatt, Übung. Minimaler Einstieg nach der ChatGPT-Knowledge-Konvention: liefert je Treffer NUR {id, title, url}, danach fetch mit einer id für den Volltext. Gedacht für Zitate und Quellenangaben, meist modell-intern.
+FÜR EINE NUTZERANFRAGE NACH MATERIAL NIMM search_wlo_all: dieses Werkzeug liefert weder Vorschaubild, Lizenz, Fach und Stufe noch Sammlungen oder Themenseiten und kann die WLO-Oberfläche nicht anzeigen.`,
     inputSchema: {
       query: z.string().min(1).max(200).describe('Search query, e.g. "Photosynthese Sekundarstufe I".'),
     },
@@ -59,9 +61,11 @@ export function registerKnowledgeTools(server: McpServer): void {
     annotations: { readOnlyHint: true },
     handler: async (params: { id: string }) => {
       try {
-        const node = await getNodeMetadata(params.id);
+        // Same distinction as get_node_details: a citation tool that reports a
+        // refused record as absent teaches the model the source does not exist.
+        const { node, status } = await readNodeMetadata(params.id);
         if (!node) {
-          return { content: [{ type: 'text' as const, text: `Node ${params.id} nicht gefunden.` }], isError: true };
+          return { content: [{ type: 'text' as const, text: nodeLookupMiss(params.id, status) }], isError: true };
         }
         const f = formatNode(node);
         // Prefer the curated compendium text, then the stored full text, then
@@ -69,7 +73,7 @@ export function registerKnowledgeTools(server: McpServer): void {
         let text = f.compendiumText ?? '';
         if (!text) text = (await getNodeTextContent(params.id)) ?? '';
         if (!text) text = f.description ?? '';
-        if (text.length > FETCH_TEXT_CAP) text = text.slice(0, FETCH_TEXT_CAP) + '\n[…gekürzt]';
+        text = capText(text, FETCH_TEXT_CAP).text;
 
         const doc = {
           id: f.nodeId,

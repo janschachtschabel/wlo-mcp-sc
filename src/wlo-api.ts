@@ -12,5 +12,8 @@
  */
 
 export * from './wlo-config.js';
+export * from './wlo-types.js';
+export * from './wlo-fetch.js';
 export * from './wlo-search.js';
 export * from './wlo-node.js';
+export * from './wlo-node-text.js';

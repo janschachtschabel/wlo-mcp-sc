@@ -49,13 +49,27 @@ async function readCssIfPresent(path) {
   return existsSync(path) ? readFile(path, 'utf8') : '';
 }
 
+/**
+ * Neutralize a closing tag inside inlined `<script>`/`<style>` content.
+ *
+ * The HTML parser ends a raw-text element at the first `</script` (or
+ * `</style`) it sees, whatever the JavaScript or CSS grammar says — so a single
+ * string literal containing that sequence would truncate the bundle and spill
+ * the remainder into the document as markup. esbuild does not escape it,
+ * because it does not know the output is being inlined. `<\/` is the standard
+ * escape and means the same thing to a JS parser.
+ */
+function inlineSafe(text, tag) {
+  return text.replace(new RegExp(`</(${tag})`, 'gi'), '<\\/$1');
+}
+
 function htmlShell(css, js) {
   return (
     '<!doctype html>\n' +
     '<html lang="de">\n<head>\n<meta charset="utf-8" />\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1" />\n' +
-    `<style>${css}</style>\n</head>\n<body>\n<div id="wlo-root"></div>\n` +
-    `<script>${js}</script>\n</body>\n</html>\n`
+    `<style>${inlineSafe(css, 'style')}</style>\n</head>\n<body>\n<div id="wlo-root"></div>\n` +
+    `<script>${inlineSafe(js, 'script')}</script>\n</body>\n</html>\n`
   );
 }
 

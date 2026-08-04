@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP-Zugang sperren · WirLernenOnline</title>
+  <meta name="description" content="Einen zuvor erzeugten Zugangsblock für den WLO-MCP-Server sperren. Danach funktioniert er sofort nicht mehr." />
+  <link rel="stylesheet" href="/auth.css" />
+</head>
+<body>
+<main>
+  <h1>MCP-Zugang sperren</h1>
+  <p class="lede">
+    Ein gesperrter Block funktioniert sofort nicht mehr — auch dann nicht, wenn ihn
+    jemand anderes hat.
+  </p>
+  <p class="lang-note" lang="en">English: this page revokes a previously issued access block.</p>
+
+  <div class="card">
+    <h2 id="form-heading">Block sperren</h2>
+    <form id="revoke-form" novalidate aria-labelledby="form-heading">
+      <div class="field">
+        <label for="block">Zugangsblock</label>
+        <textarea id="block" name="block" spellcheck="false" required
+                  aria-describedby="block-hint"></textarea>
+        <p class="hint" id="block-hint">
+          Der Wert aus den Einstellungen deines KI-Programms. Mit oder ohne
+          <code class="mono">Bearer</code> am Anfang — beides geht.
+        </p>
+      </div>
+      <div class="actions">
+        <button type="submit" id="submit">Diesen Zugang sperren</button>
+        <a href="/auth.html">Neuen Zugang holen</a>
+      </div>
+    </form>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="warn">
+    <h2>Block nicht mehr zur Hand?</h2>
+    <p>
+      Dann hilft der <strong>Wechsel deines WLO-Passworts</strong>: er macht sofort
+      <em>alle</em> deine Zugangsblöcke ungültig, weil jeder von ihnen das alte Passwort
+      enthält. Das ist der sicherste Weg, wenn ein Gerät abhandengekommen ist.
+    </p>
+  </div>
+
+  <footer>
+    <p>WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
+  </footer>
+</main>
+<script type="module" src="/auth-revoke.js"></script>
+</body>
+</html>

@@ -5,19 +5,17 @@
  */
 
 import type { WloNode, SearchResponse, SearchCriterion, NgsearchContentType } from './wlo-api.js';
-import { ngsearch } from './wlo-api.js';
+import { ngsearch, resolvePositiveInt } from './wlo-api.js';
 import type { QueryVariant } from './query-expand.js';
-import { DE_STOPWORDS, expandQuery } from './query-expand.js';
-import { nodeTitle } from './node-match.js';
+import { expandQuery } from './query-expand.js';
+import { nodeTitle, queryTerms as signalTerms, termMatches } from './node-match.js';
+import { log } from './logger.js';
 
 // Candidate pool PER search variant for ranking — NOT the number of results
 // delivered (that is maxResults). Smaller pool = faster/smaller fetches at
 // minimally lower recall. Default 25 (reduced from 40), overridable via the
 // ``WLO_POOL_SIZE`` env var.
-const POOL_SIZE: number = (() => {
-  const v = parseInt(process.env['WLO_POOL_SIZE'] ?? '', 10);
-  return Number.isFinite(v) && v > 0 ? v : 25;
-})();
+const POOL_SIZE: number = resolvePositiveInt(process.env['WLO_POOL_SIZE'], 25, 'WLO_POOL_SIZE');
 
 // Final-score blend: text/metadata quality dominates, cross-variant RRF
 // consensus nudges the order, and appearing in several variants earns a small
@@ -29,9 +27,10 @@ const APPEARANCE_BONUS_MAX = 0.1;
 
 // ── Relevance Scoring ────────────────────────────────────────────────────────
 
-function termInText(term: string, text: string): boolean {
-  return text.includes(term);
-}
+// Scoring and the local matcher must agree on what counts as a hit — they were
+// two copies of `text.includes(term)`, and the copy here decided the ranking a
+// user sees. `termMatches` holds the rule and the measurement behind it.
+const termInText = termMatches;
 
 function computeRelevanceScore(node: WloNode, query: string): number {
   let score = 0;
@@ -40,7 +39,7 @@ function computeRelevanceScore(node: WloNode, query: string): number {
   // Drop stopwords: a stopword ("die", "und", …) must not act as a relevance
   // signal (a title merely containing "die" is not a match). Phrase-level checks
   // below still use the full `queryLower`, so exact-phrase matches are unaffected.
-  const queryTerms = queryLower.split(/\s+/).filter(t => t.length >= 2 && !DE_STOPWORDS.has(t));
+  const queryTerms = signalTerms(queryLower);
 
   // Shared title chain (node-match.ts) so a node titled only at cm:title /
   // node-level scores against its real title, not an empty string.
@@ -49,8 +48,12 @@ function computeRelevanceScore(node: WloNode, query: string): number {
   const keywords = (props['cclom:general_keyword'] ?? []).map((k: string) => k.toLowerCase());
   const allKw = keywords.join(' ');
 
-  // Title relevance
-  if (title.includes(queryLower)) {
+  // Title relevance. The phrase check goes through `termMatches` too: it awards
+  // the largest single bonus here (+30), and for a ONE-WORD query it is exactly
+  // the substring test the term branch below already had to give up. A phrase of
+  // more than three characters — which every multi-word query is — still matches
+  // anywhere, so real phrase behaviour is untouched.
+  if (termInText(queryLower, title)) {
     score += 30;
     if (title === queryLower) score += 20;
     else if (title.startsWith(queryLower)) score += 10;
@@ -70,7 +73,7 @@ function computeRelevanceScore(node: WloNode, query: string): number {
   if (queryTerms.length > 1 && kwHits === queryTerms.length) score += 10;
 
   // Description relevance
-  if (desc.includes(queryLower)) score += 8;
+  if (termInText(queryLower, desc)) score += 8;
   else { for (const term of queryTerms) { if (termInText(term, desc)) score += 3; } }
 
   // Penalty: not in title or keywords
@@ -168,8 +171,7 @@ function mergeAndRank(
   // Same stopword-filtered term list as computeRelevanceScore: the floor must
   // be calibrated on the terms that can actually score, or a stopword-heavy
   // query over-filters and silently flips to the RRF-only fallback below.
-  const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2 && !DE_STOPWORDS.has(t));
-  const minScore   = Math.max(5, queryTerms.length * 3);
+  const minScore   = Math.max(5, signalTerms(query).length * 3);
   const passing = entries.filter(e => e.qualityScore >= minScore);
   // Graceful degradation: if the text-overlap quality floor would discard
   // EVERY hit (e.g. the backend matched via full-text/PDF body or keywords
@@ -204,7 +206,19 @@ export async function enhancedSearch(
     .filter((r): r is PromiseFulfilledResult<{ variant: QueryVariant; response: SearchResponse }> => r.status === 'fulfilled')
     .map(r => r.value);
 
-  if (successful.length === 0) return { nodes: [], pagination: { total: 0, from: 0, count: 0 } };
+  // One variant failing is what allSettled is for — the others still answer.
+  // But ALL of them failing is not an empty result set, it is a search that
+  // could not be performed: the repository is unreachable, or it rejected our
+  // credentials. Reporting "0 hits" there turns a configuration fault into an
+  // apparent fact about the world, and the model passes it on as one. Measured
+  // 2026-07-31: a wrong service password made every call 401 and every search
+  // answer "Gefundene Treffer gesamt: 0" with no error at all.
+  if (successful.length === 0) {
+    const reason = settled.find(r => r.status === 'rejected')?.reason;
+    const detail = reason instanceof Error ? reason.message : String(reason ?? 'unknown');
+    log.warn('every query variant failed — reporting an error, not an empty result', { query, detail });
+    throw new Error(`search failed: no query variant could be executed (${detail})`);
+  }
 
   const ranked   = mergeAndRank(successful, query);
   const filtered = ranked.filter(r => !isDeletedNode(r.node));

@@ -32,6 +32,52 @@ function payload(over: Record<string, unknown> = {}): any {
   };
 }
 
+test('the selection bar sits ABOVE the content grid, so it is reachable without scrolling past every tile', () => {
+  // It used to be emitted after the grid and pinned with `position: sticky`.
+  // Sticky needs a scrollport, and the widget document deliberately has none —
+  // "no nested scroll (the host sizes the iframe)", base.css. So it degraded to
+  // static at the very bottom: a user who ticked a box had to scroll past all
+  // results to act on it (live report 2026-07-30).
+  const html = renderSearchResults(payload(), 'de', { canSelect: true, selectedIds: ['c1'] });
+  const bar = html.indexOf('wlo-selection');
+  const firstTile = html.indexOf('Inhalt A');
+  assert.ok(bar >= 0, 'the bar renders once something is ticked');
+  assert.ok(bar < firstTile, `selection bar (${bar}) must precede the first content tile (${firstTile})`);
+});
+
+test('renderSearchResults renders a FLAT node list, so list tools can reuse the widget', () => {
+  // get_collection_contents / get_related_content / search_wlo_content return a
+  // flat `{total,count,results}` (nodeListSchema), not the search_wlo_all
+  // envelope. Without this the widget rendered its empty state for them.
+  const flat = {
+    query: 'Bruchrechnung',
+    total: 1,
+    count: 1,
+    results: [node('f1', 'Flacher Treffer')],
+  } as any;
+  const html = renderSearchResults(flat, 'de');
+  assert.match(html, /Flacher Treffer/, 'the flat list renders its tiles');
+  assert.doesNotMatch(html, /wlo-empty/, 'and does not fall through to the empty state');
+});
+
+test('a flat list is split by nodeType, so collections keep their band and their action', () => {
+  // get_collection_contents(contentFilter:"folders") and search_wlo_collections
+  // return collection nodes in the same flat shape as material nodes. Rendering
+  // them as material tiles would drop the collection band AND the "Inhalte
+  // anzeigen" button that continues the flow — the tile would be a dead end.
+  const flat = {
+    query: 'Mathematik',
+    total: 2,
+    count: 2,
+    results: [node('s9', 'Unter-Sammlung', 'collection'), node('c9', 'Ein Material')],
+  } as any;
+  const html = renderSearchResults(flat, 'de', { canSelect: true });
+  const band = html.indexOf('wlo-results__coll-band');
+  assert.ok(band >= 0, 'the collection band is present');
+  assert.ok(html.indexOf('Unter-Sammlung') > band, 'the collection renders inside the band');
+  assert.ok(html.indexOf('Ein Material') > html.indexOf('Unter-Sammlung'), 'the material renders below it');
+});
+
 test('renderSearchResults shows all three buckets with their headings and tiles', () => {
   const html = renderSearchResults(payload(), 'de');
   assert.match(html, /Themenseiten/);

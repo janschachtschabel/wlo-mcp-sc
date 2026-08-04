@@ -38,6 +38,8 @@ export interface WikiSummary {
   url: string;
   thumbnail?: string;
   lang: string;
+  /** `exact` = title/redirect as asked, `fuzzy` = resolved by search. */
+  match?: 'exact' | 'fuzzy';
 }
 
 /** `search_wlo_all` structuredContent (SearchAllEnvelope). */
@@ -75,4 +77,11 @@ export interface BrowseNode extends WidgetNode {
   subCollectionCount?: number;
   contentPreview?: WidgetNode[];
   children?: BrowseNode[];
+  /**
+   * The server capped this branch's children — there are more than are shown.
+   * Set by `browse_collection_tree`, which bounds depth and per-node width so a
+   * wide tree cannot cost dozens of upstream calls. The tree MUST surface this:
+   * a capped branch that looks complete misrepresents the catalogue.
+   */
+  hasMoreChildren?: boolean;
 }

@@ -10,6 +10,7 @@
  */
 
 import { log } from '../logger.js';
+import { parseRequestUrl } from '../request-url.js';
 import type { RestResult } from './result.js';
 import {
   SKILL_PREFIX,
@@ -24,6 +25,13 @@ import {
 
 /** Prefix of the path-form search route (`/api/search/<term>`). */
 const SEARCH_PREFIX = '/api/search/';
+
+/**
+ * CSP for `?format=html`. The rendered page is entirely self-contained — inline
+ * style, no script, no image — so everything but inline CSS can be denied.
+ */
+const HTML_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const ROUTES: Record<string, (p: URLSearchParams) => Promise<RestResult>> = {
   '/api/search': handleSearch,
@@ -45,9 +53,17 @@ export async function routeRestRequest(
   method: string | undefined,
   url: string | undefined,
 ): Promise<RestResult | null> {
-  if (!url || !url.startsWith('/api/')) return null;
-  const parsed = new URL(url, 'http://localhost');
+  // Decide on the PARSED path, never on the raw request target. `http-app.ts`
+  // dispatches to this layer on the same parse; matching the raw string here
+  // made the two disagree for a request-target in absolute form
+  // (`GET http://host/api/search`, which HTTP/1.1 permits) — this layer declined
+  // a path the caller above had already accepted as ours. A target that will not
+  // parse owns no route either, and saying so beats throwing: the rejection
+  // escaped into the http handler, where nothing awaits it (see `request-url.ts`).
+  const parsed = parseRequestUrl(url);
+  if (!parsed) return null;
   const path = parsed.pathname;
+  if (!path.startsWith('/api/')) return null;
 
   // Variable path: `/api/search/<term>` — the STRIPPING-PROOF search form.
   // AI fetch layers strip the query string from model-built URLs
@@ -127,10 +143,16 @@ export async function handleRestRequest(req: RestReq, res: RestRes): Promise<boo
   // HTML out of a served markdown body. no-store keeps AI-fetch/proxy
   // intermediaries from replaying a stale search for a different term.
   if (result.raw != null) {
+    const contentType = result.contentType ?? 'text/plain; charset=utf-8';
     res.writeHead(result.status, {
-      'Content-Type': result.contentType ?? 'text/plain; charset=utf-8',
+      'Content-Type': contentType,
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
+      // Only on the one response a browser renders (`?format=html`). The page
+      // embeds repository-supplied titles and descriptions, which `search-page.ts`
+      // escapes; this is the second control. It can be this strict because the
+      // page carries no script, no image and no external asset of its own.
+      ...(contentType.startsWith('text/html') ? { 'Content-Security-Policy': HTML_CSP } : {}),
     });
     res.end(result.raw);
   } else {

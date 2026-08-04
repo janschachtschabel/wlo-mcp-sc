@@ -93,7 +93,12 @@ body {
    ragged (user report 2026-07-28). `cover` crops to the box instead of letting
    the image dictate the height. */
 .wlo-tile__thumb {
-  aspect-ratio: 3 / 4;
+  /* 16/9, not the former 3/4. A portrait thumb made the card ~470px tall at a
+     220px column — "extrem schmal und lang" (user report 2026-07-30) — and
+     cropped the material previews, which are overwhelmingly landscape (video
+     stills, worksheet screenshots). The CARD stays portrait; only the image
+     stops dictating the height. */
+  aspect-ratio: 16 / 9;
   background: var(--wlo-surface-2);
   display: flex;
   align-items: center;

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getNodeMetadata, getNodeParents } from '../src/wlo-api.js';
+import { getNodeMetadata, getNodeParents, getNodesMetadata } from '../src/wlo-api.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
 /**
@@ -60,6 +60,32 @@ test('getNodeMetadata: an empty props array falls back to -all- (never an unfilt
   try {
     await getNodeMetadata('n1', []);
     assert.deepEqual(filtersOf(mock.calls[0].url), ['-all-']);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getNodesMetadata: keeps the -all- projection when no props are given', async () => {
+  const mock = installFetchMock(() => ({ json: { node: makeNode('n-1', 'A') } }));
+  try {
+    await getNodesMetadata(['n-1']);
+    assert.deepEqual(filtersOf(mock.calls[0].url), ['-all-']);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getNodesMetadata: narrows every request in the fan-out to the requested properties', async () => {
+  // The fan-out is the hot path this projection exists for: resolving a topic
+  // page's swimlane widgets reads exactly ONE property per node, and used to
+  // pull all ~59 for each of them.
+  const mock = installFetchMock(() => ({ json: { node: makeNode('n-1', 'A') } }));
+  try {
+    await getNodesMetadata(['n-1', 'n-2'], 8, ['ccm:widget_config']);
+    assert.equal(mock.calls.length, 2);
+    for (const c of mock.calls) {
+      assert.deepEqual(filtersOf(c.url), ['ccm:widget_config']);
+    }
   } finally {
     mock.restore();
   }

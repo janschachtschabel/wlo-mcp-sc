@@ -23,6 +23,33 @@ test('log.warn emits one JSON line to stderr with level/name/msg/fields', () => 
   assert.equal(typeof obj.ts, 'string');
 });
 
+/**
+ * `emit` runs in failure paths — a `log.error` inside a catch block is the last
+ * thing standing between a bug and a silent process. A field that cannot be
+ * serialised (a circular object, a BigInt) would make the logging call itself
+ * throw and replace the real error with a TypeError, so the line degrades
+ * instead of exploding.
+ */
+test('an unserialisable field degrades the line instead of throwing', () => {
+  const circular: Record<string, unknown> = { name: 'node' };
+  circular['self'] = circular;
+
+  const real = process.stderr.write.bind(process.stderr);
+  const captured: string[] = [];
+  process.stderr.write = ((chunk: any) => { captured.push(String(chunk)); return true; }) as any;
+  try {
+    assert.doesNotThrow(() => log.error('write failed', { detail: circular }));
+  } finally {
+    process.stderr.write = real;
+  }
+  assert.equal(captured.length, 1);
+  const obj = JSON.parse(captured[0]);
+  assert.equal(obj.level, 'error');
+  assert.equal(obj.msg, 'write failed');
+  assert.equal(typeof obj.ts, 'string');
+  assert.match(String(obj.logError), /circular/i);
+});
+
 test('logger writes only to stderr, never stdout (reserved for MCP stdio framing)', () => {
   const realOut = process.stdout.write.bind(process.stdout);
   const realErr = process.stderr.write.bind(process.stderr);

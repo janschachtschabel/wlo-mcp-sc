@@ -1,14 +1,19 @@
 /**
- * tools/shared.ts – Helpers shared by all WLO tool modules:
- * query metadata for downstream consumers, the label→URI filter builder,
- * topic-page title fallbacks, and a bounded-concurrency mapper.
+ * tools/shared.ts – Helpers shared by all WLO tool modules: query metadata for
+ * downstream consumers, topic-page title fallbacks, and the tool error shape.
+ *
+ * What is left here is genuinely about the MCP tool surface. Two things that
+ * were not moved out on 2026-08-04, because `services/` and `rest/` imported
+ * them from here and a lower layer must not depend on this one: the
+ * bounded-concurrency mapper (`../concurrency.ts`) and the vocabulary
+ * label→URI filter builder (`../filter-criteria.ts`).
  */
 
-import type { SearchCriterion } from '../wlo-api.js';
 import type { ThemePageInfo } from '../topic-page-api.js';
-import { resolveVocab, type VocabKey } from '../vocabs.js';
-import { suggestVocab } from '../vocab-suggest.js';
+import { oneLine } from '../formatter.js';
+import { sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
+import type { LabeledCriterion } from '../filter-criteria.js';
 
 // ── Topic-page display-title resolution ─────────────────────────────────────
 
@@ -44,51 +49,7 @@ export function pickThemePageTitle(r: ThemePageInfo): string {
   return 'Themenseite';
 }
 
-/**
- * Run an async mapper over `items` with a bounded number of concurrent
- * in-flight tasks (worker-pool). Keeps result order. Used to fan out the
- * per-variant enrichment in search_wlo_topic_pages Mode C WITHOUT firing
- * 100+ simultaneous upstream fetches (which risks connection exhaustion /
- * upstream throttling / the 30s Vercel limit) — a controlled pool is both
- * stable and, combined with caching, fast.
- *
- * **Fault tolerance (explicit contract):** if `fn` rejects for a single item,
- * that slot is set to `null` and the batch keeps going — one transient upstream
- * error must not discard every other successfully-resolved item. Callers
- * therefore receive `(R | null)[]` and must filter out the nulls. The failure
- * is logged so it is not silently lost.
- */
-export async function mapPool<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<(R | null)[]> {
-  const results: (R | null)[] = new Array(items.length).fill(null);
-  let next = 0;
-  const worker = async () => {
-    while (true) {
-      const i = next++;
-      if (i >= items.length) break;
-      try {
-        results[i] = await fn(items[i], i);
-      } catch (err) {
-        results[i] = null;
-        log.warn('mapPool item failed', { index: i, error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-  };
-  const n = Math.max(1, Math.min(limit, items.length));
-  await Promise.all(Array.from({ length: n }, worker));
-  return results;
-}
-
 // ── Query metadata for downstream consumers (backend → frontend) ────────────
-
-export interface LabeledCriterion {
-  property: string;
-  values: string[];
-  label?: string;
-}
 
 export interface QueryMeta {
   toolName: string;
@@ -143,6 +104,53 @@ export function queryMetaContent(meta: Omit<QueryMeta, 'searchUrl'>): { type: 't
   return { type: 'text' as const, text: JSON.stringify({ _queryMeta: { ...meta, searchUrl } }) };
 }
 
+// ── Wikipedia resolution disclosure ─────────────────────────────────────────
+
+/**
+ * The one sentence that discloses a SUBSTITUTED Wikipedia article, shared by
+ * every tool that renders an extract as prose (`get_wikipedia_summary` and
+ * `search_wlo_all`).
+ *
+ * Shared rather than written twice: a caller turning the extract into teaching
+ * material appends "Quelle: Wikipedia-Artikel „…"", so the disclosure is what
+ * stops a false attribution. It was worded on one surface and forgotten on the
+ * other — the more-used one — which is exactly the drift a single source
+ * prevents. Returns '' for an exact hit, so callers can append unconditionally.
+ */
+export function wikiResolutionNotice(
+  query: string,
+  title: string,
+  match: 'exact' | 'fuzzy' | undefined,
+): string {
+  if (match !== 'fuzzy') return '';
+  return `_Kein Artikel „${oneLine(query)}"; per Suche aufgelöst zu „${oneLine(title)}"._`;
+}
+
+// ── A node that did not load ────────────────────────────────────────────────
+
+/**
+ * Why a node lookup produced nothing, in the words the caller gets to read.
+ *
+ * `readNodeMetadata` reports the status precisely so this distinction survives
+ * into the answer: only a 404 licenses "not found". A refused read is a rights
+ * question the caller can act on, an upstream failure is a fact about the
+ * server, and both used to reach the user as "this material does not exist" —
+ * the one thing we did not learn. Shared because `get_node_details` and the
+ * knowledge-convention `fetch` answer the same question about the same read.
+ *
+ * @param status the HTTP status from `readNodeMetadata` (`0` = unparseable body).
+ */
+export function nodeLookupMiss(nodeId: string, status: number): string {
+  const id = sanitizeText(nodeId);
+  if (status === 404) return `Node ${id} nicht gefunden.`;
+  if (status === 401 || status === 403) {
+    return `Node ${id} ist nicht zugänglich (HTTP ${status}) — das Material ist nicht öffentlich. `
+      + 'Das heißt NICHT, dass es nicht existiert.';
+  }
+  return `Node ${id} ist derzeit nicht abrufbar${status ? ` (HTTP ${status})` : ''} — `
+    + 'der Abruf ist fehlgeschlagen, über den Knoten selbst sagt das nichts.';
+}
+
 // ── Uniform tool error handling ──────────────────────────────────────────────
 
 /**
@@ -160,92 +168,4 @@ export function toolError(
   const detail = err instanceof Error ? err.message : String(err);
   log.error('tool error', { context, error: detail });
   return { content: [{ type: 'text' as const, text: `${context}: ${detail}` }], isError: true };
-}
-
-// ── Shared filter builder ────────────────────────────────────────────────────
-
-export function buildFilterCriteria(params: {
-  educationalContext?: string;
-  discipline?: string;
-  userRole?: string;
-  publisher?: string;
-  learningResourceType?: string;
-}): {
-  criteria: SearchCriterion[];
-  labeled: LabeledCriterion[];
-  unresolved: UnresolvedFilter[];
-} {
-  const criteria: SearchCriterion[] = [];
-  const labeled: LabeledCriterion[] = [];
-  // Vocab filters the caller gave that didn't resolve to a URI — they get
-  // silently dropped from the search, so we report them (with fuzzy
-  // "Meintest du?" suggestions) for self-correction.
-  const unresolved: UnresolvedFilter[] = [];
-  const reportUnresolved = (field: string, value: string, vocab: VocabKey) => {
-    const suggestions = suggestVocab(value, vocab);
-    unresolved.push(suggestions.length ? { field, value, suggestions } : { field, value });
-  };
-
-  if (params.educationalContext) {
-    const uri = resolveVocab(params.educationalContext, 'educationalContext');
-    if (uri) {
-      criteria.push({ property: 'ccm:educationalcontext', values: [uri] });
-      labeled.push({ property: 'ccm:educationalcontext', values: [uri], label: params.educationalContext });
-    } else {
-      reportUnresolved('educationalContext', params.educationalContext, 'educationalContext');
-    }
-  }
-  if (params.discipline) {
-    const uri = resolveVocab(params.discipline, 'discipline');
-    if (uri) {
-      criteria.push({ property: 'ccm:taxonid', values: [uri] });
-      labeled.push({ property: 'ccm:taxonid', values: [uri], label: params.discipline });
-    } else {
-      reportUnresolved('discipline', params.discipline, 'discipline');
-    }
-  }
-  if (params.userRole) {
-    const uri = resolveVocab(params.userRole, 'userRole');
-    if (uri) {
-      criteria.push({ property: 'ccm:educationalintendedenduserrole', values: [uri] });
-      labeled.push({ property: 'ccm:educationalintendedenduserrole', values: [uri], label: params.userRole });
-    } else {
-      reportUnresolved('userRole', params.userRole, 'userRole');
-    }
-  }
-  if (params.publisher) {
-    criteria.push({ property: 'ccm:oeh_publisher_combined', values: [params.publisher] });
-    labeled.push({ property: 'ccm:oeh_publisher_combined', values: [params.publisher], label: params.publisher });
-  }
-  const lrt = resolveVocab(params.learningResourceType ?? '', 'lrt');
-  if (lrt) {
-    criteria.push({ property: 'ccm:oeh_lrt_aggregated', values: [lrt] });
-    labeled.push({ property: 'ccm:oeh_lrt_aggregated', values: [lrt], label: params.learningResourceType });
-  } else if (params.learningResourceType) {
-    reportUnresolved('learningResourceType', params.learningResourceType, 'lrt');
-  }
-
-  return { criteria, labeled, unresolved };
-}
-
-export interface UnresolvedFilter {
-  field: string;
-  value: string;
-  suggestions?: string[];
-}
-
-/**
- * Render a human-readable warning for vocab filters that did not resolve, so the
- * hint rides in the tool's visible content — not only in `_queryMeta`. Returns
- * '' when nothing is unresolved. Each line names the dropped filter and, when
- * available, up to three "Meintest du?" suggestions.
- */
-export function formatUnresolvedHint(unresolved: UnresolvedFilter[]): string {
-  if (!unresolved.length) return '';
-  return unresolved
-    .map(u => {
-      const head = `⚠ Filter "${u.value}" für ${u.field} nicht erkannt und ignoriert.`;
-      return u.suggestions?.length ? `${head} Meintest du: ${u.suggestions.join(', ')}?` : head;
-    })
-    .join('\n');
 }

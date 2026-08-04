@@ -33,7 +33,7 @@ export async function readBodyWithLimit(
       tooLarge = true;
       continue; // keep draining, stop buffering
     }
-    if (!tooLarge) chunks.push(buf);
+    chunks.push(buf);
   }
   if (tooLarge) return { tooLarge: true, text: '' };
   return { tooLarge: false, text: Buffer.concat(chunks).toString('utf-8') };

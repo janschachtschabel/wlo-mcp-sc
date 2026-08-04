@@ -17,7 +17,7 @@ import type { FormattedNode } from '../formatter.js';
 import { formatNodes } from '../formatter.js';
 import { rerankNodes } from '../reranker.js';
 import { log } from '../logger.js';
-import { mapPool } from '../tools/shared.js';
+import { mapPool } from '../concurrency.js';
 
 /**
  * Resolve a topic QUERY to the Themenseiten of the best-matching collections —
@@ -38,7 +38,16 @@ export async function findTopicPagesByQuery(
   if (!q) return [];
   const [portals, keywordHits] = await Promise.all([
     searchTopicPageCollections(q).catch(() => [] as WloNode[]),
-    searchCollectionsByKeyword(q, 10),
+    // Degrade like the portal leg: the keyword hits are the SUPPLEMENT here
+    // (their projection has no config ref at all), so a thrown keyword search
+    // — timeout, reset — must not discard the portals, which are the only leg
+    // that can surface a Themenseite. Same guard as searchAll's.
+    searchCollectionsByKeyword(q, 10).catch((err) => {
+      log.warn('findTopicPagesByQuery: keyword collection search failed, continuing without', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [] as WloNode[];
+    }),
   ]);
   // Portal copies first: on an id collision they carry the config ref. Dedup,
   // rerank by relevance, cap the per-candidate metadata fan-out.
@@ -90,8 +99,18 @@ export interface SwimlanePayload {
   reason?: string;
 }
 
-/** Cap on resolved swimlanes per call → bounded upstream call count. */
+/** Cap on resolved swimlanes per call. */
 const MAX_LANES = 12;
+
+/**
+ * Cap on widgets read per swimlane. The lane cap alone does not bound the
+ * upstream calls: one metadata request goes out per widget node, and a lane's
+ * grid is parsed unbounded (topic-page-structure.ts). Only the FIRST
+ * content-bearing widget of a lane is ever used, so a handful is all the
+ * resolution can spend — together with MAX_LANES this is what makes the call
+ * count bounded.
+ */
+const MAX_WIDGETS_PER_LANE = 4;
 
 /**
  * Resolve the content of ONE widget config — three forms that occur in WLO:
@@ -153,13 +172,19 @@ export async function resolveTopicPageSwimlanes(
   maxPerSwimlane: number,
 ): Promise<SwimlanePayload> {
   const cap = maxPerSwimlane && maxPerSwimlane > 0 ? maxPerSwimlane : 3;
-  const lanes = struct.swimlanes.slice(0, MAX_LANES);
+  // Both caps applied once, here, so the id collection below and the per-lane
+  // loop further down see the same bounded item list.
+  const lanes = struct.swimlanes
+    .slice(0, MAX_LANES)
+    .map(sl => ({ ...sl, items: sl.items.slice(0, MAX_WIDGETS_PER_LANE) }));
 
   // 1. Resolve all widget nodes ONCE (in parallel) → read widget_config.
   const widgetIds = [...new Set(
     lanes.flatMap(sl => sl.items.map(it => stripStoreRef(it.nodeId)).filter(x => !!x)),
   )];
-  const widgetNodes = await getNodesMetadata(widgetIds);
+  // Only `ccm:widget_config` is read off these nodes (below), so the fan-out
+  // asks for that one property instead of the default ~59-property projection.
+  const widgetNodes = await getNodesMetadata(widgetIds, 8, ['ccm:widget_config']);
   const cfgById = new Map<string, any>();
   for (const wn of widgetNodes) {
     const raw = wn.properties?.['ccm:widget_config']?.[0];

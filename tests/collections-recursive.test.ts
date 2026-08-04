@@ -45,6 +45,49 @@ test('get_collection_contents: recursive mode returns a shared node only once (r
   }
 });
 
+/**
+ * A wide subtree that yields no result rows: every sub-collection is empty, so
+ * the row counter never reaches maxResults and only a visit cap can stop the
+ * walk. This is the realistic shape too — a curated tree where the same
+ * references recur is de-duplicated into the same standstill.
+ */
+function installWideEmptySubtree(subCount: number) {
+  const subs = Array.from({ length: subCount }, (_, i) => `sub-${i}`);
+  const asNodes = (ids: string[]) => ({
+    json: { nodes: ids.map(id => makeNode(id, `Titel ${id}`)), pagination: { total: ids.length, from: 0, count: ids.length } },
+  });
+  return installFetchMock((url) => {
+    const u = new URL(url);
+    const nodeId = decodeURIComponent(u.pathname.match(/-home-\/([^/]+)\/children/)?.[1] ?? '');
+    if (u.searchParams.get('filter') === 'folders') return asNodes(nodeId === 'root' ? subs : []);
+    return asNodes([]);
+  });
+}
+
+test('get_collection_contents: recursive mode stops at the visit cap instead of crawling the whole subtree', async () => {
+  // Without a cap the walk runs until the queue empties — two sequential
+  // upstream calls per collection, continuing long after the client's own
+  // 30 s request timeout has closed the socket.
+  const mock = installWideEmptySubtree(200);
+  const client = await connectedClient();
+  try {
+    await client.callTool({
+      name: 'get_collection_contents',
+      arguments: { nodeId: 'root', includeSubcollections: true, contentFilter: 'files', outputFormat: 'json' },
+    });
+    const visited = new Set(
+      mock.calls
+        .map(c => new URL(c.url).pathname.match(/-home-\/([^/]+)\/children/)?.[1])
+        .filter((id): id is string => !!id),
+    );
+    // 50 = RECURSIVE_VISIT_MAX (root + 49 sub-collections). Uncapped: 201.
+    assert.equal(visited.size, 50, 'the walk must stop at the visit cap');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
 test('get_collection_contents: recursive mode honors skipCount instead of silently dropping it', async () => {
   // Regression (deep-audit): the recursive branch ignored skipCount while
   // _queryMeta still reported it — page 2 repeated page 1.

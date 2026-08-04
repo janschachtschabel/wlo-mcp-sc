@@ -7,12 +7,16 @@
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createMcpServer } from './server.js';
+import { verifyConfiguredCredential } from './auth/identity.js';
 import { log } from './logger.js';
 
 async function main(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Same one-off credential check as the HTTP entry point. Logs go to stderr
+  // (see logger.ts), so this cannot corrupt the stdout JSON-RPC framing.
+  void verifyConfiguredCredential();
   // Server runs until stdin closes
 }
 

@@ -12,7 +12,10 @@
  * credentials.
  */
 
-import { WLO_TEXT_EXTRACTION_URL, WLO_TEXT_TIMEOUT_MS, wloFetch } from './wlo-config.js';
+import { WLO_TEXT_EXTRACTION_URL, WLO_TEXT_TIMEOUT_MS } from './wlo-config.js';
+import { isPrivateHost } from './url-safety.js';
+import { wloFetch } from './wlo-fetch.js';
+import { readJson } from './read-json.js';
 import { log } from './logger.js';
 
 /** Extraction methods the service accepts; `browser` renders JS-heavy pages. */
@@ -20,8 +23,9 @@ export type ExtractionMethod = 'simple' | 'browser';
 
 /**
  * Fetch the text behind a public URL. Returns null when the service is disabled
- * (empty base URL), the URL is not http(s), or the call fails — the caller then
- * degrades to whatever the repository has.
+ * (empty base URL), the URL is not http(s), its host is private (see
+ * `isPrivateHost`), or the call fails — the caller then degrades to whatever
+ * the repository has.
  *
  * @param baseUrl override for tests; defaults to the configured service.
  */
@@ -32,6 +36,17 @@ export async function extractTextFromUrl(
 ): Promise<string | null> {
   if (!baseUrl) return null;
   if (!/^https?:\/\//i.test(url)) return null;
+
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return null;
+  }
+  if (isPrivateHost(target.hostname)) {
+    log.warn('text extraction refused a private-network URL', { host: target.hostname });
+    return null;
+  }
 
   try {
     const res = await wloFetch(`${baseUrl}/from-url`, {
@@ -51,8 +66,8 @@ export async function extractTextFromUrl(
       log.warn('text extraction returned non-OK', { status: res.status });
       return null;
     }
-    const data = await res.json() as { text?: string };
-    return data.text ?? null;
+    const data = await readJson<{ text?: string }>(res, 'extractTextFromUrl');
+    return data?.text ?? null;
   } catch (err) {
     // A failing external service must never fail the tool call — the caller
     // reports `extraction_failed` and the user still gets the metadata.

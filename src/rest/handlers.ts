@@ -15,7 +15,7 @@ import {
   type SearchAllOptions,
 } from '../services/search.js';
 import { getCompendiumTexts } from '../services/compendium.js';
-import { buildFilterCriteria } from '../tools/shared.js';
+import { buildFilterCriteria } from '../filter-criteria.js';
 import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import type { TargetGroup } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-structure.js';

@@ -431,7 +431,10 @@ export function suggestUniversitySubjects(input: string, limit = MAX_UNI_SUGGEST
       dist = Math.abs(hay.length - needle.length); // tighter (label ≈ query) ranks first
     } else {
       let best = Infinity;
-      for (const word of hay.split(/[^a-zà-ÿ0-9]+/i)) {
+      // Unicode letter classes, not a Latin-1 range: "ß" (U+00DF) sits below
+      // "à" (U+00E0), so a range-based splitter cut "Gießereiwesen" into
+      // "Gie"/"ereiwesen" and no typo of it could ever reach the distance tier.
+      for (const word of hay.split(/[^\p{L}\p{N}]+/gu)) {
         if (word.length < MIN_UNI_TOKEN_LEN) continue;
         const d = levenshtein(needle, word);
         if (d < best) best = d;

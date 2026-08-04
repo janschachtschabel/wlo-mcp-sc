@@ -50,6 +50,31 @@ test('handleRestRequest surfaces a 400 for invalid input', async () => {
   assert.equal(res.rec.status, 400);
 });
 
+/**
+ * `?format=html` is the one REST response a browser renders, and it embeds
+ * repository-supplied titles and descriptions. The escaping in `search-page.ts`
+ * is the control; the CSP is the second one, and it can be strict here because
+ * the page carries no scripts and no images of its own.
+ */
+test('the HTML search view is served under a strict content security policy', async () => {
+  const res = fakeRes();
+  await handleRestRequest({ method: 'GET', url: '/api/search?format=html' }, res); // guidance page, offline
+  assert.match(res.rec.headers?.['Content-Type'] ?? '', /text\/html/);
+  const csp = res.rec.headers?.['Content-Security-Policy'] ?? '';
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.doesNotMatch(csp, /script-src 'unsafe-inline'/, 'this page runs no script at all');
+});
+
+test('a JSON response carries no content security policy', () => {
+  // A CSP on `application/json` governs nothing and only invites someone to
+  // copy it onto a surface where the value would be wrong.
+  const res = fakeRes();
+  return handleRestRequest({ method: 'GET', url: '/api/search' }, res).then(() => {
+    assert.equal(res.rec.headers?.['Content-Security-Policy'], undefined);
+  });
+});
+
 test('handleRestRequest sends nosniff + no-store on JSON and raw responses', async () => {
   const res = fakeRes();
   await handleRestRequest({ method: 'GET', url: '/api/search' }, res); // guidance envelope, offline

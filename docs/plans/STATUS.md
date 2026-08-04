@@ -9,6 +9,14 @@ design/tasks docs.
 **Process:** one package = one phase; after each, update this file + hand off for
 a context reset (see the workflow block in CLAUDE.md).
 
+> **Superseded on 2026-08-02 — Vercel is gone.** `api/mcp.ts`, `vercel.json` and
+> `tests/api-mcp.test.ts` were deleted; the self-hosted Docker/Caddy deployment
+> is the only target and `stdio.ts` + `http.ts` the only entry points. Every
+> mention of Vercel, `api/mcp.ts`, `@vercel/node` or serverless constraints below
+> is a record of what was true at the time — **do not act on it**. In particular
+> the `@vercel/node` dependency findings and the "bundle dist-widgets for Vercel"
+> follow-ups are closed by the removal, not outstanding.
+
 ---
 
 ## Progress
@@ -719,3 +727,1444 @@ fail** (547 → +1: the extraction-URL guard) · `npm run build` exit 0, four
 widget bundles emitted · `npm audit --omit=dev --audit-level=high` and
 `npm audit --audit-level=low` both 0 vulnerabilities · encoding check 0
 damaged lines / no BOM across 12 files. Not committed (user manages git).
+
+
+## First live-deployment feedback (2026-07-30)
+
+Five reports from https://wlo-mcp.87.106.195.152.nip.io/mcp, each root-caused
+before a fix (`/better-coding-debug`), then implemented under
+`/better-coding-workflow`.
+
+| Report | Root cause | Fix |
+|---|---|---|
+| Widget appears inconsistently | Widget wired to `search_wlo_all` only | Renderer accepts a flat node list (split by `nodeType`); widget wired to all six list tools |
+| Model struggles to continue after "Inhalte anzeigen" | `get_collection_contents`, `search_wlo_within_collection`, `get_related_content` registered with plain `server.tool` → no `structuredContent`, no widget | Moved onto the Apps-SDK seam with `nodeListSchema` |
+| Volltext not fetched despite a known nodeId | `get_wlo_content_text` absent from the server `instructions`; its description discouraged the call with a wrong cost figure | Named in the instructions; cost claim corrected to the measured 288 ms |
+| Content tiles too tall/narrow | `.wlo-tile__thumb` was portrait 3/4 | 16/9 — card stays portrait, image no longer sets the height |
+| "Ausgewählte verwenden" needs far scrolling | Bar emitted after the grid with `position: sticky`, but the widget has no scrollport by design | Rendered above the grid |
+
+Live evidence gathered before fixing: `get_wlo_content_text` answers in 288 ms
+with 978 characters from the repository — the tool worked, it was never called.
+A tool-by-tool probe showed 6 of 14 returning no `structuredContent`.
+
+**Verification:** `npm run typecheck` exit 0 · `npm test` **555 pass / 0
+fail** (548 → +7) · `npm run build` exit 0 · post-build wiring check: all six
+list tools plus `get_wlo_content_text` advertise both widget and outputSchema.
+Not committed (user manages git).
+
+**One test deliberately reversed:** `widgets-wiring.test.ts` asserted "the
+plain content search is NOT a widget tool". That pinned a design decision the
+live feedback overturned; the assertion now requires the opposite, with the
+reason recorded in the test. `widgets-tile.test.ts` kept its intent (one fixed
+ratio for every preview) but no longer pins a portrait number.
+
+
+## Widget flow findings closed (2026-07-30)
+
+The three findings left open by the flow audit, all resolved.
+
+- **topic-page had no actions at all.** Its swimlane cards now carry
+  "Details" → Einzelansicht (licence, source) and from there "Volltext
+  anzeigen" / "Ähnliche Inhalte"; a collection in a lane opens its contents.
+  To avoid a second copy of the view, `renderDetail` moved to
+  `shared/detail.ts` (pure move — search-results stayed green throughout) and
+  `shared/mount.ts` became the tile-widget shell (open/close, Escape, focus
+  per WCAG 2.4.3, follow-up routing), replacing `mountSimpleWidget`.
+- **The selection message named no tool** — the only follow-up that did not.
+  It now points at `get_nodes_details` with `nodeIds`.
+- **Follow-ups are a ChatGPT capability.** Verified against the bridge: the
+  MCP-Apps standard offers `tools/call` and `ui/update-model-context`,
+  neither of which starts a user turn. No code change is possible without
+  building in-widget navigation (a different feature); documented instead in
+  both READMEs and `docs/TOOLS.md`. Confirmed all four widgets gate their
+  buttons, so no host ever shows a dead control.
+
+**Encoding check corrected.** The line-wise repair could only fix a line that
+was damaged in its entirety, so a line holding BOTH damage and correct text
+("werkzeugübergreifende … fünf") was neither repaired nor reported — the
+earlier "0 defekte Zeilen" was wrong for that class. A sequence-level repair now
+runs over every tracked and untracked text file; one line in README.de.md was
+still broken and is fixed.
+
+**Verification:** `npm run typecheck` exit 0 · `npm test` **563 pass / 0
+fail** (557 → +6) · `npm run build` exit 0 (topic-page bundle 10.0 → 13.5 kB)
+· `npm audit --audit-level=low` 0 vulnerabilities · repo-wide encoding scan
+clean. Not committed (user manages git).
+
+**Deliberately deferred:** `search-results/main.ts` still holds its own copy
+of the open/close/focus loop because it also owns the multi-select; folding it
+into the shared shell is its own change, noted in `shared/mount.ts`.
+
+
+## Tool + widget audit, findings fixed (2026-07-30)
+
+Scoped audit on three axes — all 23 tools called live, every button chain
+simulated click → message → tool call, every widget fed real tool output.
+
+**Mechanics were clean:** 0 tool errors, 0 broken button chains, 0 widgets that
+render empty despite hits. The defects were one level up, in triggering.
+
+| Fund | Fix |
+|---|---|
+| `search`, `search_wlo_content`, `search_wlo_all` all advertised "Video zur Eiszeit" | Descriptions differentiated; `search` framed as the citation entry point that forwards. Test pins that no multi-word example appears twice. |
+| Topic-page markdown H1 printed `variantTitle` ("Fachportalstartseite") | Uses `collectionTitle` first, like the widget |
+| Portal-level search answered a bare "0 Treffer" | Says which case it is (15 direct entries, none matching, 11 sub-collections) and names `get_collection_contents` |
+| `search_wlo_topic_pages` had no `structuredContent` | Projects each theme page onto one collection tile + results widget |
+
+**`search`/`fetch` overlap is by design** — the ChatGPT knowledge convention
+requires both. What was removed is the shared EXAMPLE a router matches on, not
+the overlap in purpose. Remaining conflicts checked and cleared: the only other
+shared quoted strings are vocabulary values ("Mathematik") used as filter
+examples, which is correct.
+
+**A test of mine validated my own assumption.** The first version of the
+empty-collection fix mocked `collectionTotal = 0`; live it is 15. The unit test
+passed while the live behaviour did not change. Re-measured, test corrected to
+the observed shape, then fixed.
+
+**Verification:** `npm run typecheck` exit 0 · `npm test` **567 pass / 0
+fail** (563 → +4) · `npm run build` exit 0 · live re-run of all four findings
+against the production repository. Not committed (user manages git).
+
+
+## Open display gaps closed (2026-07-30)
+
+The two remaining tools whose output had no rendering, both solvable without a
+design decision.
+
+- **`get_node_details`** -> `nodeListSchema` (one node = a list of one) plus
+  the results widget. A miss returns an empty list rather than no
+  structuredContent, so the widget shows its empty state instead of the host
+  failing. `get_nodes_details` deliberately untouched: batch resolver, no
+  display job.
+- **`get_compendium_text`** -> `contentTextSchema` plus the reading widget,
+  which its own header names as the home for "editorial compendium prose". Bulk
+  fetches keep every text but carry no `nodeId`, which gates the per-node
+  actions off.
+
+Verified live against the production repository: get_node_details renders 1
+tile with the Details button and the licence row; a single collection renders
+in the reading view with 6 actions; a 3-collection bulk renders the joined text
+with 0 actions.
+
+**Verification:** `npm run typecheck` exit 0 · `npm test` **571 pass / 0
+fail** (567 -> +4) · `npm run build` exit 0 · `npm audit` 0 vulnerabilities.
+Not committed (user manages git).
+
+**Still open and NOT done here** (deliberate): optional auth (planned, no code —
+recommended to wait for write features); the second-server setup guide with a
+real load measurement; the final domain decision before any ChatGPT submission;
+manual screen-reader/keyboard pass; the German closing-quote sweep (118 spots,
+cosmetic, wants its own diff).
+
+
+## Auth: P0 executed, modes 1+2 shipped (2026-07-30)
+
+### P0 findings (staging + prod, live probes)
+
+The verification spike overturned the earlier design AND my own recommendation
+from the same day to drop the login page in favour of host-managed OAuth.
+
+- No OIDC discovery, no Dynamic Client Registration -> a host cannot
+  self-configure OAuth against WLO.
+- The repository OpenAPI declares exactly `basicAuth` + `cookieAuth`.
+  **No Bearer.** A Bearer header is ignored, not rejected.
+- `POST /oauth2/token` exists but needs an operator-registered client, and
+  its tokens are of unverified use against the REST endpoints we call.
+- **Wrong credentials answer 200 as guest**, never 401. No loud failure mode.
+- Identity: `GET /rest/iam/v1/people/-home-/-me-` -> `person.authorityName`,
+  `esguest` when unauthenticated.
+
+### Shipped
+
+A credential CHAIN rather than three deployment modes, so one instance can
+later serve several rungs and write tools attach to the same seam:
+
+| Rung | State |
+|---|---|
+| per-user login | blocked on a WLO-operator decision (see below) |
+| service account from env (HTTP Basic) | **done** |
+| anonymous | unchanged |
+
+- `src/auth/credential.ts` - env -> Basic header; both halves required
+  (half a credential would silently downgrade to guest).
+- `src/auth/identity.ts` - asks the repository who we are, because it will
+  not tell us on its own.
+- `src/tools/auth.ts` - `wlo_auth_status`, reporting mode and whether it
+  works as two separate facts.
+- `wloFetch` attaches the credential to the repository ONLY; a look-alike
+  host and every third-party service are pinned by test.
+
+### Open: per-user login
+
+Two routes remain, neither buildable on assumptions:
+(a) an MCP-hosted login page verifying WLO credentials via Basic + `-me-`;
+(b) a registered `oauth2/token` client, IF the operators can create one and
+its tokens are accepted by our endpoints. Needs a decision plus access.
+
+**Verification:** `npm run typecheck` exit 0 - `npm test` **587 pass / 0
+fail** (571 -> +16) - `npm run build` exit 0 - `npm audit` 0 vulnerabilities.
+Live: `wlo_auth_status` reports mode=anonymous/authority=esguest without env
+credentials, and `search_wlo_all` returns unchanged results. Not committed.
+
+
+## Auth chain finished (2026-07-30)
+
+All three rungs live. The correction that unblocked it: P0 proved OAuth2/Bearer
+unavailable, which was over-read as "no per-user login". `basicAuth` is a
+declared scheme — the same one other WLO clients use — so per-user login was
+never blocked by the repository, only the DELIVERY of the credentials was open.
+
+| Rung | Delivery | State |
+|---|---|---|
+| personal account | `Authorization: Basic` from the AI host connector settings | done |
+| service account | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | done |
+| anonymous | nothing configured | unchanged |
+
+Closing package:
+- **Boot-time verification** of a configured service account, logged. Silent and
+  network-free when nothing is configured; never throws.
+- **REST layer pinned anonymous** — a caller-supplied Authorization header on
+  `/api/*` is not adopted, driven through a real HTTP server in the test.
+- **Setup docs** in `docs/TOOLS.md` (section 1a): the chain, how to build the
+  header, how to confirm it works, and why Basic rather than OAuth.
+
+Security properties held by test: per-request isolation via AsyncLocalStorage
+(three interleaved users), credential only ever sent to the repository host,
+Bearer refused rather than forwarded, no credential material in any tool output.
+
+**Verification:** `npm run typecheck` exit 0 - `npm test` **598 pass / 0
+fail** (593 -> +5) - `npm run build` exit 0 - `npm audit` 0 vulnerabilities.
+
+**NOT yet verified — needs real credentials:** that a genuine WLO login is
+accepted end to end. The mechanism follows the API spec and both branches are
+tested, but no real account has been used. To check without credentials
+entering a chat: put `WLO_SERVICE_USER`/`WLO_SERVICE_PASSWORD` into a local
+`.env` (gitignored) and run the server with `node --env-file=.env`; then
+`wlo_auth_status` must report `authenticated: true`.
+
+
+## Auth review + fixes (2026-07-31)
+
+A review of the credential chain before deploying it — the auth package was the
+only part of the day's work that changes the security posture, and it had never
+been reviewed. It found one critical defect the whole test suite had missed.
+
+**The critical one: the public REST layer inherited the service account.**
+`GET /api/*` and the launcher are reachable from the internet with no login,
+but the credential chain applied there too. Everything the account could see
+beyond public was world-readable, with no authentication and no audit trail —
+and it contradicted the design's own explicit scope line for that surface. It
+was measured, not inferred: an anonymous `GET /api/search` produced upstream
+calls carrying `Basic …`.
+
+Why nothing caught it: the existing test pinned that `/api/*` ignores a
+CALLER-supplied header, which it always did. Nobody had asked the other
+question — what the server does with the credential it configures itself.
+
+The chain now needs an explicit scope. `runAnonymous` marks a call as
+deliberately unauthenticated (`null` in the ALS, distinct from "no scope"), and
+the public surface opens one.
+
+Also fixed:
+- Caller-supplied account name reached the model unsanitized (line breaks
+  survived into `wlo_auth_status`). The repository-supplied authority and
+  profile name are cleaned at the same boundary — the logged-in person can edit
+  those too. Rule extracted from the widget module to `src/text-sanitize.ts`.
+- A credential over a non-`https` repository URL went out in the clear with no
+  warning; the boot check now says so (loopback exempt).
+- The endpoint could relay credential guessing. Capped by DISTINCT logins per
+  client (`AUTH_CREDENTIAL_LIMIT`, default 10/10 min), not by request rate — a
+  rate cap would throttle exactly the per-user clients it should serve. Only
+  schemes we actually forward count; digests stored, never raw values.
+- Docs corrected: the design doc claimed per-user login was still open while
+  the code implemented it, and claimed the REST layer was anonymous while it
+  was not. `.env.example`/README had no mode-3 documentation at all.
+
+**Risk discharged:** "SSE response mode breaks ALS propagation" was listed in
+the design and never tested — only an isolated unit test existed, which would
+have stayed green while every per-user request silently fell back to the
+service account. Now driven through a real `node:http` server with `MCP_SSE=1`,
+three concurrent users overlapping in flight. The test was confirmed to go red
+when the propagation is deliberately broken. It does not break: propagation
+works.
+
+**Verification:** `npm test` **619 pass / 0 fail** (598 -> +21) -
+`npx tsc -p tsconfig.typecheck.json --noEmit` exit 0 - `npm run build` exit 0 -
+`npm audit --omit=dev` 0 vulnerabilities - `docker compose config` valid.
+Not committed.
+
+**Still open:**
+- The write-capable test account (`WLO-Upload`) must be swapped for a read-only
+  one before mode 2 goes into regular operation. Deliberate for now, so future
+  write tools can be tested.
+- Whether ChatGPT/Claude connector UIs accept a custom `Authorization` header
+  is untested, so mode 3 is "available where the host supports it".
+- `api/mcp.ts` (Vercel, retained but unused) does not read the header, so mode
+  3 would not work there.
+- `runAnonymous` is opt-out, not opt-in: a NEW public surface added as its own
+  top-level branch in `http-app.ts` would inherit the service account again.
+  All current `/api/*` routes are covered because they share one call site.
+
+### German closing quotes swept (same day, own diff)
+
+The item parked as "118 spots, cosmetic, wants its own diff" — done as its own
+change. German quotation is `„…“`; 123 places closed with an ASCII `"` instead,
+including two lines written earlier the same day.
+
+108 in Markdown, 9 in TypeScript, 6 in the launcher HTML. Every code occurrence
+was inspected individually first: all sit inside template literals, HTML text,
+or single-quoted strings, so no ASCII `"` being replaced was a string
+terminator. No occurrence fell inside a fenced code block.
+
+Two tests pin these strings and were updated in lockstep — deliberately by
+watching them go red first. One of them, `tools-auth.test.ts`, asserts the
+ABSENCE of an empty quote pair, so the changed closer would have made it
+silently vacuous rather than failing; it was re-checked against a deliberately
+reintroduced bug afterwards.
+
+A line-bounded rule missed three quotes that wrap a line break — invisible to
+the "0 remaining" counter that shared the same assumption. Found by inspecting
+the list of opening quotes with no closer on their line, and re-verified with a
+multi-line-aware pass. (Two entries on that list are correct as they stand: the
+widget locale table and a negative regex.)
+
+**Verification:** `npm test` **619 pass / 0 fail** - typecheck exit 0 -
+`npm run build` exit 0 - no mojibake in any touched file. Not committed.
+
+### Public surfaces made safe by default (same day)
+
+The recurrence risk recorded above — `runAnonymous` was opt-out, so a new
+top-level branch in `http-app.ts` would inherit the service account again —
+is closed by inverting the default instead of by remembering.
+
+The whole HTTP handler now runs inside an anonymous scope. The MCP endpoint is
+the single branch that elevates, and it resolves the chain itself
+(`userCred ?? configuredServiceCredential()`) rather than relying on a fallback
+that would also reach anything added later. The per-surface `runAnonymous` on
+`/api/*` was removed as redundant — which is what makes the new default
+load-bearing rather than decorative.
+
+Behaviour is unchanged (the suite stayed green across the restructure). That the
+outer scope actually carries the protection was checked by removing it: the
+public-REST test fails, the MCP test still passes. The scope contract itself
+("no scope" ≠ "explicitly anonymous", and nesting a user credential inside an
+anonymous scope works) is now pinned in `auth-per-user.test.ts`.
+
+`api/mcp.ts` needs no equivalent: it serves only the MCP endpoint, where the
+service account is the intended identity. `stdio.ts` likewise runs in the
+operator's own process.
+
+**Verification:** `npm test` **621 pass / 0 fail** (619 -> +2) - typecheck
+exit 0 - `npm run build` exit 0. Not committed.
+
+## Live verification of all three modes + two real defects (2026-07-31)
+
+Ran the built server against the production repository instead of asserting the
+modes from the code. Two things that testing against a fake could not show.
+
+**All three modes confirmed:**
+| Mode | Delivery | Live result |
+|---|---|---|
+| anonymous | nothing configured | public content, authority `esguest` |
+| service | `WLO_SERVICE_USER`/`_PASSWORD` | `mode: "service"`, `authenticated: true` |
+| user | `Authorization: Basic` header | `mode: "user"`, `authenticated: true` |
+
+Mode 3 had never been checked against real WLO. Trick that made it possible
+without a second account: deliver the SAME credentials via the header instead
+of the environment — if the rung works, the mode flips from `service` to `user`.
+It does.
+
+**The public-REST fix confirmed under production conditions:**
+`GET /api/search?query=Entwurf` → 1459 (public), while the service account sees
+1464. Before the fix that surface would have served 1464 to anyone.
+
+**Defect found: a misconfigured server said "nothing found".** With a wrong
+password every upstream call is 401, and `search_wlo_all` answered
+"Gefundene Treffer gesamt: 0" with `isError: false`. `enhancedSearch` treated
+"every query variant failed" as "no matches" — resilience applied one level too
+far. All-variants-failed now throws. Re-checked live with the same broken
+config: `isError: true`, "…(ngsearch failed: 401 Unauthorized)".
+
+**Documented fact corrected.** "edu-sharing does not reject wrong credentials,
+it answers as guest" is FALSE. Wrong credentials get `401`, on the identity and
+the search endpoint alike, for a wrong password on a real account as well as an
+unknown user. Only the ABSENCE of a header yields `200`/`esguest`. The claim had
+spread from a 2026-07-30 probe into `.env.example`, both READMEs,
+`docker-compose.yml`, `docs/TOOLS.md`, the design doc, the boot warning and the
+tool description — all corrected. The consequence is the opposite of what was
+written: a typo does not degrade to public data, it stops the server answering.
+
+**Verification:** `npm test` **623 pass / 0 fail** (621 -> +2) - typecheck
+exit 0 - `npm run build` exit 0. Live probes as above. Not committed.
+
+**Skill layer — assessed, not yet changed.** `~/.claude/skills/wlo-mcp-search`
+(314 lines) documents this server's search tools and says nothing about the
+three modes or `wlo_auth_status`; `wlo-edu-sharing-api` covers Basic auth and
+already advises preferring a passed-through user header, but carries no note
+that wrong credentials are rejected with 401, and its Bearer/OAuth2 line is
+about the backend filter and reads as available on WLO, where it is not
+(no discovery, no DCR, token endpoint needs a registered client). Both are the
+user's cross-project knowledge base — proposed, awaiting the user's go.
+
+### Open points worked through (2026-07-31, later)
+
+- **Skill layer updated** (user's cross-project knowledge base, with their go).
+  `wlo-mcp-search` was stale beyond the auth gap: it named the Vercel endpoint
+  as production, the old source path, "12 Tools" (there are 24 — counted from a
+  live `tools/list`, a grep would have said 16 and been wrong), and stated
+  "read-only, öffentlich, kein Auth-Header". All corrected, plus a section on
+  the three modes and the `/api/*` scope rule. `wlo-edu-sharing-api` kept its
+  (correct) statement about what the backend filter supports and gained a
+  clearly-scoped WLO note: Bearer is ignored rather than honoured there, wrong
+  credentials give 401, and `-me-` is the identity probe.
+- **`api/mcp.ts` now resolves the same credential chain**, so the retained
+  Vercel path cannot silently lack per-user mode.
+- **Widget duplication: deliberately NOT refactored.** Only `search-results`
+  duplicates the tile shell (`reading` and `browse` are different widgets, not
+  copies — checked, an earlier note implying three was wrong). The blocker is
+  coverage: the widget tests exercise `render.ts`, so `main.ts` interaction glue
+  has none, and behaviour preservation could not be demonstrated. Added a
+  source-level drift test instead, and verified it fires.
+
+**Verification:** `npm test` **626 pass / 0 fail** (623 -> +3) - typecheck
+exit 0 - `npm run build` exit 0. Not committed.
+
+## New scope: write support / curation — research phase (2026-07-31)
+
+New order: create and submit content, improve and save existing content, the
+same for collections and sub-collections, edit/regenerate compendium texts,
+produce and store full texts, choose metadata with vocabulary support, delete
+content and collections, use the suggestions endpoints for accept/reject, and
+consider comments/ratings. All work targets **staging**.
+
+Research (no code, no writes to staging):
+**`docs/plans/2026-07-31-write-support-research.md`**
+
+Headline findings:
+- **Full text is mostly not a write.** `GET …/textContent` is itself the
+  extraction trigger: measured on a link record it returned 1941 characters and
+  left `ccm:fulltext_status = CONTENT_AVAILABLE`, second call served from cache.
+  `POST /textContent` is only needed where the repository cannot extract.
+- **LRT settled.** `ccm:oeh_lrt` carries `new_lrt`; the aggregation is published
+  in the vocabulary (214/220 concepts map to exactly one target, none to more)
+  and 300 sampled nodes never carry one field without the other. Author the full
+  LRT, let the mandatory read-back reveal whether the repository derives the
+  aggregated one. Search keeps using the aggregated vocabulary (user decision).
+- **`/suggestions/v1`** is purpose-built for the accept/reject flow
+  (`type=AI`, then `PATCH status=ACCEPTED|DECLINED`).
+- **Submitting** is `asProposal=true` on the reference PUT — there is no
+  `POST /proposals`.
+- **MDS membership decides the write route** — verified: both LRT fields are in
+  the MDS, compendium text and the fulltext properties are not.
+- Governing rule for everything: **never trust a `200` — read back.**
+
+**Deferred decision (user, 2026-07-31):** no license gate on stored full text
+for now — WLO has read use cases that are not prohibited; narrowing comes later.
+Recorded in §3a of the research doc; revisit before production use.
+
+**Update (same day):** the user supplied the upload process of the sibling
+metadata-agent project — a proven six-step flow against the same repositories.
+It answered minimum metadata and where new nodes land, and it added a mechanism
+we had missed entirely: **Alfresco aspects**. A property whose aspect is not set
+is dropped silently, which makes three independent silent-drop mechanisms (MDS
+filter, missing aspect, missing right) and one countermeasure for all of them.
+It also changed the "submit" conclusion: WLO editorial runs on the workflow
+endpoint (`status: 200_tocheck`), not on `asProposal`.
+
+Two claims in that document did not survive checking: `ccm:oeh_flex_lrt` is
+neither in the MDS nor on any sampled node, and `ccm:oeh_event_begin` *is* an
+MDS widget today. Also corrected: **my own** earlier "no node carries one LRT
+field without the other" was wrong — 30 of 400 do, and every one of them is
+tagged "Unterrichtsplanung", one of the six concepts the vocabulary maps to
+nothing. The exception explains itself, which makes the derivation conclusion
+stronger than when it had no exceptions.
+
+**Controlled writes done (authorised, 2026-07-31).** One throwaway node in the
+service account's `-userhome-` — deliberately not the shared inbox, and no
+workflow started, to keep test noise out of the editorial queue. Deleted
+afterwards; it now sits in that account's archive and can be purged or restored.
+Findings in §5a of the research doc:
+
+- **The title is silently overwritten at create time** with a value derived from
+  `ccm:wwwurl`. Set it in the metadata step. Not in the sibling documentation.
+- **Full-text extraction is URL-driven, not content-driven.** Decisive test: a
+  throwaway node whose `ccm:wwwurl` pointed at a real page returned **101 125
+  characters** via `GET …/textContent?forceUpdate=true`, with
+  `ccm:fulltext_status = CONTENT_AVAILABLE` — while the 92 bytes previously
+  written via `POST /textContent` were ignored. So `POST /textContent` is not
+  destructive, just pointless for a link record: the bytes are stored and never
+  read. An earlier note here blamed `TRANSFORM_ERROR_EXTERNAL` on the POST; it
+  was caused by the dead `example.org` URL of the first test node. Corrected.
+  **Erschließung therefore needs no write at all**, also for newly created
+  records: set a correct URL, force the extraction, done.
+- **The aspect step is not the prerequisite it is described as** — the author
+  field wrote without `cm:author`, and `cm:geographic` was added by the
+  repository itself. MDS filtering, by contrast, is exactly as documented.
+- **`POST /metadata` creates a version every time** (5 versions after 5 writes).
+- **Delete must be treated as irreversible.** `recycle=true` is the flag that
+  decides recoverability and must always be set explicitly, and
+  `POST /archive/v1/restore/` exists — but the archive search could not be
+  relied on: the person-scoped query found the first deleted node once, then
+  minutes later returned 0 entries and no longer found it either. A tool cannot
+  demonstrate recoverability at the moment of deletion, so it must confirm
+  first and must not promise a restore it cannot verify.
+- Suggestions, comments and ratings all answer `200` on staging (read paths).
+
+**Social features (from the Ideendatenbank app, 2026-07-31):** comments and
+ratings are hardcoded to `ccm:io` — a **collection cannot be commented on or
+rated** (`500` from the Java layer). `PUT /rating` returns `500` on production
+*and stores anyway* (`config.values.rating is null` — treat exactly that text as
+success, then read back); `DELETE` leaves the rating, use `PUT ?rating=0`.
+Comment bodies are raw UTF-8, rating bodies are JSON-quoted — both with
+`Content-Type: application/json`. The global skill `wlo-comments-ratings` was
+corrected: it documented `POST …?rating=4.5`, but the path has only `PUT`/
+`DELETE` (`POST` → `405`) and a float value is silently discarded.
+
+**Skills updated to anchor this knowledge (2026-07-31):** `wlo-comments-ratings`
+(rating write path corrected, `ccm:io`-only constraint, delete workaround) and
+`wlo-edu-sharing-api` (URL-driven full-text extraction, `POST /textContent`
+pointless for link records, silent title overwrite at create, `obeyMds`,
+aspects, versioning, delete/recycle and unreliable archive search).
+
+**Still open — decisions, not discoveries:** where full text goes for the
+records the repository cannot extract; versioning policy (`PUT` drafting vs
+`POST` commit); the write paths of suggestions/comments/ratings; and an explicit
+allow-list of fields a curation tool may set (the sibling project uses a
+`repo_field` flag we have no equivalent for).
+
+**Security note:** the pasted upload document contains a plaintext password for
+the `WLO-Upload` account, so it is now in the conversation transcript. Rotating
+that credential was recommended.
+
+## Write support: design + tasks ready (2026-08-01)
+
+Knowledge phase closed. Plan written, **awaiting approval — no code yet**:
+- Design: `docs/plans/2026-08-01-write-support-design.md`
+- Tasks:  `docs/plans/2026-08-01-write-support-tasks.md` (18 tasks, 6 phases)
+
+User decisions taken into the design: all four areas in scope; confirmation via
+a two-step preview + token (works on every host, unlike elicitation); the
+writable field set limited to the sibling project's core fields; new nodes land
+by mode (`-userhome-` vs inbox) and the review workflow runs only on explicit
+submit, so drafts never reach the editorial queue.
+
+Chosen architecture: one shared write pipeline in `src/services/write/`
+(gate → resolve → plan → confirm → write → read back → report) with thin tools
+on top, rather than self-contained tools. The read-back is step 6 of the
+pipeline, not per-tool discipline — three separate edu-sharing mechanisms
+discard a write while answering `200`.
+
+Deliberately out of scope, each with a reason in the design: comments/ratings
+(own error contract, `ccm:io`-only), storing full text (no working route
+exists — the deliverable is telling the user so), preview images, ACLs.
+
+**Phase 6 (suggestions) is blocked by design** and opens with a live probe: the
+endpoint shapes are verified but the write paths are not, and the promised
+workaround code from the sibling app never arrived.
+
+Skills updated the same day so this knowledge survives outside the repo:
+`wlo-edu-sharing-api` (full text, write traps, suggestions), `wlo-content-files`
+(full text, what creates a version), `wlo-comments-ratings` (rating write path
+corrected), `wlo-collections-references` (delete/recycle).
+
+## Write support Phase 1 done: the shared write pipeline (2026-08-01)
+
+Tasks 1–5 implemented TDD, each red before green. Nothing is user-visible yet —
+no tool registered, no endpoint touched. What exists is the machinery every
+later mutation goes through:
+
+| File | What it does |
+|---|---|
+| `src/services/write/credential-gate.ts` | `writeMode()` / `requireWrite()` — anonymous never writes; a service account only with `WLO_ALLOW_SERVICE_WRITES` |
+| `src/services/write/fields.ts` | the 14-field allow-list, licence key check, VCARD transform, vocabulary resolution |
+| `src/services/write/change-set.ts` | the diff a user confirms, rendered in German, sanitized |
+| `src/services/write/confirm.ts` | single-use tokens bound to a SHA-256 of the change set, TTL 10 min |
+| `src/services/write/verify.ts` | the read-back: `stored` / `dropped` / `changed` per field |
+
+**Verification:** `npm test` → 680 tests, 680 pass, 0 fail (626 before this
+phase, 54 new). `npx tsc -p tsconfig.typecheck.json --noEmit` → clean.
+`npm run build` → clean.
+
+**Three departures from the task list, each recorded there with its reason:**
+1. The VCARD shape in the task list was written from memory and was wrong. The
+   implementation follows what the WLO metadata agent actually uploads
+   (`VERSION` directly after `BEGIN`, `N` with five components) — that is the
+   format the existing records carry.
+2. `CC_0`/`CC0` are excluded from the "default the version to 4.0" rule. CC0
+   exists only as 1.0; defaulting it to 4.0 would invent a licence, which is the
+   exact defect the licence allow-list exists to prevent.
+3. Vocabulary fields additionally check that a resolved URI really belongs to
+   that vocabulary. `resolveVocab` passes any `http…` input through — right for
+   search, wrong for a write.
+
+**Retracted at the start of Phase 2:** Phase 1 closed with a "trap found" note
+saying `ccm:lifecyclecontributer_author` needs the `cm:author` aspect. That was
+taken from the sibling project's documentation and contradicts our own measured
+evidence — the research doc records that the field wrote fine without the aspect
+(`ccm:io` already carries `cclom:lifecycle`) and says in as many words: do not
+build it as a hard gate, let the read-back decide. No aspect step is being
+built. The lesson is the one the research doc already states at the top:
+documentation loses to measurement, including when the documentation is a
+sibling project's working code.
+
+**Next:** Phase 2 (Tasks 6–8) — the first end-to-end slice, editing an existing
+record, which is where the pipeline first becomes visible to a user.
+
+## Write support Phase 2 done: the first end-to-end slice (2026-08-01)
+
+Tasks 6–8, TDD throughout. The server can now change data — one tool, with the
+whole apparatus from Phase 1 wired behind it.
+
+| File | What changed |
+|---|---|
+| `src/services/write/nodes.ts` | new — `updateNodeMetadata`: MDS route vs property route, `PUT` draft vs `POST` commit, bulk-then-field-by-field retry |
+| `src/tools/curation-shared.ts` | new — the two-step conversation: preview, refusal, honest per-field report. Kept out of `tools/shared.ts`, which is about search |
+| `src/tools/curation-content.ts` | new — `wlo_update_content` |
+| `src/server.ts` | `createMcpServer(mode)`; curation tools register only when the mode is not `none` |
+| `src/http-app.ts`, `api/mcp.ts` | resolve the credential BEFORE building the server and pass the mode through |
+| `src/apps/register.ts`, `src/apps/tool-defaults.ts` | a tool may declare its own `_meta.securitySchemes`; `noauth` became a default rather than a rule |
+
+**Verification:** `npm test` → 705 tests, 705 pass, 0 fail (680 before this phase,
+25 new). Typecheck clean, build clean.
+
+The load-bearing test asserts on the RECORDED UPSTREAM CALLS, not on reply text:
+a preview call must produce zero write requests. A tool that reports "nothing was
+written" while having written is exactly what the two-step exists to prevent, and
+reply text cannot detect it.
+
+**Also fixed, because the change made them false:** the `noauth` claim would have
+been stamped on a tool that refuses anonymous callers; `api/mcp.ts` built its
+server before resolving the credential, so a per-user caller there would have
+been given the service account's tool list. Docs synced in the same change —
+`.env.example`, both READMEs (new "Kuratieren / Curation" section, the
+`WLO_ALLOW_SERVICE_WRITES` row, the "24 tools" claim), CHANGELOG.
+
+**Open decision for the user:** in stdio mode the credentials come from the
+environment and therefore count as a service account, so writing there needs
+`WLO_ALLOW_SERVICE_WRITES=1` even when the env holds a person's own login. That
+errs safe and is documented, but it is a friction worth confirming.
+
+**Next:** Phase 3 (Tasks 9–10) — the `new_lrt` vocabulary, 220 concepts, and
+wiring it into the field layer.
+
+## Write support Phase 3 done: the authoring vocabulary (2026-08-01)
+
+Tasks 9–10, TDD throughout.
+
+| File | What it is |
+|---|---|
+| `scripts/generate-lrt-vocab.mjs` | new — regenerates the table from the published SKOS vocabulary; the counts it prints are the ones the test pins |
+| `src/vocabs-lrt.ts` | new, GENERATED — 220 concepts, `AGGREGATION` (214), `UNMAPPED` (6), `resolveLrt` |
+| `src/services/write/fields-lrt.ts` | new — the content-type validator, split out when `fields.ts` passed 300 lines |
+| `src/services/write/fields.ts` | `ccm:oeh_lrt` now resolves against `new_lrt`, not the aggregated table; `FieldValidation` gained an optional `note` |
+| `src/vocab-suggest.ts` | `suggestFromEntries` extracted so the 220-concept vocabulary reuses the existing fuzzy matcher instead of growing a second one |
+| `src/tools/curation-shared.ts` | notes are shown in the preview, above the confirmation line |
+
+**Verification:** `npm test` → 727 tests, 727 pass, 0 fail (705 before this phase,
+22 new). Typecheck clean, build clean. The generator's own output confirms every
+number the plan predicted: 220 concepts, 214 mapped (broadMatch 153,
+relatedMatch 58, exactMatch 3), 6 unmapped with exactly the named labels.
+
+**Found during generation, not in the plan: two labels are shared.**
+"Suchmaschine" exists both under "Quelle" (a source website that is a search
+engine) and under "Inhalteverwaltung, Suche" (a tool); "Stationenlernen" exists
+as a pedagogical method and as an open activity. They mean different things, so
+`resolveLrt` returns `ambiguous` with both candidates and their parent concepts
+instead of picking the one that sits earlier in the hierarchy. Silently choosing
+would write a content type the curator did not choose — the same class of defect
+as an invented licence.
+
+**Also found: `exactMatch` is not a safe source for the aggregation.** Some
+concepts carry an `exactMatch` into an unrelated `contentTypes` vocabulary, so
+the generator filters all match kinds by namespace rather than taking the first.
+
+**Next:** Phase 4 (Tasks 11–13) — duplicate check, create, submit for review.
+
+## Write support Phase 4 done: create and submit (2026-08-01)
+
+Tasks 11–13, TDD throughout.
+
+| File | What it is |
+|---|---|
+| `src/services/write/nodes-lifecycle.ts` | new — `findByUrl`, `createContentNode`, `resolveCreateParent`, `submitForReview` |
+| `src/services/write/nodes.ts` | now only the write transport for an existing node; `failureDetail` exported for the split |
+| `src/services/write/change-set.ts` | `action` — a mutation that changes no field but still needs confirming (submitting); `hasSomethingToConfirm` |
+| `src/tools/curation-content.ts` | `wlo_create_content`, `wlo_submit_content`; the field schema shared between update and create |
+| `src/wlo-config.ts` | `WLO_INBOX_ID`, deliberately without a default |
+
+**Verification:** `npm test` → 752 tests, 752 pass, 0 fail (727 before this phase,
+25 new). Typecheck clean, build clean.
+
+The load-bearing test is "creating never touches the review workflow": it creates
+a record end to end and asserts zero `/workflow` calls. Submitting spends a
+reviewer's attention and cannot be taken back quietly, so it must never happen
+as a side effect of writing a draft.
+
+**Two splits, both forced by the 300-line threshold, both behaviour-preserving:**
+`nodes.ts` (310) → transport vs. lifecycle; `fields.ts` had already been split in
+Phase 3. The design's file table estimated `nodes.ts` at ~200 lines for create +
+update + delete + duplicate + submit; that estimate was wrong and the split is
+the response.
+
+**Decisions made here that the user has not yet confirmed:**
+- `WLO_INBOX_ID` has no default and service-account creation is refused without
+  it. A hardcoded id would point at a different collection on staging than on
+  production — but it does mean the variable must be set before the service
+  account can create anything.
+- A create is confirmed against a change set anchored on the URL, since the
+  record has no id yet. The read-back afterwards uses the new id.
+
+**Still open from Phase 2:** whether stdio should write without
+`WLO_ALLOW_SERVICE_WRITES`. Explained in the Phase 2 report; no code change made.
+
+**Next:** Phase 5 (Tasks 14–17) — collections, compendium text, delete.
+
+## Write support Phase 5 done: collections, compendium, delete (2026-08-01)
+
+Tasks 14–17, TDD throughout. Seven more tools; the curation surface is now ten.
+
+| File | What it is |
+|---|---|
+| `src/services/write/collections.ts` | new — create, rename, add reference, remove reference, delete collection |
+| `src/services/write/nodes-lifecycle.ts` | `deleteContentNode` — always `recycle=true`, explicitly |
+| `src/services/write/nodes.ts` | `deleteProperty` — the only way to clear a property (`null`, not an empty value) |
+| `src/tools/curation-collections.ts` | new — create/rename/add/remove, none destructive |
+| `src/tools/curation-compendium.ts` | new — `wlo_update_compendium` |
+| `src/tools/curation-delete.ts` | new — both irreversible acts together, so the "no way back" wording is written once |
+
+**Verification:** `npm test` → 790 tests, 790 pass, 0 fail (752 before this phase,
+38 new). Typecheck clean, build clean.
+
+One earlier run reported 2 failures — it ran concurrently with `tsc` and counted
+only 778 tests, the signature of resource starvation rather than a defect. Two
+consecutive full runs and three targeted runs of the two files were clean.
+
+**The two assertions this phase exists for:**
+1. Removing material from a collection must never reach the node endpoint. The
+   reference endpoint and the node endpoint differ by one path segment, and a
+   conversation blurs exactly that. Asserted on the request URL.
+2. No deletion reply may promise a restore. `recycle=true` is always sent, but
+   the archive query could not demonstrate recoverability — so the tools say the
+   deletion cannot be undone through this server and stop there.
+
+**Deviation from the plan, recorded:** Task 16 called for
+`src/services/write/compendium.ts`. It was not built. `updateNodeMetadata`
+already routes `ccm:oeh_collection_compendium_text` through the property
+endpoint via the field allow-list, so a separate service would have duplicated
+the one thing that matters. What was missing was clearing a property, which is
+five lines (`deleteProperty`) rather than an eighty-line module.
+
+**Also:** `curation-content.ts` would have passed 300 lines with a delete tool
+in it. Delete went to its own file instead — which is the better home anyway,
+since content and collection deletion share their safety wording.
+
+**Inbox id, measured 2026-08-01:** the id from the metadata-agent config
+(`21144164-…`) belongs to a node that EXISTS on staging and production — 403
+DAOSecurityException, where an invented id answers 404 DAOMissingException and a
+known public node answers 200. Not proven: that it is the upload inbox, or that
+the account may write into it. Recorded in `.env.example` as an example value
+with that evidence level, not as a default.
+
+**Next:** Phase 6 (Task 18) — the suggestions probe, which is a live measurement
+against staging, not code. It is blocked by design until that probe succeeds.
+
+## Phase 6 unblocked: the suggestions probe succeeded (2026-08-01)
+
+Task 18 run live against **staging** with the `WLO-Upload` service account, on
+three throwaway `ccm:io` nodes the probe created and deleted itself
+(`recycle=true`). No code written. Full record: research doc §8.
+
+| Step | Result |
+|---|---|
+| `POST …?type=AI&version=…` (body = array) | `200`, stored with `status: PENDING` |
+| `GET …` | `200` |
+| `PATCH …?id=…&status=ACCEPTED` | `200`, read-back confirms `status: ACCEPTED` |
+
+**The blocking condition is lifted.** Two findings change what Phase 6 builds:
+
+1. **POST returns an array, GET returns a map keyed by `propertyId`.** Reading
+   the GET as an array reports "no suggestions" for a node that has them — it
+   bit the probe itself on its first run.
+2. **Accepting does NOT apply the value to the node.** After `ACCEPTED` the
+   property was still absent. `/suggestions/v1` records proposals and decisions;
+   applying them stays our job, through `updateNodeMetadata` and its read-back.
+   A tool that stopped at `PATCH` would report a recorded opinion as a changed
+   record.
+
+A new **Task 19** is therefore in the task list: three design questions to
+settle before the tools (does accepting apply in the same call; who may accept;
+is `USER_PROPOSAL` in scope). The original plan left Phase 6's tools
+unspecified on purpose, because the probe's outcome would decide their shape.
+
+**Incidental finding, worth acting on:** the local `.env` points
+`WLO_REPOSITORY_URL` at **production** (`redaktion.openeduhub.net`), not
+staging. The probe overrode the host explicitly rather than trusting the file.
+Anyone running write experiments from this checkout should check that first.
+
+## Fixed while switching to staging: `.env` was never loaded locally (2026-08-01)
+
+Asked to point the local checkout at staging, the file change alone did not do
+it — and finding out why matters more than the change.
+
+`npm run dev`, `dev:http`, `start` and `start:http` did **not** read `.env`.
+There is no `dotenv` dependency and no `--env-file` flag; only `docker compose`
+ever loaded that file. So `WLO_REPOSITORY_URL` in `.env` had no effect on any
+local run, which fell back to the built-in default in `wlo-config.ts` — the
+**production** instance. Anyone editing `.env` to avoid touching production was
+protected by nothing, and no warning said so.
+
+Measured before the fix: `.env` set to staging, resolved config still
+`https://redaktion.openeduhub.net/edu-sharing`, service credential `(keins)`.
+After: staging, credential `WLO-Upload`, and `npm run dev` logs
+`repository credential verified`.
+
+Fix: the four scripts pass Node's own `--env-file-if-exists=.env` — no
+dependency added, and a missing file is tolerated. `npm test` deliberately does
+not, so the suite stays independent of a local file (790/790 still green).
+`engines.node` raised to `>=20.12.0`, the release that added the flag.
+
+This is also why the suggestions probe overrode the host in its own script
+instead of trusting the environment. That was caution at the time; it turns out
+to have been the only thing standing between the probe and production.
+
+## Added outside the write-support plan: `get_node_collections` (2026-08-01)
+
+Requested directly by the user on a pre-measured report from the chatbot team.
+Not part of the write-support plan — a read tool, recorded here so the addition
+is not silent.
+
+**Their report was verified before any code was written**, anonymously against
+production, and every claim reproduced:
+
+```
+reference c2e9b9ca-… → originalId 5a19e0e1-…, aspect ccm:io_reference present
+usages/5a19e0e1-…/collections → 200, 2 ACTIVE: "Ernährung", "Biologie-Breakouts"
+usages/c2e9b9ca-…/collections → 200, 0 entries      ← the silent empty
+```
+
+Two details the report did not state, measured here:
+- the response is a **bare array**, not `{usages: […]}`;
+- an unknown id answers **500 on production too**, not only on staging. So the
+  usage endpoint alone cannot separate "no such node" from "broken" — resolving
+  the node first (404) can, which is why that order is fixed.
+
+**Verification:** `npm test` → 806 tests, 806 pass, 0 fail (790 before, 16 new).
+Typecheck clean, build clean. The finished service was then run against the live
+API on the same three ids: reference → 2 collections, original → 2 collections,
+invented id → `node_not_found`.
+
+Four existing tests had to be updated because the surface genuinely changed (the
+tool count, the expected-tool list, the status-string table). While there, the
+gating test's `WRITE_TOOLS` list was completed from three names to all ten — it
+had been listing only the Phase 2 tools, so a Phase 5 tool leaking into the
+anonymous surface would have been caught only by the count.
+
+**Not implemented, reported by the same team, for a separate decision:**
+1. `includeParents` on `get_node_details` returns `[]` for every content node
+   and never errors. Either remove it or fill it via this same usage path — the
+   status quo is a documented flag that silently never delivers.
+2. `includeRaw` promises "the original `ccm:*` / `cclom:*` property URIs" and
+   delivers five vocabulary fields. Description or behaviour has to give.
+3. `search_wlo_collections` says a collection IS a topic page;
+   `search_wlo_topic_pages` says it checks which collections have one. Measured
+   for "Mathematik": 5 collections, 1 topic page. The two descriptions
+   contradict each other.
+4. `find_wlo_skills` is listed but unconfigured, so every call fails with
+   "set WLO_SKILLS_COLLECTION_ID". Suggested: hide it until it is configured.
+
+---
+
+## Write support Phase 6 done: metadata proposals (2026-08-01)
+
+The last phase of the write-support plan. Three tools that keep "a model thinks
+this should say X" and "the record says X" as two separate, separately visible
+facts.
+
+| Tool | What it does |
+|---|---|
+| `wlo_suggest_metadata` | Stores per-field proposals with a rationale. The record is untouched. |
+| `wlo_list_suggestions` | Shows them with rationale, status, and the id to decide on. |
+| `wlo_decide_suggestion` | Accept (apply → read back → mark) or decline (mark only). |
+
+**The one design decision, made before any code.** Accepting is two upstream
+operations and either can fail alone, so their order is a real choice:
+
+- `PATCH` first → a failed write leaves a proposal that *claims* to be applied.
+  The next curator reads "angenommen" and believes the record carries the value.
+- **Write first** → a failed `PATCH` leaves the value in the record and the
+  proposal open. The record is right; only the bookkeeping lags.
+
+The second failure is the harmless one, so the value is applied and read back
+**before** the proposal is marked accepted, and a write the repository discarded
+produces no `ACCEPTED` at all. `tools-curation-suggestions.test.ts` asserts the
+call order on the recorded upstream calls, not on the reply text.
+
+**Two shapes, one endpoint.** `POST` answers with an array, `GET` with a map
+keyed by `propertyId` — both measured, and the trap that bit the probe itself. A
+single parsing helper accepts either, and a test feeds it the map shape
+specifically: an array-only reader answers "keine Vorschläge" for a node that
+has several, which is wrong rather than empty. For the same reason an unreadable
+`GET` throws instead of returning `[]`.
+
+**`type: AI` is permanent; `status` carries the human decision.** The live
+OpenAPI (staging, read today) shows the `PATCH` takes no `type`. That matches
+what the two fields mean and settles the user's "only a human check makes it
+human": the check is recorded as `ACCEPTED`, and overwriting the type would not
+add the approval, it would erase the authorship.
+
+**Refactoring done in the same pass, both triggered by real thresholds:**
+- `CONTENT_FIELDS` / `FIELD_SCHEMA` moved to `src/tools/curation-fields.ts`. The
+  suggestion tools need the same 13 fields, and a second copy is how a field
+  gets added to one tool and forgotten in the other — with no test able to
+  notice, because each would pass on its own.
+- The suggestion tools crossed 300 lines in one file and were split along their
+  actual seam: `curation-suggestions.ts` stores opinions, `curation-decide.ts`
+  changes records. `recordTitle` (duplicated during the first draft),
+  `fieldLabel`, and `plainText` went to `curation-shared.ts`.
+
+**Verification:** `npm test` → **823 tests, 823 pass, 0 fail** (806 before, 17
+new). `npx tsc -p tsconfig.typecheck.json --noEmit` clean, `npm run build`
+clean. Every test ran red first for the right reason before its implementation
+existed.
+
+**Not verified live.** The probe (Task 18) exercised the three endpoints against
+staging with real nodes, so the shapes and status transitions are measured. The
+three *tools* are covered by tests against a faked upstream only — they have not
+been run against staging end to end. That is the next thing to do with a real
+credential, and until then "the tools work" is a claim the tests support, not
+one a live run has demonstrated.
+
+The write-support plan (`2026-08-01-write-support-tasks.md`) is now complete:
+all 6 phases, 22 tasks. 25 read tools + 13 curation tools.
+
+---
+
+## Live pass against staging — and two defects only it could find (2026-08-02)
+
+The outstanding item from the write-support plan: the curation tools had never
+been run against a real repository. Done now, with the `WLO-Upload` service
+account against **staging**, driving the real MCP server through an in-memory
+client. Everything the run created was deleted again through the tools
+themselves; a read-back on each id afterwards returns 404.
+
+**Worked on the first live attempt, no change needed:** `wlo_create_content`,
+`wlo_update_content` (title, merged keywords, VCARD author), the whole
+suggestion group (propose → list → accept → decline), `wlo_update_compendium`
+(write and remove), `wlo_add_to_collection`, `wlo_remove_from_collection`,
+`get_node_collections`, `wlo_delete_content`, `wlo_delete_collection`, and the
+token gate (a wrong `confirmToken` wrote nothing). The suggestion order held
+live: value written and read back, then `ACCEPTED`; the declined proposal left
+the record untouched.
+
+**Defect 1 — `wlo_create_collection` never worked.** `500 NullPointerException:
+cmNameReadableName is null`. The body carried `properties['cm:title']`; the
+endpoint derives the node name from a top-level **`title`** field. Every test
+passed because the fake upstream accepts any body — the tests asserted our own
+inference back to us.
+
+**Defect 2 — `wlo_rename_collection` never worked**, and a collection's
+description was silently discarded on both routes. Rename needs **`ref.id` in
+the body** despite the id being in the path. `cm:description` answers `200` from
+the collection endpoint and is never stored; it has to go through the node
+route. `cm:title` does land through the collection route, so only the
+description needs the extra call.
+
+Both fixed in `src/services/write/collections.ts`, with four tests written red
+first that encode the measured shape (`title`, `ref.id`, description on the node
+route, and no extra call when there is no description). A dropped description is
+now reported rather than swallowed — `wlo_create_collection` says the collection
+exists but the description did not land, and `wlo_rename_collection` says "nicht
+vollständig geändert" because title and description travel separately. Full
+measurements in the research doc, §9.
+
+**Verified after the fix, live:** create with description → both read back;
+rename with description → both read back; the rest of the chain unchanged.
+
+**Verification:** `npm test` → **828 tests, 828 pass, 0 fail** (823 before, 5
+new). Typecheck clean. Live run clean, staging left empty of probe objects.
+
+**One finding recorded, not fixed:** a client-side timeout on
+`wlo_create_content` leaves the record created upstream while the tool reports
+failure — the abort hits the response, not the work. A retry is safe (the
+duplicate check names the existing record), but the first reply is wrong about
+what happened. Staging routinely needs more than the 10 s
+`WLO_FETCH_TIMEOUT_MS` default; the probe used 60 s. Worth raising the default,
+or wording the timeout reply as "unklar" rather than "fehlgeschlagen".
+
+---
+
+## `wlo_submit_content` verified live, and given the read-back it lacked (2026-08-02)
+
+Tested on the user's explicit go-ahead. Throwaway records on staging, created
+and deleted by the probe; each id returns 404 afterwards.
+
+**It works.** `PUT …/workflow` with our hard-coded receiver and status is
+accepted, and the submission is real: the record comes back carrying
+`ccm:wf_status: 200_tocheck`, `ccm:wf_receiver`, `ccm:wf_instructions` (the
+comment) and a `ccm:wf_protocol` JSON record. The group
+`GROUP_ORG_WLO-Uploadmanager` exists on staging and is the right one — the value
+we hard-coded, not a guess that happened to be accepted.
+
+**And that made a gap visible.** A record that was never submitted has no
+`ccm:wf_status` at all. So "submitted" and "not submitted" are distinguishable
+by reading the record — and this tool was the only write in the whole pipeline
+reporting success on the strength of a `200`. `submitForReview` now returns
+`submitted` / `dropped` / `unverified` / `failed`, and the tool words each
+honestly: the success case names the status and the queue, a `200` over a record
+with no workflow status is reported as NOT submitted, and an unreadable record
+leaves the outcome open. Three tests, red first.
+
+Verified live after the change: the reply reads "Zur redaktionellen Prüfung
+eingereicht — der Datensatz trägt jetzt den Status 200_tocheck und liegt bei
+GROUP_ORG_WLO-Uploadmanager."
+
+**Verification:** `npm test` → **831 tests, 831 pass, 0 fail** (828 before, 3
+new). Typecheck clean. Measurements in the research doc, §10.
+
+With this, every curation tool has been exercised against a real repository.
+Nothing in the write-support plan is unverified any more.
+
+---
+
+## The create timeout: measured, and the default resized (2026-08-02)
+
+Follow-up on the finding from the live pass. The question was whether the failed
+create really was the timeout, and if so what a defensible value is.
+
+**It was.** Timing every upstream call separately against staging:
+
+| Call | Range |
+|---|---|
+| creating a `ccm:io` (`POST …/children`) | **4.2 – 8.0 s** (18 samples) |
+| writing metadata (`PUT …/metadata`) | 0.5 – 0.9 s |
+| reading a node | 0.3 – 0.4 s |
+| search (`ngsearch`) | 0.5 – 2.4 s (production: max 1.1 s) |
+
+Reads are not the problem on either repository — production was faster than
+staging across the board (search 1.1 s vs 2.4 s worst). The create is the outlier
+by a factor of three, and the old 10 s default left as little as **1.26×**
+headroom over the worst observed run. That is what tripped.
+
+**Two hypotheses tested and discarded** before settling on the number: a cold
+process is not slower (first call 4.6–6.3 s, second 4.7–5.9 s across six fresh
+processes — no difference), and the total pipeline duration is irrelevant because
+the timeout is per request, not per tool call.
+
+**New default: 20 s** (`DEFAULT_FETCH_TIMEOUT_MS`). ~2.5× the worst measured
+call, still below `WLO_TEXT_TIMEOUT_MS` (25 s), which stays the deliberate
+outlier for full-text reads. A hung socket is still bounded at something a
+caller can wait out.
+
+The test does not assert "is it 20000" — that would only restate the code. It
+asserts the *margin* over the measured worst case, so a future change that
+quietly narrows it fails. A second test pins that full text keeps the longer of
+the two timeouts.
+
+**Verification:** `npm test` → **833 tests, 833 pass, 0 fail** (831 before, 2
+new). Typecheck and build clean. Live with the new default, five fresh
+processes: every create succeeded, headroom 2.5×–4.0×.
+
+**Still open from the same finding:** the reply wording. Raising the timeout
+makes the case rarer, not impossible — an aborted create still leaves the record
+upstream while the tool says "konnte nicht angelegt werden". The honest wording
+is "unklar, ob angelegt — bitte erneut versuchen, ein vorhandener Datensatz wird
+dann genannt", because the duplicate check makes the retry safe.
+
+---
+
+## Chatbot-Fund 1 behoben: `includeParents` (2026-08-02)
+
+Der einzige der vier Funde, der **aktiv falsche Antworten** produziert hat — und
+deshalb zuerst.
+
+`includeParents` las `/node/v1/nodes/{id}/parents`. Dieser Endpunkt trägt die
+Ahnenkette einer **Sammlung**; für einen **Inhalts-Knoten** antwortet er `200`
+mit einer leeren Liste, immer. Das Werkzeug meldete daraufhin „Keine
+Eltern-Sammlungen gefunden", ein Modell macht daraus „liegt in keiner Sammlung",
+und das ist eine falsche Aussage, keine fehlende.
+
+`getParentCollections(node, id)` wählt jetzt nach Knotenart:
+
+| Knotenart | Quelle |
+|---|---|
+| Sammlung (`ccm:map`) | `/parents` — die Ahnenkette |
+| Material (`ccm:io`) | `/usage/v1/usages/node/{original}/collections` |
+
+Eine Reference-ID wird vorher auf ihr Original aufgelöst (dieselbe Falle wie bei
+`get_node_collections`). Der Knoten wird durchgereicht statt neu geladen, also
+kostet der Fix keinen zusätzlichen Roundtrip. Ein **fehlgeschlagener** Abruf wird
+als solcher gemeldet (`parentsError` im JSON, eigener Satz im Markdown) statt zu
+einer leeren Liste zu verfallen.
+
+Behoben in `get_node_details` **und** `get_nodes_details`.
+
+**Warum es eine volle Testsuite überlebt hat:** das Mock lieferte für `/parents`
+eines Inhalts-Knotens eine Sammlung — also gerade das, was live nie passiert.
+Der Test bestätigte eine Annahme, statt Verhalten zu prüfen. Das Mock ist jetzt
+auf die gemessene Realität korrigiert (leeres `/parents`, Sammlungen über
+`/usage/v1`). Dieselbe Lehre wie bei den Sammlungs-Defekten.
+
+**Verifikation:** `npm test` → **839 Tests, 839 grün** (835 vorher, 4 neu + 1
+korrigiert). Typecheck und Build sauber.
+
+**Offen von den vier Funden:** `includeRaw` (Beschreibung passt nicht zum
+Verhalten), die widersprüchlichen Beschreibungen von `search_wlo_collections` /
+`search_wlo_topic_pages`, und `find_wlo_skills` (gelistet, aber unkonfiguriert →
+scheitert bei jedem Aufruf).
+
+---
+
+## Chatbot-Funde 2–4 behoben (2026-08-02)
+
+Die drei verbliebenen Meldungen des Chatbot-Teams, alle klein und unabhängig.
+
+**`find_wlo_skills` war gelistet und unbrauchbar.** Ohne
+`WLO_SKILLS_COLLECTION_ID` scheiterte jeder Aufruf mit „setze
+WLO_SKILLS_COLLECTION_ID" — eine Nachricht an die Betreiberin, zugestellt an ein
+Modell, das nichts damit anfangen kann und keine gültige nodeId erraten kann. Die
+Sperre gehört an die Registrierung, nicht in die Laufzeit: `registerSkillsTool`
+nimmt die Sammlung jetzt als Argument, `server.ts` registriert nur mit einer.
+Dieselbe Logik wie bei den Schreibwerkzeugen — was nicht funktionieren kann,
+wird besser nicht angeboten. Der dadurch unerreichbare Laufzeit-Zweig ist
+entfallen. Read-Tool-Zahl damit **24** ohne konfigurierte Skill-Sammlung, 25 mit.
+
+**`includeRaw` widersprach sich selbst.** Die Beschreibung versprach „die
+originalen `ccm:*`/`cclom:*`-Property-URIs", geliefert wurden fünf
+Vokabular-Felder — und das nur im JSON. Markdown trug drei, wer das Ausgabeformat
+wechselte, verlor stillschweigend Zielgruppe und Ressourcentyp. Beide liefern
+jetzt dieselben fünf, und die Beschreibung nennt sie beim Namen statt den ganzen
+Property-Bag anzudeuten.
+
+**Die beiden Suchbeschreibungen widersprachen einander.** In
+`search_wlo_collections` stand wörtlich „In WLO ist eine Sammlung dasselbe wie
+eine Themenseite", während `search_wlo_topic_pages` sich als „sucht Sammlungen
+und prüft dann, welche eine Themenseite haben" beschrieb. Die Messung entscheidet
+es: für „Mathematik" 5 Sammlungen, davon 1 mit Themenseite. Beide Texte benennen
+jetzt die Enthaltensein-Beziehung — eine Themenseite ist eine Sammlung mit
+zusätzlichem kuratiertem Seiten-Layout — und verweisen füreinander.
+
+Für diese Art Defekt gibt es jetzt eine eigene Testdatei
+(`tests/tool-descriptions.test.ts`): eine Werkzeug-Beschreibung ist das Einzige,
+woran ein Modell zwei ähnliche Werkzeuge unterscheidet, und Widersprüche darin
+fallen sonst niemandem auf.
+
+**Verifikation:** `npm test` → **846 Tests, 846 grün** (839 vorher, 7 neu).
+Typecheck und Build sauber.
+
+Damit sind alle vier Funde des Chatbot-Teams abgearbeitet.
+
+---
+
+## Vollständiges Code-Review (R1–R12) — abgeschlossen 2026-08-03
+
+Alle zwölf Pakete des
+[Review-Plans](2026-08-02-full-review-plan.md) sind durch; die Fortschritts-
+tabelle dort trägt Funde und Testzahlen pro Paket, die übertragbaren Lehren
+stehen darunter unter „Cross-package notes".
+
+Von **846 Tests** zu Beginn auf **1021** am Ende, Typecheck und Build durchgehend
+sauber, `npm audit --omit=dev` ohne Befund. Zwei Eigenschaften, die vorher nur
+behauptet waren, sind jetzt erzwungen: die Testsuite läuft nachweislich offline
+(`tests/netguard.mjs`), und jede dokumentierte Einstellung erreicht im
+Docker-Deployment tatsächlich den Container
+(`tests/deploy-env-passthrough.test.ts`).
+
+Offen bleibt **nichts aus dem Review**.
+
+---
+
+## URL-Text-Werkzeug + Unsicher-Schalter — abgeschlossen 2026-08-03
+
+Plan: [Entwurf](2026-08-03-url-text-tool-design.md) ·
+[Aufgaben](2026-08-03-url-text-tool-tasks.md) (16 Aufgaben, 5 Phasen, alle ✅).
+
+Neu: `get_url_text` (Text einer beliebigen Web-Adresse über den
+Extraktionsdienst) und ein generischer Mechanismus, mit dem ein Werkzeug sich als
+`unsafe` deklariert und die Betreiberin es über `WLO_DISABLE_UNSAFE_TOOLS`
+abschaltet. Im Code sind unsichere Werkzeuge **an** (mit Startwarnung), in
+`.env.example` und `docker-compose.yml` **aus** (`all`).
+
+Dabei gefunden und behoben: `isPrivateHost` erkannte IPv4-in-IPv6 nicht —
+`http://[::ffff:127.0.0.1]/` wird von `new URL()` zu `[::ffff:7f00:1]`, und das
+kam durch. Das war **auf dem bestehenden `ccm:wwwurl`-Pfad live erreichbar**.
+
+Stand: **1078 Tests grün**, Typecheck und Build sauber, `npm audit` (voll und
+Produktion) ohne Befund. Live gegen Staging geprüft: 7 URLs, davon 2 öffentlich
+gelesen und 5 korrekt abgelehnt.
+
+---
+
+## Apps-SDK-Prüfungen — nachgeholt 2026-08-03
+
+**MCP Inspector (offiziell, CLI) gegen den laufenden HTTP-Server:** `tools/list`
+liefert 25 Werkzeuge, ein Skript-Check über Titel, Beschreibung, `readOnlyHint`,
+`destructiveHint`, beide `openai/toolInvocation/*`-Texte, `securitySchemes` und
+`inputSchema` findet **0 Beanstandungen**. `resources/list` zeigt die 4 Widgets
+mit `text/html;profile=mcp-app`; ein `tools/call` über dieselbe Leitung liefert
+echte Treffer. Damit ist die Lücke zum letzten Lauf (22/22 am 2026-07-17) zu.
+
+**Goldene Prompts:** die Mechanik-Hälfte ist durch — 17 von 17 lauffähigen
+Prompts liefern live (D10 braucht `WLO_SKILLS_COLLECTION_ID`). Die
+Werkzeug*wahl* eines Modells, die Negativ-Prompts und der Widget-Render brauchen
+ChatGPT-Entwicklermodus und bleiben offen.
+
+**Deployment-Haltung:** vorerst die `nip.io`-Adresse, keine Einreichung im GPT
+Store. `WLO_WIDGET_DOMAIN` bleibt deshalb ungesetzt — genau richtig, denn jeder
+Nicht-ChatGPT-Host verlangt das ohnehin. Geprüft: **kein öffentlicher Origin ist
+im Code hartkodiert**, der Wechsel auf die echte Domain ist ein Redeploy mit
+geänderten Umgebungsvariablen. Wichtig für später: der MCP-Origin ist nach der
+ersten Einreichung versionsübergreifend gesperrt — der Domainwechsel muss also
+davor passieren.
+
+`WLO_TEXT_EXTRACTION_URL` ist inzwischen gesetzt
+(`https://text-extraction.staging.openeduhub.net/`) — passend zur ebenfalls auf
+Staging zeigenden `WLO_REPOSITORY_URL`. **Für den vServer beachten:** dort zeigt
+das Repository auf die Redaktions-Instanz; dieselbe Staging-Extraktions-URL würde
+Produktions-Material-URLs in eine andere Umgebung schicken.
+
+---
+
+## Vollständiges Projekt-Audit + Behebung — 2026-08-04
+
+Audit über alle 12 Dimensionen (~17.400 LOC Quellcode, 120 Dateien).
+**Keine ausnutzbare Schwachstelle.** Gesamtnote 83/100 gewichtet; schwächste
+Dimension Dokumentation (62), stärkste Abhängigkeiten (90).
+
+**Ein Muster trug fast alle Befunde:** eine Regel wurde erkannt, benannt und an
+*einer* Stelle gelöst — und dann nicht dorthin getragen, wo sie ebenfalls gilt.
+Kein Befund lautete „das war nicht durchdacht".
+
+Behoben (jeder Fix per Mutationstest gegengeprüft — Fix zurückgedreht, Test muss
+rot werden):
+
+| # | Befund | Fix |
+|---|---|---|
+| A-1 | `PRIVACY.md` behauptete „read-only, keine Authentifizierung" bei 13 Schreibwerkzeugen und weitergereichten Zugangsdaten | neu geschrieben: Credential-Kette, was Kuration schreibt, alle vier Empfänger, Betreiber-Checkliste |
+| A-2 | Einreichungs-Checkliste: „no write tools ✅" gegenüber dem Prüfer | durch das wahre *und* stärkere Argument ersetzt |
+| A-3 | Timeout → „konnte nicht … werden" in 12 von 13 Kurationswerkzeugen. Reproduziert: erfolgreiches `DELETE`, dessen Read-Back ablief, meldete „konnte nicht gelöscht werden" | `timeoutOrError` in `curation-shared.ts` an allen 9 Fangstellen; `confirmDeleted` liefert bei geworfenem Read-Back `unverified` |
+| A-4 | `renderChangeSet` kappte die ganze Action-Zeile bei 120 Zeichen → Vorschau brach mitten im Satz ab, Decline-Vorschau verlor nodeId und Folgesatz | `sanitizeText` = `flattenText` + Cap; Renderer nutzt `flattenText` |
+| A-5 | `wlo_submit_content`: Redaktionsnotiz weder in der Vorschau noch im Token-Fingerprint | Notiz in die Action; `comment`/`versionComment` auf `max(1000)` |
+| A-6 | `public/llms.txt` (wird unter `/llms.txt` ausgeliefert) nannte „22 read-only tools" | Zahl entfernt statt gepflegt |
+| A-7 | 5 Env-Variablen mit rohem `parseInt` → `MAX_BODY_BYTES=1MB` = 1 Byte, jede Anfrage `413` | alle über `resolvePositiveInt`; neue `resolveNonNegativeInt` für die Rate-Limits (dort ist `0` dokumentiert) |
+| AR-2 | `rest/routes.ts` prüfte das rohe Request-Target, `http-app.ts` den geparsten Pfad | beide auf den geparsten Pfad |
+
+**Neue Wächter-Tests** — die Drift überlebte vier Sitzungen, weil nichts Code und
+Prosa verband:
+
+- `tests/docs-claims.test.ts` — liest die Kurations-Werkzeugnamen aus
+  `src/tools/` und lässt die drei veröffentlichten Dokumente scheitern, wenn sie
+  etwas anderes behaupten.
+- `tests/env-parsing-discipline.test.ts` — Quelltext-Prüfung auf
+  `parseInt(process.env…)`. Nötig, weil `http.ts` beim Import lauscht und
+  deshalb nicht importierbar ist: genau so überlebte das rohe `parseInt` die
+  Einführung des Helfers samt seiner Unit-Tests.
+
+**Nicht gemacht, bewusst:**
+
+- **ESLint** (Befund M-1). Das Projekt hat absichtlich 4 Dev-Abhängigkeiten;
+  `@typescript-eslint` bringt ~100 mit. Das ist eine Lieferketten-Entscheidung
+  für die Betreiberin, kein Beifang einer Fehlerbehebung.
+- **`noUncheckedIndexedAccess`** (Befund M-2). Gemessen: **134 Fehler** über die
+  Codebasis. Ein mehrtägiger Refactor, der nicht in eine Behebungs-Runde gebündelt
+  gehört.
+- **S-1** (`prune` nur beim Ausstellen). Erneut geprüft: kein Defekt.
+  `MAX_PENDING` begrenzt die Map, die Einfügereihenfolge ist die Ablaufreihenfolge.
+  Der Befund war von mir selbst 🟢/kosmetisch eingestuft — Code dafür zu ändern
+  wäre Churn.
+
+Stand: **1104 Tests grün**, Typecheck sauber, Build sauber, `npm audit --omit=dev`
+ohne Befund. `tsx` auf 4.23.5 gehoben. Neu: `npm run test:coverage`.
+
+---
+
+## Zweites Projekt-Audit + Behebung — 2026-08-04
+
+Erneuter Gesamtdurchgang nach der Runde oben (Deep für Auth, HTTP-Dispatch,
+REST-Router, Write-Pipeline, URL-Sicherheit, Widgets/Launcher). Fünf Befunde,
+alle wieder von derselben Form: **eine Regel, die an einer Stelle gilt und an der
+zweiten nicht.** Zwei davon liefen bereits in jedem Container.
+
+| # | Befund | Behoben in |
+|---|---|---|
+| A 🟠 | `GET //[` bekam **gar keine Antwort**: drei Schichten parsten dasselbe Request-Target, nur der Dispatcher abgesichert — sein Fallback reichte den Rohstring weiter, der Throw entkam dem Handler. Socket bis `requestTimeout` (30 s) belegt, unauthentifiziert, von keinem Limiter gedeckt. | neu `src/request-url.ts`; `http-app.ts`, `rest/routes.ts`, `rest/static.ts` |
+| B 🟠 | `docker-compose.yml` nagelte `WLO_FETCH_TIMEOUT_MS` auf `10000`, während Code **und** `.env.example` 20000 sagten. Compose gewinnt — jeder Container lief mit dem Wert, der ein 4,2–8,0 s dauerndes `create` mittendrin abschneidet. | `docker-compose.yml`, `docs/DEPLOYMENT.md` |
+| C 🟠 | Die Bestätigungsvorschau kappte Werte bei 120 Zeichen mit blossem „…". Gemessen: 524 Zeichen geschrieben, 120 gezeigt. Felder erlauben 20 000 / 100 000. Der Token bindet den vollen Wert — der Mensch bestätigte ungesehenen Text. | `services/write/change-set.ts`, `text-cap.ts` |
+| D 🟡 | `.env.example` führte `WLO_TEXT_EXTRACTION_URL` auf **Staging** aktiv, direkt unter einem Produktions-Repository. `cp .env.example .env` baute damit genau den Umgebungs-Mix, dessentwegen der Code-Default entfernt worden war. | `.env.example` |
+| E 🟢 | Kommentar über der Tool-Registrierung behauptete „every WLO tool is public, read-only … no authentication" — zwanzig Zeilen über den 13 Kurationswerkzeugen. | `src/server.ts` |
+
+**Neue Schutztests** (jeder vorher rot gesehen):
+
+- `tests/http-app.test.ts` — Rohsocket-Test. `fetch` kann `//[` nicht senden, es
+  normalisiert das Target; der Test spricht deshalb direkt TCP.
+- `tests/rest-static.test.ts` / `tests/rest-routes.test.ts` — jede Schicht
+  antwortet auf ein unparsbares Target mit „nicht meine Route" statt zu werfen.
+- `tests/write-change-set.test.ts` — fünf Fälle: normale Beschreibung ungekürzt,
+  Kürzung nennt die Gesamtlänge, Schnitt an der Wortgrenze, Schlagwortliste und
+  Löschtitel gleich behandelt.
+- `tests/deploy-env-passthrough.test.ts` — **die strukturelle Lücke**: die Datei
+  band bisher, dass jede Einstellung *weitergereicht* wird, nie ihren *Wert*.
+  Zwei neue Regeln: keine Zahl darf im Compose wiederholt werden (Modus-Flags mit
+  bewusst abweichendem Deployment-Default sind namentlich mit Begründung
+  ausgenommen), und `.env.example` darf keine Einstellung aktiv führen, die eine
+  Kopie stillschweigend übernimmt.
+
+Beiläufig entfernt: drei tote Importe (`safeHref`, `followUpButton` im
+Search-Results-Renderer, `ThemePageInfo` in `tools/topic-pages.ts`) — je genau
+ein Vorkommen, die Importzeile. Sichtbar erst mit `tsc --noUnusedLocals`, das
+nicht Teil des normalen Gates ist.
+
+**Mutationsprüfung**: A (drei Schichten einzeln + Vollrücklauf), B, C und D je
+zurückgedreht — jedes Mal wurde der zugehörige Test rot. E ist ein Kommentar und
+nicht testbar; das ist so gesagt, nicht kaschiert.
+
+### Nachfassen: zwei weitere Befunde aus den Pruefungen, die im Audit fehlten
+
+Der `--noUnusedLocals`-Fund zeigte, dass ich Pruefungen nicht gefahren hatte.
+Ein zweiter Durchgang mit Quelltext-Sweeps brachte:
+
+| # | Befund | Behoben in |
+|---|---|---|
+| F 🟢 | `auth/identity.ts` parste seinen Antwort-Body direkt statt ueber `readJson` — obwohl `read-json.ts` **und** `CLAUDE.md` behaupten, jeder Client gehe darueber. Eine Wartungsseite mit `200` und HTML erschien als `identity check failed: Unexpected token <` statt benannt. | `src/auth/identity.ts` |
+| G 🟡 | **`text-cap.ts` wurde von 2 von 8 Aufrufstellen benutzt.** Sechs Module trugen `x.slice(0, CAP) + '
+[…gekürzt]'` selbst — Schnitt mitten im Wort statt an der Wortgrenze — und der bytebasierte Download-Pfad war schon auf `'
+
+…[gekürzt]'` abgedriftet. Genau das, wogegen das Modul laut eigenem Docstring extrahiert wurde. | `services/search.ts`, `tools/content-search.ts`, `tools/knowledge.ts`, `tools/node-details.ts` (3×), `wlo-node-text.ts`, `text-cap.ts` |
+
+**Neuer Schutztest** `tests/shared-rule-discipline.test.ts` — Quelltext-Scans fuer
+beide Regeln, Geschwister von `env-parsing-discipline.test.ts`. Gefunden mit 7
+bzw. 1 Verstoss; beide Mutationen wieder rot gesehen. Ein Unit-Test des Helfers
+beweist, dass der Helfer stimmt, und sagt nichts darueber, ob ihn jemand benutzt.
+
+**Kein Befund, geprueft und verworfen:**
+
+- **Import-Zyklus** `fields.ts ↔ fields-lrt.ts`: Fehlalarm meines eigenen
+  Detektors. Es ist ein `import type`, der wegkompiliert wird — im gebauten
+  `dist/services/write/fields-lrt.js` steht kein `./fields.js`.
+- **Kuerzungen in `formatter.ts` / `browse.ts` / `search-page.ts`** nennen die
+  Gesamtlaenge nicht. Anders als bei C bestaetigt dort niemand etwas; das Modell
+  kann den vollen Text ueber `get_wlo_content_text` holen. Kein Defekt, und
+  fuenf Dateien dafuer anzufassen waere Churn.
+
+Stand: **1119 Tests grün** (vorher 1104), Typecheck sauber, Build sauber,
+`npm audit --omit=dev` ohne Befund, `tsc --noUnusedLocals` ohne toten Import
+in `src/`.
+
+**Nicht gemacht, bewusst:** ESLint und `noUncheckedIndexedAccess` bleiben offen
+wie oben begründet. `clampInt` in `rest/validate.ts` benutzt weiterhin rohes
+`parseInt` — das ist **kein** Befund: ein Query-Parameter mit Default und Clamp
+ist normale REST-Nachsicht, nicht die Env-Falle, die `resolvePositiveInt` schliesst.
+
+
+---
+
+## Modulgrenzen-Pass (2026-08-04)
+
+Prüfauftrag: erfüllen alle Projektdateien die Qualitäts- und Längenvorgaben des
+better-coding-workflow-Skills? Vokabulardaten ausgenommen.
+
+**Gemessen, nicht geschätzt** (`scratchpad/fnlen.mjs`, Klammer-Matching über
+`src/**/*.ts`): 16 Dateien über 300 Zeilen, 41 Einheiten über 50 Zeilen.
+
+Die Länge allein ist kein Defekt — das Skill nennt die Schwellen ausdrücklich
+Rauchmelder, nicht Feuer. Geprüft wurde deshalb gegen die projekteigene, härtere
+Regel aus `CLAUDE.md`: *ein Tool-Modul hält sein Schema und sein Rendering, nie
+einen Algorithmus*. Danach sind `collections.ts`, `content-search.ts`,
+`node-details.ts` und `node-relations.ts` sauber, obwohl lang: ihre Algorithmen
+liegen bereits in `services/`.
+
+| Befund | Problem | Ort |
+|---|---|---|
+| H 🟡 | `browse_collection_tree` hielt den beschränkten, zyklengesicherten Baumlauf inline — 190-Zeilen-Handler in einer 376-Zeilen-Datei — obwohl `CLAUDE.md` `services/collection-traversal.ts` als Ort dafür benennt. | `tools/browse.ts` → `services/collection-traversal.ts` |
+| I 🟡 | `services/` und `rest/` importierten aus `tools/`: `mapPool` (Nebenläufigkeits-Primitiv) und `buildFilterCriteria`/`formatUnresolvedHint` (Vokabular-Auflösung) lagen in `tools/shared.ts`, weil die Tools die ersten Aufrufer waren. Fünf Module griffen von unten nach oben. | 5 Module → `src/concurrency.ts`, `src/filter-criteria.ts` |
+
+Beides dieselbe Form wie jede vorige Runde: etwas dort abgelegt, wo der erste
+Aufrufer es brauchte, danach von überall her benutzt.
+
+**Ergebnis:** `browse.ts` 376 → 274 Zeilen (Handler 321 → 219), `tools/shared.ts`
+300 → 171, Inversionen 5 → **0**.
+
+**Verhaltenserhaltung belegt:** die 17 bestehenden Browse-Tests waren vor dem
+Eingriff grün und danach unverändert grün. Zwei Mutationen am extrahierten Walk
+(`TREE_CHILDREN_MAX` 10→8; Zyklenwächter entfernt) treffen jeweils den richtigen
+Test — die alten tool-basierten Tests fallen beim entfernten Wächter ebenfalls,
+was die Extraktion end-to-end bestätigt.
+
+**Neue Tests:** `tests/services-collection-tree.test.ts` (5) prüft die
+zurückgegebene STRUKTUR statt einen Baum aus gerendertem Markdown zu erschließen
+— erst die Extraktion macht das möglich. Dritter Guard in
+`tests/shared-rule-discipline.test.ts` gegen die Schichtungs-Inversion; Mutation
+rot gesehen, nennt Datei und Zeile. `mapPool`- und `buildFilterCriteria`-Tests
+sind mit ihren Modulen umgezogen.
+
+**Kein Befund, geprüft und verworfen:**
+
+- **`createHttpRequestHandler` (208 Zeilen)** ist ein linearer Dispatcher: jeder
+  Zweig kurz, eine Verantwortlichkeit, von oben nach unten lesbar.
+- **`collection-traversal.ts` liegt jetzt bei 311 Zeilen** — knapp über der
+  Schwelle, aber drei beschränkte Walks mit *einem* Änderungsgrund: wie sich der
+  Sammlungsgraph des Repositories verhält. Aufteilen wäre Zahlenkosmetik.
+- **Testdateien über 300 Zeilen** (`tools-output-integrity` 599, `write-collections`
+  563): nach Prüfgegenstand geschnitten, was der richtige Schnitt ist.
+- **Vokabulare** (`vocabs-hochschule.ts` 464, `vocabs.ts` 364, `vocabs-lrt.ts` 334)
+  sind Daten und laut Auftrag ausgenommen.
+
+Stand: **1125 Tests grün** (vorher 1119), Typecheck sauber, Build sauber (4
+Widgets), `npm audit --omit=dev` ohne Befund, `tsc --noUnusedLocals` ohne toten
+Import in `src/`.
+
+---
+
+## MCP-Zugang per WLO-Konto (Zugangsblock) — abgeschlossen 2026-08-04/05
+
+Design: [`2026-08-04-mcp-access-token-design.md`](2026-08-04-mcp-access-token-design.md) ·
+Aufgaben: [`2026-08-04-mcp-access-token-tasks.md`](2026-08-04-mcp-access-token-tasks.md)
+(P0–P6 ✅, dazu eine Review-Runde mit 7 behobenen Befunden).
+
+**Was es löst.** Die bisherige Anleitung lautete `printf 'name:passwort' | base64`.
+Das schreibt das Klartextpasswort in die Shell-History und legt es dauerhaft
+lesbar beim KI-Anbieter ab; der Wert funktioniert gegen **ganz WLO**, nicht nur
+gegen diesen Server, und ist ohne Passwortwechsel nicht zurückzunehmen. Jetzt
+holt sich eine Nutzerin unter `/auth` einen Block, dessen Passwort **im Browser**
+verschlüsselt wurde, trägt ihn einmal als `Bearer …` ein und sperrt ihn bei Bedarf
+unter `/auth-revoke.html` (oder `/auth/revoke`). Aus unter
+`WLO_AUTH_PRIVATE_KEY` = nicht gesetzt.
+
+**Gemessene Randbedingung, die alles andere ausschloss:** edu-sharing bietet
+keine OIDC-Discovery, keine Dynamic Client Registration und deklariert nur
+`basicAuth`/`cookieAuth` (P0, 2026-07-30). **Es gibt kein Token, das wir
+weiterreichen könnten** — jede Lösung transportiert die Zugangsdaten selbst.
+Deshalb hybride Verschlüsselung statt eines Tresors: ein Einbruch liefert den
+Schlüssel, aber keine Sammlung von Passwörtern.
+
+**Was die Review-Runde fand** (alle behoben, Details in der Aufgabenliste): ein
+`Access-Control-Allow-Origin: *` auf `/auth*`, das die Rateversuche gegen WLO
+über die Adressen fremder Besucher verteilbar machte und damit genau den
+Begrenzer umging, der laut Bedrohungstabelle davor schützen sollte; eine
+serialisierte Schreibkette, die **eine** abgelehnte Schreiboperation dauerhaft
+weitertrug (jeder spätere Widerruf scheiterte bis zum Neustart, ohne es zu
+versuchen); ein Schreibfehler, der als Rejection in einen Zweig ohne Fehlergrenze
+entkam, worauf der Aufrufer 30 s lang **gar keine Antwort** bekam.
+
+**Live gegen einen laufenden Server geprüft (2026-08-05)** — bis dahin die
+größte offene Lücke, und die Klasse von Lücke, die schon bei den
+Kurationswerkzeugen zwei Defekte durchgelassen hat. Aufbau: echter Server, echte
+Browser-Krypto, echte Registerdatei; nur edu-sharing durch eine Attrappe ersetzt,
+damit keine echten Zugangsdaten getippt werden mussten. Ergebnis: Block erzeugt
+(532 Zeichen), Registereintrag ohne jedes Credential, `wlo_auth_status` meldet
+`mode: user`, nach dem Sperren über die Seite ist das Register leer und derselbe
+Block liefert `mode: anonymous`. Damit ist auch die Naht zwischen WebCrypto im
+Browser und `node:crypto` im Server **live** bestätigt, nicht nur im Test.
+
+**Zugleich behoben:** der Kontrast-Befund der Launcher-Seite. Vier Bedienelemente
+trugen den dekorativen `--border` (live gemessen 1.75:1 hell / 1.90:1 dunkel, wo
+WCAG 1.4.11 3:1 fordert). Neuer Test `tests/launcher-contrast.test.ts` prüft die
+Eigenschaft, nicht den Token-Namen: Randfarbe gegen die Fläche, auf der sie
+tatsächlich liegt, in beiden Schemata.
+
+Stand: **1195 Tests grün** (vorher 1125), Typecheck sauber, Build sauber
+(4 Widgets), `npm audit --omit=dev` ohne Befund, `docker compose config` gültig.
+
+**Offen (Betreiberin):** Schlüssel erzeugen und in die `.env` auf dem Server;
+`log_credentials` im Caddyfile prüfen; die sieben Entscheidungsfragen F1–F7 im
+Team-Papier [`2026-08-04-auth-optionen-entscheidung.md`](2026-08-04-auth-optionen-entscheidung.md).

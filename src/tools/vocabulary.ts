@@ -12,6 +12,7 @@ import type { VocabKey } from '../vocabs.js';
 import { listVocab } from '../vocabs.js';
 import { suggestUniversitySubjects } from '../vocabs-hochschule.js';
 import { lookupPublishers } from '../services/publishers.js';
+import { oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
 
 /**
@@ -39,14 +40,16 @@ function universitySubjectLookup(query: string | undefined): string {
   const matches = suggestUniversitySubjects(q);
   if (matches.length === 0) {
     return [
-      `# Hochschulfächer zu „${q}"`,
+      // `q` is caller-supplied and sits on a line of its own; flattened for the
+      // same reason as every other interpolated value in a line-oriented view.
+      oneLine(`# Hochschulfächer zu „${q}“`),
       '',
       'Keine passenden Konzepte gefunden. Versuche einen anderen/kürzeren Begriff, oder nutze',
       'eine Suche mit `includeFacets: true` und lies die Hochschulfächer aus dem `discipline`-Facet ab.',
     ].join('\n');
   }
   const lines = [
-    `# Hochschulfächer zu „${q}" (${matches.length})`,
+    oneLine(`# Hochschulfächer zu „${q}“ (${matches.length})`),
     '',
     'Wähle EINEN Eintrag und nutze seinen URI als `discipline`-Filter:',
     '',
@@ -163,9 +166,13 @@ Counts are facet aggregations over the live index, ordered by size.`,
         if (publishers.length === 0) {
           return { content: [{ type: 'text' as const, text: 'Keine Anbieter gefunden.' }] };
         }
+        // The label is the raw facet value of `ccm:oeh_publisher_combined`, i.e.
+        // free text from the repository — and the model reads this list to pick
+        // a `publisher` filter value. A newline in it would offer an entry that
+        // does not exist, with a count nobody produced.
         const lines: string[] = [`# WLO Anbieter (${publishers.length})`, ''];
         for (const p of publishers) {
-          lines.push(`- **${p.label}** — ${p.count} Materialien`);
+          lines.push(oneLine(`- **${p.label}** — ${p.count} Materialien`));
         }
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (err) {

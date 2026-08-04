@@ -1,0 +1,145 @@
+/**
+ * services/topic-page-discovery.ts – the three ways a Themenseite is found.
+ *
+ * Split out of `tools/topic-pages.ts`: this owns the discovery orchestration —
+ * which upstream calls each mode makes, how wide the candidate pool is, and how
+ * variants are enriched to their owning collection — while the tool module owns
+ * the schema, the dispatch of the caller's parameters and the rendering. The
+ * bounds here are measured against live data and change when the repository's
+ * data does; the tool contract changes for entirely different reasons.
+ */
+
+import type { WloNode } from '../wlo-api.js';
+import { WLO_TOPIC_POOL, buildTopicPageUrl, stripStoreRef } from '../wlo-api.js';
+import type { TargetGroup, ThemePageInfo, TopicPageOwnerCache } from '../topic-page-api.js';
+import { getCollectionThemePages, resolveVariantCollection, searchPageVariants } from '../topic-page-api.js';
+import { resolveVocab } from '../vocabs.js';
+import { mapPool } from '../concurrency.js';
+import { findTopicPagesByQuery } from './topic-page.js';
+
+// Mode B bound: each candidate costs one metadata fetch (plus one children
+// fetch when it has a page config), so cap the merged portal+keyword set.
+const MODE_B_CANDIDATE_MAX = 12;
+
+/**
+ * Mode C candidate pool. Variants of ONE Themenseite merge into a single entry,
+ * so the pool must exceed maxResults. The theoretical bound is three (one per
+ * target group), but the live data is far leaner: 108 variants across 98 pages
+ * — 92 pages carry exactly one variant, five carry two, one carries six
+ * (measured 2026-07-27, prod). Factor 2 therefore leaves ~80 % headroom over
+ * the 1.10 average, and the one-shot top-up below covers the outliers.
+ * The former `max(50, maxResults * 5)` charged a 5-result request 50 variant
+ * enrichments (~8 s measured, client latency report); it survives as that
+ * top-up for data that merges harder than the bound predicts.
+ */
+const MODE_C_POOL_FACTOR = 2;
+const MODE_C_POOL_MIN = 10;
+const modeCTopUpPool = (maxResults: number): number => Math.max(50, maxResults * 5);
+
+/** Entries the merge step will produce from these variants. */
+function entryCount(pages: ThemePageInfo[], merge: boolean): number {
+  if (!merge) return pages.length;
+  return new Set(pages.map(p => p.collectionId ?? p.variantId)).size;
+}
+
+/**
+ * Mode C of search_wlo_topic_pages: list all Themenseiten via the page_variant
+ * API and resolve each variant's owning collection to a readable title. A
+ * per-batch owner cache dedupes resolution across sibling variants of the same
+ * Themenseite, the variant's known primary parent skips a round-trip, and a
+ * bounded pool caps concurrent upstream fetches.
+ */
+async function listThemePageVariants(
+  tg: TargetGroup | undefined,
+  educationalContext: string | undefined,
+  maxResults: number,
+  merge: boolean,
+): Promise<ThemePageInfo[]> {
+  const eduCtxUri = educationalContext
+    ? resolveVocab(educationalContext, 'educationalContext') ?? educationalContext
+    : undefined;
+  const search = (maxItems: number) => searchPageVariants({
+    isTemplate: false,
+    targetGroup: tg,
+    educationalContext: eduCtxUri,
+  }, maxItems);
+
+  const parentCache: TopicPageOwnerCache = new Map();
+  const poolSize = Math.max(MODE_C_POOL_MIN, maxResults * MODE_C_POOL_FACTOR);
+  const variants = await search(poolSize);
+  const enriched = await enrichVariants(variants, parentCache);
+
+  // A short response means upstream is exhausted, so a wider retry cannot add
+  // anything — only top up when the pool was actually filled AND the merge
+  // still left us short of what the caller asked for.
+  if (entryCount(enriched, merge) >= maxResults || variants.length < poolSize) return enriched;
+
+  const wider = await search(modeCTopUpPool(maxResults));
+  const seen = new Set(enriched.map(r => r.variantId));
+  const extra = wider.filter(v => !seen.has(v.ref?.id ?? ''));
+  return enriched.concat(await enrichVariants(extra, parentCache));
+}
+
+/** Resolve each page variant to its owning collection (shared owner cache). */
+async function enrichVariants(
+  variants: WloNode[],
+  parentCache: TopicPageOwnerCache,
+): Promise<ThemePageInfo[]> {
+  const enriched = await mapPool(variants, WLO_TOPIC_POOL, async (v) => {
+    const vProps = v.properties ?? {};
+    const variantId = v.ref?.id ?? '';
+    if (!variantId) return null;
+    const knownParentId = stripStoreRef(vProps['virtual:primaryparent_nodeid']?.[0]) || undefined;
+    // The parent walk already yields the owner's page_config_ref — re-fetching
+    // the owner's metadata just to read it back was one dead upstream call per
+    // variant, i.e. half of Mode C's latency (client report 2026-07-27).
+    const owner = await resolveVariantCollection(variantId, parentCache, knownParentId);
+    const topicPageUrl = owner ? buildTopicPageUrl(owner.id, owner.pageConfigRef) ?? '' : '';
+
+    return {
+      variantId,
+      variantName: vProps['cm:name']?.[0] || v.name || '',
+      variantTitle: vProps['cclom:title']?.[0] || vProps['cm:title']?.[0] || '',
+      targetGroup: vProps['ccm:page_variant_profiling_target_group']?.[0] || '',
+      educationalContexts: vProps['ccm:educationalcontext'] ?? [],
+      isTemplate: false,
+      topicPageUrl,
+      collectionId: owner?.id,
+      collectionName: owner?.name,
+    } satisfies ThemePageInfo;
+  });
+  return enriched.filter((r): r is NonNullable<typeof r> => r !== null);
+}
+
+/**
+ * Dispatch the three search modes and return the raw variants plus the
+ * queryType tag for the metadata block:
+ *   A. collectionId → direct check of one collection's Themenseite.
+ *   B. query        → search collections, then read their page configs.
+ *   C. filters only → list all Themenseiten via the page_variant API.
+ */
+export async function collectThemePages(
+  params: { collectionId?: string; query?: string; educationalContext?: string; maxResults?: number },
+  tg: TargetGroup | undefined,
+  merge: boolean,
+): Promise<{ results: ThemePageInfo[]; queryType: string }> {
+  const results: ThemePageInfo[] = [];
+
+  // ── Mode A: Direct collection check ──────────────────────────────────
+  if (params.collectionId) {
+    const pages = await getCollectionThemePages(params.collectionId, tg);
+    results.push(...pages);
+    return { results, queryType: 'topic_pages_by_collection' };
+  }
+  // ── Mode B: Topic-based search (collection → page_config_ref) ────────
+  // The resolution core is shared with get_topic_page_content's one-step topic
+  // path (services/topic-page.findTopicPagesByQuery).
+  if (params.query?.trim()) {
+    const pages = await findTopicPagesByQuery(params.query, tg, MODE_B_CANDIDATE_MAX);
+    results.push(...pages);
+    return { results: results.slice(0, (params.maxResults ?? 5) * 3), queryType: 'topic_pages_by_keyword' };
+  }
+  // ── Mode C: List all Themenseiten (page_variant API) ─────────────────
+  results.push(...await listThemePageVariants(tg, params.educationalContext, params.maxResults ?? 5, merge));
+  return { results, queryType: 'page_variant' };
+}

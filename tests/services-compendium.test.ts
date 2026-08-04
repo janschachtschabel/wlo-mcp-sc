@@ -71,3 +71,27 @@ test('getCompendiumTexts: empty input returns empty array without any fetch', as
     mock.restore();
   }
 });
+
+/**
+ * `-all-` fetched ~47 properties per node although only two are read. Measured
+ * against the editorial repository 2026-08-03 (read-only, anonymous): every
+ * field a `propertyFilter` names comes back byte-identical to the `-all-` read,
+ * including a 4914-character `cclom:general_description` — the filter is a
+ * whitelist, not a size limit — and the response shrinks 43% (19941 → 11287
+ * bytes over four collections). The compendium field itself could not be the
+ * witness: it is unpopulated across all 196 collections reachable from twelve
+ * broad search terms, which is why this had to be measured on the mechanism
+ * rather than on the field.
+ */
+test('getCompendiumTexts asks only for the properties it reads', async () => {
+  const mock = installMetadataMock();
+  try {
+    await getCompendiumTexts(['with-text']);
+    const url = mock.calls[0]?.url ?? '';
+    assert.doesNotMatch(url, /propertyFilter=-all-/, 'no 47-property response for two fields');
+    assert.match(url, /propertyFilter=/, 'the read is projected');
+    assert.match(decodeURIComponent(url), /ccm:oeh_collection_compendium_text/, 'and names the text it exists to fetch');
+  } finally {
+    mock.restore();
+  }
+});

@@ -13,8 +13,17 @@
 type Level = 'info' | 'warn' | 'error';
 
 function emit(level: Level, msg: string, fields?: Record<string, unknown>): void {
-  const record = { ts: new Date().toISOString(), level, name: 'wlo-mcp', msg, ...fields };
-  process.stderr.write(JSON.stringify(record) + '\n');
+  const head = { ts: new Date().toISOString(), level, name: 'wlo-mcp', msg };
+  let line: string;
+  try {
+    line = JSON.stringify({ ...head, ...fields });
+  } catch (err) {
+    // Logging runs in failure paths, so it must never become the failure. A
+    // field that cannot be serialised (circular reference, BigInt) costs the
+    // fields, not the record — and the reason is written where it is findable.
+    line = JSON.stringify({ ...head, logError: err instanceof Error ? err.message : String(err) });
+  }
+  process.stderr.write(line + '\n');
 }
 
 export const log = {

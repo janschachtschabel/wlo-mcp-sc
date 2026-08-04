@@ -12,6 +12,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
+import { log } from '../logger.js';
+import { isUnsafeToolDisabled } from '../unsafe-tools.js';
+
 /** Result shape a WLO tool handler returns (a CallToolResult subset). */
 export interface WloToolResult {
   content: { type: 'text'; text: string }[];
@@ -41,6 +44,13 @@ export interface WloToolDef {
   /** zod schema → advertised `outputSchema` + structuredContent validation. */
   outputSchema?: z.ZodTypeAny;
   annotations?: WloToolAnnotations;
+  /**
+   * Apps-SDK security declaration. Omitted ⇒ `tool-defaults.ts` stamps the
+   * server's read-only default (`noauth`). A tool that refuses anonymous
+   * callers must set its own — declaring `noauth` for it would tell the host
+   * something untrue about when it can be called.
+   */
+  securitySchemes?: ReadonlyArray<{ type: string }>;
   /** `ui://…` widget resource this tool renders (when widgets are built). */
   widgetUri?: string;
   /**
@@ -52,6 +62,17 @@ export interface WloToolDef {
    * any MCP-Apps host — current or older ChatGPT — permits the widget→host call.
    */
   widgetAccessible?: boolean;
+  /**
+   * Declares the tool UNSAFE: it is registered by default, but the operator can
+   * switch it off with `WLO_DISABLE_UNSAFE_TOOLS` (see `unsafe-tools.ts`).
+   *
+   * "Unsafe" means the tool has a risk this server cannot close from here — not
+   * that it is broken. The reason is logged at every startup, because a
+   * default-on risk that only appears in a changelog is one nobody inheriting
+   * the deployment will ever read. It belongs in the tool description too, so a
+   * host that surfaces descriptions shows it.
+   */
+  unsafe?: { reason: string };
   handler: (args: any, extra: unknown) => Promise<WloToolResult>;
 }
 
@@ -76,7 +97,29 @@ function widgetMeta(def: WloToolDef): Record<string, unknown> {
   return meta;
 }
 
-export function registerWloTool(server: McpServer, def: WloToolDef): void {
+/**
+ * @param isDisabled injectable for tests — `unsafe-tools.ts` resolves the env
+ *   once at module load, so a test cannot express "disabled" by mutating
+ *   `process.env` after the fact.
+ */
+export function registerWloTool(
+  server: McpServer,
+  def: WloToolDef,
+  isDisabled: (name: string) => boolean = isUnsafeToolDisabled,
+): void {
+  if (def.unsafe) {
+    if (isDisabled(def.name)) {
+      log.info('unsafe tool disabled by configuration', {
+        tool: def.name,
+        variable: 'WLO_DISABLE_UNSAFE_TOOLS',
+      });
+      return;
+    }
+    // Registered by default — so whoever inherits this deployment has to be able
+    // to see it at startup rather than by reading the changelog.
+    log.warn('registering a tool declared UNSAFE', { tool: def.name, reason: def.unsafe.reason });
+  }
+
   const config: Record<string, unknown> = {
     title: def.title,
     description: def.description,
@@ -85,6 +128,9 @@ export function registerWloTool(server: McpServer, def: WloToolDef): void {
   if (def.outputSchema) config.outputSchema = def.outputSchema;
   if (def.annotations) config.annotations = def.annotations;
   if (def.widgetUri) config._meta = widgetMeta(def);
+  if (def.securitySchemes) {
+    config._meta = { ...(config._meta as Record<string, unknown> ?? {}), securitySchemes: def.securitySchemes };
+  }
 
   // The SDK's registerTool is heavily generic; the WloToolDef contract keeps
   // handler args untyped (design decision), so the boundary is cast once here.

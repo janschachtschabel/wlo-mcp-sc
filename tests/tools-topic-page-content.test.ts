@@ -223,3 +223,29 @@ test('get_topic_page_content: none of query/collectionId/variantId → error', a
     await client.close();
   }
 });
+
+test('the markdown heading names the COLLECTION, not the page variant', async () => {
+  // structuredContent carried collectionTitle="Mathematik" while the markdown
+  // H1 printed variantTitle="Fachportalstartseite" — the widget used the right
+  // order, the text path the exact opposite (audit 2026-07-30). A model
+  // summarizing that answer then calls the page "Fachportalstartseite".
+  const config = JSON.stringify({ structure: { swimlanes: [{ heading: 'Einstieg', type: 'grid', grid: [] }] } });
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [makeNode('var-1', 'Fachportalstartseite', {
+        'ccm:page_variant_config': [config],
+        'cclom:title': ['Fachportalstartseite'],
+      })] } };
+    }
+    return { json: { node: makeNode('coll-1', 'Mathematik', {
+      'ccm:page_config_ref': ['workspace://SpacesStore/cfg-1'],
+      'cclom:title': ['Mathematik'],
+    }) } };
+  });
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({ name: 'get_topic_page_content', arguments: { collectionId: 'coll-1' } });
+    const head = ((r.content as { text: string }[])[0]?.text ?? '').split('\n')[0];
+    assert.equal(head, '# Mathematik', `heading was ${JSON.stringify(head)}`);
+  } finally { await client.close(); mock.restore(); }
+});

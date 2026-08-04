@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { renderDetail } from '../src/apps/widgets/shared/detail.js';
 import { renderTile } from '../src/apps/widgets/shared/tile.js';
 import { resolveLocale, t } from '../src/apps/widgets/shared/strings.js';
 
@@ -56,16 +57,43 @@ test('the missing-licence wording is localized', () => {
 });
 
 /**
+ * The same rule has to hold in the Einzelansicht, which is where someone
+ * actually decides whether they may reuse a material — the tile is the glance,
+ * the detail view is the decision. It omitted the row entirely for a record
+ * without a licence, so the view that carries the most weight was the one that
+ * left "no licence stated" looking like "not mentioned here".
+ */
+test('the detail view states the licence when there is one', () => {
+  const html = renderDetail(node(), 'de', false);
+  assert.match(html, /Lizenz/, 'licence label');
+  assert.match(html, /CC BY 4\.0/, 'the licence itself');
+});
+
+test('the detail view says so explicitly when NO licence is stated', () => {
+  const html = renderDetail(node({ license: '' }), 'de', false);
+  assert.match(html, /Lizenz/, 'the row must not disappear');
+  assert.match(html, /nicht angegeben/i, 'and must name the gap, not leave it blank');
+});
+
+/**
  * Tiles in a row must be interchangeable in size. Live, they were not: a taller
  * preview image or a longer description pushed the licence rows and the Details
  * button to a different height in every card, so the grid read as ragged
  * (user report 2026-07-28). Portrait tiles are wanted — inconsistent ones are
  * not. The fix is structural, so it is pinned structurally.
+ *
+ * The ratio itself was corrected on 2026-07-30: 3/4 made the CARD ~470px tall
+ * at a 220px column ("extrem schmal und lang") and cropped landscape previews.
+ * What this test defends is unchanged — ONE fixed ratio for every preview — so
+ * the assertion pins that property rather than a specific portrait number.
  */
-test('the preview box is a fixed portrait format, identical in every tile', () => {
+test('the preview box is one fixed landscape format, identical in every tile', () => {
   const css = readFileSync('src/apps/widgets/shared/base.css', 'utf8');
   const thumb = /\.wlo-tile__thumb\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-  assert.match(thumb, /aspect-ratio:\s*3\s*\/\s*4/, 'one portrait ratio for all previews');
+  const ratio = /aspect-ratio:\s*(\d+)\s*\/\s*(\d+)/.exec(thumb);
+  assert.ok(ratio, 'one fixed ratio for all previews');
+  const [w, h] = [Number(ratio[1]), Number(ratio[2])];
+  assert.ok(w > h, `the preview must not be taller than wide (got ${w}/${h}) — that is what made the cards too long`);
   const img = /\.wlo-tile__img\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
   assert.match(img, /object-fit:\s*cover/, 'images fill the box instead of resizing it');
   assert.match(img, /width:\s*100%/);

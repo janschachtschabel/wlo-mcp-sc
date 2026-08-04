@@ -1,3 +1,6 @@
+// MUST stay first — enables the extraction service before wlo-config resolves it.
+import './enable-extraction-env.js';
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -174,8 +177,17 @@ test('getContentText: truncates to maxChars and says so', async () => {
   }
 });
 
-test('resolveExtractionUrl: env wins, default is the staging service, empty disables', () => {
-  assert.equal(resolveExtractionUrl(undefined), 'https://text-extraction.staging.openeduhub.net');
+/**
+ * This test used to pin the opposite: that an unset variable defaults to
+ * `https://text-extraction.staging.openeduhub.net`. That default sent the URLs
+ * of PRODUCTION material to a STAGING host on any deploy that had not set the
+ * variable — the exact outcome the validation below exists to prevent ("a typo
+ * must not redirect material URLs to a host the operator never chose"). An
+ * unset variable is no more a choice than a typo is, so it now disables the
+ * service and says so, and `/textContent` remains the only source.
+ */
+test('resolveExtractionUrl: unset disables the service — no cross-environment default', () => {
+  assert.equal(resolveExtractionUrl(undefined), '');
   assert.equal(resolveExtractionUrl('https://extract.example.org/'), 'https://extract.example.org');
   assert.equal(resolveExtractionUrl('  '), '');
 });

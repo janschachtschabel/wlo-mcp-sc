@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { rerankNodes, sortByTitle } from '../src/reranker.js';
+import { enhancedSearch, rerankNodes, sortByTitle } from '../src/reranker.js';
+import { installFetchMock } from './fetchMock.js';
 import type { WloNode } from '../src/wlo-api.js';
 
 function node(id: string, title: string, extra: Partial<WloNode> = {}): WloNode {
@@ -96,4 +97,76 @@ test('rerankNodes: a node titled only at cm:title is neither dropped nor unscore
   const other = node('a-other', 'Ganz anderes Thema');
   const ranked = rerankNodes([other, cmTitleOnly], 'optik');
   assert.deepEqual(ranked.map(n => n.ref?.id), ['z-keep', 'a-other'], 'cm:title node survives and scores first');
+});
+
+test('a total upstream failure is an error, not an empty result set', async () => {
+  // Discovered live (2026-07-31): with a wrong service password every upstream
+  // call is answered 401, every query variant fails, and the search reported
+  // "0 Treffer" with isError=false. The model then tells the user there is
+  // nothing on the topic — a configuration fault rendered as a fact about the
+  // world. "All variants failed" is categorically not "no matches".
+  const mock = installFetchMock(() => ({ status: 401, json: { error: 'unauthorized' } }));
+  try {
+    await assert.rejects(
+      () => enhancedSearch('Bruchrechnung', 'FILES', [], 5),
+      /failed|401/i,
+      'a search that could not be performed must not look like one that found nothing',
+    );
+  } finally { mock.restore(); }
+});
+
+test('a partial variant failure still degrades gracefully', async () => {
+  // The counterpart: resilience must survive the fix above. One variant failing
+  // is exactly what allSettled is for, and it must NOT turn into an error.
+  let call = 0;
+  const mock = installFetchMock(() => {
+    call += 1;
+    if (call === 1) return { status: 500, json: { error: 'boom' } };
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+  try {
+    const res = await enhancedSearch('Bruchrechnung', 'FILES', [], 5);
+    assert.equal(res.nodes.length, 0, 'no hits, but a real answer');
+  } finally { mock.restore(); }
+});
+
+/**
+ * The phrase branch of `computeRelevanceScore` awards +30 for
+ * `title.includes(query)` — by far its largest single bonus. For a ONE-WORD
+ * query that branch is a raw substring test, so a short query scored the full
+ * phrase bonus on a word that merely contains it. Measured live 2026-08-03: the
+ * query "IT" put "Mauritius in a Nutshell", "supermarket self-checkouts" and
+ * "EU-Migrations- und Asylpolitik" in the top five, above actual IT material.
+ * The term branch had already been given the word-start rule; this one had not,
+ * and it outweighs the term branch four to one.
+ */
+test('a short query does not win the phrase bonus on a word that merely contains it', () => {
+  // All three are equally unrelated to IT, so nothing may outrank anything —
+  // the deterministic nodeId tie-break must decide. A spurious +30 for the
+  // mid-word "it" in "Maur-it-ius" would hoist it to the top instead.
+  const ranked = rerankNodes(
+    [node('z-mauritius', 'Mauritius in a Nutshell'), node('a-salz', 'Salz und Zucker'), node('m-politik', 'Politik heute')],
+    'IT',
+  );
+  assert.deepEqual(
+    ranked.map(n => n.ref?.id),
+    ['a-salz', 'm-politik', 'z-mauritius'],
+    'none of them is about IT, so none may be scored as if it were',
+  );
+});
+
+test('a short query still ranks the material that IS about it first', () => {
+  const ranked = rerankNodes(
+    [node('z-mauritius', 'Mauritius in a Nutshell'), node('a-it', 'IT-Sicherheit in der Schule')],
+    'IT',
+  );
+  assert.equal(ranked[0]?.ref?.id, 'a-it');
+});
+
+test('a multi-word phrase keeps the phrase bonus it always had', () => {
+  const ranked = rerankNodes(
+    [node('a', 'Ganz etwas anderes'), node('b', 'Optik im Unterricht der Sekundarstufe')],
+    'Optik im Unterricht',
+  );
+  assert.equal(ranked[0]?.ref?.id, 'b');
 });

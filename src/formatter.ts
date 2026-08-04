@@ -251,6 +251,27 @@ export function resolveFacetCounts(
   return out;
 }
 
+/**
+ * Collapse line breaks so a value cannot break out of its line.
+ *
+ * The text format below is line-oriented — `## title` opens a record, `Key: value`
+ * carries a field — and every value in it is repository-supplied: titles,
+ * descriptions, publisher names, server-side `_DISPLAYNAME` labels, URLs. A
+ * newline in any of them opened a second, fabricated record with its own nodeId
+ * and its own `Lizenz:` line, and a forged licence is precisely the claim a
+ * teacher acts on. This is not sanitizing (the text stays as it is, it is data —
+ * see `text-sanitize.ts` for the elevated-authority boundary); it is the renderer
+ * protecting its own delimiters.
+ *
+ * Exported because several tools render their own line-oriented text instead of
+ * going through `renderToText` (the collection tree, the Fachportal list, the
+ * Themenseiten listing, the swimlane outline). They have the same delimiters and
+ * therefore need the same protection — one implementation, not four.
+ */
+export function oneLine(value: string): string {
+  return value.replace(/\s*[\r\n]+\s*/g, ' ');
+}
+
 /** Render a list of FormattedNodes as a compact text format for LLM consumption. */
 export function renderToText(nodes: FormattedNode[], totalHits?: number): string {
   const lines: string[] = [];
@@ -281,7 +302,9 @@ export function renderToText(nodes: FormattedNode[], totalHits?: number): string
     if (n.compendiumText)              parts.push(`Kompendium: ${n.compendiumText.slice(0, 500)}${n.compendiumText.length > 500 ? '…' : ''}`);
     if (n.textContent)                 parts.push(`Volltext (Auszug): ${n.textContent.slice(0, 500)}${n.textContent.length > 500 ? '…' : ''}`);
     parts.push(`Typ: ${n.nodeType === 'collection' ? 'Sammlung' : 'Inhalt'}`);
-    lines.push(parts.join('\n'));
+    // Every part above is exactly one logical line, so flattening here covers
+    // all of them — including fields added later.
+    lines.push(parts.map(oneLine).join('\n'));
     lines.push('');
   }
   return lines.join('\n').trim();

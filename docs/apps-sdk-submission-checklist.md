@@ -8,14 +8,35 @@ design doc (§ "References (Apps-SDK surface — locked P3 Step 0b)").
 Legend: ✅ implemented & verified · 🔶 implemented, needs a live developer-mode
 render to confirm · ⬜ operator action.
 
+## Current posture (2026-08-03) — read this before ticking anything
+
+**No submission is pending.** The deployment runs on the `nip.io` address and is
+deliberately *not* listed in the GPT store yet; a version on a proper domain comes
+later. Everything below therefore splits into two groups:
+
+- **Ready now** — the server-side requirements. The tool surface was re-verified
+  with the official MCP Inspector CLI on 2026-08-03: 25 tools, **0 objections**
+  across title, description, hints, invocation status strings, `securitySchemes`
+  and `inputSchema`. The golden prompts' mechanics pass delivered 17 of 17.
+- **Deliberately deferred** — everything that depends on the final domain
+  (`WLO_WIDGET_DOMAIN`, org verification, portal metadata, screenshots) and the
+  developer-mode render. These stay ⬜ **on purpose**, not because they were
+  forgotten.
+
+The one thing worth deciding early anyway: the MCP origin is **locked across
+versions** once submitted. A `nip.io` URL would chain the app to that IP forever,
+so the switch to the real domain has to happen *before* the first submission —
+not after. Nothing in the code hardcodes an origin (verified 2026-08-03), so that
+switch is a redeploy with changed env variables.
+
 ## Server & transport
 
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
-| MCP server over Streamable HTTP | ✅ | `src/http.ts` (`POST /mcp`), `api/mcp.ts` (Vercel) |
+| MCP server over Streamable HTTP | ✅ | `src/http.ts` (`POST /mcp`) |
 | Real SSE streaming for ChatGPT developer mode | ✅ | `MCP_SSE=1` → `enableJsonResponse:false` (`src/mcp-transport.ts`); image defaults it on; smoke-verified (`content-type: text/event-stream`) |
 | Reverse proxy must not buffer SSE | ⬜ | Documented in `docker-compose.yml` + README; operator configures nginx `proxy_buffering off;` |
-| Stateless, read-only server | ✅ | one server+transport per request; every tool `readOnlyHint:true` |
+| Stateless server | ✅ | one server+transport per request; no session state. The 25–26 read tools all carry `readOnlyHint:true`. **Not read-only as a whole:** with a write-capable identity the server also registers 13 curation tools — see the row below |
 | Server `instructions` block (fast path vs deep-dive vs search/fetch) | ✅ | `src/apps/instructions.ts`; asserted non-empty in `tests/server.test.ts` |
 | Health endpoint | ✅ | `GET /health` → `200` (`src/http.ts`) |
 
@@ -24,12 +45,12 @@ render to confirm · ⬜ operator action.
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
 | Clear tool names + "Use this when… / Do not use for…" descriptions | ✅ | tool registrations in `src/tools/*`; disambiguation asserted in `tests/server.test.ts` |
-| `annotations.readOnlyHint` on every tool | ✅ | asserted for all 23 tools in `tests/server.test.ts` |
-| `annotations.openWorldHint` where a tool leaves WLO | ✅ | `get_wikipedia_summary` (`src/tools/wikipedia.ts`) |
+| `annotations.readOnlyHint` on every tool | ✅ | asserted for every registered tool in `tests/server.test.ts` (25 read tools in the suite's configuration) |
+| `annotations.openWorldHint` where a tool leaves WLO | ✅ | `get_wikipedia_summary` (`src/tools/wikipedia.ts`) and `get_url_text` (`src/tools/url-text.ts`) — the two that reach a source outside WLO |
 | `outputSchema` + `structuredContent` on display tools | ✅ | `src/apps/register.ts` seam + `src/apps/outputSchemas.ts`; `tests/apps-structured-content.test.ts` |
 | ChatGPT `search` + `fetch` tools with the fixed shapes | ✅ | `src/tools/knowledge.ts`; `tests/tools-knowledge.test.ts` |
-| Tool-invocation status strings (`openai/toolInvocation/*`) on all 23 tools | ✅ | `src/apps/tool-status.ts` via `tool-defaults.ts`; pinned by the conformance test in `tests/apps-tool-defaults.test.ts` |
-| Human-readable `title` on every tool (the submission scan reads it) | ✅ | seam titles + `TOOL_TITLES` in `src/apps/tool-defaults.ts`; conformance test pins title + hints + noauth + status for all current AND future tools (23/23 today); the one-off cross-check with the official MCP Inspector CLI was clean at 22/22, against the 22 tools registered on 2026-07-17 — the 23rd (`get_wlo_content_text`) is covered by the conformance test but has not been re-run through the Inspector |
+| Tool-invocation status strings (`openai/toolInvocation/*`) on every tool | ✅ | `src/apps/tool-status.ts` via `tool-defaults.ts`; pinned by the conformance test in `tests/apps-tool-defaults.test.ts` |
+| Human-readable `title` on every tool (the submission scan reads it) | ✅ | seam titles + `TOOL_TITLES` in `src/apps/tool-defaults.ts`; conformance test pins title + hints + noauth + status for all current AND future tools (25/25 today). Re-verified with the official MCP Inspector CLI on 2026-08-03 against the running HTTP server: `tools/list` returned 25 tools, and a scripted check of title + description + readOnlyHint + destructiveHint + both `openai/toolInvocation/*` strings + `securitySchemes` + `inputSchema` found **0 objections**. (The earlier one-off run was clean at 22/22 on 2026-07-17.) |
 
 ## Widgets
 
@@ -37,7 +58,7 @@ render to confirm · ⬜ operator action.
 |-------------|--------|----------|
 | Self-contained widget HTML (JS+CSS inlined, no external `<script src>`) | ✅ | `src/apps/widgets/build.mjs` → `dist-widgets/*.html`; `tests/apps-resources.test.ts` |
 | Widget resource MIME `text/html;profile=mcp-app`, `ui://` scheme | ✅ | `src/apps/resources.ts` (`WIDGET_MIME_TYPE`) |
-| `_meta.ui.domain` = submission origin | ⬜ | ABSENT by default (hosts validate it against their own sandbox format — Claude rejects foreign values and aborts the bound tool call, live-proven 2026-07-17). For the ChatGPT submission, set `WLO_WIDGET_DOMAIN` to the final app domain; it is then emitted on `ui.domain` + the `openai/widgetDomain` alias |
+| `_meta.ui.domain` = submission origin | ⬜ | ABSENT by default (hosts validate it against their own sandbox format — Claude rejects foreign values and aborts the bound tool call, live-proven 2026-07-17). **Correct for the current posture:** the deployment runs on `nip.io` and is not being submitted yet, so `WLO_WIDGET_DOMAIN` stays unset. For the later ChatGPT submission, set it to the final app domain; it is then emitted on `ui.domain` + the `openai/widgetDomain` alias — a redeploy with a changed env variable, no code change |
 | `_meta.ui.csp` restricts connect/resource/frame domains | ✅ | `src/apps/resources.ts` — whitelists only the edu-sharing origin |
 | Widget `_meta` descriptions + `prefersBorder` (hosts label the rendered component) | ✅ | `WIDGET_DESCRIPTIONS` in `src/apps/resources.ts`, emitted on `ui.*` **and** the `openai/widget*` aliases, on both the `resources/list` descriptor and each read `contents` entry; `tests/apps-resources.test.ts` |
 | Content-addressed URIs (cache-busting on rebuild) | ✅ | `computeWidgetUri()` sha256 over the HTML **and** the resource `_meta` — a metadata-only change also rolls the URI (hosts key their cache on it; live-proven 2026-07-17) |
@@ -66,9 +87,9 @@ render to confirm · ⬜ operator action.
 
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
-| Privacy policy | ✅ | `docs/PRIVACY.md` (stateless, read-only, no PII stored; operator adds contact) |
+| Privacy policy | ✅ | `docs/PRIVACY.md` — covers the anonymous read path, the optional credential and its forwarding, the curation (write) tools, and the third-party recipients. Operator adds contact + which mode the deployment runs in |
 | No third-party asset/IP leakage in public pages | ✅ | `public/launcher.html` fully self-contained (P6) |
-| Least privilege / read-only scope | ✅ | no write tools; container runs as non-root |
+| Least privilege / write scope | ✅ | Anonymous callers get a read-only surface: the 13 curation tools are **not registered** without a write-capable identity, and each refuses again at call time (a host may cache an older tool list). Every mutation is two-step — preview, then a single-use token bound to a fingerprint of exactly that change — and is read back from the repository before anything is reported. Writes under the shared service account are off unless the operator sets `WLO_ALLOW_SERVICE_WRITES`. Container runs as non-root |
 
 ## Remaining before submission (operator actions)
 
@@ -81,12 +102,16 @@ render to confirm · ⬜ operator action.
 - ⬜ **Submission-portal metadata** (set in the OpenAI developer/submission portal,
   NOT in the server code): app display name, description, **icon**, and
   **categories**. The server only carries `name` + `instructions`.
-- ⬜ **Run the full golden-prompt regimen** ([`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md))
+- 🔶 **Run the full golden-prompt regimen** ([`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md))
   and record precision/recall + false-positives; sharpen tool descriptions if the
-  model mis-selects (S4).
+  model mis-selects (S4). **Half of this is done (2026-08-03):** the mechanics
+  pass — does each prompt's expected tool actually deliver against the live
+  repository — ran green for 17 of 17 runnable prompts (D10 needs
+  `WLO_SKILLS_COLLECTION_ID`). What remains needs a model: tool *selection*
+  (A/B), the negative prompts (C), and the widget render + drill-down (D).
 - ⬜ Fill in the operator identity/contact in `docs/PRIVACY.md`.
 - ⬜ Configure the reverse proxy for SSE (`proxy_buffering off;`, long read timeout).
-- ⬜ Provide a public HTTPS origin and set `WLO_WIDGET_DOMAIN` to it for the submission scan.
+- ⬜ Provide a public HTTPS origin and set `WLO_WIDGET_DOMAIN` to it for the submission scan. **Deferred by decision (2026-08-03):** the deployment runs on the `nip.io` address for now and is NOT being listed in the GPT store yet, so `WLO_WIDGET_DOMAIN` stays unset — which is also what every non-ChatGPT host requires. Verified the same day that nothing in the code hardcodes a public origin (`src/` and `public/` contain no deployment host; the only absolute URL is the Wikipedia API User-Agent contact string), so moving to the final domain is a redeploy with changed env variables, not a code change.
 
 ## Plugin-submission portal specifics (per the 2026-07 "Prepare an app for plugin submission" doc)
 
@@ -99,7 +124,7 @@ render to confirm · ⬜ operator action.
 | Publicly accessible domain, no local/testing endpoint | ⬜ | ⚠️ **Choose the FINAL domain before the first submission.** The MCP server origin (scheme/host/port) is LOCKED across versions — changing it later means a brand-new app + review. A `nip.io`/raw-IP URL is a testing endpoint in reviewers' eyes AND would chain the app to that IP forever. Use e.g. `mcp.wirlernenonline.de` from the start |
 | CSP declared for the exact fetch domains | ✅ | `_meta.ui.csp` = the edu-sharing origin only (`src/apps/resources.ts`) |
 | Scan Tools imports the advertised metadata as a locked snapshot | ✅ | Everything it reads is complete: names, titles, descriptions, schemas, `_meta.securitySchemes`, annotations, UI-resource CSP, server `instructions` (verified with the MCP Inspector CLI 2026-07-17) |
-| Annotation justifications match server-advertised values | ⬜ | All 23 tools are `readOnlyHint:true`, `destructiveHint:false`. `get_wikipedia_summary` carries `openWorldHint:true` in the MCP-spec sense (queries an open external source); justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state* |
+| Annotation justifications match server-advertised values | ⬜ | All read tools are `readOnlyHint:true`, `destructiveHint:false`. Two carry `openWorldHint:true` in the MCP-spec sense (they query an open external source): `get_wikipedia_summary` and `get_url_text`; justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state*. Note that `get_url_text` is declared **unsafe** and is switched off by default in the shipped deployment config — a submission should state whether it is enabled. The 13 curation tools are not part of this read-only surface: they never appear without a write-capable identity. |
 | Response minimization (no telemetry/session/trace IDs in tool output) | ✅ | Responses carry only content metadata; the `_queryMeta` block is subject-matter context (search term, resolved criteria, pagination, repository URL) — no user identifiers, no session/request IDs |
 | Test prompts + expected responses for the form | ✅ | [`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md); must pass on ChatGPT web AND mobile |
 | Screenshots | ⬜ | Optional and only because the app HAS a UI — capture the three rendered widgets in developer mode |

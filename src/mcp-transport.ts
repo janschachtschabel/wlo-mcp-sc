@@ -5,8 +5,7 @@
  * `sessionIdGenerator` is always undefined. The one deployment knob is the
  * response mode:
  *  - default (JSON mode): reply with a single JSON body — maximal client
- *    compatibility (curl, simple IDE integrations), used for local/dev and the
- *    stateless Vercel path.
+ *    compatibility (curl, simple IDE integrations), used for local/dev.
  *  - `MCP_SSE` truthy: real Server-Sent-Events streaming — required by ChatGPT
  *    developer mode on the self-hosted vServer. Behind a reverse proxy, response
  *    buffering MUST be disabled (see docker-compose.yml / README) or the stream

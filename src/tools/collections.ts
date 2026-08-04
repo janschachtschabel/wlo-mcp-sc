@@ -11,155 +11,39 @@ import type { WloNode } from '../wlo-api.js';
 import {
   WLO_REPOSITORY_URL,
   WLO_ROOT_COLLECTION_ID,
-  getChildCollections,
+  getChildCollectionsResult,
   getCollectionContents,
   searchCollectionsByKeyword,
 } from '../wlo-api.js';
 import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, renderToJson, renderToText } from '../formatter.js';
-import type { LabeledCriterion } from './shared.js';
-import { buildFilterCriteria, formatUnresolvedHint, queryMetaContent, toolError } from './shared.js';
+import type { LabeledCriterion } from '../filter-criteria.js';
+import { buildFilterCriteria, formatUnresolvedHint } from '../filter-criteria.js';
+import { queryMetaContent, toolError } from './shared.js';
 import { searchWithinCollection } from '../services/search.js';
+import {
+  RECURSIVE_SKIP_MAX,
+  collectRecursiveContents,
+  findCollectionsByTreeTraversal,
+} from '../services/collection-traversal.js';
 import { registerWloTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
-import { nodeMatchesCriteria, nodeMatchesText } from '../node-match.js';
-import { log } from '../logger.js';
+import { nodeMatchesCriteria } from '../node-match.js';
 
-/**
- * Fallback collection search by tree traversal, used when the direct
- * keyword-collection search finds nothing. From the given level-1 child
- * collections it keeps those that match `query`, expands into a capped level 2,
- * and — only if nothing matched yet — a scored, capped level 3. The caps (O6)
- * stop the fallback from turning into a 100+-parallel-call avalanche; direct
- * level-1 matches are always preserved.
- */
-async function findCollectionsByTreeTraversal(level1: WloNode[], query: string): Promise<WloNode[]> {
-  // Collections form a DAG (a sub-collection can hang under several parents),
-  // so the same node can be reached more than once across levels — de-dup by
-  // nodeId at insertion (audit Q-2) to keep rows and `total` honest.
-  const seen = new Set<string>();
-  const matches: WloNode[] = [];
-  const addMatches = (nodes: WloNode[]) => {
-    for (const n of nodes) {
-      if (!nodeMatchesText(n, query)) continue;
-      const id = n.ref?.id ?? '';
-      if (id) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-      }
-      matches.push(n);
-    }
-  };
-  addMatches(level1);
 
-  const LEVEL2_PARENT_CAP = 25;
-  const level2Parents = level1.slice(0, LEVEL2_PARENT_CAP);
-  if (level1.length > LEVEL2_PARENT_CAP) {
-    log.warn('collection search: level2 expansion capped', { from: level1.length, to: LEVEL2_PARENT_CAP, query });
-  }
-  const level2Results = await Promise.allSettled(
-    level2Parents.map(parent => getChildCollections(parent.ref?.id ?? '', 50))
-  );
-  const allLevel2Nodes: WloNode[] = [];
-  for (const r of level2Results) {
-    if (r.status === 'fulfilled') {
-      allLevel2Nodes.push(...r.value);
-      addMatches(r.value);
-    }
-  }
-
-  if (matches.length === 0) {
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-    const scoreNode = (n: WloNode): number => {
-      const text = [
-        n.properties?.['cm:name']?.[0] ?? '',
-        n.properties?.['cclom:title']?.[0] ?? '',
-        n.properties?.['cclom:general_description']?.[0] ?? '',
-      ].join(' ').toLowerCase();
-      return queryWords.reduce((s, w) => s + (text.includes(w) ? 1 : 0), 0);
-    };
-    const anyScored = allLevel2Nodes.some(n => scoreNode(n) > 0);
-    const LEVEL3_PARENT_CAP = 15;
-    const level2Candidates = anyScored
-      ? [...allLevel2Nodes].sort((a, b) => scoreNode(b) - scoreNode(a)).slice(0, LEVEL3_PARENT_CAP)
-      : allLevel2Nodes.slice(0, LEVEL3_PARENT_CAP);
-
-    const level3Results = await Promise.allSettled(
-      level2Candidates.map(parent => getChildCollections(parent.ref?.id ?? '', 30))
-    );
-    for (const r of level3Results) {
-      if (r.status === 'fulfilled') addMatches(r.value);
-    }
-  }
-
-  return matches;
-}
-
-/**
- * BFS over a collection and its sub-collections, collecting file children
- * until `maxResults` rows are gathered. Result rows are de-duplicated by
- * nodeId and filtered by `excluded`; when a query is given, each page is
- * reranked before collection. `totalHits` is the SUM of each visited
- * collection's backend total — an aggregate upper bound, not a de-duplicated
- * grand total (an item referenced in two sub-collections is counted twice).
- * It answers "how much is under here" roughly.
- */
-/**
- * Cap for the LOCAL skip window of the recursive path: the BFS must gather
- * skip+max rows before slicing, so an unbounded skipCount would let one call
- * force a crawl of the whole subtree (amplification on a public endpoint).
- */
-const RECURSIVE_SKIP_MAX = 400;
-
-async function collectRecursiveContents(
-  rootId: string,
-  maxResults: number,
-  excluded: Set<string>,
-  query: string | undefined,
-): Promise<{ nodes: FormattedNode[]; totalHits: number }> {
-  const collectionQueue = [rootId];
-  const visited = new Set<string>();
-  const seenNodes = new Set<string>(); // de-dup result rows across sub-collections
-  const nodes: FormattedNode[] = [];
-  let totalHits = 0;
-
-  while (collectionQueue.length > 0 && nodes.length < maxResults) {
-    const cid = collectionQueue.shift()!;
-    if (visited.has(cid)) continue;
-    visited.add(cid);
-
-    const filesResp = await getCollectionContents(cid, 'files', 50);
-    totalHits += filesResp.pagination.total;
-    let fileNodes = filesResp.nodes;
-    if (excluded.size) fileNodes = fileNodes.filter(n => !excluded.has(n.ref?.id ?? ''));
-    // Drop a node already emitted from an earlier sub-collection.
-    fileNodes = fileNodes.filter(n => {
-      const id = n.ref?.id;
-      if (!id) return true;          // no id → cannot de-dup, keep
-      if (seenNodes.has(id)) return false;
-      seenNodes.add(id);
-      return true;
-    });
-    if (query?.trim()) fileNodes = rerankNodes(fileNodes, query);
-    nodes.push(...formatNodes(fileNodes));
-
-    // Fetch sub-collections and queue them
-    const subs = await getChildCollections(cid);
-    for (const sub of subs) {
-      const subId = sub.ref?.id ?? sub.properties?.['sys:node-uuid']?.[0];
-      if (subId && !visited.has(subId)) collectionQueue.push(subId);
-    }
-  }
-  return { nodes: nodes.slice(0, maxResults), totalHits };
-}
-
-export function registerCollectionTools(server: McpServer): void {
+export function registerCollectionTools(server: McpServer, searchResultsWidgetUri?: string): void {
   registerWloTool(server, {
     name: 'search_wlo_collections',
+    widgetUri: searchResultsWidgetUri,
     title: 'WLO Sammlungssuche',
-    description: `Finde WLO-Sammlungen und Themenseiten zu einem Thema — kuratierte thematische Seiten, die Materialien in Schwimmlinien (Karussells) nach Thema/Fach/Stufe bündeln. Für Anfragen wie "Themenseite Algebra", "Sammlung Klimawandel", "Portal Mathematik". Für einzelne Materialien (Videos/Arbeitsblätter) nutze stattdessen search_wlo_content oder search_wlo_all.
-In WLO ist eine "Sammlung" dasselbe wie eine "Themenseite".
+    description: `Finde WLO-Sammlungen zu einem Thema — kuratierte Bündel von Materialien nach Thema/Fach/Stufe. Für Anfragen wie "Themenseite Algebra", "Sammlung Klimawandel", "Portal Mathematik". Für einzelne Materialien (Videos/Arbeitsblätter) nutze stattdessen search_wlo_content oder search_wlo_all.
+Sammlung und Themenseite sind NICHT dasselbe: eine Themenseite ist eine Sammlung, die
+zusätzlich ein kuratiertes Seiten-Layout mit Schwimmlinien (Karussells) und
+Zielgruppen-Varianten trägt. Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen
+haben eine Themenseite (gemessen für "Mathematik": 5 Sammlungen, davon 1 mit Themenseite).
+Dieses Werkzeug findet ALLE Sammlungen; wenn ausschließlich Themenseiten gesucht sind, ist
+search_wlo_topic_pages das richtige.
 Use the returned nodeId with get_topic_page_content (Schwimmlinien) or get_collection_contents to retrieve the actual content items.
 Filters (discipline, educationalContext) accept German labels (e.g. "Mathematik", "Grundschule")
 or full URIs and are applied against each collection's own metadata — collections that do not
@@ -241,6 +125,8 @@ carry a matching subject/level tag are excluded.`,
         if (query && !params.parentNodeId) {
           // Over-fetch by the exclusion count so excluded ids cannot shrink the
           // page below maxResults (audit Q-3; mirrors the content-search H1 fix).
+          // The `+200` clamp is redundant while the schema caps excludeNodeIds
+          // at 200, and kept as a second bound if that cap ever moves.
           const upstreamMax = Math.min(maxResults + excluded.size, maxResults + 200);
           const directHits = await searchCollectionsByKeyword(query, upstreamMax);
           const keptDirect = directHits.filter(keepNode);
@@ -251,13 +137,20 @@ carry a matching subject/level tag are excluded.`,
           }
         }
 
-        const level1 = await getChildCollections(startId, 100);
-
-        if (!query) {
-          return renderOut(level1, 'collection_children');
+        const level1 = await getChildCollectionsResult(startId, 100);
+        // An unread listing must not become "nothing found": both answers below
+        // are statements about the catalogue ("no collections", "try a broader
+        // term") that the caller will act on, and neither is true when the
+        // repository simply did not answer.
+        if (!level1.reachable) {
+          throw new Error(`Die Sammlungsliste zu ${startId} ist derzeit nicht erreichbar.`);
         }
 
-        const matches = await findCollectionsByTreeTraversal(level1, query);
+        if (!query) {
+          return renderOut(level1.nodes, 'collection_children');
+        }
+
+        const matches = await findCollectionsByTreeTraversal(level1.nodes, query);
 
         if (matches.length === 0) {
           const text = `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`;
@@ -273,11 +166,13 @@ carry a matching subject/level tag are excluded.`,
     },
   });
 
-  server.tool(
-    'get_collection_contents',
-    `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections) und zeigen willst, was konkret drinsteckt.
+  registerWloTool(server, {
+    name: 'get_collection_contents',
+    title: 'WLO Sammlungsinhalte',
+    widgetUri: searchResultsWidgetUri,
+    description: `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections, aus dem Themenbaum oder aus einer früheren Antwort) und zeigen willst, was konkret drinsteckt.
 contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen (Unter-Themenseiten), "both" = alles. includeSubcollections=true durchläuft den gesamten Unterbaum rekursiv.`,
-    {
+    inputSchema: {
       nodeId: z.string().describe('Collection node ID from search_wlo_collections results'),
       query: z.string().optional().describe(
         'Optional search/filter query to rerank results within the collection'
@@ -300,12 +195,15 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
-    { readOnlyHint: true },
-    async (params) => {
+    outputSchema: nodeListSchema,
+    annotations: { readOnlyHint: true },
+    handler: async (params) => {
       const filter = (params.contentFilter ?? 'files') as 'files' | 'folders' | 'both';
       const maxResults = params.maxResults ?? 20;
       const skipCount = params.skipCount ?? 0;
-      const excluded = new Set(params.excludeNodeIds ?? []);
+      // Explicit element type: the seam hands the handler untyped args, so an
+      // inferred Set<unknown> would not satisfy collectRecursiveContents.
+      const excluded = new Set<string>(params.excludeNodeIds ?? []);
 
       try {
         let allNodes: FormattedNode[] = [];
@@ -346,19 +244,24 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
           pagination: { maxItems: maxResults, skipCount: effectiveSkip, totalResults: totalHits },
           repositoryUrl: WLO_REPOSITORY_URL,
         });
-        return { content: [{ type: 'text' as const, text }, meta] };
+        return {
+          content: [{ type: 'text' as const, text }, meta],
+          structuredContent: { total: totalHits, count: allNodes.length, results: allNodes },
+        };
       } catch (err) {
         return toolError('Fehler beim Abruf der Sammlungsinhalte', err);
       }
     },
-  );
+  });
 
-  server.tool(
-    'search_wlo_within_collection',
-    `Durchsuche/filtere die Inhalte INNERHALB einer bestimmten WLO-Sammlung — z.B. "welche Videos zu Zellteilung gibt es in dieser Sammlung?". Nutze dies, wenn du bereits eine Sammlung (nodeId) hast und sie per Volltext und Filtern (Fach/Stufe/Typ) eingrenzen willst.
+  registerWloTool(server, {
+    name: 'search_wlo_within_collection',
+    title: 'WLO Suche in Sammlung',
+    widgetUri: searchResultsWidgetUri,
+    description: `Durchsuche/filtere die Inhalte INNERHALB einer bestimmten WLO-Sammlung — z.B. "welche Videos zu Zellteilung gibt es in dieser Sammlung?". Nutze dies, wenn du bereits eine Sammlung (nodeId) hast und sie per Volltext und Filtern (Fach/Stufe/Typ) eingrenzen willst.
 Für eine ungebundene Suche über ganz WLO nutze search_wlo_content; um Inhalte ungefiltert zu listen get_collection_contents.
 NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.`,
-    {
+    inputSchema: {
       nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),
       educationalContext: z.string().optional().describe('Bildungsstufe: "Primarstufe", "Sekundarstufe I", … or URI'),
@@ -370,8 +273,9 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
       skipCount: z.number().int().min(0).optional().default(0).describe('Backend offset for "more results" paging (default 0)'),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
-    { readOnlyHint: true },
-    async (params) => {
+    outputSchema: nodeListSchema,
+    annotations: { readOnlyHint: true },
+    handler: async (params) => {
       try {
         const res = await searchWithinCollection({
           nodeId: params.nodeId,
@@ -393,6 +297,25 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
           ? `\n_Hinweis: Durchsucht wurden die ersten 100 von ${res.collectionTotal} Inhalten dieser Sammlung._`
           : '';
 
+        // A bare "0 Treffer" is indistinguishable from "this collection does
+        // not exist" and from "there is nothing on the topic" (audit
+        // 2026-07-30). The usual cause on a portal-level collection is that the
+        // material sits one level DOWN: matching runs over the direct contents,
+        // and those are sub-collections. Measured on the Mathematik portal: 15
+        // direct entries, none matching "Bruch", 11 sub-collections below — so
+        // the trigger is "no MATCHES", not "no contents at all".
+        let emptyHint = '';
+        if (res.results.length === 0) {
+          const folders = await getCollectionContents(params.nodeId, 'folders', 1, 0)
+            .catch(() => null);
+          const subs = folders?.pagination.total ?? 0;
+          if (subs > 0) {
+            emptyHint = res.collectionTotal > 0
+              ? `\n\n_Keiner der ${res.collectionTotal} direkten Inhalte dieser Sammlung passt zur Suche. Sie hat ${subs} Unter-Sammlung(en) — liste sie mit get_collection_contents (contentFilter="folders") auf und suche dann gezielt in einer davon._`
+              : `\n\n_Diese Sammlung enthält keine eigenen Materialien, sondern ${subs} Unter-Sammlung(en). Liste sie mit get_collection_contents (contentFilter="folders") auf und suche dann in einer davon._`;
+          }
+        }
+
         const meta = queryMetaContent({
           toolName: 'search_wlo_within_collection',
           // The scope is the collection's own contents listing, matched locally
@@ -409,14 +332,23 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
           unresolvedFilters: res.unresolved.length ? res.unresolved : undefined,
         });
 
+        // Each hint rides as its OWN content block rather than being appended to
+        // `text`: in json mode `text` is the payload, and a German sentence glued
+        // to it makes JSON.parse throw for every client that reads it (the same
+        // rule search_wlo_content follows for the unresolved-filter hint).
         const hint = formatUnresolvedHint(res.unresolved);
-        const content = [{ type: 'text' as const, text: text + sampleHint }];
-        if (hint) content.push({ type: 'text' as const, text: hint });
+        const content = [{ type: 'text' as const, text }];
+        for (const extra of [sampleHint, emptyHint, hint]) {
+          if (extra.trim()) content.push({ type: 'text' as const, text: extra.trim() });
+        }
         content.push(meta);
-        return { content };
+        return {
+          content,
+          structuredContent: { total: res.pagination.total, count: res.results.length, results: res.results },
+        };
       } catch (err) {
         return toolError('Fehler bei der Suche in der Sammlung', err);
       }
     },
-  );
+  });
 }

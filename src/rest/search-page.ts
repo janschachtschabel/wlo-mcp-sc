@@ -70,7 +70,13 @@ export function renderSearchPage(data: SearchPageData): string {
     '<!doctype html>\n<html lang="de"><head><meta charset="utf-8" />' +
     '<meta name="viewport" content="width=device-width, initial-scale=1" />' +
     `<title>WLO-Suche${q ? `: ${escapeHtml(q)}` : ''}</title>` +
-    '<style>body{font:16px/1.55 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#1a1a1a}' +
+    // The palette below is a LIGHT one. It must say so: without an explicit
+    // background a browser in dark mode paints its own dark canvas under the
+    // near-black text (measured 2026-08-03: ~1.1:1, unreadable). `color-scheme`
+    // makes the UA agree — canvas, scrollbars and form controls alike.
+    '<style>:root{color-scheme:light}' +
+    'body{font:16px/1.55 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;' +
+    'color:#1a1a1a;background:#ffffff}' +
     'h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:1.6rem}ol{padding-inline-start:1.2rem}li{margin:0 0 .7rem}' +
     'small{color:#565656}.warn{background:#fff4d6;padding:.5rem .8rem;border-radius:6px}a{color:#14539a}</style>' +
     `</head><body><h1>WLO-Suchergebnisse${q ? `: „${escapeHtml(q)}“` : ''}</h1>` +

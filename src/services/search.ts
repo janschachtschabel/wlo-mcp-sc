@@ -12,12 +12,14 @@ import { getCollectionContents, getNodeTextContent, ngsearch, searchCollectionsB
 import { enhancedSearch, rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, resolveFacetCounts } from '../formatter.js';
-import type { LabeledCriterion, UnresolvedFilter } from '../tools/shared.js';
-import { buildFilterCriteria, mapPool } from '../tools/shared.js';
+import type { LabeledCriterion, UnresolvedFilter } from '../filter-criteria.js';
+import { buildFilterCriteria } from '../filter-criteria.js';
+import { mapPool } from '../concurrency.js';
 import type { WikiSummary } from '../wikipedia-api.js';
 import { fetchWikipediaSummary } from '../wikipedia-api.js';
 import { nodeMatchesCriteria, nodeMatchesText } from '../node-match.js';
 import { log } from '../logger.js';
+import { capText } from '../text-cap.js';
 import { getCompendiumTexts } from './compendium.js';
 import type { SwimlanePayload } from './topic-page.js';
 import { resolveTopicPageSwimlanes } from './topic-page.js';
@@ -157,9 +159,7 @@ const TEXT_CONTENT_CAP = 4000;
 async function enrichTextContent(nodes: FormattedNode[]): Promise<void> {
   await mapPool(nodes, 10, async (n) => {
     const full = await getNodeTextContent(n.nodeId);
-    n.textContent = full && full.length > TEXT_CONTENT_CAP
-      ? full.slice(0, TEXT_CONTENT_CAP) + '\n[…gekürzt]'
-      : (full ?? '');
+    n.textContent = full ? capText(full, TEXT_CONTENT_CAP).text : '';
     return null;
   });
 }
@@ -167,8 +167,10 @@ async function enrichTextContent(nodes: FormattedNode[]): Promise<void> {
 /**
  * Gap-fill the FULL compendium text for collection/topic-page results that did
  * not carry it inline (the search projection can differ from full metadata).
- * One bulk `-all-` fetch for the missing ids only — nodes already carrying it
- * are left untouched (no redundant round-trip).
+ * For the missing ids ONLY — nodes already carrying the text are left
+ * untouched. Note the cost: `getNodesMetadata` is a pooled fan-out of one
+ * `-all-` request PER id, not a bulk endpoint (edu-sharing has none), so this
+ * enrichment is proportional to how many results lack the text inline.
  */
 async function enrichCompendium(nodes: FormattedNode[]): Promise<void> {
   const missing = nodes.filter(n => !n.compendiumText);

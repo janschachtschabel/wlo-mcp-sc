@@ -9,7 +9,7 @@ fehlendem Zugriff auf die eigentlichen Inhalte (nicht nur Metadaten).
 ### 1. Lizenz — die Eigenschaft ist da, die Daten fehlen
 
 `ccm:commonlicense_key` steht in `DISPLAY_PROPS`, wird in `formatNode` zu
-`FormattedNode.license` und von `renderTile` als Faktenzeile „Lizenz" gerendert.
+`FormattedNode.license` und von `renderTile` als Faktenzeile „Lizenz“ gerendert.
 Der Pfad ist vollständig.
 
 Bei sechs geprüften Tutory-Arbeitsblättern ist das Feld jedoch **auch mit voller
@@ -18,7 +18,7 @@ Objekt `license: { icon: ".../licenses/none.svg", url: null }`. Andere Treffer
 (z. B. das YouTube-Video) tragen sehr wohl eine Lizenz.
 
 → Kein Fehler in unserer Kette, sondern eine Datenlücke. **Aber:** Wir lassen die
-Zeile bei fehlender Lizenz weg. Für Lehrende ist „keine Lizenzangabe" eine
+Zeile bei fehlender Lizenz weg. Für Lehrende ist „keine Lizenzangabe“ eine
 sicherheitsrelevante Information — sie dürfen das Material dann gerade **nicht**
 als frei nachnutzbar behandeln. Das Weglassen ist die schlechteste Variante.
 
@@ -72,7 +72,7 @@ brauchen.
 `base.css` ist für Kacheln allein zuständig (`search-results/styles.css`
 enthält nur `max-width`). Das Raster stretcht Kacheln einer Zeile auf gleiche
 Höhe, **aber die Elemente im Inneren richten sich nicht aneinander aus**: Die
-Faktenzeilen (Lizenz/Quelle) und der „Details"-Button folgen direkt auf die
+Faktenzeilen (Lizenz/Quelle) und der „Details“-Button folgen direkt auf die
 Beschreibung. Ist diese kürzer, rutschen sie nach oben. Das erklärt das im
 Screenshot sichtbare Versetzen.
 
@@ -149,9 +149,9 @@ und nicht in den Code.
 
 `FormattedNode.license` bleibt unverändert (leer bei fehlender Angabe) — die
 Rohdaten sollen ehrlich bleiben. Die **Darstellung** ändert sich:
-- Kachel (`tile.ts`): fehlende Lizenz → Zeile „Lizenz: nicht angegeben".
+- Kachel (`tile.ts`): fehlende Lizenz → Zeile „Lizenz: nicht angegeben“.
 - Markdown-Ausgabe (`formatter.ts`): dieselbe Aussage.
-Das REST-Suchergebnis nutzt bereits „Lizenz unklar" — die Formulierung wird
+Das REST-Suchergebnis nutzt bereits „Lizenz unklar“ — die Formulierung wird
 angeglichen.
 
 ### Neues Widget W5 — Lesetext (Markdown)
@@ -190,10 +190,10 @@ ein Tool rufen, sondern reicht die Auswahl an die Konversation weiter:
 - Pro Inhaltskachel eine Auswahl-Checkbox (`data-node-id`), Zustand lokal im
   Widget-State (überlebt Repaints wie der Baum-Zustand).
 - Ein Aktionsbalken erscheint, sobald mindestens eine Kachel gewählt ist:
-  „N ausgewählt · Weiterverwenden".
+  „N ausgewählt · Weiterverwenden“.
 - Der Button sendet über `host.sendFollowUp` eine Nachricht in Nutzerstimme, die
   **Titel und nodeIds explizit aufführt** — die Lehre aus dem „Inhalte
-  anzeigen"-Button, der ohne nodeId scheiterte.
+  anzeigen“-Button, der ohne nodeId scheiterte.
 - Capability-gebunden über `canFollowUp()`; ohne Host-Unterstützung erscheinen
   weder Checkboxen noch Balken (keine toten Bedienelemente).
 

@@ -30,9 +30,23 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+// netguard makes the documented "no network required" an enforced property
+// instead of a convention: it fails any fetch to a non-loopback host that no
+// installFetchMock intercepted. `--import` propagates to the per-file child
+// processes the test runner spawns, the same way `--import tsx` does.
+const netguard = new URL('../tests/netguard.mjs', import.meta.url).href;
+
+// `npm run test:coverage` adds the runner's own coverage report. Opt-in rather
+// than always-on: the report is long, and `npm test` is the thing run dozens of
+// times a day. Node 20 has it behind --experimental-test-coverage; the flag is
+// accepted (and unnecessary) on newer runtimes too, so one spelling serves both.
+const coverage = process.argv.includes('--coverage')
+  ? ['--experimental-test-coverage']
+  : [];
+
 const { status } = spawnSync(
   process.execPath,
-  ['--import', 'tsx', '--test', ...files],
+  ['--import', 'tsx', '--import', netguard, ...coverage, '--test', ...files],
   { stdio: 'inherit' },
 );
 process.exit(status ?? 1);

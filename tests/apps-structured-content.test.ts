@@ -101,3 +101,57 @@ test('get_topic_page_content returns a valid (empty) swimlane payload when nothi
     assert.deepEqual(payload.swimlanes, []);
   } finally { await client.close(); mock.restore(); }
 });
+
+test('get_collection_contents returns text + nodeList structuredContent', async () => {
+  // It was registered with the plain `server.tool`, so it advertised no
+  // outputSchema and returned only a text blob. The widget follow-up button
+  // "Inhalte anzeigen" routes here, so the flow dead-ended in unstructured
+  // text (live probe 2026-07-30: structuredContent keys []).
+  const mock = installFetchMock(() => oneNode());
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_collection_contents', arguments: { nodeId: 'coll-1' } });
+    assert.ok(toolText(result).length > 0, 'legacy text present');
+    const sc = nodeListSchema.parse(result.structuredContent);
+    assert.equal(sc.results[0]?.nodeId, 'n1');
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('get_related_content returns text + nodeList structuredContent', async () => {
+  // Same gap, same cause: the "Ähnliche Inhalte" button routes here.
+  const mock = installFetchMock(() => oneNode());
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_related_content', arguments: { nodeId: 'n1' } });
+    assert.ok(toolText(result).length > 0, 'legacy text present');
+    const sc = nodeListSchema.parse(result.structuredContent);
+    assert.ok(Array.isArray(sc.results));
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('get_node_details returns text + nodeList structuredContent', async () => {
+  // A single node had no structuredContent and no widget, so the one tool that
+  // answers "tell me about THIS material" rendered nothing — while the detail
+  // view for exactly that shape already existed (audit 2026-07-30). One hit is
+  // a list of one: the results widget shows its tile, and "Details" opens the
+  // Einzelansicht with licence, source and the follow-up actions.
+  const mock = installFetchMock(() => ({ json: { node: makeNode('n1', 'Titel n1') } }));
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'n1' } });
+    assert.ok(toolText(result).length > 0, 'legacy text present');
+    const sc = nodeListSchema.parse(result.structuredContent);
+    assert.equal(sc.count, 1, 'exactly the requested node');
+    assert.equal(sc.results[0]?.nodeId, 'n1');
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('get_node_details on a missing node still satisfies its schema', async () => {
+  const mock = installFetchMock(() => ({ status: 404, json: {} }));
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'nope' } });
+    const sc = nodeListSchema.parse(result.structuredContent);
+    assert.equal(sc.results.length, 0, 'the widget shows its empty state, the host does not fail');
+  } finally { await client.close(); mock.restore(); }
+});

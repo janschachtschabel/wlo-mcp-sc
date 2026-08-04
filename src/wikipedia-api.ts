@@ -4,7 +4,9 @@
  *
  * Isolated from the WLO/edu-sharing client on purpose: it targets a different
  * host, needs its own descriptive User-Agent (Wikimedia policy), and must never
- * pull WLO config into a public encyclopedia lookup. No API key required.
+ * send a repository credential to a public encyclopedia — which is why it calls
+ * `fetch` directly instead of the credential-attaching `wloFetch`. The one thing
+ * it does share is the upstream timeout constant. No API key required.
  *
  * Two endpoints:
  *   - REST summary: ``https://<lang>.wikipedia.org/api/rest_v1/page/summary/{title}``
@@ -15,7 +17,14 @@
  */
 
 import { log } from './logger.js';
-import { WLO_FETCH_TIMEOUT_MS } from './wlo-api.js';
+import { readJson } from './read-json.js';
+import { pickRelevantTitle } from './wikipedia-relevance.js';
+// The upstream TIMEOUT is shared with the WLO client (see wikiFetch below);
+// nothing else is, and in particular no repository credential can reach here —
+// this module calls `fetch` directly, never the credential-attaching wloFetch.
+// Imported from the config leaf rather than the `wlo-api` barrel so a public
+// encyclopedia lookup does not drag in the whole edu-sharing client.
+import { WLO_FETCH_TIMEOUT_MS } from './wlo-config.js';
 
 /**
  * Descriptive User-Agent — Wikimedia's REST API policy requires one that
@@ -31,6 +40,19 @@ export interface WikiSummary {
   thumbnail?: string;
   url: string;
   lang: string;
+  /**
+   * How the article was reached:
+   *  - `exact`  — the title as asked, or a Wikipedia REDIRECT from it. Editorial,
+   *    so it is trusted as-is.
+   *  - `fuzzy`  — no article of that name; resolved through a search and checked
+   *    for relevance (see `wikipedia-relevance.ts`). Still the best available
+   *    answer, but the caller asked for something the encyclopedia does not have
+   *    under that name.
+   *
+   * Consumers that ATTRIBUTE the text ("Quelle: Wikipedia-Artikel …") should
+   * weigh the two differently: a fuzzy hit cites an article the user never named.
+   */
+  match: 'exact' | 'fuzzy';
 }
 
 /** Raw REST summary shape (only the fields we consume). */
@@ -69,6 +91,7 @@ async function fetchSummaryByTitle(
   title: string,
   lang: string,
   sections: number,
+  match: 'exact' | 'fuzzy',
 ): Promise<WikiSummary | null> {
   const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   let res: Response;
@@ -79,23 +102,32 @@ async function fetchSummaryByTitle(
     return null;
   }
   if (!res.ok) return null;
-  const data = (await res.json()) as RestSummary;
-  if (!data.extract || (data.type && data.type !== 'standard')) return null;
+  const data = await readJson<RestSummary>(res, 'wikipedia summary');
+  if (!data?.extract || (data.type && data.type !== 'standard')) return null;
   return {
     title: data.title ?? title,
     extract: capSections(data.extract, sections),
     thumbnail: data.thumbnail?.source,
     url: data.content_urls?.desktop?.page ?? `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
     lang: data.lang ?? lang,
+    match,
   };
 }
 
-/** opensearch → the best-matching real title for a fuzzy query, or null. */
-async function resolveTitle(query: string, lang: string): Promise<string | null> {
+/**
+ * How many opensearch candidates to weigh. Measured 2026-08-02: for "Dreiecke"
+ * the correct article ("Dreieck") was the FIFTH result while a mountain in the
+ * Allgäu was the first, so the old `limit: 1` could not have found it under any
+ * scoring rule. Ten is one request either way and still a short list to judge.
+ */
+const CANDIDATE_LIMIT = 10;
+
+/** opensearch → real article titles for a fuzzy query, best-first, possibly empty. */
+async function resolveTitleCandidates(query: string, lang: string): Promise<string[]> {
   const params = new URLSearchParams({
     action: 'opensearch',
     search: query,
-    limit: '1',
+    limit: String(CANDIDATE_LIMIT),
     namespace: '0',
     format: 'json',
   });
@@ -105,18 +137,25 @@ async function resolveTitle(query: string, lang: string): Promise<string | null>
     res = await wikiFetch(url);
   } catch (err) {
     log.warn('wikipedia opensearch failed', { query, lang, error: String(err) });
-    return null;
+    return [];
   }
-  if (!res.ok) return null;
+  if (!res.ok) return [];
   // opensearch shape: [query, titles[], descriptions[], urls[]]
-  const data = (await res.json()) as [string, string[], string[], string[]];
-  return Array.isArray(data) && Array.isArray(data[1]) && data[1].length ? data[1][0] : null;
+  const data = await readJson<[string, string[], string[], string[]]>(res, 'wikipedia opensearch');
+  return Array.isArray(data) && Array.isArray(data[1]) ? data[1].filter(t => typeof t === 'string') : [];
 }
 
 /**
  * Resolve a query to a Wikipedia article summary. Tries the direct title
- * lookup first; on a miss, resolves a real title via opensearch and retries.
- * Returns null when no article matches.
+ * lookup first; on a miss, weighs the opensearch candidates and takes the one
+ * the query is actually about. Returns null when no article matches — including
+ * when candidates existed but none of them was on topic.
+ *
+ * Returning nothing is the deliberate outcome for an off-topic candidate. A
+ * caller that turns this into teaching material appends "Quelle:
+ * Wikipedia-Artikel „X"", so a plausible-but-wrong article does not merely look
+ * odd — it publishes a false attribution. Measured before this guard existed:
+ * "Stadt Berlin" answered with the Swiss federal city.
  *
  * @param sections 1..3 leading paragraphs of the lead extract to keep (default 1).
  */
@@ -131,12 +170,26 @@ export async function fetchWikipediaSummary(
   // (this function is reused by the REST layer and search bundling).
   const safeLang = /^[a-z]{2,3}$/.test(lang) ? lang : 'de';
 
-  const direct = await fetchSummaryByTitle(query, safeLang, sections);
+  // A direct hit is the title as asked OR a Wikipedia redirect from it, and a
+  // redirect is an editorial statement that both names denote the same topic.
+  // It is therefore trusted without a relevance check — checking it would only
+  // reject correct answers ("Bruchrechnen" → "Bruchrechnung" share no prefix
+  // any rule could relate without a stemmer).
+  const direct = await fetchSummaryByTitle(query, safeLang, sections, 'exact');
   if (direct) return direct;
 
-  const title = await resolveTitle(query, safeLang);
-  if (title && title.toLowerCase() !== query.toLowerCase()) {
-    return fetchSummaryByTitle(title, safeLang, sections);
+  const candidates = await resolveTitleCandidates(query, safeLang);
+  const picked = pickRelevantTitle(query, candidates);
+  if (!picked) {
+    if (candidates.length) {
+      log.info('wikipedia: no candidate was on topic', { query, lang: safeLang, candidates });
+    }
+    return null;
   }
-  return null;
+  // The direct lookup for this exact name already failed above (404, or a
+  // disambiguation page, which is not an article) — asking again would spend a
+  // round trip to reach the same null.
+  if (picked.toLowerCase() === query.toLowerCase()) return null;
+
+  return fetchSummaryByTitle(picked, safeLang, sections, 'fuzzy');
 }

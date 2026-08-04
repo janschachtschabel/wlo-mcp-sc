@@ -19,6 +19,7 @@
  */
 
 import { t, type Locale, type StringKey } from './strings.js';
+import { sanitizeText } from '../../../text-sanitize.js';
 
 /** Actions a TOOL performs — what a result tile can offer. */
 export type ToolFollowUpAction = 'contents' | 'topicPage' | 'text' | 'related';
@@ -36,6 +37,21 @@ export const FOLLOW_UP_TOOLS: Readonly<Record<ToolFollowUpAction, string>> = {
 };
 
 /**
+ * The INPUT PARAMETER each target tool expects the id under — not all of them
+ * call it `nodeId`. `get_topic_page_content` takes query/collectionId/variantId
+ * and rejects `nodeId` outright ("Bitte query, collectionId oder variantId
+ * angeben.", live 2026-07-30), so a message saying "mit dieser nodeId" only
+ * worked when the model translated the name on its own. A test checks each
+ * entry against the registered tool's real input schema.
+ */
+export const FOLLOW_UP_PARAMS: Readonly<Record<ToolFollowUpAction, string>> = {
+  contents: 'nodeId',
+  topicPage: 'collectionId',
+  text: 'nodeId',
+  related: 'nodeId',
+};
+
+/**
  * Explicit action → string key. A template literal with `as never` compiled
  * even when a key was missing and rendered the word "undefined" into the
  * prompt; this table makes a missing key a compile error.
@@ -50,15 +66,6 @@ const ASK_KEY: Readonly<Record<FollowUpAction, StringKey>> = {
   exercises: 'followUp_exercises',
 };
 
-/** Cap on the title inside a prompt — long enough to identify, short enough
- *  that it cannot crowd out the id or flood the turn. */
-const TITLE_MAX = 120;
-
-/** True for C0/C1 control characters — line breaks and tabs among them. */
-function isControl(codePoint: number): boolean {
-  return codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f);
-}
-
 /**
  * Make a publisher-supplied title safe to embed in an injected USER message.
  *
@@ -67,17 +74,10 @@ function isControl(codePoint: number): boolean {
  * control characters would let a title pose as a separate instruction block, so
  * they collapse to spaces and the length is capped (audit finding 2026-07-28).
  *
- * Written as a codepoint check rather than a regex character class so no
- * control character has to appear in this source file.
+ * The rule itself lives in `text-sanitize.ts` because the server needs it too
+ * (`wlo_auth_status` embeds a user-supplied account name).
  */
-export function sanitizeTitle(raw: string): string {
-  let flat = '';
-  for (const ch of raw ?? '') {
-    flat += isControl(ch.codePointAt(0) ?? 0) ? ' ' : ch;
-  }
-  flat = flat.replace(/\s+/g, ' ').trim();
-  return flat.length > TITLE_MAX ? `${flat.slice(0, TITLE_MAX).trimEnd()}…` : flat;
-}
+export const sanitizeTitle = sanitizeText;
 
 /** The user message a follow-up button injects. */
 export function followUpPrompt(
@@ -87,13 +87,16 @@ export function followUpPrompt(
   locale: Locale,
 ): string {
   const clean = sanitizeTitle(title);
+  // Model tasks name no tool — none performs them — and then the id travels
+  // under the neutral label the whole system uses elsewhere.
+  const tool = (FOLLOW_UP_TOOLS as Partial<Record<FollowUpAction, string>>)[action];
+  const param = (FOLLOW_UP_PARAMS as Partial<Record<FollowUpAction, string>>)[action] ?? 'nodeId';
   // Without a usable title the id alone still identifies the material; empty
   // quotes would say nothing.
-  const what = clean
-    ? `${t(locale, 'quoteOpen')}${clean}${t(locale, 'quoteClose')} (nodeId: ${nodeId})`
-    : `(nodeId: ${nodeId})`;
+  const id = `(${param}: ${nodeId})`;
+  const what = clean ? `${t(locale, 'quoteOpen')}${clean}${t(locale, 'quoteClose')} ${id}` : id;
   const ask = `${t(locale, ASK_KEY[action])} ${what}`;
-  // Model tasks name no tool — none performs them.
-  const tool = (FOLLOW_UP_TOOLS as Partial<Record<FollowUpAction, string>>)[action];
-  return tool ? `${ask}. ${t(locale, 'followUpTool').replace('{tool}', tool)}` : ask;
+  return tool
+    ? `${ask}. ${t(locale, 'followUpTool').replace('{tool}', tool).replace('{param}', param)}`
+    : ask;
 }

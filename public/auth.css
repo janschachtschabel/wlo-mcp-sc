@@ -1,0 +1,157 @@
+/* auth.css — shared by the two access-block pages.
+   Token names and values match public/launcher.html so the three pages read as
+   one product. A separate file rather than inline style because both pages use
+   it: one copy is one place to change, and it lets the CSP for these pages drop
+   'unsafe-inline' entirely. */
+
+:root {
+  --bg: #f3f7fc;
+  --surface: #ffffff;
+  --surface-2: #e7eef8;
+  --text: #12212f;
+  --text-muted: #47586a;
+  --border: #b3c6da;
+  /* Separate token for the outline of things you OPERATE — inputs, buttons.
+     WCAG 1.4.11 wants 3:1 there, and the decorative `--border` inherited from
+     the launcher measures 1.75:1 against white: a field whose edge you cannot
+     find. This one is 3.30:1. `--border` keeps its job on cards and dividers,
+     where no threshold applies. */
+  --border-control: #7f8fa3;
+  --accent: #1565c0;
+  --accent-fg: #ffffff;
+  --accent-strong: #0d4a94;
+  --danger: #9a2b2b;
+  --danger-weak: #fbeaea;
+  --ok: #1d6b3a;
+  --ok-weak: #e6f4ea;
+  --radius: 12px;
+  --maxw: 44rem;
+  --space: 1rem;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1826;
+    --surface: #14273d;
+    --surface-2: #1d3350;
+    --text: #e6eef8;
+    --text-muted: #a6b8cd;
+    --border: #34527a;
+    --border-control: #6486b5; /* 4.05:1 on --surface */
+    --accent: #64b5f6;
+    --accent-fg: #08243f;
+    --accent-strong: #9ccbfa;
+    --danger: #ff9d9d;
+    --danger-weak: #3a1d1d;
+    --ok: #8fe0ab;
+    --ok-weak: #14301f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: calc(var(--space) * 1.5);
+  background: var(--bg);
+  color: var(--text);
+  font: 1rem/1.6 var(--font);
+}
+
+main { max-width: var(--maxw); margin: 0 auto; }
+
+h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 0.5rem; }
+h2 { font-size: 1.15rem; margin: calc(var(--space) * 2) 0 0.5rem; }
+p { margin: 0 0 var(--space); }
+
+.lede { color: var(--text-muted); }
+
+/* The one English line: this is a German product, but the audience includes
+   people whose AI host speaks English. A full i18n layer for two pages would be
+   machinery without a second locale to justify it. */
+.lang-note { font-size: 0.85rem; color: var(--text-muted); margin-bottom: calc(var(--space) * 1.5); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: calc(var(--space) * 1.25);
+}
+
+label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+
+input[type="text"], input[type="password"], textarea {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+}
+
+textarea { font-family: var(--mono); font-size: 0.9rem; min-height: 7rem; resize: vertical; }
+
+.field { margin-bottom: var(--space); }
+.hint { font-size: 0.85rem; color: var(--text-muted); margin: 0.25rem 0 0; }
+
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  /* 2.75rem ≥ 44px: comfortably above the 24px floor, and the same height as
+     the inputs above it so the column does not wobble. */
+  min-height: 2.75rem;
+  padding: 0 1.1rem;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+button:hover { background: var(--accent-strong); }
+button[disabled] { cursor: progress; opacity: 0.7; }
+button.secondary { color: var(--accent); background: transparent; border-color: var(--border-control); }
+button.secondary:hover { background: var(--surface-2); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+
+/* Status regions. Colour is never the only signal: each carries a text prefix
+   and a left border, so it reads the same to someone who cannot see the tint. */
+.status { margin-top: var(--space); padding: 0.8rem 1rem; border-radius: 8px; border-inline-start: 4px solid; }
+.status:empty { display: none; }
+.status.error { color: var(--danger); background: var(--danger-weak); border-color: var(--danger); }
+.status.ok { color: var(--ok); background: var(--ok-weak); border-color: var(--ok); }
+.status.busy { color: var(--text-muted); background: var(--surface-2); border-color: var(--border); }
+
+.block-out { margin-top: var(--space); }
+.block-out[hidden] { display: none; }
+
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+
+.warn {
+  margin-top: calc(var(--space) * 1.5);
+  padding: 0.8rem 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+/* Spacing lives here, not in `style=` attributes: the CSP for these pages omits
+   'unsafe-inline', so an inline style is silently dropped and the layout shifts
+   with nothing in the console to explain it. */
+.warn h2 { margin-top: 0; }
+.warn p:last-child { margin-bottom: 0; }
+
+footer { margin-top: calc(var(--space) * 2); font-size: 0.9rem; color: var(--text-muted); }
+a { color: var(--accent); }
+
+ol, ul { padding-inline-start: 1.4rem; }
+li { margin-bottom: 0.4rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

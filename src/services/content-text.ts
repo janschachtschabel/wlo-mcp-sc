@@ -16,6 +16,7 @@
 import { WLO_TEXT_TIMEOUT_MS, getNodeMetadata, readNodeTextContent, stripStoreRef } from '../wlo-api.js';
 import { extractTextFromUrl } from '../text-extraction-api.js';
 import { nodeTitle } from '../node-match.js';
+import { capText } from '../text-cap.js';
 
 /** Where the returned text came from. */
 export type ContentTextSource = 'repository' | 'external-extraction' | 'none';
@@ -50,8 +51,12 @@ export interface ContentText {
   reason?: ContentTextMiss;
 }
 
-/** Below this a "text" is boilerplate (cookie banner, nav crumbs), not content. */
-const MIN_USEFUL_CHARS = 200;
+/**
+ * Below this a "text" is boilerplate (cookie banner, nav crumbs), not content.
+ * Exported because `services/url-text.ts` judges extraction results by the same
+ * rule — one floor, not two that drift apart.
+ */
+export const MIN_USEFUL_CHARS = 200;
 
 /** Fields read off the node: its title and the external URL for the fallback. */
 const NODE_PROPS = ['ccm:wwwurl', 'cclom:title', 'cm:title', 'cm:name'];
@@ -86,17 +91,10 @@ export async function getContentText(nodeId: string, maxChars: number): Promise<
   return cap({ ...base, text: extracted, source: 'external-extraction', sourceUrl: wwwurl }, maxChars);
 }
 
-/** Cut to maxChars at a word boundary and disclose that it happened. */
+/** Apply the shared truncation rule (text-cap.ts) to a ContentText in progress. */
 function cap(
   r: { nodeId: string; title: string; text: string; source: ContentTextSource; sourceUrl: string | null },
   maxChars: number,
 ): ContentText {
-  const full = r.text.trim();
-  if (full.length <= maxChars) {
-    return { ...r, text: full, charCount: full.length, truncated: false };
-  }
-  const slice = full.slice(0, maxChars);
-  const lastSpace = slice.lastIndexOf(' ');
-  const cut = lastSpace > maxChars * 0.8 ? slice.slice(0, lastSpace) : slice;
-  return { ...r, text: `${cut.trimEnd()}\n\n[…gekürzt]`, charCount: full.length, truncated: true };
+  return { ...r, ...capText(r.text, maxChars) };
 }

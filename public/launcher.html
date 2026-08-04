@@ -16,6 +16,12 @@
       --text: #12212f;
       --text-muted: #47586a;
       --border: #b3c6da;
+      /* The border of something you OPERATE — a field, a chip, a button — must
+         reach 3:1 (WCAG 1.4.11), where the decorative `--border` above measures
+         1.75:1 on this surface. Text ratios passing is what makes this easy to
+         miss: the page looks right and the input is hard to find. Same value as
+         `auth.css`, so the site keeps one palette. */
+      --border-control: #7f8fa3;
       --accent: #1565c0;
       --accent-fg: #ffffff;
       --accent-weak: #dbeafe;
@@ -40,6 +46,7 @@
         --text: #e6eef8;
         --text-muted: #a6b8cd;
         --border: #34527a;
+        --border-control: #6486b5;
         --accent: #64b5f6;
         --accent-fg: #08243f;
         --accent-weak: #12294a;
@@ -77,7 +84,7 @@
       font-size: 0.97rem;
     }
 
-    .lang { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+    .lang { display: inline-flex; border: 1px solid var(--border-control); border-radius: 999px; overflow: hidden; }
     .lang button {
       appearance: none; border: 0; background: var(--surface); color: var(--text);
       padding: 0.35rem 0.8rem; font: inherit; cursor: pointer; min-height: 2.25rem;
@@ -100,7 +107,7 @@
     .chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
     .chip span {
       display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.75rem;
-      padding: 0.5rem 0.9rem; border: 1.5px solid var(--border); border-radius: 999px;
+      padding: 0.5rem 0.9rem; border: 1.5px solid var(--border-control); border-radius: 999px;
       background: var(--surface); color: var(--text); font-weight: 600; cursor: pointer;
     }
     .chip input:checked + span { border-color: var(--accent); background: var(--accent-weak); color: var(--accent-strong); }
@@ -115,7 +122,7 @@
     button.btn, a.btn {
       appearance: none; font: inherit; font-weight: 600; cursor: pointer;
       border-radius: var(--radius); padding: 0.7rem 1.2rem; min-height: 2.85rem;
-      border: 1.5px solid var(--border); background: var(--surface); color: var(--text);
+      border: 1.5px solid var(--border-control); background: var(--surface); color: var(--text);
       text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;
     }
     button.btn:hover, a.btn:hover { background: var(--surface-2); }
@@ -152,7 +159,7 @@
     .hint { color: var(--text-muted); font-size: 0.875rem; margin: 0; }
     input[type="text"], input[type="search"], select, textarea {
       font: inherit; color: var(--text); background: var(--bg);
-      border: 1px solid var(--border); border-radius: 10px;
+      border: 1px solid var(--border-control); border-radius: 10px;
       padding: 0.6rem 0.7rem; width: 100%; min-height: 2.75rem;
     }
     textarea { min-height: 11rem; resize: vertical; line-height: 1.45; font-size: 0.92rem; }
@@ -219,14 +226,14 @@
 
     <p class="speech" data-i18n="speech">
       Hallo, ich bin <strong>Boerdi</strong>! Ich helfe dir, die Dienste von
-      WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen" –
+      WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen“ –
       und dein Chat weiß, wie er offene Bildungsinhalte findet und fertige Skills anwendet.
     </p>
 
     <!-- Primary action: choose AI + one button -->
     <section class="card" aria-labelledby="use-h">
       <h2 id="use-h"><span class="step">1.</span> <span data-i18n="use_h">Öffne WLO in deiner KI</span></h2>
-      <p class="lead" data-i18n="use_lead">Wähle deine KI. Der „Öffnen"-Button übergibt ihr die Anleitung, wie sie die WLO-Dienste selbst nutzt.</p>
+      <p class="lead" data-i18n="use_lead">Wähle deine KI. Der „Öffnen“-Button übergibt ihr die Anleitung, wie sie die WLO-Dienste selbst nutzt.</p>
       <fieldset>
         <legend data-i18n="app_legend">Deine KI</legend>
         <div class="apps" id="apps">
@@ -252,7 +259,7 @@
     <section class="card" aria-labelledby="skills-h">
       <h2 id="skills-h">🧩 <span data-i18n="skills_h">Fertige Skills</span></h2>
       <p class="lead" data-i18n="skills_lead">
-        Neben der Suche liefert Boerdi fertige „Skills" – kurze Anleitungen aus einer
+        Neben der Suche liefert Boerdi fertige „Skills“ – kurze Anleitungen aus einer
         WirLernenOnline-Sammlung. Titel und Beschreibung sagen, was ein Skill tut und
         wann du ihn nutzt; das rohe Markdown wird über die Download-URL des Treffers geladen.
       </p>
@@ -272,7 +279,7 @@
           <div class="field">
             <label for="q" data-i18n="q_label">Suchbegriff</label>
             <input type="search" id="q" name="q" autocomplete="off" aria-describedby="q-hint" enterkeyhint="search" />
-            <p class="hint" id="q-hint" data-i18n="q_hint">Wird zum ersten Suchauftrag in der Anleitung – bei Claude entfällt damit das Rein-Kopieren – und dient für „RAW-Ergebnis laden".</p>
+            <p class="hint" id="q-hint" data-i18n="q_hint">Wird zum ersten Suchauftrag in der Anleitung – bei Claude entfällt damit das Rein-Kopieren – und dient für „RAW-Ergebnis laden“.</p>
           </div>
           <div class="row">
             <div class="field">
@@ -336,7 +343,7 @@
       <h2 id="install-h">🛠️ <span data-i18n="install_h">WLO-Dienste einrichten</span></h2>
       <p class="lead" data-i18n="install_lead">Zwei Wege, wie deine KI WLO nutzt – Boerdi hilft bei beiden:</p>
       <ul class="tight">
-        <li data-i18n="install_a"><strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen" – fertig.</li>
+        <li data-i18n="install_a"><strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen“ – fertig.</li>
         <li data-i18n="install_b"><strong>Nativ (MCP):</strong> trägst du den WLO-MCP-Server in deiner KI (z. B. Claude Desktop) ein, hast du alle WLO-Tools direkt, inkl. <code class="inline">find_wlo_skills</code>.</li>
       </ul>
     </section>
@@ -357,7 +364,7 @@
       de: {
         title: "WLO-Launcher", subtitle: "mit Boerdi, der WLO-Eule",
         owl_alt: "Boerdi, die WLO-Eule",
-        speech: 'Hallo, ich bin <strong>Boerdi</strong>! Ich helfe dir, die Dienste von WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen" – und dein Chat weiß, wie er offene Bildungsinhalte findet und fertige Skills anwendet.',
+        speech: 'Hallo, ich bin <strong>Boerdi</strong>! Ich helfe dir, die Dienste von WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen“ – und dein Chat weiß, wie er offene Bildungsinhalte findet und fertige Skills anwendet.',
         use_h: "Öffne WLO in deiner KI",
         use_lead: "Wähle deine KI. Der „Öffnen“-Button übergibt ihr die Anleitung, wie sie die WLO-Dienste selbst nutzt.",
         app_legend: "Deine KI", app_copy: "Nur kopieren",

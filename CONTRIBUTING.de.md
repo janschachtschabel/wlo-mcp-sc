@@ -9,7 +9,7 @@ gut lesbare Änderungen, die das Projekt wartbar halten.
 
 1. Vor dem Coden: die betroffenen Dateien lesen, kleinste sinnvolle Änderung planen.
 2. Bei neuer Logik oder Bugfixes: **Test zuerst** (`node:test`), rot sehen, dann grün.
-3. Vor „fertig": `npm run build` **und** `npm test` laufen lassen — beide grün, Output ansehen.
+3. Vor „fertig“: `npm run build` **und** `npm test` laufen lassen — beide grün, Output ansehen.
 4. Docs (README, CHANGELOG, Kommentare) in derselben Änderung mitziehen.
 
 ```bash
@@ -17,6 +17,15 @@ npm install
 npm run build   # tsc (strict)
 npm test        # Offline-Suite (node:test), kein Netzwerk nötig
 ```
+
+„Kein Netzwerk nötig" ist erzwungen, nicht bloß beabsichtigt: `npm test` lädt
+`tests/netguard.mjs`, das jeden Fetch an einen Nicht-Loopback-Host abbricht, den
+kein `installFetchMock` abgefangen hat. Erscheint `netguard: the test suite must
+not reach the network`, fehlt dem Test darunter sein Mock — ein echter
+Upstream-Aufruf macht die Suite von einem laufenden Repository abhängig und kann
+einen Test aus dem falschen Grund grün werden lassen (eine Zusicherung, die nur
+prüft „irgendetwas ist fehlgeschlagen", unterscheidet einen Validierungsfehler
+nicht von einem Verbindungsfehler).
 
 ## Sprache
 

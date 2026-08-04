@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { renderBrowse, askFollowUpPrompt } from '../src/apps/widgets/browse/render.js';
-import { initialBrowseState } from '../src/apps/widgets/browse/state.js';
+import { initialBrowseState, browseReducer } from '../src/apps/widgets/browse/state.js';
 
 function coll(id: string, title = id): any {
   return {
@@ -74,4 +74,24 @@ test('renderBrowse escapes node titles and renders an empty state with no roots'
   const state = { ...initialBrowseState(), roots: [coll('a', '<script>x</script>')] };
   assert.match(renderBrowse(state, 'de'), /&lt;script&gt;/);
   assert.match(renderBrowse(initialBrowseState(), 'de'), /Keine Treffer gefunden/);
+});
+
+test('a branch the server truncated says so, instead of looking complete', () => {
+  // browse_collection_tree deliberately caps depth and per-node width and
+  // reports it via `hasMoreChildren` / `truncated`. The tool tells the MODEL,
+  // and the markdown path prints it — but the widget rendered neither, so a
+  // capped tree looked like the whole catalogue. The user asked for exactly
+  // this hint ("max. 2 Ebenen und den Rest auf Nachfrage — Hinweis an User
+  // notwendig", 2026-07-29).
+  const state = initialBrowseState();
+  const node: any = {
+    nodeId: 'b1', title: 'Algebra', nodeType: 'collection',
+    hasMoreChildren: true,
+    description: '', disciplines: [], educationalContexts: [],
+    learningResourceTypes: [], url: '', contentUrl: '', previewUrl: '',
+    previewIsIcon: true, license: '', publisher: '', topicPageUrl: '',
+  };
+  const seeded = browseReducer(state, { type: 'init', roots: [node], rootLabel: '' });
+  const html = renderBrowse(seeded, 'de', { canFollowUp: true });
+  assert.match(html, /wlo-tree__more/, 'the branch carries a "there is more" marker');
 });

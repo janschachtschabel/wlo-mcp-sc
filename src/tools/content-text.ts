@@ -9,6 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { getContentText } from '../services/content-text.js';
+import { oneLine } from '../formatter.js';
 import { registerWloTool } from '../apps/register.js';
 import { contentTextSchema } from '../apps/outputSchemas.js';
 import { toolError } from './shared.js';
@@ -28,7 +29,7 @@ export function registerContentTextTool(server: McpServer, readingWidgetUri?: st
     description: `Hole den VOLLTEXT eines WLO-Inhalts — den eigentlichen Text eines Arbeitsblatts, Artikels oder Materials, nicht nur seine Metadaten. Nutze dies, wenn du mit dem Inhalt arbeiten sollst: zusammenfassen, Aufgaben daraus ableiten, an eine Klassenstufe anpassen, Fragen dazu beantworten.
 Gib die "nodeId" aus einer WLO-Suche an. Der Text kommt bevorzugt aus dem Repository; nur wenn dort nichts hinterlegt ist und das Material extern verlinkt ist, wird der Text von der verlinkten Seite geholt (\`source\` sagt, welcher Weg es war).
 Gibt es keinen Text, ist das kein Fehler: \`source: "none"\` mit einem \`reason\` — \`access_denied\` (Material ist nicht öffentlich), \`no_text_no_url\`, \`extraction_failed\`, \`node_not_found\`. Lange Texte werden gekürzt (\`truncated\`), \`maxChars\` steuert die Grenze.
-ABWÄGUNG: Dieser Abruf dauert typisch 1–3 Sekunden. Brauchst du nur Titel, Fach, Lizenz oder Link, nimm get_node_details — das ist deutlich schneller. Nutze dieses Werkzeug erst, wenn der Inhalt selbst gebraucht wird.`,
+ABWÄGUNG: Der Repository-Weg ist schnell (live gemessen ~0,3 s); nur der Rückfall auf den Extraktionsdienst bei extern verlinktem Material dauert länger. Brauchst du ausschließlich Titel, Fach, Lizenz oder Link, nimm get_node_details. Geht es um den Inhalt selbst, ist dies das richtige Werkzeug — auch dann, wenn die nodeId schon aus einer früheren Antwort im Gespräch stammt.`,
     inputSchema: {
       nodeId: z.string().describe('nodeId of the material (from any WLO search result).'),
       maxChars: z.number().int().min(500).max(50000).optional().default(DEFAULT_MAX_CHARS)
@@ -56,7 +57,12 @@ ABWÄGUNG: Dieser Abruf dauert typisch 1–3 Sekunden. Brauchst du nur Titel, Fa
           : result.source === 'external-extraction'
             ? `verlinkte Seite (${result.sourceUrl})`
             : 'kein Text verfügbar';
-        const lines = [`# ${result.title || result.nodeId}`, '', `Quelle: ${origin}`];
+        // The header is flattened, the body is not: title and sourceUrl are
+        // repository-supplied, and a newline in either forges a SECOND `Quelle:`
+        // line — a false provenance claim in the one place a teacher reads to
+        // attribute the text. The document below keeps its own line breaks.
+        const lines = [`# ${result.title || result.nodeId}`, '', `Quelle: ${origin}`]
+          .map(oneLine);
         if (result.truncated) lines.push(`Hinweis: gekürzt auf ${params.maxChars ?? DEFAULT_MAX_CHARS} von ${result.charCount} Zeichen.`);
         lines.push('');
         lines.push(result.text || `_Kein Volltext verfügbar (${result.reason ?? 'unbekannt'})._`);

@@ -66,3 +66,20 @@ test('GET /api/search?format=html without a term renders the guidance as HTML', 
   assert.match(r?.contentType ?? '', /text\/html/);
   assert.match(String(r!.raw ?? ''), /api\/search\//, 'hint teaches the path form');
 });
+
+/**
+ * The page hardcodes a LIGHT palette (near-black text, a blue link, a pale
+ * warning strip) but declared no background, so a browser in dark mode painted
+ * its own dark canvas underneath — measured live 2026-08-03 at
+ * `color: rgb(26,26,26)` on a transparent body, roughly 1.1:1. Unreadable, and
+ * invisible to every unit test and to reading the source; only opening the page
+ * showed it. A palette has to state both halves of its contrast or neither.
+ */
+test('the HTML view states its own background, not just its text colour', async () => {
+  const r = await routeRestRequest('GET', '/api/search?format=html');
+  const html = String(r!.raw ?? '');
+  const body = /body\{([^}]*)\}/.exec(html)?.[1] ?? '';
+  assert.match(body, /color:/, 'text colour');
+  assert.match(body, /background:/, 'and the surface it is read against');
+  assert.match(html, /color-scheme:\s*light/, 'so the UA paints a light canvas and matching scrollbars');
+});

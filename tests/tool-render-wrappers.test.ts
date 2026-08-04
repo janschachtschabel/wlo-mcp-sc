@@ -39,7 +39,7 @@ test('get_related_content (markdown): renders the Basis line and the siblings se
       arguments: { nodeId: 'seed', includeSiblings: true },
     });
     const md = toolText(result);
-    assert.match(md, /# Verwandte Inhalte zu „Seed-Material"/);
+    assert.match(md, /# Verwandte Inhalte zu „Seed-Material“/);
     assert.match(md, /_Basis: .*Bildungsstufe/, 'Basis line carries the seed profile');
     assert.match(md, /Verwandt 1/);
     assert.match(md, /## Aus derselben Sammlung \(1\)/, 'seed excluded from its own siblings');

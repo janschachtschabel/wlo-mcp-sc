@@ -6,7 +6,7 @@
  * merge algorithm that consumes the variants.
  */
 
-import type { SearchCriterion } from './wlo-config.js';
+import type { SearchCriterion } from './wlo-types.js';
 
 // O4: Upper bound for parallel query variants (= parallel ngsearch calls).
 // Variants are sorted by weight and trimmed to the best MAX_VARIANTS, so a

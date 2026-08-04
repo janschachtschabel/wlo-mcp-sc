@@ -6,6 +6,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { registerContentSearchTools } from '../src/tools/content-search.js';
+import { registerCollectionTools } from '../src/tools/collections.js';
+import { registerNodeRelationTools } from '../src/tools/node-relations.js';
 import { registerBrowseTools } from '../src/tools/browse.js';
 import { registerTopicPageContentTool } from '../src/tools/topic-page-content.js';
 
@@ -32,9 +34,10 @@ test('search_wlo_all advertises its widget resourceUri (+ openai alias) when wir
   assert.equal(metaUi(all)?.resourceUri, URI);
   assert.equal((all?._meta as Record<string, unknown>)?.['openai/outputTemplate'], URI);
 
-  // The plain content search is NOT a widget tool.
+  // search_wlo_content renders through the SAME widget — see the node-LIST
+  // test below for why that stopped being an exception.
   const content = tools.find(x => x.name === 'search_wlo_content');
-  assert.equal(metaUi(content)?.resourceUri, undefined);
+  assert.equal(metaUi(content)?.resourceUri, URI);
 
   await client.close();
 });
@@ -73,5 +76,29 @@ test('get_topic_page_content advertises the W4 widget resourceUri when wired', a
   const { tools } = await client.listTools();
   assert.equal(metaUi(tools.find(x => x.name === 'get_topic_page_content'))?.resourceUri, uri);
 
+  await client.close();
+});
+
+test('every node-LIST tool carries the search-results widget', async () => {
+  // Reversal of an earlier decision, on live evidence (2026-07-30): wiring the
+  // widget to search_wlo_all alone made the UI look random to users — "ich suche
+  // etwas zur Eiszeit" answered as plain text, "ich suche inhalte zu
+  // bruchrechnung" as a widget, purely because the model picked a different
+  // search tool. Whether a result renders must not depend on which of several
+  // equivalent tools the model chose. The tools below all return a node list,
+  // which the widget now renders.
+  const server = new McpServer({ name: 't', version: '0' });
+  registerContentSearchTools(server, URI);
+  registerCollectionTools(server, URI);
+  registerNodeRelationTools(server, URI);
+  const client = await connect(server);
+
+  const { tools } = await client.listTools();
+  for (const name of ['search_wlo_all', 'search_wlo_content', 'search_wlo_collections',
+                      'get_collection_contents', 'search_wlo_within_collection', 'get_related_content']) {
+    const tool = tools.find(x => x.name === name);
+    assert.ok(tool, `${name} is registered`);
+    assert.equal(metaUi(tool)?.resourceUri, URI, `${name} advertises the widget`);
+  }
   await client.close();
 });

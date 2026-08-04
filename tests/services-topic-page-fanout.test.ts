@@ -69,6 +69,37 @@ test('findTopicPagesByQuery: checks candidates with the configured fan-out width
   }
 });
 
+test('findTopicPagesByQuery: a failing keyword search does not discard the portal matches', async () => {
+  // The two legs are not equals: only the portal leg carries ccm:page_config_ref
+  // (the keyword-collections endpoint returns a reduced projection without it).
+  // Losing the whole call because the supplementary leg threw is the defect
+  // searchAll already guards against at services/search.ts.
+  const real = globalThis.fetch;
+  const seen: string[] = [];
+  globalThis.fetch = (async (input: unknown) => {
+    const url = typeof input === 'string' ? input : String((input as { url?: string })?.url ?? input);
+    seen.push(url);
+    // What a timeout or a reset looks like: a rejected fetch, not a 5xx.
+    if (url.includes('/queries/-home-/mds_oeh/collections')) throw new TypeError('fetch failed');
+    if (url.includes(`${WLO_ROOT_COLLECTION_ID}/children`)) {
+      return new Response(JSON.stringify({ nodes: [makeNode('portal-1', 'Optik', {
+        'ccm:page_config_ref': ['workspace://SpacesStore/cfg-1'],
+      })] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    const pages = await findTopicPagesByQuery('Optik');
+    assert.ok(Array.isArray(pages), 'the call must resolve, not reject');
+    assert.ok(
+      seen.some(u => u.includes('portal-1')),
+      'the portal candidate must still be examined after the keyword leg failed',
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test('findTopicPagesByQuery: still returns every candidate page', async () => {
   // Widening the fan-out must not change the result set.
   const probe = installConcurrencyProbe(candidatesHandler);

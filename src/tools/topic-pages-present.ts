@@ -7,6 +7,8 @@
  */
 
 import type { ThemePageInfo } from '../topic-page-api.js';
+import type { FormattedNode } from '../formatter.js';
+import { oneLine } from '../formatter.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
 import { labelFromUri } from '../vocabs.js';
 import { pickThemePageTitle } from './shared.js';
@@ -98,6 +100,46 @@ type TextContent = { type: 'text'; text: string };
  * a Markdown listing, and append the machine-readable `_queryMeta` block in
  * both cases.
  */
+/**
+ * Project the presented theme pages onto the node-list shape the results widget
+ * renders — ONE tile per page, not per variant.
+ *
+ * A Themenseite is not a node, so the projection fills the fields it has and
+ * leaves the rest empty: `nodeId` is the OWNING collection (what every
+ * follow-up needs) and `topicPageUrl` is set, which is what makes the tile
+ * offer "Themenseite öffnen" rather than "Inhalte anzeigen". The variants
+ * (target groups) do not survive into the widget — they never did — and stay
+ * in the text output.
+ */
+export function themePagesAsNodeList(out: PresentedThemePage[]): {
+  total: number;
+  count: number;
+  results: FormattedNode[];
+} {
+  const results = out.map((p): FormattedNode => ({
+    nodeId: p.collectionId,
+    title: p.title,
+    description: '',
+    keywords: [],
+    disciplines: [],
+    educationalContexts: p.educationalContexts ?? [],
+    userRoles: [],
+    learningResourceTypes: [],
+    url: p.topicPageUrl,
+    downloadUrl: '',
+    contentUrl: '',
+    previewUrl: '',
+    previewIsIcon: true,
+    mimeType: '',
+    fileSize: 0,
+    license: '',
+    publisher: '',
+    nodeType: 'collection',
+    topicPageUrl: p.topicPageUrl,
+  }));
+  return { total: results.length, count: results.length, results };
+}
+
 export function renderThemePages(
   out: PresentedThemePage[],
   meta: TextContent,
@@ -133,7 +175,11 @@ export function renderThemePages(
         parts.push(`  - ${v.targetGroupLabel} (Variante-ID: ${v.variantId})`);
       }
     }
-    lines.push(parts.join('\n'));
+    // Every part is one logical line — the collection name that becomes the
+    // `## ` heading is repository-supplied, and a newline in it would open a
+    // second Themenseite entry carrying a `Sammlung-nodeId:` of its own. That
+    // id is what the next tool call acts on. Same rule as renderToText.
+    lines.push(parts.map(oneLine).join('\n'));
     lines.push('');
   }
   return { content: [{ type: 'text' as const, text: lines.join('\n').trim() }, meta] };

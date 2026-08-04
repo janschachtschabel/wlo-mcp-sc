@@ -40,5 +40,6 @@ quote), url (human page), license (empty = licence unclear, not CC).
 ## MCP
 
 The same server speaks the Model Context Protocol at POST /mcp
-(Streamable HTTP/SSE) with 22 read-only tools incl. search_wlo_all — prefer it
-over REST when your client supports MCP connectors.
+(Streamable HTTP/SSE). Call tools/list for the current set (search_wlo_all is
+the one to start with) — prefer MCP over REST when your client supports
+connectors. Everything reachable without a login is read-only.

@@ -8,6 +8,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { getCollectionStats } from '../services/stats.js';
+import { oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
 
 const BREAKDOWN_LABELS: Record<string, string> = {
@@ -34,8 +35,12 @@ Die Aufschlüsselung zählt über bis zu 100 DIREKTE Kind-Dateien (Stichprobe, n
           return { content: [{ type: 'text' as const, text: JSON.stringify(stats) }] };
         }
 
+        // This whole output is counts on their own lines, and both the title and
+        // the bucket labels are repository-supplied (`_DISPLAYNAME` values). A
+        // newline in either fabricates a count — and a count is exactly what
+        // this tool is believed for.
         const lines: string[] = [
-          `# Sammlungs-Statistik: ${stats.title || stats.nodeId}`,
+          oneLine(`# Sammlungs-Statistik: ${stats.title || stats.nodeId}`),
           `- Inhalte (Dateien): ${stats.fileCount}`,
           `- Unter-Sammlungen: ${stats.subCollectionCount}`,
         ];
@@ -48,7 +53,7 @@ Die Aufschlüsselung zählt über bis zu 100 DIREKTE Kind-Dateien (Stichprobe, n
         for (const [key, buckets] of Object.entries(stats.breakdown)) {
           if (!buckets.length) continue;
           lines.push('', `## ${BREAKDOWN_LABELS[key] ?? key}`);
-          for (const b of buckets) lines.push(`- ${b.label}: ${b.count}`);
+          for (const b of buckets) lines.push(oneLine(`- ${b.label}: ${b.count}`));
         }
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (err) {

@@ -1,0 +1,139 @@
+/**
+ * shared-rule-discipline.test.ts – a rule extracted into a shared module must
+ * actually be the only copy.
+ *
+ * Sibling of `env-parsing-discipline.test.ts`, and it exists for the same reason
+ * that one does: every audit round of this project has turned up the same shape
+ * — a rule identified, named, solved in one place, and then not carried to the
+ * other places it applies to. A unit test of the shared helper proves the helper
+ * is right; it says nothing about whether anyone uses it. These scan the SOURCE,
+ * which is the only thing that can.
+ *
+ * Both rules below were found with 6 and 1 violations respectively, in modules
+ * written after the shared helper already existed.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+
+const srcDir = fileURLToPath(new URL('../src/', import.meta.url));
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
+    else if (entry.endsWith('.ts')) out.push(full);
+  }
+  return out;
+}
+
+const rel = (file: string) => file.slice(srcDir.length).split('\\').join('/');
+
+/** Every line of `src/**\/*.ts` matching `pattern`, outside `owners`. */
+function offenders(pattern: RegExp, owners: string[]): string[] {
+  const out: string[] = [];
+  for (const file of sourceFiles(srcDir)) {
+    const name = rel(file);
+    if (owners.includes(name)) continue;
+    readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      if (pattern.test(line)) out.push(`${name}:${i + 1}  ${line.trim()}`);
+    });
+  }
+  return out;
+}
+
+/**
+ * The truncation marker in its bracketed form. Prose uses the bare word
+ * ("gekürzt auf X von Y Zeichen" in a tool's output, "gekürzten Auszug" in a
+ * tool description), so matching the brackets separates the MARKER from talk
+ * about truncation.
+ */
+const TRUNCATION_MARKER_LITERAL = /\[…?gekürzt\]/;
+
+test('the truncation marker is written in exactly one module', () => {
+  // `text-cap.ts` says in its own docstring that it was extracted "when a second
+  // caller needed the identical rule — two copies of a truncation marker drift
+  // silently". It was then used by 2 of 8 call sites. The other six each carried
+  // `x.slice(0, CAP) + '\n[…gekürzt]'`, cutting mid-word where the shared rule
+  // cuts at a word boundary, and `wlo-node-text.ts` had already drifted to
+  // `'\n\n…[gekürzt]'` — the ellipsis on the other side of the bracket.
+  assert.deepEqual(
+    offenders(TRUNCATION_MARKER_LITERAL, ['text-cap.ts']),
+    [],
+    'use capText / TRUNCATION_MARKER from text-cap.ts — a second copy drifts, and the drift is ' +
+      'only ever visible to whoever reads the output',
+  );
+});
+
+/**
+ * `res.json()` outside the one module that guards it. `res.ok` says the server
+ * answered, not that the body is JSON: a proxy maintenance page and a captive
+ * portal both arrive as 200 with something `res.json()` throws on.
+ */
+const RAW_RESPONSE_JSON = /\bres(ponse)?\.json\(\)/;
+
+test('an upstream response body is parsed only through readJson', () => {
+  // `read-json.ts` documents itself as the place "every client goes through",
+  // and `CLAUDE.md` repeats the claim. `auth/identity.ts` did not: it parsed the
+  // identity probe directly, so a non-JSON body surfaced as "identity check
+  // failed: Unexpected token <" instead of the named "upstream response was not
+  // valid JSON" with the status beside it.
+  assert.deepEqual(
+    offenders(RAW_RESPONSE_JSON, ['read-json.ts']),
+    [],
+    'use readJson(res, context) — it decides what a non-JSON body means and logs which call it was',
+  );
+});
+
+/**
+ * A runtime write to disk. The server deliberately stores nothing, which is why
+ * the container can run `read_only: true` with one writable volume for the
+ * access registry alone.
+ */
+const WRITES_TO_DISK = /\b(writeFile|writeFileSync|appendFile|createWriteStream|mkdir|mkdirSync|rename|renameSync|unlink|rmdir)\s*\(/;
+
+test('the access registry is the only module that writes to disk at runtime', () => {
+  // The architecture's strongest property is that a breach finds nothing at
+  // rest. `access-registry.ts` is the single, deliberate exception — it holds
+  // access IDS, never a credential (pinned in access-registry.test.ts). A
+  // second writer would quietly need a second writable mount, and the
+  // `read_only` hardening would be relaxed to accommodate it rather than
+  // questioned.
+  assert.deepEqual(
+    offenders(WRITES_TO_DISK, ['auth/access-registry.ts']),
+    [],
+    'the server stores nothing at rest — if a new module genuinely needs disk, change the design first',
+  );
+});
+
+/** An import reaching up into the MCP tool layer from a module below it. */
+const IMPORTS_TOOLS = /from '\.\.\/tools\//;
+
+test('services and the REST layer do not import from the tool layer', () => {
+  // Same shape as the two rules above, one level up: `mapPool` and
+  // `buildFilterCriteria` sat in `tools/shared.ts` because the MCP tools were
+  // the first callers, and four services plus the REST layer then imported them
+  // from there. Neither has anything to do with MCP — one is a concurrency
+  // primitive, the other vocabulary label→URI resolution — so both moved to leaf
+  // modules (`concurrency.ts`, `filter-criteria.ts`) that any layer may use.
+  //
+  // The direction is the point: `tools/` composes what is below it, so a
+  // service that depends on it makes the lower layer untestable without the
+  // upper one and invites a genuine cycle. `server.ts` importing from `tools/`
+  // is correct — it is the composition root, above them both.
+  const offending = sourceFiles(srcDir)
+    .filter(f => rel(f).startsWith('services/') || rel(f).startsWith('rest/'))
+    .flatMap(file => readFileSync(file, 'utf8').split('\n')
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => IMPORTS_TOOLS.test(line))
+      .map(({ line, i }) => `${rel(file)}:${i + 1}  ${line.trim()}`));
+  assert.deepEqual(
+    offending,
+    [],
+    'move the shared thing to a leaf module instead — a lower layer must not depend on tools/',
+  );
+});

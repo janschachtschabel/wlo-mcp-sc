@@ -12,15 +12,15 @@ import type { SearchCriterion, WloNode } from './wlo-api.js';
 import {
   BASE_URL,
   DISPLAY_PROPS,
-  HEADERS,
   WLO_ROOT_COLLECTION_ID,
-  wloFetch,
+  appendPropertyFilter,
   buildTopicPageUrl,
   getChildCollections,
   getNodeMetadata,
   stripStoreRef,
 } from './wlo-api.js';
-import { logUpstreamMiss } from './wlo-config.js';
+import { HEADERS, wloFetch, logUpstreamMiss } from './wlo-fetch.js';
+import { readJson } from './read-json.js';
 import { nodeMatchesText } from './node-match.js';
 
 // Topic-page variants additionally need the page_variant fields
@@ -91,13 +91,13 @@ export async function searchPageVariants(
     maxItems: String(maxItems),
     skipCount: '0',
   });
-  for (const p of TOPIC_PAGE_PROPS) params.append('propertyFilter', p);
+  appendPropertyFilter(params, TOPIC_PAGE_PROPS);
   const url = `${BASE_URL}/search/v1/queries/-home-/mds_oeh/page_variant?${params}`;
   const body = JSON.stringify({ criteria });
   const res = await wloFetch(url, { method: 'POST', headers: HEADERS, body });
   if (!res.ok) { logUpstreamMiss('searchPageVariants', res); return []; }
-  const data = await res.json() as { nodes?: WloNode[] };
-  return data.nodes ?? [];
+  const data = await readJson<{ nodes?: WloNode[] }>(res, 'searchPageVariants');
+  return data?.nodes ?? [];
 }
 
 /**

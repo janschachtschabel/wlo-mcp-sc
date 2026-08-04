@@ -11,7 +11,7 @@
 
 import type { SearchCriterion } from '../wlo-api.js';
 import { ngsearch } from '../wlo-api.js';
-import { buildFilterCriteria } from '../tools/shared.js';
+import { buildFilterCriteria } from '../filter-criteria.js';
 
 const PUBLISHER_FACET = 'ccm:oeh_publisher_combined';
 

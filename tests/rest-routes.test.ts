@@ -413,3 +413,20 @@ test('GET /api/topic-page without collectionId or variantId → 400', async () =
   const r = await routeRestRequest('GET', '/api/topic-page');
   assert.equal(r?.status, 400);
 });
+
+/**
+ * Same contract as `resolveStaticRoute`: an unparseable target belongs to no
+ * route, so it is declined rather than thrown over. The throw used to escape
+ * `handleRestRequest` into the http handler, whose returned promise node:http
+ * never awaits — no response, socket held until `requestTimeout`.
+ */
+test('routeRestRequest declines a target that will not parse', async () => {
+  for (const target of ['//[', '//[bad]x', '//user@[::1]x']) {
+    assert.equal(await routeRestRequest('GET', target), null, target);
+  }
+});
+
+/** Same total contract as the static router for a missing target. */
+test('routeRestRequest declines when there is no target at all', async () => {
+  assert.equal(await routeRestRequest('GET', undefined), null);
+});

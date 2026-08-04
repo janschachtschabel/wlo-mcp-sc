@@ -36,11 +36,27 @@ interface Candidate {
  * than the entry's primary label. Returns [] when nothing is close enough.
  */
 export function suggestVocab(input: string, vocab: VocabKey): string[] {
+  return suggestFromEntries(input, listVocab(vocab), MAX_SUGGESTIONS);
+}
+
+/**
+ * The matching itself, over any label/alias table.
+ *
+ * Split out unchanged from `suggestVocab` when the `new_lrt` vocabulary needed
+ * the same near-miss help: it has 220 concepts and does not live in the
+ * `VocabKey` tables, and a second fuzzy matcher would have been one more thing
+ * to keep in step.
+ */
+export function suggestFromEntries(
+  input: string,
+  entries: ReadonlyArray<{ label: string; aliases: string[] }>,
+  max: number = MAX_SUGGESTIONS,
+): string[] {
   const needle = input?.trim().toLowerCase();
   if (!needle) return [];
 
   const matches: Candidate[] = [];
-  for (const entry of listVocab(vocab)) {
+  for (const entry of entries) {
     let best: Candidate | null = null;
     for (const term of [entry.label, ...entry.aliases]) {
       const hay = term.toLowerCase();
@@ -69,7 +85,7 @@ export function suggestVocab(input: string, vocab: VocabKey): string[] {
     if (seen.has(m.display)) continue;
     seen.add(m.display);
     out.push(m.display);
-    if (out.length >= MAX_SUGGESTIONS) break;
+    if (out.length >= max) break;
   }
   return out;
 }

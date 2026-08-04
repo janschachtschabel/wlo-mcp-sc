@@ -12,8 +12,8 @@
  */
 
 import { escapeHtml } from '../shared/escape.js';
-import { safeHref } from '../shared/safe-url.js';
-import { followUpButton, renderTile } from '../shared/tile.js';
+import { renderTile } from '../shared/tile.js';
+import { renderDetail } from '../shared/detail.js';
 import { t, type Locale, type StringKey } from '../shared/strings.js';
 import type { SearchAllPayload, WidgetNode } from '../shared/types.js';
 
@@ -64,66 +64,47 @@ function allNodes(payload: SearchAllPayload | undefined): WidgetNode[] {
   ];
 }
 
-/** The Einzelansicht: full metadata of one hit, replacing the grid. */
-function renderDetail(node: WidgetNode, locale: Locale, canFollowUp: boolean): string {
-  const title = escapeHtml(node.title || '');
-  const previewSrc = (!!node.previewUrl && !node.previewIsIcon) ? safeHref(node.previewUrl) : '';
-  const thumb = previewSrc
-    ? `<img class="wlo-detail__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" />`
-    : `<span class="wlo-tile__icon" aria-hidden="true">${node.nodeType === 'collection' ? '⧉' : '📄'}</span>`;
+/**
+ * A flat `{total,count,results}` node list, as returned by every list tool that
+ * is not `search_wlo_all` (`search_wlo_content`, `get_collection_contents`,
+ * `get_related_content`).
+ */
+type FlatNodeList = { query?: string; total: number; count: number; results: WidgetNode[] };
 
-  const chips = [...(node.disciplines ?? []), ...(node.educationalContexts ?? []), ...(node.learningResourceTypes ?? [])]
-    .filter(Boolean)
-    .map(c => `<li class="wlo-chip">${escapeHtml(c)}</li>`)
-    .join('');
-  const chipsHtml = chips ? `<ul class="wlo-tile__chips" role="list">${chips}</ul>` : '';
-
-  const desc = node.description
-    ? `<p class="wlo-detail__desc">${escapeHtml(node.description)}</p>`
-    : '';
-
-  const facts = [
-    node.license ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'licenseLabel'))}</dt><dd>${escapeHtml(node.license)}</dd></div>` : '',
-    node.publisher ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'sourceLabel'))}</dt><dd>${escapeHtml(node.publisher)}</dd></div>` : '',
-  ].join('');
-  const factsHtml = facts ? `<dl class="wlo-tile__facts">${facts}</dl>` : '';
-
-  const contentHref = safeHref(node.url || node.contentUrl);
-  const topicHref = safeHref(node.topicPageUrl);
-  // The arrow is a visual "opens externally" cue only — aria-hidden so screen
-  // readers announce just the action label.
-  const arrow = ' <span aria-hidden="true">↗</span>';
-  const links = [
-    contentHref ? `<a class="wlo-detail__cta" href="${escapeHtml(contentHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t(locale, 'openContent'))}${arrow}</a>` : '',
-    topicHref ? `<a class="wlo-detail__cta wlo-detail__cta--secondary" href="${escapeHtml(topicHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t(locale, 'openTopicPage'))}${arrow}</a>` : '',
-  ].join('');
-  const linksHtml = links ? `<p class="wlo-detail__links">${links}</p>` : '';
-
-  // The detail view is where someone decides what to DO with a hit. Opening the
-  // material externally leaves the chat; these two continue it — reading the
-  // material's text (which nothing else routed to) and finding more like it.
-  const actions = canFollowUp
-    ? `<p class="wlo-detail__actions">` +
-      (node.nodeType === 'content' ? followUpButton('text', node, locale) : '') +
-      followUpButton('related', node, locale) +
-      `</p>`
-    : '';
-
-  return (
-    `<article class="wlo-detail">` +
-    `<button type="button" class="wlo-detail__back" data-action="back">← ${escapeHtml(t(locale, 'back'))}</button>` +
-    `<div class="wlo-detail__thumb">${thumb}</div>` +
-    `<h1 class="wlo-detail__title">${title}</h1>` +
-    `${chipsHtml}${desc}${factsHtml}${actions}${linksHtml}` +
-    `</article>`
-  );
+/**
+ * Accept both payload shapes so ONE widget serves every list tool. Which tool
+ * the model happens to pick must not decide whether the user sees a rendered
+ * result or a wall of text (live report 2026-07-30: the same request rendered
+ * differently depending on whether `search_wlo_all` or `search_wlo_content` was
+ * chosen).
+ *
+ * A flat list is split by `nodeType`: collection nodes belong in the band with
+ * their "open its contents" action, material nodes in the grid. Dropping them
+ * all into the content bucket would turn a sub-collection into a dead-end tile.
+ */
+function toEnvelope(payload: SearchAllPayload | FlatNodeList | undefined): SearchAllPayload | undefined {
+  if (!payload) return undefined;
+  if ('content' in payload) return payload;
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  const colls = results.filter(n => n.nodeType === 'collection');
+  const items = results.filter(n => n.nodeType !== 'collection');
+  const bucket = (nodes: WidgetNode[]) => ({ total: nodes.length, count: nodes.length, results: nodes });
+  return {
+    query: payload.query ?? '',
+    // `total` describes the whole upstream list; it belongs to whichever bucket
+    // actually holds the results, so paging counts stay truthful.
+    content: items.length ? { ...bucket(items), total: colls.length ? items.length : payload.total ?? items.length } : bucket([]),
+    collections: colls.length ? { ...bucket(colls), total: items.length ? colls.length : payload.total ?? colls.length } : bucket([]),
+    topicPages: bucket([]),
+  };
 }
 
 export function renderSearchResults(
-  payload: SearchAllPayload | undefined,
+  input: SearchAllPayload | FlatNodeList | undefined,
   locale: Locale = 'de',
   state: SearchResultsState = {},
 ): string {
+  const payload = toEnvelope(input);
   // Detail view first: a selected node replaces the grid entirely. An id the
   // current payload no longer contains falls through to the grid — the widget
   // must never go blank after a data refresh.
@@ -171,14 +152,15 @@ export function renderSearchResults(
       `</div>`
     : '';
 
+  // The bar precedes the grid: without a scrollport sticky cannot hold it in
+  // view, so placing it after the results hid it behind the whole list.
   return (
-    `<div class="wlo-results">${heading}${band}` +
+    `<div class="wlo-results">${heading}${band}${selectionBar}` +
     section('sectionContent', content, locale, {
       detail: true,
       selectable: state.canSelect,
       selectedIds: state.selectedIds,
     }) +
-    selectionBar +
     `</div>`
   );
 }

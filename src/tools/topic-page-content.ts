@@ -12,6 +12,8 @@ import type { TargetGroup } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
+import { oneLine } from '../formatter.js';
+import { log } from '../logger.js';
 import { toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { swimlanePayloadSchema } from '../apps/outputSchemas.js';
@@ -64,6 +66,7 @@ Gib EINES an:
 
         if (!collectionId && !variantId) {
           if (!params.query?.trim()) {
+            log.warn('get_topic_page_content called without query, collectionId or variantId');
             return { content: [{ type: 'text' as const, text: 'Bitte query, collectionId oder variantId angeben.' }], isError: true };
           }
           // One-step topic path: resolve the best Themenseite for the topic so
@@ -125,13 +128,23 @@ Gib EINES an:
         }
 
         const lines: string[] = [];
-        if (struct.variantTitle) lines.push(`# ${struct.variantTitle}`);
+        // Collection title first, variant title only as the fallback — the same
+        // order the widget uses. The variant title is a technical page name
+        // ("Fachportalstartseite"); heading the answer with it made a model
+        // summarizing the page call it that instead of "Mathematik".
+        //
+        // oneLine on every rendered value: headings and widget names come from
+        // the page configuration, so a newline in one of them would add an
+        // outline section with nodeIds this page does not contain (same rule as
+        // renderToText).
+        const heading = struct.collectionTitle || struct.variantTitle;
+        if (heading) lines.push(oneLine(`# ${heading}`));
         lines.push(`Abschnitte (Swimlanes): ${struct.swimlanes.length}`);
         lines.push('');
         struct.swimlanes.forEach((sl, i) => {
-          lines.push(`## ${i + 1}. ${sl.heading || '(ohne Überschrift)'}${sl.type ? ` [${sl.type}]` : ''}`);
+          lines.push(oneLine(`## ${i + 1}. ${sl.heading || '(ohne Überschrift)'}${sl.type ? ` [${sl.type}]` : ''}`));
           for (const it of sl.items) {
-            lines.push(`  - ${it.widget || 'widget'}${it.nodeId ? ` → nodeId: ${it.nodeId}` : ''}`);
+            lines.push(oneLine(`  - ${it.widget || 'widget'}${it.nodeId ? ` → nodeId: ${it.nodeId}` : ''}`));
           }
         });
         if (struct.referencedNodeIds.length) {

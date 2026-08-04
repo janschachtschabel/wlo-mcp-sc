@@ -10,12 +10,18 @@ import { z } from 'zod';
 import type { SearchCriterion } from '../wlo-api.js';
 import { WLO_REPOSITORY_URL, getNodeTextContent, ngsearch } from '../wlo-api.js';
 import { enhancedSearch } from '../reranker.js';
-import { formatNodes, renderToJson, renderToText } from '../formatter.js';
-import type { LabeledCriterion } from './shared.js';
-import { buildFilterCriteria, formatUnresolvedHint, mapPool, queryMetaContent, toolError } from './shared.js';
+import { formatNodes, oneLine, renderToJson, renderToText } from '../formatter.js';
+import type { LabeledCriterion } from '../filter-criteria.js';
+import { buildFilterCriteria, formatUnresolvedHint } from '../filter-criteria.js';
+import { queryMetaContent, toolError, wikiResolutionNotice } from './shared.js';
+import { mapPool } from '../concurrency.js';
 import { searchAll, searchFacets } from '../services/search.js';
 import { registerWloTool } from '../apps/register.js';
+import { capText } from '../text-cap.js';
 import { nodeListSchema, searchAllEnvelopeSchema } from '../apps/outputSchemas.js';
+
+/** Same bound as `get_node_details`, so an inline text reads the same either way. */
+const TEXT_CONTENT_CAP = 4000;
 
 /**
  * @param searchResultsWidgetUri – when the W1 widget is built, its `ui://`
@@ -26,7 +32,9 @@ export function registerContentSearchTools(server: McpServer, searchResultsWidge
   registerWloTool(server, {
     name: 'search_wlo_content',
     title: 'WLO Inhaltssuche',
-    description: `Finde einzelne WLO-Materialien (Inhalte) zu einem Thema — Videos, Arbeitsblätter, interaktive Medien, Unterrichtspläne. Für Anfragen wie "Video zur Eiszeit" oder "Arbeitsblatt zu Prozentrechnung", statt einer Websuche. Volltextsuche mit Reranking; Filter (Fach/Stufe/Typ) als deutsche Labels oder URIs. Brauchst du zusätzlich Sammlungen + Themenseiten, nutze search_wlo_all.`,
+    widgetUri: searchResultsWidgetUri,
+    description: `NUR einzelne WLO-Materialien — Video, Arbeitsblatt, interaktives Medium, Unterrichtsplan — ohne Sammlungen und ohne Themenseiten. Für Anfragen, bei denen genau ein Materialtyp gefragt ist und alles andere stören würde, z.B. "ausschließlich Videos zur Zellteilung". Volltextsuche mit Reranking; Filter (Fach/Stufe/Typ) als deutsche Labels oder URIs.
+IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND Themenseiten in einem Aufruf und ist der Standard-Einstieg. Dieses Werkzeug ist die bewusste Verengung darauf.`,
     inputSchema: {
       query: z.string().max(200).describe('Search query in German, e.g. "Bruchrechnung Grundschule" or "Klimawandel interaktiv"'),
       educationalContext: z.string().optional().describe(
@@ -80,14 +88,21 @@ export function registerContentSearchTools(server: McpServer, searchResultsWidge
 
       try {
         // Facet aggregation (opt-in) fires IN PARALLEL with the main search →
-        // ≈0 wall-clock. searchFacets is graceful (a facet failure yields {}).
-        const facetPromise = params.includeFacets ? searchFacets(params) : Promise.resolve({});
+        // ≈0 wall-clock. The `.catch` is not redundant with searchFacets being
+        // graceful: when the main search below throws, this promise is never
+        // awaited, and an unhandled rejection takes down the whole process. The
+        // guarantee has to be here, where the floating promise is created.
+        const facetPromise = params.includeFacets
+          ? searchFacets(params).catch(() => ({}))
+          : Promise.resolve({});
         let response;
         let queryType: string;
         let effectiveCriteria: LabeledCriterion[];
         // Over-fetch by the exclusion count so that after dropping already-seen
-        // ids we can still reach maxResults; never below maxResults. The buffer is
-        // bounded by the excludeNodeIds schema max (200). (Mirrors the recursive
+        // ids we can still reach maxResults; never below maxResults. The `+200`
+        // clamp is redundant TODAY — the excludeNodeIds schema already caps the
+        // array at 200 — and kept as a second, local bound so raising that cap
+        // cannot silently widen the upstream page. (Mirrors the recursive
         // collection branch in collections.ts.)
         const pool = excluded.size > 0 ? Math.min(maxResults + excluded.size, maxResults + 200) : maxResults;
         if (params.query.trim()) {
@@ -111,13 +126,11 @@ export function registerContentSearchTools(server: McpServer, searchResultsWidge
         const formatted = formatNodes(kept.slice(0, maxResults));
 
         // Optional inline full text — opt-in, so a plain search pays zero extra
-        // round-trips. Bounded concurrency; same 4000-char cap as get_node_details.
+        // round-trips. Bounded concurrency; same cap and cutting rule as get_node_details.
         if (params.includeTextContent) {
           await mapPool(formatted, 10, async (n) => {
             const full = await getNodeTextContent(n.nodeId);
-            n.textContent = full && full.length > 4000
-              ? full.slice(0, 4000) + '\n[…gekürzt]'
-              : (full ?? '');
+            n.textContent = full ? capText(full, TEXT_CONTENT_CAP).text : '';
             return null;
           });
         }
@@ -132,7 +145,7 @@ export function registerContentSearchTools(server: McpServer, searchResultsWidge
         const meta = queryMetaContent({
           toolName: 'search_wlo_content',
           queryType,
-          searchTerm: params.query ?? '',
+          searchTerm: params.query,
           criteria: effectiveCriteria,
           pagination: { maxItems: maxResults, skipCount, totalResults: response.pagination.total },
           repositoryUrl: WLO_REPOSITORY_URL,
@@ -239,9 +252,12 @@ collections.total und topicPages.total entsprechen der angezeigten Anzahl
 
       try {
         // Facet aggregation (opt-in) is fired BEFORE awaiting searchAll so it
-        // overlaps the search → no added wall-clock. searchFacets is graceful
-        // (a facet failure yields {}).
-        const facetPromise = params.includeFacets ? searchFacets(params) : Promise.resolve({});
+        // overlaps the search → no added wall-clock. `.catch` for the same
+        // reason as in search_wlo_content: a throw from searchAll leaves this
+        // promise unawaited, and an unhandled rejection ends the process.
+        const facetPromise = params.includeFacets
+          ? searchFacets(params).catch(() => ({}))
+          : Promise.resolve({});
 
         const envelope = await searchAll({
           query: params.query,
@@ -303,7 +319,20 @@ collections.total und topicPages.total entsprechen der angezeigten Anzahl
         if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);        md.push(renderToText(envelope.content.results, envelope.content.total) || 'Keine Inhalte gefunden.'); }
         if (want.has('collections')) { md.push(`# Sammlungen (${envelope.collections.count})`);  md.push(renderToText(envelope.collections.results) || 'Keine Sammlungen gefunden.'); }
         if (want.has('topicPages'))  { md.push(`# Themenseiten (${envelope.topicPages.count})`); md.push(renderToText(envelope.topicPages.results) || 'Keine Themenseiten gefunden.'); }
-        if (envelope.wikipedia)      { md.push(`# Wikipedia`); md.push(`**${envelope.wikipedia.title}**\n\n${envelope.wikipedia.extract}\n\n[Wikipedia](${envelope.wikipedia.url})`); }
+        if (envelope.wikipedia) {
+          // Quoted, not inlined: the extract is world-editable text landing
+          // between our own `# Inhalte` / `# Sammlungen` headings, and a line
+          // inside it starting with `#` would otherwise read as one of those
+          // sections. `oneLine` is the wrong tool here (prose may wrap); a
+          // blockquote keeps the paragraphs and denies the line start.
+          const quoted = envelope.wikipedia.extract.split('\n').map(l => `> ${l}`).join('\n');
+          // The same disclosure get_wikipedia_summary gives, from the same
+          // source. This tool is the documented default entry point, so a
+          // silent substitution here reaches MORE callers, not fewer.
+          const notice = wikiResolutionNotice(query, envelope.wikipedia.title, envelope.wikipedia.match);
+          md.push(`# Wikipedia`);
+          md.push(`**${oneLine(envelope.wikipedia.title)}**${notice ? `\n\n${notice}` : ''}\n\n${quoted}\n\n[Wikipedia](${envelope.wikipedia.url})`);
+        }
         return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...metas], structuredContent: envelope };
       } catch (err) {
         return toolError('Fehler bei der kombinierten Suche', err);

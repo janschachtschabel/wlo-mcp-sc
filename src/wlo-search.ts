@@ -7,10 +7,10 @@
  * `propertyFilter` helpers in `wlo-config`.
  */
 
-import {
-  BASE_URL, DISPLAY_PROPS, HEADERS, appendPropertyFilter, wloFetch, logUpstreamMiss,
-  type SearchCriterion, type SearchResponse, type WloNode,
-} from './wlo-config.js';
+import { BASE_URL, DISPLAY_PROPS, appendPropertyFilter } from './wlo-config.js';
+import { HEADERS, wloFetch, logUpstreamMiss } from './wlo-fetch.js';
+import { readJson } from './read-json.js';
+import type { SearchCriterion, SearchResponse, WloNode } from './wlo-types.js';
 
 /**
  * POST /search/v1/queries/-home-/mds_oeh/ngsearch
@@ -51,11 +51,14 @@ export async function ngsearch(
   const res = await wloFetch(url, { method: 'POST', headers: HEADERS, body });
   if (!res.ok) throw new Error(`ngsearch failed: ${res.status} ${res.statusText}`);
 
-  const data = await res.json() as {
+  // Throws rather than degrading: search is the primary read of the call it
+  // serves, and an empty result set would be read as "nothing matched".
+  const data = await readJson<{
     nodes?: WloNode[];
     pagination?: SearchResponse['pagination'];
     facets?: SearchResponse['facets'];
-  };
+  }>(res, 'ngsearch');
+  if (!data) throw new Error('ngsearch: upstream response was not valid JSON');
   return {
     nodes: data.nodes ?? [],
     pagination: data.pagination ?? { total: 0, from: 0, count: 0 },
@@ -83,6 +86,6 @@ export async function searchCollectionsByKeyword(
   const body = JSON.stringify({ criteria: [{ property: 'ngsearchword', values: [query] }] });
   const res = await wloFetch(url, { method: 'POST', headers: HEADERS, body });
   if (!res.ok) { logUpstreamMiss('searchCollectionsByKeyword', res); return []; }
-  const data = await res.json() as { nodes?: WloNode[] };
-  return data.nodes ?? [];
+  const data = await readJson<{ nodes?: WloNode[] }>(res, 'searchCollectionsByKeyword');
+  return data?.nodes ?? [];
 }

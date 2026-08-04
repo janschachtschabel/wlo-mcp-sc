@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createRateLimiter, clientKey } from '../src/rate-limit.js';
+import { createRateLimiter, createDistinctValueLimiter, clientKey } from '../src/rate-limit.js';
 
 const T0 = 1_000_000; // fixed base clock (ms); tests inject all timestamps
 
@@ -70,4 +70,59 @@ test('clientKey: falls back to remoteAddress when trusted but no header', () => 
 
 test('clientKey: returns "unknown" when nothing identifies the client', () => {
   assert.equal(clientKey(undefined, undefined, false), 'unknown');
+});
+
+// ── Credential-stuffing relay guard ──────────────────────────────────────────
+// The MCP endpoint forwards a client-supplied Basic header upstream, which
+// makes it usable as a relay for guessing WLO logins behind OUR ip. A plain
+// requests-per-minute cap is the wrong tool: a legitimate per-user client sends
+// a header on EVERY call and would be throttled, while an attacker rotating
+// credentials stays under any per-credential cap. The distinguishing signal is
+// the number of DISTINCT credentials one address presents.
+
+test('distinct-credential limiter: one client using one login is never limited', () => {
+  const lim = createDistinctValueLimiter(3, 60_000);
+  for (let i = 0; i < 500; i++) {
+    assert.equal(lim.check('1.2.3.4', 'anna:pw', 1000 + i), false, `call ${i}`);
+  }
+});
+
+test('distinct-credential limiter: rotating credentials trips it', () => {
+  const lim = createDistinctValueLimiter(3, 60_000);
+  assert.equal(lim.check('1.2.3.4', 'a:1', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'b:2', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'c:3', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'd:4', 1000), true, 'the fourth distinct login is refused');
+});
+
+test('distinct-credential limiter: separate addresses have separate budgets', () => {
+  const lim = createDistinctValueLimiter(1, 60_000);
+  assert.equal(lim.check('1.1.1.1', 'a:1', 1000), false);
+  assert.equal(lim.check('2.2.2.2', 'b:2', 1000), false, 'another client is unaffected');
+  assert.equal(lim.check('1.1.1.1', 'z:9', 1000), true);
+});
+
+test('distinct-credential limiter: the window resets', () => {
+  const lim = createDistinctValueLimiter(1, 60_000);
+  assert.equal(lim.check('1.2.3.4', 'a:1', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'b:2', 2000), true);
+  assert.equal(lim.check('1.2.3.4', 'b:2', 1000 + 60_001), false, 'a new window starts clean');
+});
+
+test('distinct-credential limiter: a limit of 0 disables it', () => {
+  const lim = createDistinctValueLimiter(0, 60_000);
+  for (const v of ['a:1', 'b:2', 'c:3', 'd:4']) {
+    assert.equal(lim.check('1.2.3.4', v, 1000), false);
+  }
+});
+
+test('distinct-credential limiter: the raw credential is never retained', () => {
+  // Whatever this holds sits in memory for a whole window, so it must be a
+  // digest — a password in a long-lived Set is a needless liability.
+  const lim = createDistinctValueLimiter(5, 60_000);
+  lim.check('1.2.3.4', 'anna:sehr-geheimes-passwort', 1000);
+  assert.ok(
+    !JSON.stringify(lim.inspectForTest()).includes('sehr-geheimes-passwort'),
+    'the credential must not be recoverable from the limiter state',
+  );
 });

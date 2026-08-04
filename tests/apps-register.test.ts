@@ -65,9 +65,19 @@ test('nodeListSchema and searchAllEnvelopeSchema accept their envelopes', () => 
         swimlaneCount: 0, swimlanesTotal: 0, swimlanes: [],
       } }],
     },
-    wikipedia: { title: 'Photosynthese', extract: '…', url: 'https://de.wikipedia.org/wiki/x', lang: 'de' },
+    // `match` is part of every summary the client produces — the fixture said
+    // otherwise and the schema caught it.
+    wikipedia: { title: 'Photosynthese', extract: '…', url: 'https://de.wikipedia.org/wiki/x', lang: 'de', match: 'exact' },
   };
   assert.equal(searchAllEnvelopeSchema.safeParse(enriched).success, true);
+
+  // A summary without the resolution quality must NOT validate: a host that
+  // attributes the text needs to know whether the article is the one asked for.
+  const { match: _dropped, ...withoutMatch } = enriched.wikipedia;
+  assert.equal(
+    searchAllEnvelopeSchema.safeParse({ ...enriched, wikipedia: withoutMatch }).success,
+    false,
+  );
 });
 
 test('swimlanePayloadSchema and browseTreeSchema accept their envelopes', () => {

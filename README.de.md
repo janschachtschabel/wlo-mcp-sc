@@ -7,9 +7,18 @@ KI-Agenten das **Suchen und Abrufen offener Bildungsressourcen (OER)** aus
 [WirLernenOnline (WLO)](https://wirlernenonline.de) über die öffentliche
 edu-sharing-REST-API ermöglicht.
 
-Er stellt **23 Tools** für Volltextsuche, Sammlungs-/Themenseiten-Navigation,
-Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen die anonyme,
-nur lesende öffentliche API. Keine Authentifizierung, keine Schreibzugriffe.
+Er stellt **26 lesende Werkzeuge** bereit (25 immer; `find_wlo_skills` erscheint nur mit konfigurierter Skill-Sammlung, und `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
+Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen die
+anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
+Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
+
+Mit einer Anmeldung kommen **kuratierende Werkzeuge** hinzu (derzeit dreizehn:
+Anlegen, Bearbeiten, Einreichen, Sammlungen, Kompendialtexte, Metadaten-
+Vorschläge, Löschen). Sie
+werden nur für Aufrufende registriert, die schreiben
+dürfen, und verweigern zusätzlich zur Aufrufzeit. Jede Änderung wird vorher
+gezeigt und bestätigt und hinterher zurückgelesen — siehe
+[Kuratieren](#kuratieren-schreiben-in-wlo).
 
 ---
 
@@ -24,6 +33,7 @@ nur lesende öffentliche API. Keine Authentifizierung, keine Schreibzugriffe.
 - [REST-API](#rest-api-öffentlich-nur-lesend)
 - [Prompt-Launcher](#prompt-launcher)
 - [Tools](#tools)
+- [Kuratieren](#kuratieren-schreiben-in-wlo)
 - [Ausgabeformate](#ausgabeformate)
 - [Filter & Vokabular](#filter--vokabular)
 - [Deployment](#deployment)
@@ -36,39 +46,60 @@ nur lesende öffentliche API. Keine Authentifizierung, keine Schreibzugriffe.
 
 ## Konzept
 
-In WLO sind eine **Sammlung** (collection) und eine **Themenseite** (topic page)
-dasselbe: eine kuratierte thematische Seite, die Bildungsinhalte in
-**Swimlanes** (Schwimmlinien / Karussells) bündelt, gruppiert nach Thema, Fach
-oder Bildungsstufe. Untersammlungen sind Unter-Themenseiten. Eine Sammlung mit
-einer `ccm:page_config_ref`-Eigenschaft besitzt eine kuratierte **Themenseite**
-mit zielgruppenspezifischen Varianten (Lehrende / Lernende / allgemein).
+In WLO bündelt eine **Sammlung** (collection) Bildungsinhalte nach Thema, Fach
+oder Bildungsstufe; Untersammlungen sind Unterthemen. Eine Sammlung mit einer
+`ccm:page_config_ref`-Eigenschaft besitzt zusätzlich eine kuratierte
+**Themenseite**: ein Seiten-Layout aus **Schwimmlinien** (Karussells) mit
+zielgruppenspezifischen Varianten (Lehrende / Lernende / allgemein).
+
+Beides ist also **nicht** dasselbe. Jede Themenseite ist eine Sammlung, aber nur
+manche Sammlungen haben eine — gemessen für „Mathematik": 5 Sammlungen, davon 1
+mit Themenseite. `search_wlo_collections` findet alle,
+`search_wlo_topic_pages` die Teilmenge mit kuratierter Seite.
 
 Alles, was der Server zurückgibt, sind öffentliche OER-Metadaten; der Server ist
 ein schlanker, zustandsloser Proxy vor edu-sharing.
 
 ## Funktionen
 
-- **23 MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
+- **26 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
   Themenseiten und deren Swimlane-Inhalte, Fachportale, Baum-Navigation,
   Node-Details (einzeln & im Bulk), Vokabular-Abfrage, Anbieter-Abfrage,
-  Health-Check, Wikipedia-Zusammenfassung, voller Kompendiumstext, Suche
-  innerhalb einer Sammlung, verwandte Inhalte, Sammlungsstatistik,
-  Node-Breadcrumb, **WLO-Skill-Suche** sowie die
-  ChatGPT-`search`/`fetch`-Knowledge-Tools.
+  Health-Check, Wikipedia-Zusammenfassung, voller Kompendiumstext, Volltext
+  eines Materials, Suche innerhalb einer Sammlung, verwandte Inhalte,
+  Sammlungsstatistik, Node-Breadcrumb, Sammlungs-Zugehörigkeit eines Materials,
+  Anmeldestatus, **WLO-Skill-Suche** sowie die
+  ChatGPT-`search`/`fetch`-Knowledge-Tools. Davon sind 25 immer da:
+  `find_wlo_skills` braucht eine konfigurierte Skills-Sammlung. Dazu kommt
+  `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
+  deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
+- **13 kuratierende MCP-Tools** — nur mit Schreibrechten sichtbar: Datensätze
+  anlegen, ändern, einreichen und löschen; Sammlungen anlegen, umbenennen,
+  befüllen, leeren und löschen; Kompendialtexte schreiben; Metadaten
+  vorschlagen, auflisten und entscheiden. Jede Änderung läuft über eine
+  Vorschau mit einmaligem Bestätigungs-Token und wird danach zurückgelesen.
+  Vollständige Liste mit Chat-Triggern: [docs/TOOLS.md](docs/TOOLS.md).
 - **OpenAI-Apps-SDK-Unterstützung** — Anzeige-Tools liefern `structuredContent`
   (Tool-`outputSchema`) mit read-only-`annotations`, der Server annonciert
-  werkzeugÃ¼bergreifende `instructions`, und fünf Tools bringen ein inline-
-  gebündeltes `ui://`-Widget mit (Kombi-Suchergebnisse mit Detailansicht im
-  Widget, Themenseiten-Swimlanes unter einem Titel/Beschreibungs-Kopf und ein
-  interaktiver Sammlungs-Browser), jeweils mit Widget-`_meta` (Beschreibung,
-  CSP, `prefersBorder`) — theme-fähig, WCAG 2.2 AA, DE/EN. Nicht-Apps-Clients
-  bleiben unberührt.
+  werkzeugübergreifende `instructions`, und **vier inline gebündelte
+  `ui://`-Widgets bedienen zehn Tools** (Suchergebnisse — geteilt von jedem
+  Werkzeug, das eine Trefferliste liefert, mit Detailansicht im Widget,
+  Kachelauswahl und Folgeaktionen je Kachel; Themenseiten-Swimlanes unter einem
+  Titel/Beschreibungs-Kopf, jede Karte aufklappbar; ein interaktiver
+  Sammlungs-Browser; und eine Leseansicht für den Volltext eines Materials),
+  jeweils mit Widget-`_meta` (Beschreibung, CSP, `prefersBorder`) — theme-fähig,
+  WCAG 2.2 AA, DE/EN. Nicht-Apps-Clients bleiben unberührt.
+  Buttons, die das Gespräch fortsetzen, speisen eine Chat-Nachricht ein — das
+  ist eine **ChatGPT-Erweiterung** (`sendFollowUpMessage`). Die
+  MCP-Apps-Standardbrücke hat kein Gegenstück, deshalb entfallen diese Buttons
+  auf anderen Hosts, statt tot zu erscheinen; die Widgets sind dort reine
+  Anzeige. Lokale Bedienung (Detailansicht, Zurück, Baum aufklappen) läuft
+  überall.
 - **Qualitäts-Reranking** — Multi-Query-Expansion (Synonyme, Keyword, Titel,
   Stoppwort-Varianten), fusioniert mit Reciprocal Rank Fusion (RRF) und einem
   Metadaten-Qualitätsscore. Deterministische Sortierung.
-- **Drei Transporte** — stdio, eigenständiges Streamable HTTP und eine
-  Vercel-Serverless-Funktion — alle aus einer transport-agnostischen
-  Server-Factory.
+- **Zwei Transporte** — stdio und ein eigenständiger Streamable-HTTP-Server —
+  beide aus einer transport-agnostischen Server-Factory.
 - **Öffentliche REST-Schicht** (HTTP-Modus) — nur lesende
   `GET /api/{search,compendium,topic-page,wikipedia}`-Wrapper über dieselben
   Services, für Nicht-MCP-KI-Werkzeuge und den Prompt-Launcher. Rate-limitiert,
@@ -79,6 +110,13 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   selbst zu nutzen (Suche + rohes JSON + fertige Skills aus `GET /api/collection`),
   als Claude/ChatGPT/Copilot/Gemini-Nachricht. Erweiterte Felder sind standardmäßig
   eingeklappt; ein Bookmarklet füllt eine Auswahl vor. Siehe [Prompt-Launcher](#prompt-launcher).
+- **Persönliche Zugangsblöcke** (HTTP-Modus, per `WLO_AUTH_PRIVATE_KEY`
+  einschaltbar) — eine Seite unter `/auth`, auf der sich jemand mit dem eigenen
+  WLO-Konto anmeldet und einen Zugangsblock erhält, dessen Passwort **im
+  Browser** verschlüsselt wurde. Einmal ins KI-Programm eintragen, sperren unter
+  `/auth-revoke.html`. Anders als ein Basic-Header ist der Block für den
+  KI-Anbieter unlesbar, außerhalb dieses Servers wertlos und ohne
+  Passwortwechsel zurücknehmbar.
 - **Deutsch ⇄ URI-Vokabular** — Filter akzeptieren deutsche Labels
   (`Mathematik`, `Grundschule`, `Lehrer/in`, `Video`) oder vollständige URIs.
 - **Gehärteter HTTP-Modus** — Upstream-Timeouts, Größenbegrenzung des
@@ -112,18 +150,72 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
 | `WLO_POOL_SIZE` | `25` | alle | Größe des Kandidaten-Pools **pro Suchvariante** für das Reranking (`enhancedSearch`) — **nicht** die Anzahl der zurückgegebenen Treffer (das ist `maxResults`). Kleiner = schneller/kleinere Abrufe bei minimal geringerer Recall-Quote. |
-| `WLO_FETCH_TIMEOUT_MS` | `10000` | alle | Timeout pro Anfrage (ms) für jeden Upstream-edu-sharing-Aufruf. Verhindert, dass ein hängender Backend-Socket einen Tool-Aufruf blockiert. |
-| `WLO_TEXT_EXTRACTION_URL` | `https://text-extraction.staging.openeduhub.net` | alle | Basis-URL des Text-Extraktionsdienstes, auf den `get_wlo_content_text` bei extern verlinktem Material (`ccm:wwwurl`) zurückfällt, dessen Text das Repository nicht gespeichert hat. Jede Instanz betreibt üblicherweise einen eigenen. **Leer schaltet** den externen Weg **ab** — dann bleibt `/textContent` des Repositories die einzige Quelle. Ein Wert, der nicht als Basis taugt (kein Schema, kein http(s), oder mit Query/Fragment), schaltet ihn ebenfalls ab und loggt eine Warnung; es wird bewusst **nicht** auf den Default zurückgefallen, damit ein Tippfehler keine Material-URLs an einen nicht gewählten Host schickt. |
-| `WLO_TEXT_TIMEOUT_MS` | `25000` | alle | Timeout (ms) für Volltext-Abrufe — sowohl `/textContent` als auch den Extraktionsdienst. Bewusst größer als `WLO_FETCH_TIMEOUT_MS`: `/textContent` wurde mit 4,6 s Median und 9,2 s Maximum gemessen, was der 10-s-Default abschneiden würde — ein vorhandener Text ginge verloren. |
+| `WLO_FETCH_TIMEOUT_MS` | `20000` | alle | Timeout pro Anfrage (ms) für jeden Upstream-edu-sharing-Aufruf. Verhindert, dass ein hängender Backend-Socket einen Tool-Aufruf blockiert. Aus Messung abgeleitet (Staging, 2026-08-02): Anlegen eines Datensatzes 4,2–8,0 s, jeder andere Aufruf unter 2,5 s. |
+| `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(nicht gesetzt)_ | alle | Optionales Dienstkonto. Nicht gesetzt (Standard) → der Server liest **anonym**, nur öffentliche Inhalte, exakt wie bisher. Beide gesetzt → jeder Aufruf meldet sich per HTTP Basic mit diesem einen Konto an, **alle** Nutzenden dieses MCP sehen also dieselben erweiterten Inhalte. Dafür ein eigens angelegtes, schreibgeschütztes Konto verwenden: was es sieht, sieht jede:r, und im edu-sharing-Protokoll steht das Dienstkonto statt der Person. Eine halbe Angabe gilt als keine. **Falsche Zugangsdaten schalten nicht auf „nur öffentlich“ zurück** — das Repository antwortet mit `401` (gemessen gegen die Produktion am 2026-07-31, auf dem Identitäts- wie auf dem Such-Endpunkt), damit schlägt jede Abfrage fehl und der Server liefert gar nichts. Wer anonym lesen will, lässt beide Variablen weg. Mit dem Werkzeug `wlo_auth_status` prüfen: `mode: "service"` zusammen mit `authenticated: false` heißt, die Zugangsdaten werden abgelehnt. HTTP Basic, weil es neben dem Session-Cookie das einzige Schema ist, das die edu-sharing-OpenAPI deklariert. **Geltungsbereich:** Das Dienstkonto gilt nur für den MCP-Endpunkt. Die öffentliche REST-Schnittstelle (`GET /api/*`) und die Launcher-Seite bleiben bewusst anonym — sie sind ohne Anmeldung aus dem Internet erreichbar; würden sie das Konto erben, wäre alles, was es sieht, für jede:n lesbar. Bei einer Repository-URL ohne `https` gehen die Zugangsdaten im Klartext über die Leitung (Basic ist base64, keine Verschlüsselung); der Server warnt darüber beim Start. |
+| `WLO_ALLOW_SERVICE_WRITES` | _(nicht gesetzt)_ | alle | Erlaubt dem **Dienstkonto** die kuratierenden (schreibenden) Werkzeuge. Standardmäßig aus: eine Änderung unter einem gemeinsamen Konto ist niemandem zuzuordnen — in der Historie des Repositorys steht der Kontoname, nicht die Person, die sie angefordert hat. Wer sich mit dem eigenen WLO-Login meldet, darf immer schreiben und braucht hier nichts; anonyme Aufrufende dürfen nie und sehen die Werkzeuge gar nicht. Gilt ebenso für den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als Dienstkonto gelten. Gültige Werte: `1`, `true`, `yes`, `on`; alles andere (auch `false`) lässt es aus. Siehe [Kuratieren](#kuratieren-schreiben-in-wlo). |
+| `WLO_AUTH_PRIVATE_KEY` | _(nicht gesetzt)_ | http | PKCS#8-PEM, das **persönliche Zugangsblöcke** einschaltet: Wer sich unter `/auth` einen verschlüsselten Block holt, trägt ihn einmal als `Bearer …` in das Authorization-Feld seines KI-Programms ein und kann ihn unter `/auth-revoke.html` (oder `/auth/revoke` — dieselbe Seite) sperren. Pro Konto gelten die zehn zuletzt geholten Blöcke. Nicht gesetzt heißt: Funktion komplett aus — die `/auth/…`-Endpunkte antworten 404, die Seiten sagen es, ein Bearer-Header wird abgelehnt wie bisher. Der öffentliche Schlüssel wird hieraus **abgeleitet**, es gibt also keine zweite Variable, die auseinanderdriften könnte. Erzeugen mit `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **Dieser Schlüssel entschlüsselt jeden ausgestellten Block zu einem lebenden WLO-Passwort** — er gehört in die `.env` auf dem Server, nie ins Image und nie ins Repository. |
+| `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(nicht gesetzt)_ | http | Der vorherige Schlüssel während eines Wechsels. Ausgestellt wird immer mit dem aktuellen, geöffnet mit beiden — sonst würde ein Wechsel alle Nutzerkonfigurationen gleichzeitig ungültig machen. Nach dem Überlappungsfenster wieder entfernen. Ein unbrauchbarer Wert schaltet die Funktion **aus**, statt das Fenster still zu verwerfen: sonst bräche genau das, wofür es existiert, und man erführe es von Nutzerbeschwerden statt aus dem Start-Log. |
+| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Ablageort der Positivliste ausgestellter Zugangs-IDs. Sie enthält IDs, Benutzernamen und Ausstellungszeitpunkt — **nie ein Credential**. Es ist eine POSITIV-Liste: Geht sie verloren, funktioniert kein Block mehr (unbequem) statt dass jeder widerrufene wieder gilt (unsicher). In Docker ist das das einzige beschreibbare Volume; `read_only: true` gilt für alles andere weiter. **Sichern.** |
+| `WLO_INBOX_ID` | _(nicht gesetzt)_ | alle | nodeId des gemeinsamen Posteingangs, in dem neue Datensätze landen, wenn der Server unter dem **Dienstkonto** schreibt. Wer mit eigenem Login arbeitet, legt in `-userhome-` an und braucht hier nichts. Bewusst ohne Vorgabewert: nodeIds gelten nur für ein Repository, eine fest eingebaute würde auf Staging in eine andere Sammlung zeigen als auf der Produktion und anderswo auf gar nichts. Nicht gesetzt heißt: Anlegen im Dienstkonto-Modus wird mit Hinweis auf diese Variable abgelehnt — besser als ein Datensatz, den niemand findet. |
+| `AUTH_CREDENTIAL_LIMIT` | `10` | HTTP-Modus | Wie viele **verschiedene** Logins eine Client-Adresse innerhalb von 10 Minuten vorzeigen darf; darüber 429. Der Server reicht einen mitgeschickten `Authorization`-Header nach oben weiter, könnte also zum Durchprobieren von WLO-Logins unter *unserer* Adresse dienen. Eine Anfragen-pro-Minute-Grenze wäre hier das falsche Mittel — ein Modus-3-Client sendet den Header bei **jedem** Aufruf. Das Signal sind verschiedene Logins: eine echte Person hat genau eines. `0` schaltet die Prüfung ab. |
+| `WLO_DISABLE_UNSAFE_TOOLS` | *(nicht gesetzt — nichts abgeschaltet; ausgeliefert als `all`)* | alle | Schaltet Werkzeuge ab, die sich als **unsicher** deklarieren. Namensliste (Komma oder Leerzeichen) oder `all` (auch `1`/`true`/`yes`/`on`). Nicht gesetzt heißt: unsichere Werkzeuge SIND registriert, und der Server warnt beim Start mit Name und Begründung — ein Risiko, das nur im Changelog steht, liest niemand, der ein Deployment erbt. `.env.example` und `docker-compose.yml` liefern `all` aus, in einem echten Deployment sind sie also **ab Werk aus**; auf einen leeren Wert setzen schaltet sie an. Betroffen ist derzeit genau ein Werkzeug: `get_url_text`. `get_wlo_content_text` ausdrücklich **nicht** — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge). |
+| `WLO_TEXT_EXTRACTION_URL` | *(keiner — nicht gesetzt = aus)* | alle | Basis-URL des Text-Extraktionsdienstes, auf den `get_wlo_content_text` bei extern verlinktem Material (`ccm:wwwurl`) zurückfällt, dessen Text das Repository nicht gespeichert hat. Jede Instanz betreibt üblicherweise einen eigenen, deshalb gibt es **keinen Default**: nicht gesetzt (oder leer) schaltet den externen Weg ab und loggt den Grund, dann bleibt `/textContent` des Repositories die einzige Quelle. Ein Wert, der nicht als Basis taugt (kein Schema, kein http(s), oder mit Query/Fragment), schaltet ihn ebenfalls ab und warnt, damit ein Tippfehler keine Material-URLs an einen nicht gewählten Host schickt. Auf den Extraktionsdienst *deines* Repositories zeigen lassen — ein Default auf den Staging-Dienst hat Produktions-Material-URLs in eine andere Umgebung geschickt. |
+| `WLO_TEXT_TIMEOUT_MS` | `25000` | alle | Timeout (ms) für Volltext-Abrufe — sowohl `/textContent` als auch den Extraktionsdienst. Bewusst größer als `WLO_FETCH_TIMEOUT_MS`: `/textContent` wurde mit 4,6 s Median und 9,2 s Maximum gemessen. Volltext ist der eine Aufruf, der länger dauern darf als alles andere. |
 | `WLO_TOPIC_POOL` | `10` | alle | Fächerbreite für die Anreicherung von Themenseiten-Kandidaten (parallel abgesetzte Metadaten-Abrufe). Höher = weniger sequenzielle Wellen bei mehr gleichzeitiger Upstream-Last. |
 | `PORT` | `3000` | HTTP-Modus | Port für den eigenständigen HTTP-Server. |
 | `MCP_SSE` | `false` | HTTP-Modus | Bei wahrem Wert (`1`/`true`/`yes`) wird `POST /mcp` als echter Server-Sent-Events-Stream ausgeliefert (vom ChatGPT-Entwicklermodus benötigt). Standard sind Einzel-JSON-Antworten (maximale Client-Kompatibilität). Hinter einem Reverse-Proxy **muss** das Buffering für die `/mcp`-Location deaktiviert sein — siehe [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Das Docker-Image setzt dies standardmäßig auf `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | alle | MIME-Type der inline-Apps-SDK-Widget-Ressourcen. Standard ist der MCP-Apps-Standard (portabel). Auf `text/html+skybridge` setzen, falls eine Legacy-ChatGPT-Runtime die Widgets mit dem Standardwert nicht rendert. |
 | `WLO_WIDGET_DOMAIN` | nicht gesetzt | alle | App-Identitäts-Domain für die ChatGPT-Plugin-Submission (dort Pflicht + pro App eindeutig; Widgets rendern unter `<domain>.web-sandbox.oaiusercontent.com`). Wenn gesetzt, wird sie auf `_meta.ui.domain` **und** dem Alias `openai/widgetDomain` ausgewiesen; **wenn nicht gesetzt, auf keinem von beiden** — ein Host validiert die Domain gegen sein eigenes Sandbox-Format und verwirft bei fremden Werten das ganze Widget (und bricht den zugehörigen Tool-Call ab): Claude erwartet `{hash}.claudemcpcontent.com` und normalisiert den Vendor-Alias auf den Standard-Key, es reicht also nicht, nur einen wegzulassen. Für Claude und jeden Nicht-ChatGPT-Host nicht setzen. Die Widget-CSP bleibt unabhängig davon auf der edu-sharing-Origin. |
-| `MAX_BODY_BYTES` | `1048576` (1 MB) | HTTP-Modus | Maximale Request-Body-Größe; größere POSTs erhalten `413`. Begrenzt einen Speichererschöpfungs-Vektor. |
+| `MAX_BODY_BYTES` | `1048576` (1 MB) | HTTP-Modus | Maximale Request-Body-Größe **in Bytes**; größere POSTs erhalten `413`. Begrenzt einen Speichererschöpfungs-Vektor. Nur reine Ziffern — `1MB` wird mit einer Warnung abgelehnt und der Standard behalten, statt als `1` Byte gelesen zu werden (womit jede Anfrage `413` bekäme). |
 | `RATE_LIMIT_RPM` | `120` | HTTP-Modus | Anfragen/Minute **pro Client-IP** am MCP-Endpunkt; über dem Limit wird `429` zurückgegeben. `/health` ist ausgenommen. `0` zum Deaktivieren (z. B. hinter einem WAF-/Plattform-Limiter). |
 | `API_RATE_LIMIT_RPM` | `30` | HTTP-Modus | Anfragen/Minute **pro Client-IP** an den öffentlichen REST-Endpunkten (`GET /api/*`); über dem Limit `429`. Strenger als `RATE_LIMIT_RPM`, da es eine anonyme öffentliche Oberfläche ist. `0` zum Deaktivieren. |
 | `TRUST_PROXY` | `false` | HTTP-Modus | Bei wahrem Wert (`1`/`true`/`yes`) wird die Client-IP aus dem letzten (Proxy-angehängten) `X-Forwarded-For`-Hop statt aus der Socket-Adresse genommen — nötig für korrektes Rate-Limiting pro Client **hinter einem Reverse-Proxy**. Standardmäßig aus, da `X-Forwarded-For` auf einem direkt exponierten Server fälschbar ist. |
+
+**Zahlenformate.** Jede numerische Variable oben nimmt reine Ziffern und sonst
+nichts. Ein Wert mit Einheit oder Trennzeichen (`20s`, `1MB`, `120/min`) wird
+**abgelehnt** — mit einer Warnung, die die Variable benennt — und der Standard
+gilt weiter. `parseInt` würde sonst beim ersten Nicht-Ziffern-Zeichen stehen
+bleiben und stillschweigend einen 20-Millisekunden-Timeout oder eine Ein-Byte-
+Obergrenze erzeugen. Die Rate-Limits nehmen zusätzlich `0` an (bedeutet
+„abgeschaltet"); jede andere numerische Variable verlangt mindestens `1`.
+
+### Mit welchen Rechten der Server liest
+
+Drei Modi, in der Reihenfolge, in der der Server sie pro Aufruf auflöst:
+
+1. **Anonym** (Standard, keine Konfiguration) — nur öffentliche Inhalte. So
+   arbeitet jede Installation, solange nichts gesetzt ist.
+2. **Ein gemeinsames Dienstkonto** — `WLO_SERVICE_USER` und
+   `WLO_SERVICE_PASSWORD` setzen. Alle Nutzenden dieses MCP-Servers sehen dann
+   dieselben erweiterten Inhalte. Gilt nur für den MCP-Endpunkt; `GET /api/*`
+   und die Launcher-Seite bleiben anonym.
+3. **Jede Person mit ihrem eigenen WLO-Login.** Das KI-Programm sendet einen
+   `Authorization`-Header, den der Server an genau diese eine Anfrage bindet —
+   nichts wird gespeichert, und das Sprachmodell bekommt ihn nie zu sehen. Die
+   Ergebnisse folgen den Rechten dieser Person, und im edu-sharing-Protokoll
+   steht sie statt eines Sammelkontos. Für diesen Header gibt es zwei Wege, und
+   sie sind nicht gleichwertig:
+
+   - **Verschlüsselter Zugangsblock (empfohlen).** Ist `WLO_AUTH_PRIVATE_KEY`
+     gesetzt, öffnet die Person `/auth`, meldet sich mit ihrem WLO-Konto an, und
+     die Seite verschlüsselt das Passwort **im Browser** zu einem `wlo2.…`-Block,
+     den nur dieser Server öffnen kann. Einmal als `Bearer wlo2.…` eintragen;
+     sperren jederzeit unter `/auth-revoke.html`.
+   - **`Authorization: Basic <base64(user:passwort)>`.** Funktioniert überall und
+     braucht am Server nichts — aber base64 ist keine Verschlüsselung. Der Wert
+     *ist* das Passwort, er ist für jeden lesbar, der ihn speichert, er
+     funktioniert gegen **ganz WLO** statt nur gegen diesen Server, und
+     zurücknehmen lässt er sich nur durch einen Passwortwechsel. Wer ihn auf der
+     Kommandozeile baut, schreibt das Passwort in die Shell-History. Nutzen, wo
+     der Block nicht angeboten wird.
+
+Ein persönliches Login sticht für diese Anfrage das Dienstkonto; ohne beides
+läuft der Aufruf anonym. Welcher Modus aktiv ist, sagt das Werkzeug
+`wlo_auth_status` — wobei `authenticated` eine eigene Aussage ist, weil
+edu-sharing falsche Zugangsdaten nicht ablehnt, sondern als Gast antwortet.
+
+Ob Modus 3 zur Verfügung steht, hängt vom KI-Programm ab: es muss einen eigenen
+Header für die Verbindung zulassen. Wo das nicht geht, bleiben Modus 1 und 2.
 
 > **Ein Server = ein Repository.** Jeder Prozess zeigt auf genau eine
 > edu-sharing-Instanz. Um Prod und Staging parallel zu bedienen, betreiben Sie
@@ -138,6 +230,8 @@ node dist/http.js         # HTTP mode → http://localhost:3000/mcp
 npm run dev               # stdio with auto-reload (tsx)
 npm run dev:http          # HTTP with auto-reload (tsx)
 npm test                  # offline unit/smoke tests (node:test)
+npm run test:coverage     # dieselbe Suite plus Coverage-Bericht des Runners
+npm run typecheck         # Typ-Gate über src + tests + Widget-Einstiegspunkte
 ```
 
 ## REST-API (öffentlich, nur lesend)
@@ -163,11 +257,11 @@ Share-Link. Die Fläche beschreibt sich für KI-Fetcher selbst über
 | Endpunkt | Query-Parameter | Liefert |
 |---|---|---|
 | `GET /api/search/<Begriff>` | Pfad-Form von `/api/search` — der Begriff steht im **Pfad**, Filter bleiben optionale Query-Parameter. Für KI-Werkzeuge bevorzugt: Manche KI-Abrufschichten entfernen bei selbst gebauten URLs den Query-String (live diagnostiziert); die Pfad-Form übersteht das — es fehlen dann höchstens die Filter, nicht die Suche. Ein explizites `q` gewinnt gegen den Pfad-Begriff. | Dasselbe Envelope wie `GET /api/search`. |
-| `GET /api/search` | `q` (Pflicht), `educationalContext`, `discipline`, `learningResourceType`, `userRole`, `publisher`, `maxContent`, `maxCollections`, `skipCount`, `include` (`content,collections,topicPages`), `includeCompendium`, `includeTextContent`, `includeWikipedia`, `includeTopicPageContent`, `maxPerSwimlane`, `includeFacets`, `fields` | Das kombinierte `search_wlo_all`-Envelope (`content` / `collections` / `topicPages`, optional `wikipedia`). Ergänzt `unresolvedFilters` (nicht auflösbare Vokabel-Filter + „Meintest du?"-Vorschläge), und — mit `includeFacets=1` — `facets` (`{label, count, uri}` je Bucket; die `discipline`-Facette löst Hochschulfächer auf, siehe unten). Optionales `fields=title,url,…` kürzt jeden Treffer auf diese Schlüssel (`nodeId` bleibt immer) — Token-Ersparnis für LLM-Clients, die das rohe JSON lesen. |
+| `GET /api/search` | `q` (Pflicht), `educationalContext`, `discipline`, `learningResourceType`, `userRole`, `publisher`, `maxContent`, `maxCollections`, `skipCount`, `include` (`content,collections,topicPages`), `includeCompendium`, `includeTextContent`, `includeWikipedia`, `includeTopicPageContent`, `maxPerSwimlane`, `includeFacets`, `fields` | Das kombinierte `search_wlo_all`-Envelope (`content` / `collections` / `topicPages`, optional `wikipedia`). Ergänzt `unresolvedFilters` (nicht auflösbare Vokabel-Filter + „Meintest du?“-Vorschläge), und — mit `includeFacets=1` — `facets` (`{label, count, uri}` je Bucket; die `discipline`-Facette löst Hochschulfächer auf, siehe unten). Optionales `fields=title,url,…` kürzt jeden Treffer auf diese Schlüssel (`nodeId` bleibt immer) — Token-Ersparnis für LLM-Clients, die das rohe JSON lesen. |
 | `GET /api/collection` | `nodeId` (Default `WLO_SKILLS_COLLECTION_ID`), `q` (optional, Suche innerhalb), `max`, `fields`, Vokabular-Filter | Die Inhalte einer Sammlung: `{ collectionId, query, total, results: [{ nodeId, title, description, learningResourceTypes, publisher, url, downloadUrl }] }`. Ohne `q` werden die direkten Datei-Kinder gelistet (zuverlässig auch für Referenz-Sammlungen); mit `q` wird darin gesucht. Optionales `fields=…` kürzt jeden Treffer (`nodeId` bleibt immer). Die **Skills**-Quelle des Launchers — je Treffer liefert `downloadUrl` das rohe Markdown. |
 | `GET /api/compendium` | `ids` (kommagetrennt) oder `nodeId`, ≤ 25 | `{ entries: [{ nodeId, title, compendiumText }] }` — der VOLLE redaktionelle Kompendiumstext. |
 | `GET /api/topic-page` | `collectionId` oder `variantId` (≥ 1 Pflicht), `targetGroup` (`teacher`/`learner`/`general`), `maxPerSwimlane` | Das render-fertige Swimlane-Payload (`variantTitle`, `topicPageUrl`, `swimlanes[]`). |
-| `GET /api/wikipedia` | `q` (Pflicht), `lang` (Standard `de`), `sections` (1–3) | Eine Wikipedia-Einleitungszusammenfassung `{ title, extract, thumbnail?, url, lang }`, oder `404`, wenn kein Artikel passt. |
+| `GET /api/wikipedia` | `q` (Pflicht), `lang` (Standard `de`), `sections` (1–3) | Eine Wikipedia-Einleitungszusammenfassung `{ title, extract, thumbnail?, url, lang, match }`, oder `404`, wenn kein Artikel passt. `match` ist `exact` (Titel wie gefragt oder eine Wikipedia-Weiterleitung darauf) oder `fuzzy` (kein Artikel dieses Namens; per Suche aufgelöst und auf Relevanz geprüft). Ein Kandidat, der nicht zum Thema gehört, ergibt `404` statt eines plausiblen falschen Artikels. |
 | `GET /api/skills` | — | Der Skill-Katalog `{ skills: [{ id, name, description, path }] }` für KI-Apps (siehe [Prompt-Launcher](#prompt-launcher)). |
 | `GET /api/skills/<id>` | — | Der **rohe Markdown-Text** eines Skills (`text/markdown`), oder `404` bei unbekannter id. `<id>` ist heute ein stabiler Slug (später vsl. eine WLO-nodeId). |
 
@@ -175,8 +269,8 @@ Share-Link. Die Fläche beschreibt sich für KI-Fetcher selbst über
 curl "http://localhost:3000/api/search?q=Photosynthese&includeWikipedia=1"
 ```
 
-Die REST-Schicht wird nur von `http.ts` bedient — **nicht** vom Vercel-Handler
-(`api/mcp.ts`).
+Die REST-Schicht wird nur von `http.ts` bedient — **nicht** vom
+stdio-Einstiegspunkt.
 
 ## Prompt-Launcher
 
@@ -228,11 +322,15 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 16 | `search` | ChatGPT-Knowledge-Konvention: leichte Treffer `{id,title,url}` über WLO | json (+ Text) |
 | 17 | `fetch` | ChatGPT-Knowledge-Konvention: volles Dokument eines Knotens `{id,title,text,url,metadata}` | json (+ Text) |
 | 18 | `lookup_wlo_publishers` | Anbieter/Quellen mit Materialzahl je Anbieter auflisten (Facette) | markdown / json |
-| 19 | `get_related_content` | „Mehr davon": Inhalte mit gleichem Fach/gleicher Stufe wie ein Seed-Node (+ optional Geschwister) | markdown / json |
+| 19 | `get_related_content` | „Mehr davon“: Inhalte mit gleichem Fach/gleicher Stufe wie ein Seed-Node (+ optional Geschwister) | markdown / json |
 | 20 | `get_node_breadcrumb` | Ahnenpfad einer Sammlung (Wurzel → Node) im Inhaltsbaum | markdown / json |
+| `get_node_collections` | In welchen Sammlungen ein Material geführt wird — die Umkehrung aller anderen Abfragen. Beantwortet „wo ist das eingeordnet?" und „wo finde ich mehr davon?". Löst eine Reference-ID zuerst auf ihr Original auf, damit eine ID aus einem Sammlungs-Listing genauso funktioniert wie eine aus der Suche. |
 | 21 | `get_collection_stats` | Zusammensetzung einer Sammlung: Datei-/Untersammlungs-Zahlen + Typ/Fach/Stufe-Aufschlüsselung | markdown / json |
-| 22 | `find_wlo_skills` | WLO-„Skills" (wiederverwendbare Instruktions-Markdown in einer WLO-Sammlung) zu einer Aufgabe finden und ihre Instruktionen zum Anwenden liefern | markdown / json |
+| 22 | `find_wlo_skills` | WLO-„Skills“ (wiederverwendbare Instruktions-Markdown in einer WLO-Sammlung) zu einer Aufgabe finden und ihre Instruktionen zum Anwenden liefern | markdown / json |
 | 23 | `get_wlo_content_text` | Der **eigentliche Volltext** eines Materials (Arbeitsblatt, Artikel), nicht dessen Metadaten — Repository zuerst, verlinkte Seite als Rückfallebene | markdown / json |
+| 24 | `get_node_collections` | In welchen Sammlungen ein Material liegt (Rückwärtssuche über `/usage/v1`) | markdown / json |
+| 25 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf | markdown / json |
+| 26 | `get_url_text` | **UNSICHER** — der Text hinter einer BELIEBIGEN Web-Adresse, über den Extraktionsdienst. Nicht für WLO-Material (dafür 23). Über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar; **für den Produktivbetrieb nicht empfohlen** — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge) | markdown / json |
 
 Die Anzeige-/Such-Tools liefern zusätzlich `structuredContent` (gegen ein
 Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
@@ -354,8 +452,18 @@ ist `null` für Knoten ohne die Eigenschaft.
 `query?`, die fünf Vokabular-Filter, `maxResults?` (1–50, Standard 10),
 `skipCount?`, `outputFormat?`. Eine Volltextsuche, begrenzt auf einen
 Sammlungs-Teilbaum (via `virtual:primaryparent_nodeid`) — „welche Videos zu X
-sind in dieser Sammlung?". Für eine unbegrenzte Suche `search_wlo_content`, zum
+sind in dieser Sammlung?“. Für eine unbegrenzte Suche `search_wlo_content`, zum
 ungefilterten Auflisten `get_collection_contents` nutzen.
+
+**16. `search`** und **17. `fetch`** — die ChatGPT-*Knowledge-Konvention*, ein
+festes Paar aus Namen und Formen, das ein Host für belegte Antworten von sich
+aus aufrufen darf. `search` nimmt eine `query` und liefert bewusst leichte
+Treffer (`{id, title, url}`), damit ein Modell zitieren kann, ohne volle
+Datensätze zu bezahlen; `fetch` nimmt eine dieser `id`s und liefert das ganze
+Dokument (`{id, title, text, url, metadata}`). Beide sind eine dünne Schicht
+über derselben Pipeline wie 2 und 23 — angeboten unter den Namen, die die
+Konvention verlangt, damit ein Host sie findet. Für alles, was eine Person in
+Worten fragt, sind die reichhaltigeren Werkzeuge oben die bessere Wahl.
 
 **18. `lookup_wlo_publishers`** — `query?`, `discipline?`, `educationalContext?`,
 `maxResults?` (1–100, Standard 20), `outputFormat?`. Listet die Anbieter/Quellen
@@ -367,7 +475,7 @@ um gültige Werte für den `publisher`-Filter zu finden.
 (1–30, Standard 8), `includeSiblings?` (Standard `false`), `outputFormat?`. Liest
 Fächer + Bildungsstufen des Seed-Nodes und findet anderes Material mit gleichem
 Profil (der Seed wird ausgeschlossen); `includeSiblings` liefert zusätzlich die
-übrigen Inhalte der primären Eltern-Sammlung. „Was passt noch dazu?"
+übrigen Inhalte der primären Eltern-Sammlung. „Was passt noch dazu?“
 
 **20. `get_node_breadcrumb`** — `nodeId` (erforderlich), `outputFormat?`. Gibt den
 Ahnenpfad des Nodes zurück, geordnet Wurzel → Node (ein `/parents`-Aufruf,
@@ -403,6 +511,134 @@ genommenen Weg. Ein fehlender Text ist kein Fehler, sondern ein `reason`:
 `access_denied` (vorhanden, aber nicht öffentlich — da hilft kein Konverter,
 nur Rechte), `no_text_no_url`, `extraction_failed`, `node_not_found`. Lange
 Texte werden gekürzt und als solche markiert (`truncated`).
+
+**24. `get_node_collections`** — `nodeId`, `maxResults?`, `outputFormat?`. Der
+umgekehrte Weg zum Stöbern: zu einem Material die kuratierten Sammlungen, die es
+führen. Die Antwort auf „wo ist das eingeordnet?“ und „wo finde ich mehr davon?“
+— vom einzelnen Fundstück zurück zur Sammlung. Für die Einordnung einer
+*Sammlung* im Baum ist 21 (`get_node_breadcrumb`) zuständig.
+
+**25. `wlo_auth_status`** — ohne Parameter. Mit welchen Rechten dieser Server
+gerade liest: `anonymous` (nur öffentliche Daten, der Standard), `service` (ein
+fest konfiguriertes Konto, dieselben Rechte für alle) oder `user` (die Rechte
+der angemeldeten Person). `authenticated` ist eine **eigene** Aussage:
+`service`/`user` bei `authenticated: false` heißt, WLO lehnt die hinterlegten
+Zugangsdaten ab — dann schlagen *alle* Abfragen fehl, es kommen nicht etwa nur
+öffentliche Inhalte, sondern gar keine. Ein Konfigurationsfehler, den man
+benennen sollte, statt eine leere Welt zu melden.
+
+**26. `get_url_text`** *(UNSICHER — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge))*
+— `url`, `method?` (`browser` Standard / `simple`), `maxChars?` (500–50000,
+Standard 8000), `outputFormat?`. Der Text hinter einer **beliebigen**
+Web-Adresse — für eine Adresse, die im Gespräch genannt wurde, nicht für einen
+WLO-Datensatz. Für WLO-Material 23 nehmen: das liest direkt aus dem Repository,
+ist schneller und funktioniert dort, wo dieses Werkzeug scheitert. Kein Text ist
+eine normale Antwort mit `reason` — `not_http`, `private_host`, `dns_failed`,
+`service_disabled` (eine Server-Einstellung fehlt, das liegt nicht an der Seite),
+`extraction_failed`. Bei letzterem lohnt genau ein zweiter Versuch mit dem
+anderen `method`: der Dienst rendert mit Playwright und hat bekannte Lücken
+(geschützte oder bot-gesperrte Seiten, reine Mediendateien). Die gemeldete `url`
+ist die **normalisierte** — die tatsächlich angefragte, die nicht immer die
+übergebene Zeichenkette ist.
+
+### Wikipedia-Auflösung
+
+`get_wikipedia_summary` und `GET /api/wikipedia` antworten auf zwei Weisen, und
+das Feld `match` sagt, auf welche:
+
+- **`exact`** — Wikipedia hat einen Artikel unter dem gefragten Namen oder eine
+  **Weiterleitung** darauf (`Bruchrechnen` → `Bruchrechnung`). Eine Weiterleitung
+  ist eine redaktionelle Aussage, dass beide Namen dasselbe Thema meinen, und
+  wird deshalb ungeprüft übernommen.
+- **`fuzzy`** — kein Artikel dieses Namens. Die Anfrage geht an die
+  Wikipedia-Suche, und es wird der Kandidat gewählt, um den es tatsächlich geht
+  — nicht einfach der erste. `Feinoptik` → `Feinoptiker`, `Dreiecke` → `Dreieck`.
+
+**Passt kein Kandidat zum Thema, lautet die Antwort „kein Artikel" — nie die
+nächstliegende Zeichenkette.** Vor dieser Absicherung gemessen: `Stadt Berlin`
+lieferte `Bern`, `Dreiecke` lieferte `Dreiecker`, einen Berg im Allgäu. Wer den
+Extrakt zu Unterrichtsmaterial verarbeitet, hängt eine Quellenangabe auf den
+Artikel an — ein plausibler falscher Artikel sieht dann nicht nur schief aus,
+sondern veröffentlicht eine falsche Quellenangabe. Die verworfenen Kandidaten
+stehen im Log, damit ein Fehlschlag nachvollziehbar bleibt.
+
+Die Prüfung läuft nur auf den Suchkandidaten. Zwei Folgen sind wissenswert: eine
+Weiterleitung wird nie angezweifelt (ohne Stemmer lässt sich „Bruchrechnen" und
+„Bruchrechnung" durch keine Regel verbinden), und ein Artikel, der das Thema nur
+*erwähnt*, wird dafür nicht angenommen — `Stabi Berlin` ist nicht die Antwort auf
+`Stadt Berlin`, obwohl eine reine Wortvorkommen-Prüfung ihn nähme.
+
+## Kuratieren (Schreiben in WLO)
+
+Kuratierende Werkzeuge verändern Daten im Repository. Sie sind deshalb doppelt
+abgesichert und handeln nie in einem Schritt.
+
+**Wer schreiben darf.** Anonyme Aufrufende nie — die Werkzeuge werden gar nicht
+erst registriert und tauchen in `tools/list` nicht auf. Wer sich mit dem eigenen
+WLO-Login meldet, immer. Das eingerichtete Dienstkonto nur, wenn
+`WLO_ALLOW_SERVICE_WRITES` gesetzt ist: eine Änderung unter einem gemeinsamen
+Konto ist niemandem zuzuordnen, weil in der Historie des Repositorys der
+Kontoname steht und nicht die Person, die sie angefordert hat. Das betrifft auch
+den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als
+Dienstkonto gelten.
+
+Jedes Werkzeug verweigert zusätzlich zur Aufrufzeit — ein Host kann eine
+Werkzeugliste ausliefern, die er in einer angemeldeten Sitzung zwischengespeichert
+hat.
+
+**Immer zwei Schritte.** Ein Aufruf ohne `confirmToken` schreibt nichts. Er liest
+den Datensatz, zeigt genau, was sich ändern würde, und gibt einen einmalig
+gültigen Schlüssel zurück, der zehn Minuten hält. Erst ein zweiter Aufruf mit
+diesem Schlüssel schreibt. Der Schlüssel hängt an einer Prüfsumme der
+geplanten Änderung — die Vorschau einer harmlosen Korrektur kann also keine
+andere Änderung freigeben. Genau das bräuchte ein Prompt-Injection-Angriff.
+
+**Nichts gilt als gespeichert, bis es zurückgelesen wurde.** edu-sharing
+antwortet in drei gemessenen Fällen mit `200` und verwirft den Wert trotzdem:
+wenn das Metadatenset die Eigenschaft herausfiltert, wenn dem Knoten der
+tragende Aspect fehlt und wenn die aufrufende Person das Recht nicht hat. Nach
+jedem Schreibvorgang wird der Datensatz erneut gelesen und je Feld berichtet, ob
+der Wert gespeichert, verworfen oder vom Repository umgeschrieben wurde. Ein
+verworfenes Feld wird nie als Erfolg gemeldet.
+
+**Ein abgebrochener Aufruf lässt das Ergebnis offen — er wird nie als
+Fehlschlag gemeldet.** Antwortet das Repository nicht rechtzeitig, trifft der
+Abbruch die *Antwort*, nicht die Arbeit: auf Staging gemessen, hatte ein
+zeitlich abgelaufenes Anlegen den Datensatz bereits erzeugt. Jedes
+Kurationswerkzeug trennt deshalb „das Repository hat abgelehnt" (es ist nichts
+passiert, und das wird klar gesagt) von „wir haben aufgehört zuzuhören" (das
+Ergebnis ist offen, die Antwort sagt das und schickt zum Nachsehen). Am meisten
+zählt das bei den beiden Löschwerkzeugen: ein falsches „konnte nicht gelöscht
+werden" ist genau das, was jemanden davon abhält nachzuschauen, ob sein Material
+noch da ist.
+
+**Versionen.** Standardmäßig ändert eine Bearbeitung den Datensatz an Ort und
+Stelle (`PUT`). Mit `commit: true` und einem `versionComment` wird eine
+Arbeitsrunde als neue Version abgeschlossen (`POST`) — sonst hinterließe ein
+Gespräch, das einen Titel dreimal korrigiert, drei Versionen.
+
+| Werkzeug | Was es tut |
+|---|---|
+| `wlo_update_content` | Ändert die Metadaten eines vorhandenen Datensatzes: Titel, Beschreibung, Schlagwörter (werden ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Bildungsstufe, Zielgruppe. |
+| `wlo_create_content` | Legt einen neuen Datensatz fuer ein ueber URL erreichbares Material an. Prueft vorher, ob es zu dieser URL schon einen gibt, und nennt diesen statt einen zweiten anzulegen. Der Datensatz ist ein Entwurf und geht NICHT in die redaktionelle Warteschlange. |
+| `wlo_submit_content` | Reicht einen vorhandenen Datensatz zur redaktionellen Pruefung ein. Ein eigener Schritt, nie automatisch — damit kein Entwurf bei der Redaktion landet, weil jemand noch am Schreiben war. |
+| `wlo_create_collection` | Legt eine Sammlung an (eine kuratierte Themenseite), auf oberster Ebene oder als Untersammlung. |
+| `wlo_rename_collection` | Ändert Titel und Beschreibung einer Sammlung. |
+| `wlo_add_to_collection` | Nimmt vorhandenes Material in eine Sammlung auf. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise. |
+| `wlo_remove_from_collection` | Nimmt Material aus einer Sammlung heraus. Das Material bleibt bestehen und in allen anderen Sammlungen. |
+| `wlo_update_compendium` | Schreibt, ersetzt oder entfernt den redaktionellen Kompendialtext einer Sammlung (Markdown). |
+| `wlo_suggest_metadata` | Schlägt Werte mit Begründung vor, statt sie zu schreiben. Der Datensatz bleibt unverändert. |
+| `wlo_list_suggestions` | Zeigt die hinterlegten Vorschläge mit Begründung, Status und der ID zum Entscheiden. |
+| `wlo_decide_suggestion` | Nimmt an (schreiben, zurücklesen, dann vermerken) oder lehnt ab. |
+| `wlo_delete_content` | Löscht einen Datensatz. Über diesen Server nicht rückgängig zu machen — siehe unten. |
+| `wlo_delete_collection` | Löscht eine Sammlung samt Untersammlungen. Das darin verlinkte Material bleibt bestehen. |
+
+**Löschen ist hier endgültig.** `recycle=true` wird immer mitgeschickt, das Repository behält also möglicherweise eine Archivkopie — eine personenbezogene Archivabfrage fand einen gelöschten Knoten aber nur einmal und Minuten später für denselben Knoten nichts mehr. Wiederherstellbarkeit ließ sich damit nicht zeigen. Die Werkzeuge sagen deshalb, dass sich die Löschung über diesen Server nicht rückgängig machen lässt, und versprechen keine Wiederherstellung. Material aus einer Sammlung herauszunehmen (`wlo_remove_from_collection`) ist etwas anderes und lässt das Material unangetastet. Die vier Start-Skripte (`dev`, `dev:http`, `start`, `start:http`) laden eine vorhandene `.env` über Nodes `--env-file-if-exists`; `docker compose` liest sie ohnehin. `npm test` bewusst nicht — die Testsuite darf nicht von einer lokalen Datei abhängen.
+
+Lizenzschlüssel werden gegen eine feste Liste geprüft; eine erfundene Lizenz —
+etwa der Name einer Universität — wird mit Nennung des Werts abgelehnt statt
+geschrieben. Den aggregierten Inhaltstyp (`ccm:oeh_lrt_aggregated`) schreibt
+dieser Server nie: das Repository leitet ihn selbst ab.
 
 ## Ausgabeformate
 
@@ -467,7 +703,7 @@ Quellen sind die offiziellen SKOS-Vokabulare unter
 `https://vocabs.openeduhub.de`.
 
 **Hochschulfächer (Hochschulfächersystematik).** Schul- und Hochschulfächer teilen
-viele Labels („Mathematik", „Physik", …), daher bleibt das Hochschul-Vokabular
+viele Labels („Mathematik“, „Physik“, …), daher bleibt das Hochschul-Vokabular
 bewusst aus der *Eingabe*-Auflösung heraus — `discipline="Mathematik"` meint immer
 das Schulfach, nie einen mehrdeutigen Treffer. Um nach einem *Hochschulfach* zu
 filtern, gibt es zwei modellfreie, konfliktfreie Wege:
@@ -491,7 +727,7 @@ edu-sharing-Instanzen hinweg identisch.
 ## Deployment
 
 Produktiv läuft der Server **selbst gehostet und persistent** (Docker, siehe
-unten). Der Vercel-Pfad ist weiterhin im Repository, wird aber nicht betrieben.
+unten). Ein Serverless-Deployment-Ziel gibt es nicht.
 
 ### Docker (Produktionsweg)
 
@@ -530,13 +766,6 @@ node dist/http.js                                                        # prod 
 WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node dist/http.js
 ```
 
-### Vercel (vorhanden, nicht betrieben)
-
-`api/mcp.ts` und `vercel.json` bieten weiterhin einen serverless
-Streamable-HTTP-Einstieg, damit die Option offen bleibt. Er ist **nicht** der
-betriebene Pfad, wendet keine eigenen Rate-/Body-Limits an und kann nicht von
-prozessweitem Caching profitieren.
-
 ### Apps-SDK-Einreichung & Datenschutz
 
 - [`docs/apps-sdk-submission-checklist.md`](docs/apps-sdk-submission-checklist.md)
@@ -552,6 +781,40 @@ prozessweitem Caching profitieren.
 
 ## Sicherheit & Betrieb
 
+### Als unsicher deklarierte Werkzeuge
+
+Ein Werkzeug kann sich selbst als **unsicher** deklarieren. Das heißt nicht, dass
+es kaputt ist — es heißt, dass es ein Risiko trägt, das dieser Server von seiner
+Position aus nicht schließen kann. So ein Werkzeug wird standardmäßig
+registriert, protokolliert beim Start eine Warnung mit Name und Begründung und
+lässt sich mit `WLO_DISABLE_UNSAFE_TOOLS` entfernen. Ausgeliefertes
+`.env.example` und `docker-compose.yml` setzen das auf `all`, ein echtes
+Deployment startet also ohne sie.
+
+Betroffen ist derzeit ein Werkzeug:
+
+**`get_url_text` — für den Produktivbetrieb nicht empfohlen.** Es liest den Text
+hinter einer Adresse, die der *Aufrufer* wählt. Bevor irgendetwas angefragt wird,
+lehnt der Server einen wörtlich privaten Host ab (einschließlich IPv4-in-IPv6 wie
+`[::ffff:127.0.0.1]`, das `new URL()` zu `[::ffff:7f00:1]` umschreibt), lehnt
+einen öffentlichen NAMEN ab, dessen DNS-Eintrag in einen privaten Bereich zeigt,
+und lehnt einen Namen ab, den er gar nicht auflösen kann, statt zu raten.
+
+Was es **nicht** prüfen kann, ist der wichtigste Teil: wir rufen das Ziel nie
+selbst ab. Das tut der Extraktionsdienst, mit Playwright, in seinem eigenen
+Prozess. Eine Adresse, die alle obigen Prüfungen besteht und dann auf eine
+interne Adresse **weiterleitet** — oder deren DNS-Antwort sich zwischen unserer
+Abfrage und der des Dienstes ändert — ist auf dieser Ebene unsichtbar. Das zu
+schließen erfordert eine Prüfung zum Auflösungszeitpunkt *im abrufenden Dienst*.
+Solange es die nicht gibt, ist dies ein Werkzeug für Entwicklung und Erprobung.
+
+`get_wlo_content_text` ist bewusst **nicht** betroffen, obwohl seine
+Rückfallebene denselben Extraktionsdienst nutzt. Dessen Adresse stammt aus dem
+kuratierten `ccm:wwwurl` des Datensatzes, der Aufrufer kann das Ziel also nicht
+wählen — genau dieser Unterschied ist der Grund, warum nur eines von beiden als
+unsicher gilt. Unsichere Werkzeuge abzuschalten darf das andere nicht seine
+Rückfallebene kosten.
+
 - **HTTP-Modus-Härtung:** Jede Upstream-Anfrage hat ein Timeout
   (`WLO_FETCH_TIMEOUT_MS`); Request-Bodies sind begrenzt (`MAX_BODY_BYTES`, `413`
   über dem Limit); der MCP-Endpunkt ist pro IP rate-limitiert (`RATE_LIMIT_RPM`,
@@ -563,16 +826,13 @@ prozessweitem Caching profitieren.
   Nicht-`GET`-Methoden ab (`405`), validiert jede Eingabe serverseitig
   (Query-/nodeId-/ID-Anzahl-Grenzen) und gibt keine internen Fehlerdetails preis
   (generischer `500`). CORS ist `*` nur für `GET`.
-- **Härtungs-Asymmetrie:** Body-/Rate-Limits gelten im eigenständigen HTTP-Server,
-  **nicht** im Vercel-Handler (`api/mcp.ts`), der sich auf die Plattform verlässt.
 - **`npm audit`:** Der Produktions-Abhängigkeitsbaum ist frei von High-/
   Critical-Advisories (`npm audit --omit=dev --audit-level=high`, als CI-Gate
   verdrahtet). Der Gesamtbaum trägt nur noch eine einzige **niedrige, reine
   Dev**-Advisory (`esbuild`, via `tsx` — ein Windows-Dev-Server-Dateilesefehler),
   die weder ausgeliefert noch in CI/Produktion ausgeführt wird: eine Produktions-
-  Installation (`npm ci --omit=dev`, wie im Dockerfile) enthält keine davon. Der
-  frühere `@vercel/node`-Dev-Baum (undici u. a.) wurde entfernt — `api/mcp.ts`
-  nutzt jetzt lokale `node:http`-Request/Response-Typen. Der Server nutzt Nodes
+  Installation (`npm ci --omit=dev`, wie im Dockerfile) enthält keine davon.
+  Der Server nutzt Nodes
   eingebautes `fetch`.
 - **Monitoring & Logging:** `GET /health` (HTTP-Modus) gibt `200` mit einem kleinen
   JSON-Status zurück — nutzen Sie es für Uptime-Monitoring; der Docker-`HEALTHCHECK`
@@ -586,9 +846,9 @@ prozessweitem Caching profitieren.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 23 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 39 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
-│   │   ├── shared.ts         #   _queryMeta, filter builder, mapPool, toolError, title fallbacks
+│   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
 │   │   ├── content-search.ts #   search_wlo_content, search_wlo_all
 │   │   ├── node-details.ts   #   get_node_details, get_nodes_details
@@ -628,7 +888,8 @@ wlo-mcp-server/
 │   ├── wlo-node.ts           #   node endpoints (children/metadata/text/download/breadcrumb) + URL builders
 │   ├── topic-page-api.ts     # topic-page discovery (page_variant search, variant→collection)
 │   ├── topic-page-structure.ts # one page's content: variant → swimlanes
-│   ├── wikipedia-api.ts      # Wikipedia REST summary client (opensearch title fallback)
+│   ├── wikipedia-api.ts      # Wikipedia REST summary client (search title fallback)
+│   ├── wikipedia-relevance.ts # picks which fuzzy candidate the query is about
 │   ├── reranker.ts           # RRF-Merge + Quality-Scoring (pure)
 │   ├── query-expand.ts       # Query → gewichtete Backend-Varianten (Synonyme, Stoppwörter)
 │   ├── node-match.ts         # lokales Node-Matching (Text + Kriterien) für /children-Fallbacks
@@ -652,12 +913,14 @@ wlo-mcp-server/
 │   ├── bookmarklet.md        #   selection → launcher bookmarklet (install docs, DE/EN)
 │   └── skills/               #   AI-app skills served raw via GET /api/skills/<id>
 ├── tests/                    # offline unit/smoke tests (node:test): npm test
-├── api/mcp.ts                # Vercel serverless wrapper
-├── docs/                     # DEPLOYMENT.md, PRIVACY.md, apps-sdk-submission-checklist.md, apps-sdk-golden-prompts.md, plans/
-├── Dockerfile · docker-compose.yml · .dockerignore · vercel.json · .env.example
+│   ├── fetchMock.ts          #   the in-memory MCP client + upstream fetch stub every tool test uses
+│   └── netguard.mjs          #   fails any unmocked non-loopback fetch — enforces "no network required"
+├── scripts/                  # tooling (not shipped): run-tests.mjs (npm test), vocab generation, measurements
+├── docs/                     # DEPLOYMENT.md, PRIVACY.md, TOOLS.md, apps-sdk-submission-checklist.md, apps-sdk-golden-prompts.md, plans/
+├── Dockerfile · docker-compose.yml · .dockerignore · .env.example
 ```
 
-**Datenfluss:** Transport-Einstieg (`stdio.ts` / `http.ts` / `api/mcp.ts`) →
+**Datenfluss:** Transport-Einstieg (`stdio.ts` / `http.ts`) →
 `createMcpServer()` (`server.ts`) → ein Tool-Handler (`tools/*`) →
 `wlo-api.ts`/`topic-page-api.ts` (alle Upstream-Aufrufe über `wloFetch`) →
 `reranker.ts` + `formatter.ts` → Tool-Ergebnis. Abhängigkeiten zeigen nach innen;
@@ -720,11 +983,12 @@ Codes), gruppiert nach Modul.
 | `createRateLimiter` | `rate-limit.ts` | In-Memory-Rate-Limiter pro IP (festes Fenster) |
 | `clientKey` | `rate-limit.ts` | Client-IP auflösen (nutzt `X-Forwarded-For` bei `TRUST_PROXY`) |
 | `readBodyWithLimit` | `read-body.ts` | Request-Body begrenzt durch `MAX_BODY_BYTES` lesen |
+| `parseRequestUrl` | `request-url.ts` | Request-Target einmal parsen; `null`, wenn node:http annimmt, was `new URL()` ablehnt |
 | `log` | `logger.ts` | Strukturierter JSON-Logger (stderr) |
-| `buildFilterCriteria` | `tools/shared.ts` | Deutsche Labels/Filter → Such-Kriterien |
+| `buildFilterCriteria` | `filter-criteria.ts` | Deutsche Labels/Filter → Such-Kriterien |
 | `queryMetaContent` | `tools/shared.ts` | Den `_queryMeta`-Block bauen |
 | `toolError` | `tools/shared.ts` | Loggen + einheitliches Tool-Fehlerergebnis bauen |
-| `mapPool` | `tools/shared.ts` | Async-Map mit begrenzter Nebenläufigkeit (fehlertolerant) |
+| `mapPool` | `concurrency.ts` | Async-Map mit begrenzter Nebenläufigkeit (fehlertolerant) |
 | `pickThemePageTitle` | `tools/shared.ts` | Bester lesbarer Themenseiten-Titel |
 | `matchSubjectPortal` | `tools/browse.ts` | Fach-Name → zugehöriges Fachportal auflösen (getiert) |
 

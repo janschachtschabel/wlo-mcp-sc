@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { connectedClient } from './fetchMock.js';
+import { assertRejectsWithoutUpstream, connectedClient } from './fetchMock.js';
 
 const EXPECTED_TOOLS = [
   'search_wlo_collections',
@@ -19,17 +19,25 @@ const EXPECTED_TOOLS = [
   'get_wikipedia_summary',
   'get_compendium_text',
   'get_wlo_content_text',
+  // Declared UNSAFE and registered BY DEFAULT — its absence is what the
+  // operator has to configure. See tests/unsafe-gate.test.ts for the switch.
+  'get_url_text',
   'search_wlo_within_collection',
   'search',
   'fetch',
   'lookup_wlo_publishers',
   'get_related_content',
   'get_node_breadcrumb',
+  'get_node_collections',
   'get_collection_stats',
-  'find_wlo_skills',
+  'wlo_auth_status',
+  // `find_wlo_skills` is deliberately NOT here: it is registered only when
+  // WLO_SKILLS_COLLECTION_ID is configured, and the suite runs without it.
+  // Unconfigured it failed on every call, so listing it advertised a capability
+  // that could not work.
 ];
 
-test('createMcpServer registers exactly the 23 expected tools', async () => {
+test('createMcpServer registers exactly the 25 unconditional read tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS].sort());
@@ -48,20 +56,12 @@ test('get_topic_page_content without ids returns a validation error (no network)
 test('search_wlo_content rejects an over-long excludeNodeIds array (no network)', async () => {
   const client = await connectedClient();
   const tooMany = Array.from({ length: 201 }, (_, i) => `id-${i}`);
-  // Invalid params must be rejected by schema validation BEFORE the handler
-  // runs, so no upstream request is made. The SDK may surface this as a
-  // thrown error or an isError result — accept either.
-  let rejected = false;
-  try {
-    const result = await client.callTool({
-      name: 'search_wlo_content',
-      arguments: { query: 'mathe', excludeNodeIds: tooMany },
-    });
-    rejected = result.isError === true;
-  } catch {
-    rejected = true;
-  }
-  assert.equal(rejected, true, 'expected 201 excludeNodeIds to be rejected');
+  await assertRejectsWithoutUpstream(
+    client,
+    'search_wlo_content',
+    { query: 'mathe', excludeNodeIds: tooMany },
+    'expected 201 excludeNodeIds to be rejected',
+  );
   await client.close();
 });
 
@@ -138,4 +138,48 @@ test('lookup_wlo_vocabulary lists target groups (no network)', async () => {
   assert.match(text, /Lernende/);
   assert.match(text, /Allgemein/);
   await client.close();
+});
+
+test('the server instructions name the full-text tool', async () => {
+  // A user asked for the Volltext of a material whose nodeId was already in the
+  // conversation and got "ich kann den Volltext nicht ausgeben" — no tool call
+  // at all (live report 2026-07-30). The instructions are the routing surface
+  // the model reads once, and they did not mention get_wlo_content_text; they
+  // steered away from extra calls entirely. A tool the routing surface never
+  // names is a tool the model does not reach for.
+  const client = await connectedClient();
+  try {
+    const instructions = client.getInstructions() ?? '';
+    assert.match(instructions, /get_wlo_content_text/, 'instructions point at the full-text tool');
+  } finally { await client.close(); }
+});
+
+test('no two tools advertise the same example query', async () => {
+  // Three tools carried the literal example "Video zur Eiszeit"
+  // (search, search_wlo_content, search_wlo_all), so the same request routed
+  // to whichever the model happened to pick — and `search` cannot fill the
+  // widget (audit 2026-07-30, matching the user's live report).
+  //
+  // `search`/`fetch` are REQUIRED by the ChatGPT knowledge convention and
+  // deliberately overlap in PURPOSE; what must not overlap is the concrete
+  // example a router matches on.
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    // Only MULTI-WORD phrases count: a single quoted term is a vocabulary
+    // value ("Mathematik", "Video") that legitimately appears in many tools as
+    // a filter example. What must be unique is the example REQUEST a router
+    // matches a user's sentence against.
+    const byPhrase = new Map<string, string[]>();
+    for (const t of tools) {
+      for (const m of (t.description ?? '').matchAll(/"([^"]{6,60})"/g)) {
+        const key = m[1].toLowerCase().trim();
+        if (key.split(/\s+/).length < 2) continue;
+        byPhrase.set(key, [...new Set([...(byPhrase.get(key) ?? []), t.name])]);
+      }
+    }
+    const collisions = [...byPhrase].filter(([, names]) => names.length > 1)
+      .map(([phrase, names]) => `"${phrase}" → ${names.join(', ')}`);
+    assert.deepEqual(collisions, [], `example queries must be unique per tool:\n${collisions.join('\n')}`);
+  } finally { await client.close(); }
 });

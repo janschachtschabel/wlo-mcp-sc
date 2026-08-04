@@ -45,13 +45,14 @@ const STRINGS = {
     reasonNodeNotFound: 'Dieses Material wurde nicht gefunden.',
     // Auswahl in der Kachelansicht
     selectLabel: 'Auswählen',
+    treeMore: '… mehr vorhanden',
     selectionCount: 'ausgewählt',
     selectionUse: 'Ausgewählte weiterverwenden',
     selectionClear: 'Auswahl aufheben',
     selectionPrompt: 'Arbeite mit diesen WLO-Materialien weiter:',
-    selectionPromptTail: 'Nutze die nodeIds, um die Inhalte zu laden.',
+    selectionPromptTail: 'Rufe dazu {tool} mit diesen {param} auf.',
     // Folgeaktionen auf Kacheln und in der Einzelansicht
-    followUpTool: 'Rufe dazu {tool} mit dieser nodeId auf.',
+    followUpTool: 'Rufe dazu {tool} mit dieser {param} auf.',
     followUp_contents: 'Zeige mir die Inhalte der WLO-Sammlung',
     followUp_topicPage: 'Zeige mir die WLO-Themenseite',
     followUp_text: 'Zeige mir den Volltext von',
@@ -100,13 +101,14 @@ const STRINGS = {
     reasonNodeNotFound: 'This material was not found.',
     // Tile selection
     selectLabel: 'Select',
+    treeMore: '… more available',
     selectionCount: 'selected',
     selectionUse: 'Use selected',
     selectionClear: 'Clear selection',
     selectionPrompt: 'Continue working with these WLO materials:',
-    selectionPromptTail: 'Use the nodeIds to load the contents.',
+    selectionPromptTail: 'Call {tool} with these {param}.',
     // Follow-up actions on tiles and in the detail view
-    followUpTool: 'Call {tool} with this nodeId.',
+    followUpTool: 'Call {tool} with this {param}.',
     followUp_contents: 'Show me the contents of the WLO collection',
     followUp_topicPage: 'Show me the WLO topic page',
     followUp_text: 'Show me the full text of',

@@ -13,7 +13,7 @@
 
 import { getNodeDownloadText } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
-import { mapPool } from '../tools/shared.js';
+import { mapPool } from '../concurrency.js';
 import { listCollectionContents } from './search.js';
 
 export interface Skill {

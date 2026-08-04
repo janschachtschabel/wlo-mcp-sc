@@ -1,11 +1,13 @@
 /**
  * topic-page/main.ts – W4 browser entry (bundled+inlined by build.mjs).
- * Thin shell around the shared mount: render the tool output (a
- * SwimlanePayload) into `#wlo-root`, repaint on host updates.
+ * Shell around the shared tile mount: render the tool output (a
+ * SwimlanePayload) into `#wlo-root`, open a card's Einzelansicht on demand, and
+ * hand follow-up buttons to the conversation.
  */
 
 import { renderTopicPage } from './render.js';
-import { mountSimpleWidget } from '../shared/mount.js';
+import { mountTileWidget } from '../shared/mount.js';
 import type { SwimlanePayload } from '../shared/types.js';
 
-mountSimpleWidget((output, locale) => renderTopicPage(output as SwimlanePayload | undefined, locale));
+mountTileWidget((output, locale, state) =>
+  renderTopicPage(output as SwimlanePayload | undefined, locale, state));

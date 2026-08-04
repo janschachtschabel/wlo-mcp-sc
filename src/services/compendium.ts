@@ -10,7 +10,7 @@
  * bundling.
  */
 
-import { getNodesMetadata } from '../wlo-api.js';
+import { DISPLAY_PROPS, getNodesMetadata } from '../wlo-api.js';
 import { formatNode } from '../formatter.js';
 
 export interface CompendiumEntry {
@@ -22,7 +22,14 @@ export interface CompendiumEntry {
 export async function getCompendiumTexts(nodeIds: string[]): Promise<CompendiumEntry[]> {
   if (nodeIds.length === 0) return [];
 
-  const nodes = await getNodesMetadata(nodeIds);
+  // Projected, not `-all-`: this reads two fields and `DISPLAY_PROPS` names
+  // both, including the full compendium text (the 500-char cap elsewhere is our
+  // renderer's, not the API's). Measured read-only against the editorial
+  // repository on 2026-08-03 — a `propertyFilter` returns every field it names
+  // byte-identical to the `-all-` read, including a 4914-character description,
+  // so the filter bounds WHICH properties come back and never their content.
+  // The responses shrink ~43%.
+  const nodes = await getNodesMetadata(nodeIds, undefined, DISPLAY_PROPS);
   // getNodesMetadata drops nodes that failed to resolve, so map what came back
   // by its canonical id and build one entry per REQUESTED id (order preserved;
   // a missing/failed node yields a null-text entry rather than vanishing).

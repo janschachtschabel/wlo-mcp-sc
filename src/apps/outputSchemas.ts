@@ -80,6 +80,18 @@ export const contentTextSchema = z.object({
   reason: z.string().optional(),
 });
 
+/** Mirrors `UrlText` (services/url-text.ts). */
+export const urlTextSchema = z.object({
+  /** The NORMALISED url that was requested — not necessarily the string passed in. */
+  url: z.string(),
+  text: z.string(),
+  /** Length BEFORE truncation, so the caller sees what it is missing. */
+  charCount: z.number(),
+  truncated: z.boolean(),
+  /** Only when there is no text: which of the five causes it was. */
+  reason: z.string().optional(),
+});
+
 /** Mirrors `WikiSummary` (wikipedia-api.ts). */
 const wikiSummarySchema = z.object({
   title: z.string(),
@@ -87,6 +99,11 @@ const wikiSummarySchema = z.object({
   thumbnail: z.string().optional(),
   url: z.string(),
   lang: z.string(),
+  // Declared, not merely tolerated: a zod object drops unknown keys, so leaving
+  // this out would strip the resolution quality before it reaches a host that
+  // attributes the text to the article. Required, because the producer always
+  // sets it — optional would let a regression that stops setting it pass.
+  match: z.enum(['exact', 'fuzzy']),
 });
 
 /** A topic-page result may carry its resolved swimlane content (`TopicPageResult`). */

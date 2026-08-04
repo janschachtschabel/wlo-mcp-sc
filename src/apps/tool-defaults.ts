@@ -1,11 +1,15 @@
 /**
  * apps/tool-defaults.ts – Uniform descriptor defaults for this server's tools.
  *
- * Every WLO tool is public, read-only OER data with no authentication, so they
- * all share two descriptor traits that the Apps-SDK wants declared explicitly:
+ * The reading tools — all but the curation ones — are public OER data with no
+ * authentication, so they share two descriptor traits that the Apps-SDK wants
+ * declared explicitly:
  *
  *   1. `_meta.securitySchemes: [{ type: 'noauth' }]` — the "callable
- *      anonymously" declaration (F6). The Apps-SDK auth doc shows a top-level
+ *      anonymously" declaration (F6), applied as a DEFAULT: a tool that sets
+ *      its own scheme at the registration site keeps it, which is how the
+ *      curation tools avoid claiming they are callable without an identity.
+ *      The Apps-SDK auth doc shows a top-level
  *      `securitySchemes` descriptor field, but the SDK does not know or
  *      serialise that field (re-verified against @modelcontextprotocol/sdk
  *      1.30.0 on 2026-07-27 — still zero occurrences in the package), so
@@ -55,16 +59,26 @@ const TOOL_TITLES: Readonly<Record<string, string>> = {
   get_wikipedia_summary: 'Wikipedia-Zusammenfassung',
   get_compendium_text: 'WLO Kompendiumtext',
   get_wlo_content_text: 'WLO Volltext',
+  get_url_text: 'Volltext einer Webseite',
   lookup_wlo_publishers: 'WLO Anbieter',
   get_related_content: 'WLO Verwandte Inhalte',
   get_node_breadcrumb: 'WLO Pfadnavigation',
   get_collection_stats: 'WLO Sammlungsstatistik',
   find_wlo_skills: 'WLO Skills',
+  wlo_auth_status: 'WLO Anmeldestatus',
 };
 
 function applyDefaults(tool: RegisteredTool, name: unknown): RegisteredTool {
   const statusMeta = typeof name === 'string' ? toolStatusMeta(name) : {};
-  tool._meta = { ...(tool._meta ?? {}), securitySchemes: NOAUTH_SECURITY_SCHEMES, ...statusMeta };
+  // `noauth` is the default, not a rule: a curation tool declares its own
+  // scheme at the registration site and must not be overwritten with a claim
+  // that it is callable without an identity.
+  const existing = (tool._meta as { securitySchemes?: unknown } | undefined)?.securitySchemes;
+  tool._meta = {
+    ...(tool._meta ?? {}),
+    securitySchemes: existing ?? NOAUTH_SECURITY_SCHEMES,
+    ...statusMeta,
+  };
   if (typeof name === 'string') tool.title ??= TOOL_TITLES[name];
   // Defaults first, explicit per-tool annotations last so they win (readOnlyHint
   // on every tool, openWorldHint:true on get_wikipedia_summary).

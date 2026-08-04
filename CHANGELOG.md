@@ -9,6 +9,1436 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — personal access blocks (2026-08-04)
+
+A user can now sign in with their own WLO account without handing their password
+to their AI provider. On `/auth` the password is encrypted **in the browser**
+with a key only this server can undo; the resulting `wlo2.…` block goes once into
+the connector's `Authorization` field and can be revoked at `/auth-revoke.html` (or
+`/auth/revoke` — the same page, since that is the path people guess). Off unless
+`WLO_AUTH_PRIVATE_KEY` is set — the `/auth/…` endpoints then answer 404, the
+pages say so, and a Bearer header is refused exactly as before. Anonymous
+reading, the service account and the Basic header are untouched.
+
+Why it is worth the machinery: today's `Basic <base64>` is the password in a thin
+disguise. It is readable by whoever stores it, it works against **all** of WLO
+rather than just this server, and it cannot be withdrawn short of a password
+change. A block is unreadable to the AI provider, useless anywhere but here, and
+revocable.
+
+- **Hybrid encryption, not plain RSA.** RSA-2048-OAEP caps the plaintext at 190
+  bytes; a long password plus the id can exceed that, and the failure would hit
+  only some users and only in production. A fresh AES-256-GCM key encrypts the
+  payload, RSA wraps the key. Everything — including the access id — is inside
+  the authenticated payload, so an id cannot be swapped to dodge revocation.
+- **The browser and the server are tested against each other.** The test imports
+  the very file the page loads and hands its output to the real decoder, which
+  works because `crypto.subtle` is a global in Node 20. Two implementations of
+  one wire format is the seam that breaks silently otherwise.
+- **Revocation needs a record, so the server now persists one thing.** An
+  ALLOW-list of issued access ids (id, user name, issue time — never a
+  credential) in a file on a dedicated volume; `read_only: true` still covers
+  the rest of the container. Positive rather than deny: losing the file stops
+  every issued block (inconvenient) instead of resurrecting every revoked one
+  (unsafe). It belongs in the backup — see `docs/DEPLOYMENT.md` §3.1.
+- **`/auth/issue` checks the reported authority, never `res.ok`.** Measured on
+  staging: this API answers `200` with the guest authority for credentials that
+  do not work, and an anonymous read of `-userhome-/children` answers `200` too.
+  Trusting the status code would issue blocks for logins that fail, and the
+  holder would find out days later as "the tools return nothing".
+- **The one endpoint that checks a password is guarded twice** — requests per
+  address and *distinct logins* per address — because it is otherwise a guessing
+  oracle with this server's address as the origin. Both guards count per client
+  ADDRESS, which is why `/auth*` sends **no CORS header at all**: a wildcard
+  origin would let a web page spend every visitor's quota on a different guess
+  and read which one worked. The pages are served from this origin and need
+  none. (The MCP and REST surfaces keep theirs — their clients are not browsers.)
+- **A registry entry is not forever.** Revoking a block requires holding it, so
+  blocks people fetch and lose would otherwise stay valid indefinitely and the
+  file would only grow. Each account keeps its ten most recent blocks, oldest
+  first — per account and never global, so no one can push another's access out.
+- **A failed write stays a failed write, not a broken registry.** The chain that
+  serialises writes used to carry one rejection forward to every later one, so a
+  full disk at the wrong moment disabled *revocation* until a restart; and the
+  entry stayed in memory while missing from the file, briefly granting what was
+  never recorded. Writes are now attempted again and undone on failure.
+- **The `/auth` endpoints answer even when they fail.** A failing write escaped
+  into a handler with no boundary there, and node:http does not await one — the
+  caller got no response at all for 30 seconds. Now a generic `500`, with the
+  reason in the log only.
+- **Key rotation exists before it is needed.** `WLO_AUTH_PRIVATE_KEY_PREVIOUS`
+  opens an overlap window; without one, changing the key would invalidate every
+  user's configuration at the same moment.
+- The two pages carry a **stricter CSP than the launcher** — no inline script or
+  style at all, and `form-action 'none'` so a scripting failure cannot fall back
+  to posting the password in clear. A test pins the policy, a second pins that
+  the markup complies with it.
+- Documented in both READMEs, `docs/DEPLOYMENT.md`, `docs/TOOLS.md` and
+  `docs/PRIVACY.md` — the last of which no longer claims the server stores
+  nothing, because it now stores this.
+
+### Changed — module boundaries (2026-08-04)
+
+A size-and-responsibility pass over every source file. Two findings, both the
+project's recurring shape: something placed where its first caller needed it,
+then reached for from everywhere else.
+
+- **The browse tree walk moved out of the tool module.** `browse_collection_tree`
+  held its bounded, cycle-guarded, budget-derived traversal inline — a 190-line
+  handler in a 376-line file — although `CLAUDE.md` states that a tool module
+  holds its schema and its rendering, never an algorithm, and names
+  `services/collection-traversal.ts` as where such walks live. It is now
+  `buildCollectionTree` there, beside the two walks split out of
+  `tools/collections.ts` for the same reason. `browse.ts` drops to 274 lines and
+  keeps what a tool owns: schema, subject→portal resolution, rendering.
+  Behaviour-preserving — the 17 existing browse tests pin it, and the walk gained
+  5 tests that assert the returned STRUCTURE instead of inferring a tree from
+  rendered markdown.
+- **`services/` and `rest/` no longer import from `tools/`.** `mapPool` (a
+  concurrency primitive) and `buildFilterCriteria`/`formatUnresolvedHint`
+  (vocabulary label→URI resolution) sat in `tools/shared.ts` because the MCP
+  tools were their first callers; four services and the REST layer then imported
+  them from there, pointing the dependency at the layer above. Neither has
+  anything to do with MCP, so both moved to leaf modules — `src/concurrency.ts`
+  and `src/filter-criteria.ts` — that any layer may use. No cycle existed yet;
+  this removes the conditions for one. `tools/shared.ts` drops 300 → 171 lines.
+  A third guard in `tests/shared-rule-discipline.test.ts` now fails on any
+  reintroduced import, naming the file and line.
+
+Not changed, and deliberately: the other `register*Tools` functions are long
+because they carry tool schemas, German descriptions, and rendering — which is
+what a tool module is for. Their algorithms already live in `services/`.
+
+### Fixed — second full-project audit (2026-08-04)
+
+A re-audit after the round below found five more instances of the same shape.
+Two of them were live in every container.
+
+- **An unparseable request target is answered instead of hanging the socket.**
+  node:http accepts request targets the WHATWG URL parser refuses — `GET //[`
+  among them. Three layers parsed the same `req.url` and only the dispatcher
+  guarded its parse; its fallback handed the raw string to the REST router and
+  the static router, where the throw escaped the handler (node:http never awaits
+  the promise a handler returns). Reproduced over a raw socket: **no response at
+  all**, the socket held until `requestTimeout` (30 s), and a generic
+  `unhandledRejection` line as the only trace — from an unauthenticated request
+  on a path neither rate limiter covers. The parse now lives in one leaf module
+  (`src/request-url.ts`) and every layer gives the same total answer.
+- **Docker deployments no longer run a timeout that was measured too short.**
+  `docker-compose.yml` pinned `WLO_FETCH_TIMEOUT_MS` at `10000` while the code
+  default had moved to `20000` and `.env.example` documented `20000`. Compose
+  wins, so *every* container ran the value that cuts a 4.2–8.0 s create off
+  mid-flight — the precise condition that makes a tool report a failure over a
+  record the repository has already made. All numeric tuning defaults are now
+  forwarded empty, so the number lives only where its measurement does.
+  `docs/DEPLOYMENT.md` carried the stale `10000` too and now agrees.
+- **The confirmation preview discloses what it leaves out.** Values were capped
+  at `sanitizeText`'s 120 characters with a bare ellipsis, while the write
+  surface allows 20 000 characters for a description and 100 000 for a
+  compendium text. Measured: 526 characters written, 120 shown, nothing said
+  about the rest — and the token binds the full value, so the person approved
+  text the preview never showed them. Sharpest for `wlo_decide_suggestion`,
+  where the value was written by somebody else and the preview is the only place
+  it is ever seen. The budget is now 600 characters (enough for essentially every
+  real description) and anything beyond it is cut at a word boundary and reported
+  with its full length. The cutting rule is shared with `text-cap.ts` rather than
+  copied; only the marker differs, because a newline would forge a second line in
+  a line-oriented preview.
+- **`.env.example` no longer activates a cross-environment setting.**
+  `WLO_TEXT_EXTRACTION_URL=https://text-extraction.staging.openeduhub.net` sat
+  active directly below a production `WLO_REPOSITORY_URL`, so `cp .env.example
+  .env` — the copy step `docker-compose.yml` itself recommends — rebuilt exactly
+  the leak that removing the code-side default was meant to end: the URLs of
+  production material sent to a staging host.
+- **A stale comment above the tool registration** claimed every WLO tool is
+  "public, read-only OER data with no authentication", twenty lines above the
+  registration of the 13 curation tools. Last remnant of the read-only drift
+  corrected in the round below.
+- **Three dead imports removed** (`safeHref` and `followUpButton` in the
+  search-results widget renderer, the `ThemePageInfo` type in `tools/topic-pages.ts`)
+  — each with exactly one occurrence, its own import line. Surfaced by running
+  the type checker with `--noUnusedLocals`, which is not part of the normal gate.
+- **The shared truncation rule is now actually shared.** `text-cap.ts` says in
+  its own docstring that it was extracted "when a second caller needed the
+  identical rule — two copies of a truncation marker drift silently". It was then
+  used by **2 of 8** call sites: six modules carried their own
+  `x.slice(0, CAP) + '\n[…gekürzt]'`, cutting mid-word where the shared rule cuts
+  at a word boundary, and the byte-capped download path had already drifted to
+  `'\n\n…[gekürzt]'` — the ellipsis on the other side of the bracket. All six go
+  through `capText` now; the download path cannot (it caps bytes on a stream, not
+  characters on a string) and takes the exported marker instead.
+- **The identity probe parses its body through `readJson`** like every other
+  upstream call. `read-json.ts` and `CLAUDE.md` both claim every client goes
+  through it; `auth/identity.ts` did not, so a proxy maintenance page answering
+  `200` with HTML surfaced as `identity check failed: Unexpected token <` rather
+  than naming the call and its status.
+
+### Added
+
+- `tests/deploy-env-passthrough.test.ts` gained two guards for the class the
+  compose drift belongs to: no numeric default may be restated in
+  `docker-compose.yml` (mode flags whose deployment default deliberately differs
+  are named with their reason), and `.env.example` may activate no setting a copy
+  would silently adopt. The existing tests in that file pinned that a setting is
+  *forwarded*; nothing pinned its *value*, which is why the drift was invisible.
+- `tests/shared-rule-discipline.test.ts` — source-level guards for the pattern
+  every audit round of this project has turned up: a rule extracted into a shared
+  module, then not adopted by the modules written afterwards. Two rules so far —
+  the truncation marker belongs to `text-cap.ts` alone, and an upstream body is
+  parsed only through `read-json.ts`. A unit test of a helper proves the helper
+  is right and says nothing about whether anyone uses it; only a source scan can.
+  Sibling of `env-parsing-discipline.test.ts`, which exists for the same reason.
+
+### Fixed — full-project audit follow-up (2026-08-04)
+
+A whole-codebase audit across 12 dimensions found no exploitable vulnerability
+and one recurring shape: a rule identified, named, solved in one place — and then
+not carried to the other places it applies to. Every finding below is an instance.
+
+- **An aborted write is no longer reported as a failure.** `isUpstreamTimeout`
+  existed and was applied to exactly one of thirteen curation tools. The other
+  twelve answered a timeout with "… konnte nicht … werden" — a claim about
+  something we do not know, since the abort hits the response, not the work
+  (measured 2026-08-02: a timed-out create had already produced the record). The
+  worst case was reproducible: a **successful** `DELETE` whose read-back timed
+  out reported `Der Datensatz konnte nicht gelöscht werden`, which is exactly the
+  sentence that stops a curator from checking whether their material is gone.
+  A shared `timeoutOrError` in `tools/curation-shared.ts` now separates "the
+  repository refused" from "we stopped listening" at every mutation, and
+  `confirmDeleted` turns a thrown read-back into the `unverified` outcome its own
+  type already had.
+- **Confirmation previews no longer truncate mid-sentence.** `renderChangeSet`
+  passed the whole assembled action line through `sanitizeText`, whose 120-char
+  cap is meant for a single foreign value. The fixed German prose plus a 36-char
+  nodeId plus a title exceeded it routinely: a submit preview ended at `… zur…`,
+  and a *decline* preview — which has no field changes and is therefore only that
+  line — lost both the nodeId and the clause saying the record stays untouched.
+  `sanitizeText` is now `flattenText` plus the cap, and the renderer uses
+  `flattenText`. The same trap had already been identified and avoided in
+  `fields.ts`; this is it reintroduced one module over.
+- **`wlo_submit_content` binds its editorial note to the confirmation token.**
+  The note travelled to the editorial queue under the submitter's name while
+  appearing in neither the preview nor the token's fingerprint — so an approval
+  for "submit this record" carried whatever text arrived with the confirming
+  call. It is now part of the previewed action, and both it and
+  `versionComment` are length-bounded (`max(1000)`) like every other free text
+  that reaches the repository.
+- **Five environment variables stopped silently mis-parsing.** `resolvePositiveInt`
+  was written because `WLO_FETCH_TIMEOUT_MS=20s` resolved to a 20 ms timeout;
+  `MAX_BODY_BYTES`, `RATE_LIMIT_RPM`, `API_RATE_LIMIT_RPM`,
+  `AUTH_CREDENTIAL_LIMIT` and `WLO_POOL_SIZE` still used raw `parseInt`, so
+  `MAX_BODY_BYTES=1MB` became a one-byte cap that answered every request with
+  `413`, with nothing in the log pointing at the cause. All five now go through
+  the shared parser; the rate limits use a new `resolveNonNegativeInt`, because
+  `0` is documented there and means "disabled".
+- **`rest/routes.ts` dispatches on the parsed path**, matching `http-app.ts`.
+  Matching the raw request target made the two disagree for a request-target in
+  absolute form, which HTTP/1.1 permits.
+
+### Documentation — three published documents said "read-only" (2026-08-04)
+
+Write support shipped in 2026-08; three documents that state publicly what this
+server does still described a read-only, unauthenticated proxy.
+
+- **`docs/PRIVACY.md` rewritten.** It claimed "no authentication", "the server
+  never writes", "no write/mutation tools exist" and — of credentials — "it has
+  none", for a server that accepts an `Authorization` header, forwards it to the
+  repository, and registers thirteen write tools. It also omitted the
+  text-extraction service as a third-party recipient and the 10-minute hashed
+  credential digest the abuse guard keeps, and described the *first*
+  `X-Forwarded-For` hop where the code takes the rightmost. The policy now covers
+  the credential chain, what curation writes and where that data then lives, all
+  four recipients, and an operator checklist that starts with "say which mode
+  this deployment runs in".
+- **`docs/apps-sdk-submission-checklist.md`**: the row a reviewer reads said
+  "no write tools ✅". Replaced with the argument that is both true and stronger
+  — write tools exist, are unregistered without an identity, refuse again at call
+  time, are two-step confirmed and are read back.
+- **`public/llms.txt`** — which is *served* at `/llms.txt` — advertised "22
+  read-only tools" long after there were 25. The count is gone rather than
+  corrected; `tools/list` is authoritative and a hand-maintained number in a
+  served file will drift again.
+- **`tests/docs-claims.test.ts`** now pins all three to the source: it derives
+  the curation tool names from `src/tools/` and fails if the documents claim
+  otherwise. Nothing connected code and prose before, which is why the drift
+  survived four sessions.
+- README (EN + DE), `CLAUDE.md` and `docs/DEPLOYMENT.md` updated in step: the
+  open-outcome rule, the number-format rule for env variables, a rollback
+  procedure with the two things that do *not* roll back with the image
+  (configuration, and anything curation wrote), the `/health` deploy fingerprint,
+  and the widget count in the verification step (three → four).
+
+### Added
+
+- `npm run test:coverage` — the same suite with the runner's coverage report.
+  Opt-in, so `npm test` stays short.
+
+### Verified — MCP Inspector re-run and the golden prompts' mechanics pass (2026-08-03)
+
+- **Official MCP Inspector CLI, against the running HTTP server:** `tools/list`
+  returned 25 tools and a scripted check over title, description, `readOnlyHint`,
+  `destructiveHint`, both `openai/toolInvocation/*` strings, `securitySchemes`
+  and `inputSchema` found **0 objections**. `resources/list` returned the 4
+  widgets with `text/html;profile=mcp-app`, and a `tools/call` over the same
+  connection returned real results (315 hits for "Photosynthese"). This closes
+  the gap left by the previous run, which was clean at 22/22 on 2026-07-17 and
+  predated four tools.
+- **Golden prompts, mechanics half:** 17 of 17 runnable prompts delivered live
+  against the staging repository (D10 needs `WLO_SKILLS_COLLECTION_ID`). Two
+  first-attempt failures were the probe's own fault — `get_topic_page_content`
+  takes `query`, not `topic`, and `browse_collection_tree` takes `depth` and
+  answers in `results` — which is itself worth recording: a golden-prompt run
+  should check parameter names against `tools/list` before filing a tool as
+  broken. Tool *selection*, the negative prompts and the widget render still
+  need a live ChatGPT session.
+- **Deployment posture recorded:** the server runs on the `nip.io` address for
+  now and is not being submitted to the GPT store, so `WLO_WIDGET_DOMAIN` stays
+  unset — which is what every non-ChatGPT host requires anyway. Verified that no
+  public origin is hardcoded anywhere in `src/` or `public/`, so the later switch
+  to a real domain is a redeploy with changed env variables. The checklist now
+  separates "ready now" from "deliberately deferred" instead of leaving both as
+  bare open boxes.
+
+### Documentation — every tool named, counts corrected (2026-08-03)
+
+- **`docs/TOOLS.md` documented 24 tools; there are 39.** It listed neither the
+  13 curation tools nor `get_node_collections` and `get_url_text`. It now opens
+  with what a session actually sees (25 anonymous · 26 with a skills collection ·
+  +13 with write rights · minus `get_url_text` where the operator disabled it)
+  and carries a curation section with chat triggers and the three rules that
+  bind every write: two-step confirmation, read-back, and irreversible deletion.
+- **A rendering defect in the same file:** four rows of the browse table sat
+  *after* a blockquote, so they had no header above them and rendered as literal
+  pipe characters rather than as table rows.
+- **Stale counts corrected** in `README.md` ("25 read tools"), `README.de.md`
+  ("24 MCP-Tools"), the project tree in both ("registers all 23 tools") and the
+  Apps-SDK submission checklist. The checklist's *historical* measurement — the
+  Inspector run that was clean at 22/22 on 2026-07-17 — is left as it was; only
+  the claims about today were changed, and `get_url_text` was added as the
+  second tool carrying `openWorldHint`.
+- Both READMEs gained per-tool detail entries for `get_node_collections` and
+  `wlo_auth_status`, which had table rows but no description.
+
+### Added — `get_url_text` and a generic unsafe-tool switch (2026-08-03)
+
+- **`get_url_text`** reads the text behind an arbitrary web URL through the
+  extraction service — for a URL named in the conversation rather than a WLO
+  record. WLO material keeps its own path: `get_wlo_content_text` reads the
+  repository directly and is both faster and more reliable. "No text" is a
+  normal outcome with a `reason`, not an error; the service renders with
+  Playwright and has known gaps (protected pages, bot detection, media files),
+  so the description names `method: "simple"` as the one sensible retry.
+- **A tool can declare itself unsafe.** `WloToolDef.unsafe = { reason }`, and
+  the single registration seam skips it when the operator sets
+  `WLO_DISABLE_UNSAFE_TOOLS` (names, or `all`). Unsafe tools are registered by
+  default and each logs a startup **warning** naming itself and the reason — a
+  default-on risk documented only in a changelog is one nobody inheriting a
+  deployment will read. `.env.example` and `docker-compose.yml` ship `all`, so a
+  real deployment starts without them. Ordinary tools are untouched by the
+  switch; that is asserted, because a security knob that empties the server is
+  an outage, not a mitigation.
+- **`get_url_text` is documented as not-for-production.** Before anything is
+  requested it refuses a literal private host, a public name whose DNS record
+  resolves into a private range, and a name it cannot resolve at all. What it
+  cannot check is the decisive part: we never fetch the target — Playwright
+  inside the extraction service does — so a redirect into an internal address,
+  or a DNS answer that changes between our lookup and the service's, is
+  invisible here. That needs enforcement inside the fetching service.
+
+### Fixed — IPv4-mapped IPv6 addresses passed the private-network check (2026-08-03)
+
+- **`http://[::ffff:127.0.0.1]/` was not recognised as loopback.** `new URL()`
+  rewrites that host to `[::ffff:7f00:1]`, so the dotted quad is gone before any
+  check runs and the IPv6 branch had no idea that `7f00:1` is 127.0.0.1.
+  Measured, not theorised. This was **live on the existing `ccm:wwwurl` path**:
+  anyone able to set that field — including through this server's own write
+  tools — could have pointed the extraction service at its own loopback.
+  `isPrivateHost` now unwraps the mapped address in both spellings (`::ffff:10.0.0.1`
+  as DNS returns it, `::ffff:a00:1` as `new URL()` produces it) and judges the
+  IPv4 inside; a mapped PUBLIC address such as `::ffff:808:808` stays public.
+- The rule moved into its own module (`src/url-safety.ts`) with tests. It had
+  none: it was a private function reached only through a tool that degrades to
+  `null` on refusal, so a hole in it looked exactly like a service switched off.
+- Correction to an earlier assumption recorded in the plan: decimal and hex IPv4
+  literals (`http://2130706433/`) were never a hole — `new URL()` normalises them
+  to `127.0.0.1` first — and a DNS check would not have caught them either
+  (`dns.lookup('2130706433')` answers `ENOTFOUND`).
+
+### Fixed — Supporting layer: test honesty, deployment config, docs (R12, 2026-08-03)
+
+- **Eleven documented settings never reached the container.** `docker compose`
+  auto-loads a neighbouring `.env`, but only for `${…}` *interpolation* — a
+  variable the compose file never names is not passed to the service. Measured
+  with `docker compose --env-file … config`: with `WLO_SKILLS_COLLECTION_ID`,
+  `WLO_ALLOW_SERVICE_WRITES` and `WLO_TEXT_EXTRACTION_URL` all set, the rendered
+  service environment contained none of them. These are not tuning knobs — they
+  decide which tools *exist*: `WLO_ALLOW_SERVICE_WRITES` gates all 13 curation
+  tools, `WLO_SKILLS_COLLECTION_ID` registers `find_wlo_skills`, `WLO_INBOX_ID`
+  is required before the service account can create anything. An operator set
+  them, restarted, and the capability was still missing with nothing logged.
+  All eleven are now forwarded (`PORT` deliberately is not — the port mapping
+  hardcodes the container side, so overriding it would leave the server
+  listening where nothing is published), and
+  `tests/deploy-env-passthrough.test.ts` pins `.env.example` and
+  `docker-compose.yml` to each other so the next new setting cannot drift.
+- **Two validation tests passed over a deleted constraint.** Both named
+  themselves "(no network)" and wrapped the call in a `try/catch` that accepted
+  *any* failure as the rejection they were looking for. Measured: with the
+  `excludeNodeIds` cap removed from the schema, the handler ran, its upstream
+  call failed because the network was unreachable, the catch read that as the
+  rejection — 11/11 green over a removed input-validation cap. Rejection before
+  any upstream request is now asserted (`assertRejectsWithoutUpstream`), which
+  fails with "4 !== 0" instead of passing.
+- **The offline guarantee is now enforced instead of promised.** README and
+  CONTRIBUTING state "no network required" in six places and nothing checked it.
+  `npm test` loads `tests/netguard.mjs`, which fails any fetch to a non-loopback
+  host that no `installFetchMock` intercepted; loopback stays allowed because the
+  transport and REST tests boot a real local server. Verified twice: the full
+  suite is genuinely offline (1021/1021 with every external host blocked), and a
+  probe test fetching `example.com` fails with the guard's message.
+- **`CLAUDE.md` documented a test command that runs nothing on the shipped
+  runtime.** It gave `node --import tsx --test "tests/*.test.ts"`; Node 20 —
+  what `engines` and the Docker image declare — takes that glob literally, which
+  is exactly why `scripts/run-tests.mjs` exists.
+- **`package.json` declared no license** although the repository ships
+  Apache-2.0, and was not marked `private`, so a stray `npm publish` would have
+  attempted to publish an internal server package. Both added.
+- **The project tree in both READMEs omitted `scripts/`** — the directory
+  `npm test` depends on — and `docs/TOOLS.md`.
+
+### Fixed — Matching and ranking, measured live (carry-overs from R4/R7, 2026-08-03)
+
+- **A German article in the query no longer makes the local matcher accept
+  everything.** `nodeMatchesText` split the query on whitespace with no stopword
+  filter and matched any word as a substring — and German stopwords sit inside
+  ordinary words ("Stu-die-n", "Me-die-n"). Measured over a 60-node pool from a
+  real search: `"Bruchrechnung"` correctly matched 0 nodes, `"die
+  Bruchrechnung"` matched 43 (72%), `"der Wald"` 48, `"IT"` 47. The filter was a
+  no-op for any query phrased the way a person speaks. It now drops stopwords
+  and single characters, and a query of nothing but stopwords matches nothing
+  rather than everything.
+- **A short query term must match at a word start.** A substring test is right
+  for German — "Rechnung" belongs inside "Bruchrechnung" — but for a two- or
+  three-letter term it is mostly accident: the query "IT" put "s-it-ting",
+  "Maur-it-ius", "Pol-it-ik" and "C-it-izenship" in the top five of a live
+  search. Compounds and inflections carry the term at a word start while the
+  accidental matches bury it mid-word, so short terms now require that boundary.
+  "EU" still matches "Europäische" and "Bio" still matches "Biologie".
+- **The relevance scorer's phrase bonus follows the same rule.** It awards +30,
+  its largest single bonus, for `title.includes(query)` — which for a one-word
+  query is exactly the substring test the term branch had already given up, and
+  it outweighed that branch four to one. Multi-word phrases are unaffected.
+- **The three copies of "which query words count" are now one function.** Scoring,
+  the quality floor and the local matcher each had their own; the copy in the
+  scorer decided the order a user sees.
+- **`get_compendium_text` no longer fetches every property to read two.**
+  Measured read-only against the editorial repository: a `propertyFilter`
+  returns each field it names byte-identical to the `-all-` read, including a
+  4914-character description — the filter bounds which properties come back,
+  never their content. Responses shrink ~43%.
+
+### Fixed — Transport, REST & entry points (review R11, 2026-08-03)
+
+- **The CORS policy no longer invites a browser to relay credentials.** The MCP
+  endpoint forwards a caller's `Authorization` header to the WLO repository,
+  which is why it caps how many *distinct* logins one client may present. That
+  cap keys on the client address — and advertising `Authorization` as a
+  cross-origin-allowed header was the way around it: a web page could spend
+  every visitor's address on a different guess and read the outcome, since a
+  write-capable login yields a longer tool list. CORS restrains browsers and
+  nothing else, and no browser is a client of this endpoint, so the header is
+  simply no longer offered.
+- **The dispatch matches on the path, not on the raw request target.**
+  `req.url` carries the query string, so `POST /mcp?v=1` answered "Not found.
+  Use POST /mcp" and `GET /health?t=1` 404'd — while the REST router and the
+  static layer had normalized correctly all along.
+- **Both public HTML surfaces declare a Content-Security-Policy.** The search
+  view (`?format=html`) and the prompt launcher embed repository-supplied text;
+  escaping was the only control. The search view denies everything but inline
+  style; the launcher additionally permits its own inline script and a
+  same-origin fetch. Neither may be framed.
+- **The HTML search view is readable in a dark-mode browser.** It hardcodes a
+  light palette but declared no background, so the browser painted its own dark
+  canvas under near-black text — measured at roughly 1.1:1, i.e. unreadable. It
+  now states its background and `color-scheme: light`, giving ~16:1.
+
+### Fixed — Apps-SDK & widgets (review R10, 2026-08-03)
+
+- **A material title can no longer forge an entry in the multi-select
+  hand-off.** "Use selected" injects a message *as the user* listing one
+  material per line as `- „title" (nodeId: x)`, and the title — which comes from
+  spidered external sources — went in raw. A line break in one forged a second
+  entry naming an id the teacher never picked, which the model would then act
+  on. The single-tile buttons have sanitized their title since 2026-07-28; this
+  path built its own message and did not. HTML escaping does not help here: the
+  delimiter of a prompt list is the newline, not `<`.
+- **The detail view states the licence even when the record has none.** The
+  tile always shows the row, deliberately — teachers must be able to tell "free
+  to reuse" from "no licence stated". The Einzelansicht omitted it, and that is
+  the view where the reuse decision is actually made.
+- **Inlined widget JS and CSS are escaped against their own closing tag.** The
+  build writes the bundle into `<script>…</script>`; an HTML parser ends a
+  raw-text element at the first `</script`, whatever the JavaScript grammar
+  says, and esbuild does not escape it because it cannot know the output is
+  being inlined. One string literal would have truncated the bundle and spilled
+  the rest into the document as markup.
+- **A tree node's `aria-controls` no longer depends on the node id being
+  id-safe.** `aria-controls` is a space-separated id list, so a node id carrying
+  whitespace pointed the disclosure button at two elements that do not exist.
+
+### Fixed — Curation tools (review R9, 2026-08-03)
+
+- **`wlo_remove_from_collection` never worked.** Filing material into a
+  collection creates a *reference* node with its own id, and the two directions
+  of the repository API do not take the same one: the `PUT` that files material
+  takes the original node id, while the `DELETE` that removes it requires the
+  reference id. Measured against staging, the delete with the original id
+  answers `200` and removes nothing — the reference was still readable
+  afterwards. The tool now resolves the reference from the collection listing
+  first, accepts either id from the caller, and says plainly when the material
+  is not in the collection at all instead of reporting a removal that did not
+  happen.
+- **The removal is confirmed on the reference node, not through `/usage/v1`.**
+  That endpoint answers `500` for exactly the state this check exists to
+  observe: a material whose reference was just deleted keeps a usage row
+  pointing at the node it can no longer resolve. Every successful removal would
+  have been reported as unverified.
+- **Removing a compendium text now reads the record back.** Writing one already
+  did; removing one reported success from the status code alone.
+- **A confirmation token now binds the whole change, not part of it.** Three
+  fields sat outside the change set and were therefore not covered by the
+  fingerprint: a collection's `description` on create and rename, and
+  `commit`/`versionComment` on `wlo_update_content`. A token approved for one
+  description authorised writing a different one; an approved metadata edit
+  could silently cut a new version.
+- **`cm:title` and `cm:description` are named in the writable-field list.** Both
+  were already written by the collection tools; the list understated the write
+  surface it exists to declare.
+- **Repository-supplied values are sanitized before they are interpolated into
+  a confirmation preview or a rejection message** — field names, offered
+  vocabulary values, suggestion ids and statuses. These messages carry elevated
+  authority: they are what a curator approves.
+- **A collection title longer than 255 characters is refused before anything is
+  sent.** Every other written field passes the length check; this one reached
+  the repository unchecked.
+
+### Fixed — Detail & auxiliary tools (review R8, 2026-08-03)
+
+- **Repository text can no longer forge a detail record.** `get_node_details`
+  rebuilt `renderToText`'s line format by hand — `## title`, `nodeId:`,
+  `Lizenz:` — but without its `oneLine` protection, so a newline in a title
+  opened a second, fabricated record with its own nodeId and its own licence
+  line. The same gap is closed in `get_related_content`, `get_node_collections`,
+  `get_node_breadcrumb`, `find_wlo_skills`, `get_wlo_content_text`,
+  `get_collection_stats`, `lookup_wlo_publishers` and `get_compendium_text`.
+  Decided per site, not swept: prose bodies (the stored full text, a compendium
+  text, a skill's instruction Markdown) keep their line breaks — they are
+  documents, not fields.
+- **`get_wlo_content_text` states a provenance that cannot be forged.** A
+  newline in the title used to fabricate a second `Quelle:` line, i.e. claim
+  repository origin for text taken from a linked page — the one line a teacher
+  reads to attribute the material.
+- **A record that is merely not public is no longer reported as non-existent.**
+  `getNodeMetadata` returns `null` for every non-OK status, so `get_node_details`,
+  the knowledge-convention `fetch` and `get_node_collections` all answered "Node
+  X nicht gefunden" for a 401/403 (not public — measured: such a node refuses
+  its metadata too) and for a 503. New `readNodeMetadata` carries the status;
+  the three answers are now kept apart.
+- **`get_node_breadcrumb` no longer invents a cause.** A failed `/parents` read
+  was reported as "probably a file node or the root". New `readNodeBreadcrumb`
+  reports the failed read as one.
+- **`get_node_details` no longer claims a full text is absent after a failed
+  read**, and its JSON output carries `textContentError` alongside the empty
+  string, mirroring `parentsError`.
+- **Two unbounded values in the detail record are capped** to the same limits
+  `renderToText` applies: the compendium text (500 chars) and the description
+  (400). A call asking for title and licence used to return an entire editorial
+  essay inline.
+- **`get_nodes_details` bounds its full-text fan-out** to the first 20 nodes.
+  Concurrency alone does not bound wall-clock: 50 slow reads at pool width 10
+  could outlast the server's own 30 s request timeout, and the caller lost the
+  connection instead of receiving the metadata it also asked for. Skipped ids
+  are named in `textContentSkipped` — never silently dropped.
+
+### Fixed — Wikipedia returned the wrong article (2026-08-02)
+
+- **A search-resolved Wikipedia hit is now checked for relevance, and the
+  candidate the query is about is chosen instead of the first one.** Measured
+  before: `Stadt Berlin` answered with `Bern`, `Dreiecke` with `Dreiecker` — a
+  mountain in the Allgäu. That is not cosmetic: a caller turning the extract
+  into teaching material appends "Quelle: Wikipedia-Artikel „…"", so a wrong
+  article publishes a false attribution.
+  The check sits on the **candidates**, not on the finished summary, because
+  every wrong article measured came from the opensearch fallback and never from
+  the direct lookup — a direct hit is the exact title or a curated **redirect**
+  (`Bruchrechnen` → `Bruchrechnung`), which is an editorial statement that both
+  names mean the same topic and is trusted as such.
+  The candidate list also grew from 1 to 10, which turns a rejection into a
+  correct answer: for `Dreiecke` the right article was the fifth result.
+  Live-verified against de.wikipedia.org, 10/10 cases as expected.
+- **`WikiSummary` carries `match`** (`exact` | `fuzzy`) on the MCP tool, on
+  `GET /api/wikipedia` and in the Apps-SDK output schema, so a consumer that
+  attributes the text can tell whether the article is the one the user named.
+  The Markdown output states the substitution for a fuzzy hit.
+- **A generic classifier noun no longer outvotes the proper name.** The topic is
+  taken from the longest content word, so `Insel Rab` answered `Insel (Album)` (a
+  music album), `Element Zinn` answered `Élément moral` (a French legal concept)
+  and `Fluss Po` answered `Fluss-Greiskraut` (a plant) — the classifier matched
+  and the name was never weighed. Found by a live probe, not by review. Among
+  accepted candidates, one that accounts for more of the query now wins over one
+  that accounts for less (`Satz des Pythagoras` over `Pythagoras`).
+- **A short topic word no longer empties the query.** `Stadt Rom` reduced to
+  nothing at all — "stadt" is a stop word and "rom" fell under the length floor —
+  so the search never ran. The floor is now a preference: when nothing longer
+  survives, the short words are used, and they can still only match a whole word.
+- **No candidate on topic now means "no article", not the closest string.** The
+  rejected candidates are logged so a miss can be diagnosed.
+- The substitution notice is shared by `get_wikipedia_summary` and
+  `search_wlo_all` instead of living on one of them — it had been written on the
+  less-used surface and forgotten on the documented default entry point.
+  Rationale, measurement and the deliberate deviations from the proposal are in
+  [`docs/plans/2026-08-02-wikipedia-relevance.md`](docs/plans/2026-08-02-wikipedia-relevance.md).
+
+### Removed — the Vercel serverless path (2026-08-02)
+
+- **`api/mcp.ts`, `vercel.json` and `tests/api-mcp.test.ts` are gone.** The
+  serverless entry point had been retained but not operated for months, which
+  meant every change to the credential chain, the tool registration or the
+  transport had to be made twice and reasoned about twice — the R6 review found
+  it drifted exactly there. Vercel is no longer a deployment target, so the
+  second copy is now a liability rather than an option.
+  **Nothing was lost with the tests:** each of the six properties they pinned
+  (health payload, 405 on a wrong method, the `Accept` patch, the relay-abuse
+  guard, an unusable `Authorization` header not borrowing the service account,
+  and per-user credential propagation) has a twin against the self-hosted path
+  in `tests/http-app.test.ts` and `tests/auth-per-user.test.ts`.
+  Earlier entries in this same Unreleased section that describe `api/mcp.ts` are
+  superseded by this one; they are kept as the record of what was done.
+  The type gate (`tsconfig.typecheck.json`) and CI still cover `tests/` and the
+  widget entry points — only `api/**/*` left its `include`.
+  **Serverless constraints no longer apply anywhere in this codebase.** The
+  server is a long-lived process: in-memory rate limiting, per-process caching
+  and startup work are all sound, and the README/PERFORMANCE caveats about cold
+  starts are gone rather than merely qualified.
+
+### Fixed — R7 review: search & discovery tools (2026-08-02)
+
+- **`search_wlo_within_collection` no longer corrupts its own JSON.** With
+  `outputFormat:"json"`, the sampling note ("searched the first 100 of 214") and
+  the sub-collection hint were appended to the JSON string, so `JSON.parse`
+  threw for every client that read the text block. Both now ride as their own
+  content blocks, the way the unresolved-filter hint already did.
+- **Repository text can no longer forge a tool's own record delimiters.**
+  `renderToText` has collapsed newlines in repository values since the licence
+  fix; four tools rendered their own line-oriented text and did not. A
+  collection title containing a newline could add a branch to the collection
+  tree, a Fachportal to the portal list, an entry to the Themenseiten listing,
+  or a section to a swimlane outline — each with a `nodeId` of its choosing,
+  which is what the next tool call acts on. `oneLine` is now exported from
+  `formatter.ts` and applied in `browse.ts`, `topic-pages-present.ts` and
+  `topic-page-content.ts`. A Wikipedia extract in `search_wlo_all` is rendered
+  as a blockquote instead: prose may wrap, but no line inside it can open one of
+  the answer's own `#` sections.
+- **An unreadable collection listing is no longer reported as an empty one.**
+  `getChildCollections` degrades to `[]` on any non-OK status, so a 503 reached
+  the user as "no collections found — try a broader term", as `WLO Fachportale:
+  0`, or as `Sub-Sammlungen: 0` per portal. The new `getChildCollectionsResult`
+  reports whether the listing was readable; the four places that turn emptiness
+  into a claim now fail loudly or omit the count instead of asserting a fact
+  about the catalogue that is really a fact about the server.
+- **A facet query can no longer take down the process.** `searchFacets` was
+  started before the main search and awaited after it, so a throw from the main
+  search left it unawaited — an unhandled rejection ends the Node process. The
+  `.catch` now sits at the call site, where the floating promise is created,
+  rather than relying on an invariant held in another module.
+- A collection that is both a top-level entry and a sibling's child is no longer
+  emitted twice in `browse_collection_tree`. The duplicate only appeared past the
+  eleventh top-level node: the ids were claimed inside each worker, whose
+  synchronous prefix covered exactly the first pool-width of them. The two
+  argument-error paths now log like every other failure, and the stale Vercel
+  reference in the `mapPool` rationale is gone.
+
+### Fixed — R6 review: auth & credentials (2026-08-02)
+
+- **An `Authorization` header the server cannot use no longer borrows the shared
+  service account.** A refused scheme (Bearer, Digest) or a malformed Basic
+  payload was indistinguishable from sending no header at all, so the caller
+  quietly acted under the service identity — with rights they never asked for
+  and, with `WLO_ALLOW_SERVICE_WRITES` set, the ability to write changes
+  attributable to nobody. Such a request is now served anonymously, on both HTTP
+  entry points, with a warning in the log. Sending no header still resolves to
+  the service account; that fallback is the intended one.
+- **A Basic header with an empty password is refused.** `resolveServiceCredential`
+  already rejected a half-filled login for a documented reason; the header path
+  accepted it, which produced `mode: "user"`, registered the curation tools and
+  then failed every upstream call with 401.
+- **The cleartext-transport warning no longer depends on a service account being
+  configured.** It sat behind that early return, so the deployment where every
+  individual user's own password travels in the clear — per-user mode, which
+  needs no service account — was the one that never heard about it. The warning
+  now fires for the transport itself at boot; loopback stays exempt.
+- **The Vercel entry point guards forwarded credentials.** It relayed a
+  client-supplied `Authorization` header upstream with no cap on distinct
+  logins, the relay-abuse vector the self-hosted handler has guarded since it
+  started forwarding headers. On serverless the in-memory guard is per-instance
+  and resets on a cold start, so a platform rate rule is still required — but a
+  weakened guard beats none. (Entry point retained, not deployed.)
+
+### Fixed — R5 review: write pipeline (2026-08-02)
+
+- **Six mutations reported success from the HTTP status alone; every one of them
+  now reads the record back.** Creating and renaming a collection, filing and
+  removing a reference, deleting a record and deleting a collection all answered
+  "done" on `res.ok`, although the write pipeline's own rule is that a `200` from
+  edu-sharing is not evidence — the collection endpoint is measured to discard
+  `cm:description` while answering one, and the mechanism that discards a write
+  when the caller lacks the right is not endpoint-specific. This is the gap that
+  was found in production for `wlo_submit_content`. Create/rename compare
+  `cm:title` (and the description) on a read-back; the reference tools ask the
+  usage endpoint, which resolves a reference id to its original first; both
+  deletions require the record to be unreadable (`404`), not merely a `200` from
+  the DELETE. The three answers stay apart — `failed` (nothing happened),
+  `not_visible` (accepted, not in the record), `unverified` (we could not find
+  out) — because each permits a different sentence.
+- **A commit that falls back to field-by-field no longer versions each field.**
+  `POST …/metadata` creates a version every time, and the retry ran with the
+  caller's options, so one rejected value out of five left four history entries
+  carrying the same comment. The retry now drafts and a single commit covers
+  whatever landed.
+- **Upstream error bodies are sanitized before they reach the model.**
+  `failureDetail` embedded up to 200 raw characters of an edu-sharing response in
+  six user-facing replies; a newline in a stack trace ended our sentence and
+  opened a line that read like one of ours.
+- **Author names are escaped for vCard.** `toVcard` interpolated the name into
+  `N:` and `FN:` unescaped, so a pasted line break ("Maria Schmidt⏎Universität
+  Musterstadt") produced a card a strict parser drops whole — the author vanishes
+  from the record rather than being slightly wrong. A `;` shifted every following
+  `N:` component.
+- **Write values are bounded in number as well as in length.** No property capped
+  its value count, and only four of fourteen capped the length of a value; the
+  real bound was the HTTP body cap, which the stdio path does not have.
+
+### Fixed — R4 review: read services (2026-08-02)
+
+- **The recursive collection walk is bounded by the collections it reads, not
+  only by the rows it collects.** `collectRecursiveContents` stopped at
+  `maxResults` rows — but rows are counted only when they are new, so a curated
+  subtree whose sub-collections share their references de-duplicates itself into
+  a standstill and the queue kept draining. Two sequential upstream calls per
+  collection, continuing after the client's 30 s request timeout had already
+  closed the socket. A visit cap (50 collections) now ends the walk, with a
+  warning in the log; `totalHits` remains the "there is more below" signal. The
+  module's own header had claimed both walks capped their fan-out; only the
+  keyword-fallback walk did.
+- **A refused parent lookup on a collection is no longer reported as "in no
+  collection".** `getNodeParents` degrades to `[]` on any non-OK response, so a
+  403 and a genuine root collection arrived identical, and
+  `get_wlo_node_details` printed "Keine Eltern-Sammlungen gefunden." for a
+  collection that is filed somewhere — the same confident falsehood
+  `getParentCollections` was written to prevent on its material branch. New
+  `readNodeParents` reports whether the repository answered (the split
+  `getNodeTextContent` / `readNodeTextContent` already uses); the collection
+  branch now returns `unknown` on a failed or unparseable read. `getNodeParents`
+  keeps its graceful contract for breadcrumbs, where a missing crumb is cosmetic.
+- **A failing keyword search no longer discards the topic-page portals.** In
+  `findTopicPagesByQuery` the portal leg was guarded and its supplementary
+  sibling was not, although only the portals carry `ccm:page_config_ref` — a
+  timeout on the supplement failed the whole call. Same guard `searchAll`
+  already carries.
+- **The topic-page widget fan-out is capped per lane.** `MAX_LANES` bounded the
+  swimlanes but not the widgets inside one: the grid is parsed unbounded and
+  each widget node costs its own metadata request (measured in the new test:
+  1200 requests for a 12×100 page). Only the first content-bearing widget of a
+  lane is ever used, so at most four per lane are read.
+- Doc fix: `enrichCompendium` described its gap-fill as "one bulk `-all-` fetch";
+  `getNodesMetadata` is a pooled fan-out of one request per id — edu-sharing has
+  no bulk metadata endpoint.
+
+### Fixed — R3 review: vocabularies & presentation (2026-08-02)
+
+- **A repository-supplied field can no longer forge a record in the Markdown
+  output.** `renderToText` writes a line-oriented format (`## title`,
+  `Key: value`) in which every value comes from the repository — titles,
+  descriptions, publisher names, `_DISPLAYNAME` labels, URLs. A newline in any of
+  them opened a second, fabricated record carrying its own `nodeId` and its own
+  `Lizenz:` line; a forged "CC BY 4.0" over material that has no licence is
+  exactly the claim a teacher acts on. Values are now flattened to one line each
+  where the format needs one line. The text itself is unchanged — this is the
+  renderer protecting its delimiters, not sanitizing (`text-sanitize.ts` remains
+  the elevated-authority boundary), and JSON output keeps the line breaks.
+- **`elementary school` now resolves to Grundschule, not Elementarbereich.** The
+  alias sat on both entries and the first-wins exact match handed the English
+  term for primary school to the pre-school concept — a wrong filter with no
+  "did you mean" hint, because a non-null result reads as "resolved". A test now
+  asserts that no label or alias is shared by two concepts of one vocabulary.
+- **`resolveVocab` requires a real scheme before treating input as a URI.**
+  `startsWith('http')` accepted any word beginning with those four letters and
+  passed the typo on as a filter value: a guaranteed empty result, and the fuzzy
+  suggestion suppressed along with it.
+- **The eight aggregated learning-resource-type concepts missing from the local
+  table were added** (48 in total). The repository derives them from `new_lrt`,
+  so they appear as facet values — and facet values carry no server-side
+  `_DISPLAYNAME`, so they rendered as bare UUID URIs. Labels are the official
+  prefLabels from the published vocabulary, read once from the index rather than
+  inferred from the child concepts.
+- **Typo tolerance restored for university subjects spelled with "ß".** The word
+  splitter used a Latin-1 range that excludes U+00DF, so "Gießereiwesen" was
+  tokenised as "Gie"/"ereiwesen"; it now splits on Unicode letter classes.
+
+### Fixed — remaining `res.json()` sites in the service and write layers (2026-08-02)
+
+- The five call sites R2 deliberately left alone now go through `readJson` too,
+  each keeping its own contract rather than inheriting one. `listSuggestions`
+  and the collection-usage lookup **throw**, because both document that an empty
+  array is the positive claim "there is nothing here" — a claim that must never
+  cover "we could not look". The two create paths (`createCollection`,
+  `createContentNode`) take the route their missing-id branch already took: the
+  POST was accepted, so a record may exist, and reporting a plain failure would
+  invite a retry — which with `renameIfExists` produces a *second* record rather
+  than a no-op. Their message now says to look in the repository before
+  repeating the operation. `auth/identity.ts` was checked and left unchanged:
+  its parse is already inside the `try` that carries its "never throws" contract.
+
+### Changed — modularization (2026-08-02)
+
+Three files past the 300-line threshold were split along the seam where two
+responsibilities had accumulated, not at the line count. All moves are
+behaviour-preserving; the suite is the guard.
+
+- `src/services/collection-traversal.ts` (new) — the DAG walks
+  (`findCollectionsByTreeTraversal`, `collectRecursiveContents`) out of
+  `tools/collections.ts` (461 → 338). Bounded fan-out over the collection graph
+  changes with the repository's data; the tool schema changes with its contract.
+- `src/services/topic-page-discovery.ts` (new) — the three-mode Themenseiten
+  discovery out of `tools/topic-pages.ts` (311 → 174), same seam.
+- `src/wlo-node-text.ts` (new) — `/textContent` and the anonymous file download
+  out of `wlo-node.ts` (333 → 228). Reading a node's TEXT carries its own
+  timeout budget, byte cap and UTF-8 handling; reading its metadata carries
+  none of that. Re-exported through the `wlo-api` barrel, so no caller changed.
+
+### Fixed — review package R2, upstream API clients (2026-08-02)
+
+- **An upstream 200 that is not JSON no longer decides the failure mode.**
+  `res.ok` says the server answered; it does not say the body is JSON. A reverse
+  proxy's maintenance page, a captive portal and an empty body all arrive as
+  HTTP 200 with something `res.json()` throws on — and every client function
+  parsed unguarded, so the parse error escaped past functions that document
+  themselves as degrading to `[]`/`null`. The worst case was
+  `fetchWikipediaSummary`, whose whole contract is "returns null when no article
+  matches": its `try` covered the network call but not the parse, so a Wikimedia
+  CDN interstitial turned an optional enrichment into **HTTP 500 from
+  `/api/wikipedia`** instead of a 404. That it bites was already visible in the
+  code — `services/search.ts` wraps the call in `.catch(() => null)`, a
+  workaround only needed because the function broke its own promise. A new
+  `src/read-json.ts` leaf now parses once for all three clients: callers that
+  degrade get `null` and log which call failed; callers that throw by contract
+  (`ngsearch`, `getCollectionContents`) throw a named error instead of
+  `Unexpected token <`.
+- **A truncated download no longer ends in a broken character, and its cap is
+  measured in bytes.** `getNodeDownloadText`'s no-body fallback compared
+  `text.length` (UTF-16 units) against a byte limit, so German text could run to
+  roughly three times the intended size; the streaming path cut at an arbitrary
+  byte offset, which lands inside a multi-byte sequence and left a U+FFFD before
+  the truncation marker.
+
+### Security — review package R2 (2026-08-02)
+
+- **A material URL pointing into a private network is no longer forwarded to the
+  text-extraction service.** The URL comes from a repository record's
+  `ccm:wwwurl` — content any curator can set, including through this server's own
+  write tools — and the only check was that it began with `http`. The service
+  fetches whatever it is given, so `http://169.254.169.254/…` or an RFC-1918
+  address turned it into a probe of whatever network it sits in; self-hosted
+  next to this server, that network is the operator's. Loopback, link-local,
+  RFC-1918 and IPv6 unique-local/link-local hosts are now refused before the
+  request is made, and the refusal is logged. Known limit, stated in the code: a
+  public name that *resolves* to a private address still passes — closing that
+  needs resolution-time enforcement inside the fetching service.
+
+### Changed — review package R2 (2026-08-02)
+
+- **The metadata fan-out can ask for the fields it actually reads.**
+  `getNodesMetadata` had no projection parameter and always pulled `-all-`
+  (~59 properties per node). Resolving a topic page's swimlane widgets reads
+  exactly one property off each node and paid for all of them, on the hot path
+  of the most expensive tool. It now takes an optional `props` list; the widget
+  resolution passes `['ccm:widget_config']` and every other caller keeps `-all-`.
+- **`wikipedia-api.ts` no longer imports the whole edu-sharing client.** It
+  pulled its one shared constant through the `wlo-api` barrel while its own
+  header claimed it must never pull WLO config in — a contradiction inside a
+  single file. It now imports from the config leaf, and the header states what is
+  actually true: no repository credential can reach Wikipedia, because this
+  module calls `fetch` directly rather than the credential-attaching `wloFetch`.
+
+### Security — review package R1, foundation & config (2026-08-02)
+
+- **Invisible Unicode can no longer smuggle instructions through
+  `sanitizeText`.** The rule flattened C0/C1 control characters, which left every
+  invisible class untouched: the Unicode tag block (U+E0000–U+E007F) encodes a
+  full ASCII sentence that renders as nothing, bidi overrides (U+202A–U+202E)
+  make the displayed text differ from what is read, and zero-width space splits
+  words invisibly. Measured: 32 tag codepoints carrying "IGNORE ALL PREVIOUS
+  INSTRUCTIONS" survived unchanged. This is the exact threat the module was
+  written for — a value posing as a fresh instruction block — in the variant its
+  tests did not cover. The worst path is `followUpPrompt`, which embeds a
+  repository-supplied title in a message injected with *user* authority; titles
+  come from spidered external sources. Invisibles are now dropped (not turned
+  into spaces, which would insert word breaks) and dropped *before* the length
+  cap, so padding cannot push the readable part out. ZWNJ/ZWJ and LRM/RLM
+  deliberately survive — Persian and Indic orthography and emoji sequences need
+  them, and direction *hints* cannot reorder text the way an override can.
+
+### Changed — review package R1 (2026-08-02)
+
+- **`WLO_TEXT_EXTRACTION_URL` has no default any more.** It defaulted to the
+  *staging* extraction service regardless of which repository was configured, so
+  any production deploy that had not set it sent the URLs of production material
+  to another environment — the outcome the surrounding validation exists to
+  prevent ("a typo must not redirect material URLs to a host the operator never
+  chose"); an unset variable is no more a choice than a typo. Unset now disables
+  the external path and logs why, leaving `/textContent` as the only source.
+  **Action for operators: set `WLO_TEXT_EXTRACTION_URL` explicitly**, or accept
+  repository-only full text.
+- **A malformed numeric env value is refused instead of half-parsed.**
+  `parseInt` stops at the first non-digit, so `WLO_FETCH_TIMEOUT_MS=20s`
+  resolved to a **20 ms** timeout — a deployment where every upstream call fails,
+  with nothing in the log pointing at the cause. `resolvePositiveInt` now
+  requires a plain run of digits and warns with the variable name and the
+  rejected value. Unset and empty stay silent.
+- **The credential boundary moved to a file named after it.** `wloFetch` and
+  `withCredential` — the single function deciding who receives the operator's
+  password — lived in `wlo-config.ts`, a 412-line module also holding env
+  resolution, the shared node types and the property-filter helpers. Now
+  `src/wlo-fetch.ts` (fetch + credential boundary + `logUpstreamMiss`) and
+  `src/wlo-types.ts` (`WloNode`, `SearchResponse`, `SearchCriterion`); the
+  barrel `wlo-api.ts` re-exports both, so no downstream import changed. Pure
+  relocation, no logic touched.
+- **The logger cannot become the failure it is reporting.** A field that cannot
+  be serialised (circular reference, BigInt) made `JSON.stringify` throw inside
+  `emit`, replacing the real error with a TypeError. The record now degrades to
+  its header plus a `logError` field.
+
+### Fixed — the remaining three findings from the chatbot team (2026-08-02)
+
+- **`find_wlo_skills` is no longer offered unconfigured.** Without
+  `WLO_SKILLS_COLLECTION_ID` every call failed with "set
+  WLO_SKILLS_COLLECTION_ID" — a message aimed at the operator, delivered to a
+  model that cannot act on it and cannot guess a valid nodeId. The tool now takes
+  its collection as an argument and is registered only when one is configured,
+  the same gate the write tools use. The unreachable runtime branch went with it.
+- **`includeRaw` now matches its description, and itself.** It promised "the
+  original ccm:* / cclom:* property URIs" and delivered five vocabulary fields —
+  in JSON. Markdown carried only three, so switching output format silently
+  dropped the target group and the resource type. Both now return the same five,
+  and the description names them instead of implying the full property bag.
+- **`search_wlo_collections` and `search_wlo_topic_pages` no longer contradict
+  each other.** One said a Sammlung *is* a Themenseite, the other said it checks
+  which collections have one. Measured for "Mathematik": 5 collections, 1 topic
+  page. Both descriptions now state the containment — a Themenseite is a
+  collection that additionally carries a curated page layout — and each names the
+  other tool for its case.
+
+### Fixed — `includeParents` answered "in no collection" for material that was in several (2026-08-02)
+Reported by the chatbot team, confirmed by measurement. The flag read
+`/node/v1/nodes/{id}/parents`, which carries the ancestor chain for a collection
+and an **empty list** for a content item — always, with a `200`. A model reading
+that answers "this is in no collection", which is a false statement rather than a
+missing one.
+
+- `includeParents` now picks the endpoint that knows: `/parents` for a
+  collection, `/usage/v1/usages/node/{original}/collections` for a material
+  (resolving a reference id to its original first).
+- A failed lookup is reported as such instead of collapsing into an empty list —
+  "we could not find out" and "it is in none" lead to different answers.
+- Both `get_node_details` and `get_nodes_details` are fixed.
+- The test mock that had served `/parents` with a collection for content nodes
+  was corrected to what the endpoint actually returns. It was the reason the
+  defect survived a full test suite.
+
+### Changed — a timed-out create no longer claims nothing was created (2026-08-02)
+The abort hits the response, not the work: measured, a timed-out
+`wlo_create_content` had already produced the record. Raising the timeout makes
+that rarer, never impossible, so the reply now states the outcome as open and
+offers a retry — safe, because the duplicate check finds and names an existing
+record instead of making a second one. An ordinary refusal from the repository
+is still reported plainly as a failure.
+
+### Changed — upstream timeout default raised to 20 s (2026-08-02)
+`WLO_FETCH_TIMEOUT_MS` defaulted to 10 s, which cut a create off mid-flight while
+the repository had already made the record.
+
+- Measured per call against staging: creating a `ccm:io` takes **4.2–8.0 s** (18
+  samples), everything else stays under 2.5 s, and production reads are faster
+  still. The create is the outlier by a factor of three; 10 s left as little as
+  1.26× headroom over the worst run.
+- Two explanations were tested and discarded first: a cold process is not slower,
+  and the total pipeline duration does not matter because the timeout is per
+  request.
+- The new default is ~2.5× the worst measured call and stays below
+  `WLO_TEXT_TIMEOUT_MS` (25 s), which remains the deliberate outlier for
+  full-text reads. Both defaults are now named constants, and the test asserts
+  the *margin* over the measurement rather than the literal number.
+
+### Changed — submitting for review now reads the record back (2026-08-02)
+`wlo_submit_content` was the one write that reported success on the strength of
+a `200` alone. The live run showed the submission is verifiable: a submitted
+record carries `ccm:wf_status: 200_tocheck` and `ccm:wf_receiver`, one that was
+never submitted carries neither.
+
+- The reply now names the status the record actually carries and the group it is
+  waiting for, instead of a bare "eingereicht".
+- A call answered with `200` whose record shows no workflow status is reported as
+  NOT submitted — the same treatment every other silent drop gets. A draft
+  sitting in nobody's queue while the user believes an editor has it is the
+  failure this prevents.
+- A record that cannot be re-read afterwards leaves the outcome explicitly open.
+
+### Fixed — collections could not be created or renamed (2026-08-02)
+Found by the first live run against a real repository. Both calls had been
+covered by tests the whole time; the tests asserted our own inference back to us,
+because the faked upstream accepts any body.
+
+- **`wlo_create_collection`** answered `500` (`cmNameReadableName is null`) on
+  every call. The endpoint derives the node name from a top-level `title` field
+  in the body; `properties['cm:title']` alone is not read for that.
+- **`wlo_rename_collection`** answered `500` (`NodeRef.getId()` on null). The
+  update DTO must carry `ref.id` even though the id is already in the path.
+- **A collection's description was silently discarded.** The collection endpoint
+  accepts `cm:description` with `200` and stores nothing — the fourth measured
+  instance of that pattern. It now travels through the node metadata route, and
+  a description that still fails to land is reported instead of swallowed.
+
+### Added — metadata proposals (2026-08-01)
+Three tools that separate "a model thinks this should say X" from "the record
+says X". Both facts stay readable in the repository afterwards.
+
+- **`wlo_suggest_metadata`** stores per-field proposals with a rationale and
+  leaves the record untouched. **`wlo_list_suggestions`** shows them with their
+  status and the id to decide on. **`wlo_decide_suggestion`** accepts or
+  declines one.
+- **Accepting applies the value; the endpoint does not.** Measured on staging: a
+  suggestion moved to `ACCEPTED` left the node's property absent.
+  `/suggestions/v1` records proposals and decisions, nothing more — so accepting
+  runs the ordinary write pipeline with its read-back.
+- **Order matters, and it is fixed.** The value is written and read back
+  **before** the proposal is marked accepted. A proposal marked accepted over a
+  record that never received the value reads, to the next curator, as work
+  already done; a written value with the proposal still open costs one repeated
+  decision and states nothing untrue. A write the repository discarded therefore
+  produces no `ACCEPTED` at all, and the reply says the proposal is still open.
+- **`type: AI` is permanent, `status` carries the human decision.** The upstream
+  `PATCH` takes no type, which matches what the two fields mean: the type records
+  that a model wrote the proposal, the status that a person approved it.
+  Overwriting the type would not add the approval — it would erase the
+  authorship.
+- Proposals are validated against the same allow-list as a direct edit, both when
+  stored and when accepted. A proposal naming a property this server must not
+  write (e.g. `ccm:oeh_lrt_aggregated`) is refused with the property named, and
+  declining stays available so it does not sit on the list forever.
+
+### Added — curation, first slice (2026-08-01)
+The server can change data for the first time. It is deliberately narrow: one
+tool, and the whole safety apparatus around it built before the tool existed.
+
+- **`wlo_update_content`** edits the metadata of an existing record — title,
+  description, keywords (added to, not replacing), source URL, language, author,
+  publisher, licence, content type, subject, educational level, target group.
+- **Two-step confirmation.** A call without `confirmToken` reads the record,
+  renders the diff, hands back a single-use key valid for ten minutes, and writes
+  nothing. The key is bound to a hash of the planned change, so a preview of a
+  harmless edit cannot authorise a different one.
+- **Read-back after every write.** edu-sharing answers `200` in three measured
+  situations where the value is discarded (MDS filter, missing aspect, missing
+  right). Each field is re-read and reported as saved, discarded, or rewritten by
+  the repository; a discarded field is never reported as success.
+- **Gated twice.** Write tools are not registered for a caller who may not write,
+  so they never appear in `tools/list` — and each refuses at call time as well,
+  because a host may serve a cached list. Anonymous never writes; an individual
+  login always may; the shared service account only with the new
+  **`WLO_ALLOW_SERVICE_WRITES`**, since a change under a collective identity is
+  attributable to nobody.
+- **A fixed licence key list.** An invented licence (a university's name, say) is
+  rejected with the value named rather than written to an OER record.
+  `ccm:oeh_lrt_aggregated` is never written — the repository derives it.
+- **Drafts do not create versions.** Editing uses `PUT`; `commit: true` with a
+  `versionComment` closes a round of work as a new version (`POST`).
+- Tool descriptors may now declare their own `_meta.securitySchemes`. The
+  server-wide `noauth` default is a default, not a rule — a tool that refuses
+  anonymous callers must not claim otherwise.
+- **`wlo_create_content`** creates a record for a material reachable by URL. A
+  duplicate check on that URL runs first and compares each hit's actual URL
+  case-insensitively — the API's own "did anything come back" is too loose,
+  because the search also returns neighbours. `cclom:title` is deliberately not
+  in the create body: measured, the repository replaces a create-time title with
+  one derived from the URL, so the title is written in the metadata step after.
+  New records go to `-userhome-` under a personal login, or to the shared inbox
+  named by the new **`WLO_INBOX_ID`** under the service account.
+- **`wlo_submit_content`** hands a record to the editorial review queue. Kept
+  separate from creating on purpose: submitting spends a reviewer's attention
+  and cannot be taken back quietly, so no draft reaches the queue because
+  somebody was still writing.
+### Added — `get_node_collections`: from a material back to its collections (2026-08-01)
+The one lookup that ran the other way was missing. `get_node_details`'s
+`includeParents` returned an empty list for every content node tested, and a
+model that receives an empty list answers "this is in no collection" — a false
+statement, which is worse than a missing one.
+
+- A **separate tool**, not a flag: `get_node_details` advertises itself as fast
+  (metadata only) and is called casually. This costs two upstream round-trips
+  for a question that is rarely asked.
+- **A reference id is resolved to its original first, always.** Filing material
+  into a collection creates a reference node with its own id, and collection
+  listings hand those out — but the usage endpoint only knows the original and
+  answers `200` with an empty array for a reference. A "try it, resolve on
+  empty" fallback was rejected: an empty array is a legitimate answer, and
+  reading it as "probably a reference" makes the normal case slow and the empty
+  case ambiguous.
+- **The empty case is named.** `not_in_any_collection` versus `node_not_found` —
+  the usage endpoint answers `500` for an unknown id on both production and
+  staging, so it cannot tell them apart, but resolving the node first can.
+- A failed lookup throws rather than degrading to an empty list. "We could not
+  find out" must not reach a user as "it is in nothing".
+
+Reported and pre-measured by the chatbot team; every claim in that report was
+reproduced here before any code was written, and the finished service was run
+against the live API on the same nodes.
+
+### Fixed — a local run ignored `.env` entirely (2026-08-01)
+`npm run dev`, `dev:http`, `start` and `start:http` did not read `.env`: there is
+no `dotenv` dependency and no `--env-file` flag, so only `docker compose` ever
+loaded it. A developer who pointed `WLO_REPOSITORY_URL` at staging still had
+every local call go to **production**, because the built-in fallback in
+`wlo-config.ts` is the production instance. Nothing warned about it.
+
+The four scripts now pass Node's own `--env-file-if-exists=.env` (no dependency
+added). `npm test` deliberately does not — the suite must not depend on a local
+file. `engines.node` is raised to `>=20.12.0`, the release that added the flag;
+`>=20` was promising a runtime that lacks it.
+
+- **Collections**: `wlo_create_collection`, `wlo_rename_collection`,
+  `wlo_add_to_collection`, `wlo_remove_from_collection`. Adding and removing
+  material are separate tools whose wording cannot be confused with deleting it —
+  a collection holds references, and the reference endpoint is one path segment
+  away from the node endpoint that would destroy the material for everyone.
+- **`wlo_update_compendium`** writes, replaces, or removes a collection's
+  editorial prose. Always through the property endpoint: the field is not in the
+  metadata set, where `PUT` would answer 200 and store nothing. Removal is its
+  own parameter rather than an empty string, because only `null` clears a
+  property.
+- **`wlo_delete_content`** and **`wlo_delete_collection`**. `recycle=true` is
+  always sent explicitly rather than relying on a default. Neither tool promises
+  the deletion can be undone: a person-scoped archive query found a deleted node
+  once and then returned nothing for the same node minutes later, so
+  recoverability could not be demonstrated, and a reassurance we cannot back up
+  is how someone loses their material.
+- The content type (`ccm:oeh_lrt`) now resolves against the full **`new_lrt`**
+  vocabulary — 220 concepts, generated from the published SKOS source by
+  `scripts/generate-lrt-vocab.mjs`. Two labels ("Suchmaschine",
+  "Stationenlernen") belong to two different concepts each and are reported with
+  both candidates rather than silently resolved. The six concepts the vocabulary
+  maps to no aggregated type are accepted with a warning, because material
+  tagged only with those does not appear under the aggregated content-type
+  facets.
+
+### Fixed — auth review (2026-07-31)
+A review of the credential chain before deployment; the first finding is the
+reason nothing was deployed until it was closed.
+- **The public REST layer inherited the service account.** `GET /api/*` and the
+  launcher are open to the internet with no login, but the credential chain
+  applied to them too, so everything the account could see beyond public was
+  world-readable without any authentication — a silent authorization downgrade,
+  and a breach of the design's own "anonymous-only" requirement for that
+  surface. Measured, not inferred: an anonymous `GET /api/search` produced
+  upstream calls carrying `Basic …`.
+
+  **Fixed at the default, not at the call site.** The whole HTTP handler now
+  runs anonymous, and the MCP endpoint — the one branch that needs rights —
+  resolves the credential chain itself. Opting out per surface would have left
+  the same trap for the next surface someone adds; this way a new branch is
+  safe without anyone remembering. Behaviour is unchanged, and that the outer
+  scope carries the protection was confirmed by removing it and watching the
+  public-REST test fail while the MCP one still passed.
+- **A caller-supplied account name reached the model unsanitized.** In per-user
+  mode the label is whatever precedes the colon in the Basic header; line
+  breaks survived into `wlo_auth_status` output, letting a name read as a
+  separate instruction block. The repository-supplied authority and profile
+  name are now cleaned at the same boundary — those are editable by the
+  logged-in person too. The rule moved out of the widget module into
+  `text-sanitize.ts`, shared by both sides instead of duplicated.
+- **A credential over a non-`https` repository URL** was sent in the clear with
+  no warning; the boot check now says so (loopback exempt, so a local
+  development instance does not train the operator to ignore it).
+- **The endpoint could relay credential guessing.** A client-supplied header is
+  forwarded upstream, so WLO logins could be tried from this server's address.
+  Capped by the number of *distinct* logins per client
+  (`AUTH_CREDENTIAL_LIMIT`, default 10 per 10 minutes) rather than by request
+  rate — a per-user client legitimately sends its header on every call, so a
+  rate cap would throttle exactly the people it should serve. Values are stored
+  as digests, never in the clear.
+
+### Added — tests closing a known gap (2026-07-31)
+- **The SSE/ALS integration test the design called for but never got.** The
+  plan listed "SSE response mode breaks ALS propagation" as a risk to be
+  discharged by a dedicated test; only an isolated unit test existed, which
+  would have stayed green while every per-user request silently fell back to
+  the service account. Now driven through a real `node:http` server with
+  `MCP_SSE=1`, including three concurrent users overlapping in flight. The test
+  was confirmed to fail when the propagation is deliberately broken. Result:
+  the risk is discharged — propagation works.
+
+### Changed — consistency and drift guards (2026-07-31)
+- **The retained Vercel entry point resolves the same credential chain.**
+  `api/mcp.ts` ignored the `Authorization` header, so per-user mode would have
+  silently done nothing if that path were ever revived — the quiet capability
+  gap this server keeps finding elsewhere. It serves only the MCP endpoint, so
+  the service-account fallback is correct there and no public surface needs
+  holding anonymous.
+- **The duplicated follow-up dispatch is pinned instead of merged.**
+  `shared/mount.ts` and `search-results/main.ts` carry the same click-handling
+  branch; the latter keeps its own copy because it also owns the multi-select.
+  Merging them would parameterise the shell for one caller, and these `main.ts`
+  files have no behavioural test coverage — only `render.ts` is tested — so a
+  refactor could not be shown to preserve behaviour, and adding a DOM test
+  runner for a cosmetic gain is not worth a new dependency. A source-level test
+  now fails if the two copies drift apart, matching the idiom the project
+  already uses for `main.ts`. Confirmed to fire by renaming an attribute in one
+  copy.
+
+### Fixed — a misconfigured server reported "nothing found" (2026-07-31)
+Found while verifying the auth modes against the real repository, not by
+reading code.
+
+- **A rejected credential made every search answer "0 hits" with no error.**
+  With a wrong service password, `search_wlo_all` returned
+  "Gefundene Treffer gesamt: 0" and `isError: false` — a configuration fault
+  rendered as a fact about the world, which the model then passes on as
+  "there is nothing on this topic". Cause: `enhancedSearch` treats "every query
+  variant failed" the same as "no matches" (`reranker.ts`). One variant failing
+  is what `Promise.allSettled` is for; ALL of them failing means the search
+  could not be performed, and that now throws. Live re-check with the same
+  broken configuration: `isError: true`, "search failed: no query variant could
+  be executed (ngsearch failed: 401 Unauthorized)".
+
+### Corrected — a documented fact about edu-sharing was wrong (2026-07-31)
+- **"edu-sharing does not reject wrong credentials, it answers as guest" is
+  false.** Re-measured against production: wrong credentials get `401`, on the
+  identity endpoint and the search endpoint alike, for a wrong password on a
+  real account as well as for an unknown user. Only the ABSENCE of a header
+  gives `200`/`esguest`. The claim had been copied from a 2026-07-30 probe into
+  `.env.example`, both READMEs, `docker-compose.yml`, `docs/TOOLS.md`, the
+  design doc, the boot warning, and the `wlo_auth_status` tool description —
+  all corrected. The practical consequence is the opposite of what was
+  documented: a typo does not degrade to public content, it stops the server
+  answering at all.
+
+### Verified live against the real repository (2026-07-31)
+- **All three modes confirmed end to end**, the third one for the first time:
+  anonymous (no configuration), service account (`mode: "service"`,
+  `authenticated: true`), and per-user — the same credentials delivered as an
+  `Authorization: Basic` header resolve to `mode: "user"`, proving the header
+  path against real WLO rather than a fake.
+- **The public-REST fix confirmed under production conditions:**
+  `GET /api/search?query=Entwurf` reports 1459 (the public count) while the
+  service account sees 1464. Before the fix that surface would have answered
+  1464 to anyone, unauthenticated.
+
+### Verified live (service account, 2026-07-31)
+The credential chain confirmed against the production repository with a real
+WLO account — the part that could not be tested from the API spec alone.
+- `wlo_auth_status` → `mode: "service"`, `authenticated: true`, authority and
+  display name reported; the boot check logs `repository credential verified`.
+- **The account genuinely sees more**, stable across three alternating runs:
+  `"Entwurf"` 1459 → 1464, `"Test"` 6805 → 6863, `"intern"` 481 → 482. Small,
+  reproducible, and exactly the shape expected of drafts an editor may see.
+  Public-facing queries (`"Bruchrechnung"`, subject portals) are unchanged, so
+  the anonymous experience is not altered.
+- **Operational trap found and documented:** an unquoted `#` in the password
+  truncates the value silently — both in `node --env-file` and in Docker
+  Compose's `.env` (measured: 13 characters became 3). Combined with
+  edu-sharing's silent guest fallback that produces a server which looks
+  configured and serves public data only. `docker-compose.yml` now carries the
+  two variables plus the quoting rule, and `.env.example` states it.
+
+### Added (the credential chain, finished, 2026-07-30)
+- **A configured service account is verified at boot.** Credentials the
+  repository rejects are invisible in a normal reply, so a typo would leave the
+  server looking configured while nothing works. One probe at startup turns
+  that into a log line. (This entry originally said edu-sharing answers as
+  guest for wrong credentials; re-measured 2026-07-31 it answers `401` — see
+  the correction under the auth review below.) Silent and network-free when nothing is configured: the
+  default deployment does not pay for a feature it does not use, and an
+  unreachable repository is a warning, never a failed boot.
+- **The public REST layer stays anonymous by contract.** A caller-supplied
+  `Authorization` header on `/api/*` is not adopted — pinned by a test that
+  drives a real HTTP server and inspects the identity at the upstream call.
+  Accepting credentials there would turn a deliberately public surface into an
+  authenticated API without any of the decisions that would need.
+- Setup instructions for the per-user login in `docs/TOOLS.md`, including how
+  to build the header and how to confirm it took effect.
+
+### Added (per-user login via the host's connector header, 2026-07-30)
+The third rung. A WLO user configures their own credentials once in their AI
+host's connector settings; the host sends `Authorization: Basic …` with every
+request and the server calls edu-sharing as that person.
+- **The model never sees the credentials, and the server never stores them.**
+  No login page, no token in the conversation — the two weaknesses the earlier
+  envelope design had to accept.
+- **Per-request isolation via `AsyncLocalStorage`.** One endpoint serves
+  everybody, so the identity cannot live in a module variable; a test
+  interleaves three concurrent "requests" and asserts none sees another's.
+- **Only HTTP Basic is accepted.** A Bearer header is refused rather than
+  forwarded: edu-sharing ignores Bearer instead of rejecting it, so passing one
+  on would produce a call that looks authenticated and silently is not.
+- Precedence: user header → service account → anonymous. `wlo_auth_status`
+  reports which one applied.
+
+Correction to the previous entry: per-user login was never blocked by
+edu-sharing. P0 proved OAuth2/Bearer unavailable, and that was over-read as
+"no per-user login". `basicAuth` is a declared scheme — which is exactly how
+other WLO clients log people in.
+
+### Added (operating modes: anonymous or one service account, 2026-07-30)
+The server no longer has to be anonymous. Identity is resolved as a CHAIN, not
+as a deployment mode — a service account from the environment, otherwise
+anonymous — so a per-user rung can be inserted later without touching callers.
+- **`WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD`** authenticate every upstream
+  call via HTTP Basic. Unset (the default) is byte-for-byte today's behaviour.
+- **The credential travels to the repository and nowhere else.** One place
+  attaches it (`wloFetch`), one rule bounds it: Wikipedia, the text-extraction
+  service and a look-alike host never see it, pinned by test.
+- **`wlo_auth_status`** reports the resolved mode AND whether it actually
+  works — two different facts, because edu-sharing answers `200` as guest for
+  wrong credentials instead of failing (probed live). A configured account that
+  is not being honoured is named as a configuration error rather than hidden.
+
+P0 verification (staging + prod, recorded in
+`docs/plans/2026-07-25-wlo-mcp-optional-auth.md`) settled the transport:
+edu-sharing's own OpenAPI declares only `basicAuth` and `cookieAuth` — **no
+Bearer** — and offers no OIDC discovery or Dynamic Client Registration. The
+earlier design's paste-back Bearer envelope and host-managed OAuth are both
+unavailable; per-user login stays open pending a decision by the WLO operators.
+
+### Added (the last two display gaps, 2026-07-30)
+- **`get_node_details` renders.** The tool that answers "tell me about THIS
+  material" returned neither `structuredContent` nor a widget, while the detail
+  view for exactly that shape already existed. One node is a list of one: the
+  results widget shows its tile, "Details" opens the Einzelansicht with licence,
+  source and the follow-up actions. `get_nodes_details` stays plain — it is a
+  model-internal batch resolver with no display job.
+- **`get_compendium_text` renders in the reading view.** That widget was built
+  for "material full text OR editorial compendium prose" (its own header), yet
+  the one tool whose output IS editorial prose never reached it. A bulk fetch
+  stays one readable document — the same joined markdown the text output
+  carries — but with an empty `nodeId`, which is what gates the per-node
+  "summarize this" buttons off: the question is ambiguous across several
+  collections.
+
+### Fixed (tool + widget audit, 2026-07-30)
+All 23 tools called live, every button chain simulated end to end, every widget
+fed real tool output. Mechanics were clean (0 tool errors, 0 broken chains, 0
+empty widgets); the defects sat one level up, in what triggers what.
+- **Three tools advertised the same example query.** `search`,
+  `search_wlo_content` and `search_wlo_all` all carried the literal
+  "Video zur Eiszeit", so the same request routed to whichever the model
+  happened to pick — and `search` returns only `{id,title,url}`, too little for
+  a widget. `search` is now described as what it is (the ChatGPT
+  knowledge-convention entry point for citations, forwarding to `search_wlo_all`
+  for anything user-facing) and `search_wlo_content` as the deliberate narrowing
+  to materials only. `search`/`fetch` still overlap in PURPOSE — the convention
+  requires them — but no longer in the example a router matches on. A test pins
+  that no multi-word example appears in two descriptions.
+- **The topic-page markdown headed the answer with the technical variant name.**
+  `structuredContent.collectionTitle` said "Mathematik" while the H1 printed
+  `variantTitle` — "Fachportalstartseite". The widget used the right order, the
+  text path the exact opposite.
+- **Searching a portal-level collection answered "0 Treffer" and nothing else.**
+  Matching runs over a collection's DIRECT contents; on the Mathematik portal
+  that is 15 entries, none matching, with 11 sub-collections one level down.
+  The answer now says which of the two it is and names the way forward.
+- **`search_wlo_topic_pages` was the last hit-list tool without
+  `structuredContent`.** It now projects each theme page onto one collection
+  tile (`nodeId` = owning collection, `topicPageUrl` set → "Themenseite
+  öffnen") and carries the results widget. Variants stay in the text.
+
+### Added (the topic page stops being a dead end, 2026-07-30)
+- **Swimlane cards can now be opened and acted on.** The topic-page widget was
+  the only one whose cards did nothing — an external link out of the chat and
+  nothing else — which made the most curated view the one where a click replaced
+  no typing. Each card now carries "Details" → Einzelansicht (licence, source)
+  and, from there, "Volltext anzeigen" / "Ähnliche Inhalte"; a collection in a
+  lane offers its contents directly.
+- **`renderDetail` moved to `shared/detail.ts`** so both widgets render the same
+  view instead of two copies drifting apart, and `shared/mount.ts` grew from
+  "render + repaint" into the tile-widget shell (open/close, Escape, focus per
+  WCAG 2.4.3, follow-up routing). `search-results/main.ts` keeps its own copy of
+  that loop for now because it also owns the multi-select — folding it in is a
+  separate change.
+- **The selection message names its tool.** Every single-tile button named the
+  tool that continues the flow; "Ausgewählte weiterverwenden" was the one that
+  did not. It now points at `get_nodes_details` with `nodeIds` — the batch route
+  that reports per-id failures instead of failing the whole call.
+
+### Documented (2026-07-30)
+- **Follow-up buttons are a ChatGPT capability, and the docs now say so.**
+  Injecting a chat message uses `window.openai.sendFollowUpMessage`; the
+  MCP-Apps standard bridge offers only `tools/call` and
+  `ui/update-model-context`, neither of which starts a user turn. On other hosts
+  the buttons are omitted rather than rendered dead, and the widgets are
+  display-only — local interaction (detail view, back, tree expansion) works
+  everywhere. README (both languages) and `docs/TOOLS.md` state this.
+- Widget counts corrected throughout: **four widgets serving ten tools**.
+
+### Fixed (widget flow audit, 2026-07-30)
+Walked every button in all four widgets from the click to the tool that has to
+answer it.
+- **"Themenseite öffnen" named a parameter its tool does not have.** The message
+  said "Rufe dazu get_topic_page_content mit dieser nodeId auf", but that tool
+  takes query/collectionId/variantId and answers "Bitte query, collectionId oder
+  variantId angeben." Proven live: the same id succeeds as `collectionId`
+  (866 ms, 8 swimlanes) and fails as `nodeId`. Taken literally the button was
+  broken; it worked only when the model translated the name on its own.
+  `FOLLOW_UP_PARAMS` now maps each action to the parameter its tool really has,
+  and a test checks every entry against the registered tool's input schema.
+- **A capped browse branch looked complete.** `browse_collection_tree` bounds
+  depth and per-node width and reports it via `hasMoreChildren` / `truncated`;
+  the tool's text told the model, but the tree widget rendered neither, so a
+  truncated catalogue read as exhaustive. Capped branches now carry a visible
+  "… mehr vorhanden" marker.
+
+### Fixed (first live-deployment feedback, 2026-07-30)
+Five reports from the deployed server, each traced to a root cause before any
+fix (`/better-coding-debug`).
+- **One widget now serves every result list.** It was wired to `search_wlo_all`
+  alone, so the same request rendered as tiles or as plain text depending on
+  which search tool the model happened to pick — "ich suche etwas zur Eiszeit"
+  came back as text, "ich suche inhalte zu bruchrechnung" as a widget. The
+  renderer accepts the flat `{total,count,results}` shape as well as the
+  `search_wlo_all` envelope, splitting it by `nodeType` so collections keep
+  their band and their "Inhalte anzeigen" action. Wired to `search_wlo_content`,
+  `search_wlo_collections`, `get_collection_contents`,
+  `search_wlo_within_collection` and `get_related_content`.
+- **Four list tools returned no `structuredContent` at all** — registered with
+  the plain `server.tool`, they answered with a text blob. Two of them are what
+  the widget's own buttons route to, so "Inhalte anzeigen" and "Ähnliche
+  Inhalte" dead-ended in unstructured text. All four moved onto the Apps-SDK
+  seam with `nodeListSchema`.
+- **The full-text tool was invisible to the router.** `get_wlo_content_text`
+  was absent from the server `instructions`, which additionally steered away
+  from extra calls — so a request for a material's Volltext produced no tool
+  call at all, only an apology. The instructions now name it (and
+  `get_collection_contents`). Its own description claimed the call "dauert
+  typisch 1–3 Sekunden" and advised against it; measured live, the repository
+  path answers in **288 ms**. The claim is corrected and the discouragement
+  scoped to the external-extraction fallback that is actually slow.
+- **Content tiles were too tall and narrow.** The preview box was a portrait
+  3/4, which at a 220px column made the card ~470px tall and cropped the
+  landscape previews most materials have. Now 16/9 — the card stays portrait,
+  the image stops dictating its height.
+- **The selection bar sat behind every result.** It was emitted after the grid
+  and pinned with `position: sticky`, but the widget document deliberately has
+  no scrollport ("the host sizes the iframe"), so sticky degraded to static at
+  the very bottom. It now renders above the grid.
+
 ### Fixed (pre-deploy audit follow-up, 2026-07-30)
 Every finding from the pre-deploy audit, resolved.
 - **Follow-up prompts sanitize the title.** A control character or a runaway
@@ -451,7 +1881,7 @@ Pinned by 2 new template tests (DE + EN) in `tests/launcher-instructions.test.ts
 
 ### Fixed (browse "Inhalte anzeigen" asked for a Node ID, 2026-07-17)
 - The follow-up button injected a title-only message ("Zeige mir die Inhalte der
-  WLO-Sammlung „X""), so the model had no nodeId and answered that it needs one
+  WLO-Sammlung „X“"), so the model had no nodeId and answered that it needs one
   (live). The prompt now embeds the nodeId and names the tool
   (`askFollowUpPrompt`, pure + unit-tested): "… (nodeId: <id>). Rufe dazu
   get_collection_contents mit dieser nodeId auf." The button already carried

@@ -56,7 +56,10 @@ function gradeAliases(from: number, to: number): string[] {
 }
 
 const EDUCATIONAL_CONTEXT: VocabEntry[] = [
-  { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'elementary school', 'kita', 'kindergarten'] },
+  // "elementary school" belongs to Grundschule below, not here: in English it is
+  // primary school, and as an alias on both entries the first-wins exact match
+  // silently sent an English filter to the pre-school concept.
+  { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'kita', 'kindergarten'] },
   { id: EC_BASE + 'schule',            labels: ['schule', 'school'] },
   { id: EC_BASE + 'grundschule',       labels: ['primarstufe', 'grundschule', 'primary school', 'elementary school', 'primär', ...gradeAliases(1, 4)] },
   { id: EC_BASE + 'sekundarstufe_1',   labels: ['sekundarstufe i', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1', ...gradeAliases(5, 10)] },
@@ -203,6 +206,20 @@ const LRT: VocabEntry[] = [
   { id: LRT_BASE + 'b06c5816-60c7-4f1b-bcd7-95d70aaa4740', labels: ['event', 'wettbewerb', 'competition'] },
   { id: LRT_BASE + '9bbb50a2-10c5-4a8b-9e0e-6a5fc86c40fe', labels: ['news', 'nachricht'] },
   { id: LRT_BASE + '2e678af3-1026-4171-b88e-3b3a915d1673', labels: ['quelle', 'source'] },
+  // The eight concepts below complete the vocabulary (48 in total). They carry no
+  // entry in the media-type-oriented part above, but the repository derives them
+  // from `new_lrt` all the same (see `AGGREGATION` in vocabs-lrt.ts), so they do
+  // appear as facet values — and a facet value has no server-side _DISPLAYNAME to
+  // fall back on, which rendered them as bare UUID URIs. Labels are the official
+  // prefLabels, including the vocabulary's own spelling of "Regelungsintrumente".
+  { id: LRT_BASE + '2c151a4e-556e-42db-9e44-3a581deb5834', labels: ['textbausteine', 'textbaustein'] },
+  { id: LRT_BASE + 'b1e25325-d403-44f0-814a-ff2f5d866931', labels: ['persönlichkeit', 'bekannte persönlichkeit'] },
+  { id: LRT_BASE + '620a3fee-ac87-40e6-8408-20b48b430eca', labels: ['daten'] },
+  { id: LRT_BASE + 'a0b83e5a-eaa4-4df8-9eec-3678abd60c25', labels: ['tabellen'] },
+  { id: LRT_BASE + 'c2fc554c-a7ae-4af7-a785-d727c5a8d0db', labels: ['formel'] },
+  { id: LRT_BASE + '25957b6b-338e-4379-ba4f-67fc7654ef34', labels: ['Modell / 3D', 'modell', '3d-druck'] },
+  { id: LRT_BASE + '0d1f8d25-7a81-44d5-b250-1c42bb71c167', labels: ['regelungsintrumente', 'regelungsinstrumente'] },
+  { id: LRT_BASE + '9c2acd39-7207-4e28-87a5-06e60d59c9e1', labels: ['orientierungsinstrumente'] },
 ];
 
 // ── Licenses ─────────────────────────────────────────────────────────────────
@@ -254,8 +271,11 @@ export function resolveVocab(input: string, vocab: VocabKey): string | null {
   if (!input?.trim()) return null;
   const trimmed = input.trim();
 
-  // Already a URI
-  if (trimmed.startsWith('http')) return trimmed;
+  // Already a URI. The scheme is required: a plain word merely starting with
+  // "http" is a typo, and passing it through as a filter value produced a
+  // guaranteed empty result with no "did you mean" hint — a non-null return
+  // means "resolved" to every caller.
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
 
   const lower = trimmed.toLowerCase();
   const entries = VOCAB_MAP[vocab];

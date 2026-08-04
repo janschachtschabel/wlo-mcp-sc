@@ -6,9 +6,9 @@ it bundles the built widgets (`dist-widgets/`) and the public launcher + skills
 (`public/`), runs as a non-root user, and exposes MCP, a health check, the public
 REST API, and the prompt launcher.
 
-For the serverless alternative see the Vercel section in the README; this guide is
-the **self-hosted / ChatGPT-developer-mode** path, which needs real SSE and is why
-a correctly configured reverse proxy matters.
+This is the **self-hosted / ChatGPT-developer-mode** path — the only deployment
+target. It needs real SSE, which is why a correctly configured reverse proxy
+matters.
 
 ## 1. Prerequisites
 
@@ -48,9 +48,46 @@ tracked compose file. The full list with defaults is in
 | `TRUST_PROXY` | `1` | Take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
 | `RATE_LIMIT_RPM` | `120` | Per-IP requests/min on `/mcp` (`0` disables). |
 | `API_RATE_LIMIT_RPM` | `30` | Per-IP requests/min on the public `/api/*` surface. |
-| `WLO_FETCH_TIMEOUT_MS` | `10000` | Per-upstream-request timeout. |
+| `WLO_FETCH_TIMEOUT_MS` | `20000` | Per-upstream-request timeout. Sized from measurement (creating a record takes 4.2–8.0 s); the compose file deliberately forwards it with an **empty** default so this number lives only in `src/wlo-config.ts`. |
+| `WLO_DISABLE_UNSAFE_TOOLS` | `all` (set by compose) | Switches off tools declared unsafe. Compose ships `all`, so `get_url_text` is **absent in a default deployment** — which is the recommendation, see the README section "Tools declared unsafe". Set the variable to an empty value in `.env` to switch them on; the server then logs `registering a tool declared UNSAFE` at startup, which is how you confirm the switch took effect either way. |
+| `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | One shared WLO identity for every call on `POST /mcp` — the mode a chatbot or portal deployment uses. Unset = anonymous, public content only. It applies to the MCP endpoint **alone**: the public `/api/*` surface and the launcher stay anonymous by design and never inherit these rights. Wrong credentials do not degrade to public — edu-sharing answers `401` and the server can then answer nothing at all; the startup log names that case. |
+| `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | Lets the service account use the 13 curation (write) tools. Off by default: a change under a shared account is attributable to nobody — the history records the account, not the person who asked. A caller with their own WLO login may always write and needs nothing here. Accepted: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. |
+| `WLO_INBOX_ID` | _(unset)_ | nodeId of the shared inbox new records are filed in under the service account; editing existing records does not need it. No default on purpose — node ids are repository-bound, so a hardcoded one points at a different collection on staging than on production. Unset ⇒ service-account creation is refused with a message naming this variable. |
+| `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | Switches on **personal access blocks**: a user fetches an encrypted block at `https://<host>/auth`, pastes it once into their AI host's `Authorization` field, and revokes it at `/auth-revoke.html`. Unset = off; the `/auth/…` endpoints answer 404 and the pages say the server is not issuing access. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **It decrypts every issued block into a live WLO password** — `.env` on the server only, never the image. Multi-line: pass as `WLO_AUTH_PRIVATE_KEY="$(cat key.pem)"`. |
+| `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(unset)_ | The previous key during a rotation, so a key change does not invalidate every user's configuration at once. Remove it after the overlap window. An unusable value switches the feature off rather than silently dropping the window. |
+| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | The allow-list of issued access ids — ids, user names and issue times, never a credential. Must point into the `wlo-access-registry` volume; anywhere else is read-only and the feature stays off with an error in the log. |
 | `BIND_ADDR` | `127.0.0.1` | Host interface compose publishes on. Set `0.0.0.0` **only** with `TRUST_PROXY=0` for direct exposure. |
 | `HOST_PORT` | `3000` | Host-side port of the published mapping. |
+
+### 3.1 The one thing to back up
+
+If personal access blocks are switched on, compose creates a named volume
+`wlo-access-registry` mounted at `/data`. It is the **only** writable path — the
+read-only root filesystem still covers everything else — and it holds the
+allow-list of issued access ids.
+
+That list is a POSITIVE list, which is deliberate: lose it and every issued block
+stops working, so people fetch a new one. The alternative — a deny-list — would
+mean that losing the file silently makes every *revoked* block valid again.
+Inconvenient beats unsafe, but it does mean the volume belongs in your backup:
+
+```bash
+docker run --rm -v wlo-access-registry:/data -v "$PWD:/backup" alpine \
+  cp /data/access-registry.json /backup/access-registry.json
+```
+
+`docker compose down` keeps the volume; `docker compose down -v` deletes it.
+
+The file is bounded on its own: each WLO account keeps its ten most recent
+blocks, so a lost block ages out once that person has fetched ten more. Deleting
+a line by hand revokes that block immediately — the list is read into memory at
+startup, so an edit needs a restart to take effect.
+
+**Rotating the key.** Move the current value to `WLO_AUTH_PRIVATE_KEY_PREVIOUS`,
+put the new one in `WLO_AUTH_PRIVATE_KEY`, restart. Blocks issued under either
+key work during the window; new ones use the new key. Remove the previous entry
+once everyone has re-fetched. Skipping the window invalidates every user's
+configuration at the same moment.
 
 ## 4. Reverse proxy for SSE (required for ChatGPT)
 
@@ -118,8 +155,45 @@ curl https://mcp.example.org/launcher.html -I    # 200 text/html
 curl https://mcp.example.org/api/skills          # 200 JSON skill list
 ```
 
-A `resources/list` MCP call should return three `ui://widget/...` resources — that
-confirms the bundled widgets shipped.
+A `resources/list` MCP call should return four `ui://widget/...` resources
+(`search-results`, `topic-page`, `browse`, `reading`) — that confirms the bundled
+widgets shipped.
+
+`GET /health` also carries the **deploy fingerprint**: the content hash of each
+built widget. It changes with every widget or widget-metadata change, so
+comparing it before and after answers "is the new build actually live?" without
+diffing bytes:
+
+```bash
+curl -s https://mcp.example.org/health | grep -o '"widgets":{[^}]*}'
+```
+
+### 5.1 Rolling back
+
+The image is the unit of rollback; there is no migration and no persistent state
+to unwind (confirmation tokens and rate-limit counters live in memory and are
+meant to be lost on restart).
+
+```bash
+# Tag every deploy so there is something to go back TO.
+docker build -t wlomcp:$(git rev-parse --short HEAD) .
+docker tag wlomcp:$(git rev-parse --short HEAD) wlomcp:current
+
+# Roll back: point the tag at the previous build and restart.
+docker tag wlomcp:<previous-sha> wlomcp:current
+docker compose up -d
+curl -s https://mcp.example.org/health   # fingerprint should show the old hashes
+```
+
+Two things do **not** roll back with the image and have to be undone
+deliberately:
+
+- **Configuration.** `.env` is not part of the image. If the bad deploy also
+  changed a variable, change it back — a rolled-back image with the new `.env` is
+  a combination that was never tested.
+- **Anything the curation tools wrote.** Those changes live in the repository,
+  not here. Rolling the server back does not revert them; use the repository's
+  own version history.
 
 ## 6. ChatGPT developer mode (the one manual gate)
 

@@ -125,3 +125,25 @@ test('handleStaticRequest serves a permissive robots.txt', async () => {
   assert.match(body, /User-agent: \*/);
   assert.match(body, /^Disallow:\s*$/m);
 });
+
+/**
+ * A target that will not parse is not a target this layer owns.
+ *
+ * `http-app.ts` guards its own parse and falls back to the raw string, which it
+ * then hands here — so a throw at this second parse escaped the handler and the
+ * client got no response at all. Every layer that parses the same target must
+ * answer the same way: not ours.
+ */
+test('resolveStaticRoute returns null for a target that will not parse', () => {
+  for (const target of ['//[', '//[bad]x', '//user@[::1]x']) {
+    assert.equal(resolveStaticRoute('GET', target), null, target);
+  }
+});
+
+/**
+ * `req.url` is `string | undefined` in the node:http types, and an absent target
+ * must not be told apart from an unparseable one — both mean "no route here".
+ */
+test('resolveStaticRoute returns null when there is no target at all', () => {
+  assert.equal(resolveStaticRoute('GET', undefined), null);
+});

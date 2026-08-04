@@ -18,6 +18,14 @@ npm run build   # tsc (strict)
 npm test        # offline suite (node:test), no network required
 ```
 
+"No network required" is enforced, not just intended: `npm test` loads
+`tests/netguard.mjs`, which fails any fetch to a non-loopback host that no
+`installFetchMock` intercepted. If you see `netguard: the test suite must not
+reach the network`, the test under it is missing its mock — a real upstream call
+makes the suite depend on a live repository and can make a test pass for the
+wrong reason (an assertion that only checks "something failed" cannot tell a
+validation error from a connection error).
+
 ## Language
 
 - **Code identifiers** (variables, functions, types): English.

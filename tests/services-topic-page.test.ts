@@ -115,3 +115,30 @@ test('resolveTopicPageSwimlanes: caps at MAX_LANES=12 and reports the true total
     mock.restore();
   }
 });
+
+test('resolveTopicPageSwimlanes: the widget-metadata fan-out is capped per lane, not lanes × items', async () => {
+  // MAX_LANES bounds the lanes; the metadata reads are one request PER widget
+  // node, and a page config can list any number of widgets in a lane's grid
+  // (topic-page-structure parses it unbounded). Only the first content-bearing
+  // widget of a lane is ever used, so reading a whole lane's grid is waste the
+  // bound was supposed to prevent.
+  const mock = installFetchMock(() => ({ json: {} }));
+  try {
+    const swimlanes = Array.from({ length: 12 }, (_, lane) => ({
+      heading: `Lane ${lane}`,
+      type: 'container',
+      items: Array.from({ length: 100 }, (_, i) => ({ widget: 'teaser', nodeId: `w-${lane}-${i}` })),
+    }));
+    const struct: TopicPageStructure = {
+      variantId: 'v', variantTitle: '', swimlanes, referencedNodeIds: [],
+    };
+
+    await resolveTopicPageSwimlanes(struct, 3);
+
+    const metaCalls = mock.calls.filter(c => c.url.includes('/metadata'));
+    // 12 lanes × MAX_WIDGETS_PER_LANE=4. Uncapped this is 1200 requests.
+    assert.ok(metaCalls.length <= 48, `widget fan-out must stay bounded, saw ${metaCalls.length}`);
+  } finally {
+    mock.restore();
+  }
+});

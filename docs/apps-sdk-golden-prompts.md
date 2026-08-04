@@ -25,6 +25,42 @@ surrounding structure is English (project convention). Node tests verify tool
 Replace every `<nodeId>` below with a real WLO node id taken from a prior result
 in the same session (e.g. run prompt D1, then copy an id into D8/D9).
 
+## What a machine can check first — the mechanics pass
+
+Each prompt has two halves. **Which tool the model picks** needs a live model and
+a ChatGPT session; nothing here can substitute for that. But **whether the
+expected tool delivers at all** is checkable without a model — and running it
+first is worth the minutes: if D2 comes back empty in a manual run, the evaluator
+otherwise cannot tell whether the model chose wrong or the tool is simply dry.
+
+Result of that pass, run 2026-08-03 against
+`repository.staging.openeduhub.net` through a real MCP client:
+
+| # | Expected tool | ms | Delivered |
+|---|---|---|---|
+| D1 | `search_wlo_all` | 2671 | ✅ content + collections |
+| D2 | `get_topic_page_content` (`query: "Optik"`) | 3619 | ✅ 3 swimlanes, variant *Vorlage "Optik"* |
+| D3 | `get_subject_portals` | 837 | ✅ |
+| D4 | `browse_collection_tree` (`subject: "Mathematik", depth: 1`) | 1709 | ✅ 11 children (Algebra, Analysis, …) |
+| D5 | `lookup_wlo_publishers` | 445 | ✅ |
+| D6 | `get_wikipedia_summary` | 255 | ✅ |
+| D7 | `search_wlo_collections` | 857 | ✅ |
+| D8 | `get_node_details` | 381 | ✅ |
+| D9 | `search_wlo_within_collection` | 1400 | ✅ |
+| D10 | `find_wlo_skills` | — | ⬜ not registered: `WLO_SKILLS_COLLECTION_ID` unset |
+| I1–I6 | `search_wlo_all`, `search_wlo_topic_pages`, `lookup_wlo_publishers`, `get_related_content`, `get_collection_stats`, `get_node_breadcrumb` | 456–2571 | ✅ all six |
+
+**17 of 17 runnable prompts delivered.** Two apparent failures in the first
+attempt were the probe's own fault, not the server's — `get_topic_page_content`
+takes `query`, not `topic`, and `browse_collection_tree` takes `depth` and
+answers in `results`. Worth writing down: a golden-prompt run that reports a
+tool as broken should check the parameter names against `tools/list` before
+filing it.
+
+Still open and only observable in ChatGPT: **tool selection** (A/B), the
+**negative prompts** (C — a false positive needs a model that could have fired),
+and the **widget render + drill-down** (D).
+
 ## How to run
 
 For each prompt: send it in a fresh ChatGPT turn, then record
@@ -43,16 +79,16 @@ should fire.
 
 | # | Prompt (DE) | Expected tool | Expected output / widget | Pass criteria |
 |---|-------------|---------------|--------------------------|---------------|
-| D1 | „Finde WLO-Materialien zur Photosynthese für die Sekundarstufe I." | `search_wlo_all` | **search-results** widget | widget renders content + collections + topic pages; a card's „Details" button opens the in-widget Einzelansicht, back/Escape returns to the grid |
-| D2 | „Zeig mir die WLO-Themenseite zu Optik." | `get_topic_page_content` | **topic-page** widget (title/description header + swimlanes) | header + swimlanes render as tile grids |
-| D3 | „Welche Fachportale gibt es bei WLO?" | `get_subject_portals` | **browse** widget | portal list renders |
-| D4 | „Klappe im Fachportal Mathematik die Unterthemen auf." | `browse_collection_tree` (from the widget) | **browse** widget drill-down | expanding a portal loads its children live (**F3**) |
-| D5 | „Welche Anbieter liefern die meisten Biologie-Materialien auf WLO?" | `lookup_wlo_publishers` | text (publisher counts) | ranked publisher list |
-| D6 | „Gib mir einen Wikipedia-Überblick zu Zellatmung." | `get_wikipedia_summary` | text | summary with source link |
-| D7 | „Welche WLO-Sammlungen gibt es zum Klimawandel?" | `search_wlo_collections` | text/JSON list | collections returned |
-| D8 | „Zeig mir Details und den Volltext zu diesem WLO-Inhalt: `<nodeId>`." | `get_node_details` | text | metadata + text content |
-| D9 | „Finde in der Sammlung `<nodeId>` nur die Videos zur Zellteilung." | `search_wlo_within_collection` | text/JSON list | scoped results |
-| D10 | „Gibt es fertige Anleitungen/Skills, um ein Arbeitsblatt zu erstellen?" | `find_wlo_skills` | text (skill list + instructions) | skills returned (requires `WLO_SKILLS_COLLECTION_ID`) |
+| D1 | „Finde WLO-Materialien zur Photosynthese für die Sekundarstufe I.“ | `search_wlo_all` | **search-results** widget | widget renders content + collections + topic pages; a card's „Details“ button opens the in-widget Einzelansicht, back/Escape returns to the grid |
+| D2 | „Zeig mir die WLO-Themenseite zu Optik.“ | `get_topic_page_content` | **topic-page** widget (title/description header + swimlanes) | header + swimlanes render as tile grids |
+| D3 | „Welche Fachportale gibt es bei WLO?“ | `get_subject_portals` | **browse** widget | portal list renders |
+| D4 | „Klappe im Fachportal Mathematik die Unterthemen auf.“ | `browse_collection_tree` (from the widget) | **browse** widget drill-down | expanding a portal loads its children live (**F3**) |
+| D5 | „Welche Anbieter liefern die meisten Biologie-Materialien auf WLO?“ | `lookup_wlo_publishers` | text (publisher counts) | ranked publisher list |
+| D6 | „Gib mir einen Wikipedia-Überblick zu Zellatmung.“ | `get_wikipedia_summary` | text | summary with source link |
+| D7 | „Welche WLO-Sammlungen gibt es zum Klimawandel?“ | `search_wlo_collections` | text/JSON list | collections returned |
+| D8 | „Zeig mir Details und den Volltext zu diesem WLO-Inhalt: `<nodeId>`.“ | `get_node_details` | text | metadata + text content |
+| D9 | „Finde in der Sammlung `<nodeId>` nur die Videos zur Zellteilung.“ | `search_wlo_within_collection` | text/JSON list | scoped results |
+| D10 | „Gibt es fertige Anleitungen/Skills, um ein Arbeitsblatt zu erstellen?“ | `find_wlo_skills` | text (skill list + instructions) | skills returned (requires `WLO_SKILLS_COLLECTION_ID`) |
 
 ## B. Indirect-intent prompts
 
@@ -61,12 +97,12 @@ need and reach for the app.
 
 | # | Prompt (DE) | Expected tool | Pass criteria |
 |---|-------------|---------------|---------------|
-| I1 | „Ich suche Unterrichtsmaterial zur Bruchrechnung für die 6. Klasse." | `search_wlo_all` | app fires; relevant results |
-| I2 | „Gibt es eine gute Übersichtsseite zur Französischen Revolution für den Unterricht?" | `search_wlo_topic_pages` / `get_topic_page_content` | a topic page is surfaced |
-| I3 | „Wer stellt am meisten Material für Informatik bereit?" | `lookup_wlo_publishers` | publisher facet used |
-| I4 | „Was passt inhaltlich noch zu diesem Material `<nodeId>`?" | `get_related_content` | related items returned |
-| I5 | „Wie umfangreich ist diese Sammlung `<nodeId>`?" | `get_collection_stats` | file/sub-collection counts |
-| I6 | „In welchem thematischen Kontext steht die Sammlung `<nodeId>`?" | `get_node_breadcrumb` | ancestor path returned |
+| I1 | „Ich suche Unterrichtsmaterial zur Bruchrechnung für die 6. Klasse.“ | `search_wlo_all` | app fires; relevant results |
+| I2 | „Gibt es eine gute Übersichtsseite zur Französischen Revolution für den Unterricht?“ | `search_wlo_topic_pages` / `get_topic_page_content` | a topic page is surfaced |
+| I3 | „Wer stellt am meisten Material für Informatik bereit?“ | `lookup_wlo_publishers` | publisher facet used |
+| I4 | „Was passt inhaltlich noch zu diesem Material `<nodeId>`?“ | `get_related_content` | related items returned |
+| I5 | „Wie umfangreich ist diese Sammlung `<nodeId>`?“ | `get_collection_stats` | file/sub-collection counts |
+| I6 | „In welchem thematischen Kontext steht die Sammlung `<nodeId>`?“ | `get_node_breadcrumb` | ancestor path returned |
 
 ## C. Negative prompts
 
@@ -75,12 +111,12 @@ false-positive (hurts precision and the review).
 
 | # | Prompt (DE) | Expected | Pass criteria |
 |---|-------------|----------|---------------|
-| N1 | „Wie wird das Wetter morgen in Berlin?" | no WLO tool | model answers without the app |
-| N2 | „Schreib mir ein kurzes Gedicht über den Herbst." | no WLO tool | no tool call |
-| N3 | „Was ist die Hauptstadt von Australien?" | no WLO tool | general-knowledge answer |
-| N4 | „Übersetze ‚Guten Morgen' ins Spanische." | no WLO tool | no tool call |
-| N5 | „Erstelle eine Tabelle mit meinen Ausgaben letzten Monat." | no WLO tool | no tool call |
-| N6 | „Fasse mir diesen Text zusammen: …" | no WLO tool | no tool call |
+| N1 | „Wie wird das Wetter morgen in Berlin?“ | no WLO tool | model answers without the app |
+| N2 | „Schreib mir ein kurzes Gedicht über den Herbst.“ | no WLO tool | no tool call |
+| N3 | „Was ist die Hauptstadt von Australien?“ | no WLO tool | general-knowledge answer |
+| N4 | „Übersetze ‚Guten Morgen' ins Spanische.“ | no WLO tool | no tool call |
+| N5 | „Erstelle eine Tabelle mit meinen Ausgaben letzten Monat.“ | no WLO tool | no tool call |
+| N6 | „Fasse mir diesen Text zusammen: …“ | no WLO tool | no tool call |
 
 ## D. Widget-specific checks (settle F1 + F3)
 

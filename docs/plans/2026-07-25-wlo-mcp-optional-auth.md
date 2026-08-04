@@ -59,7 +59,15 @@ Out of scope (explicitly):
   anything, but the server never sends 401 to anonymous clients (that would
   destroy guest-by-default on OAuth-capable hosts).
 - Authentication for the public REST layer (`/api/*`) and the launcher — they
-  stay anonymous-only.
+  stay anonymous-only. **This is a requirement, not just an omission:** they are
+  open to the internet with no login, so they must never inherit a configured
+  service account either. Enforced by making the WHOLE HTTP handler anonymous
+  (`runAnonymous` wraps it in `http-app.ts`); the MCP endpoint is the one branch
+  that elevates, and it resolves the chain itself. The first implementation had
+  it the other way round — elevated by default, opt out per surface — and the
+  public REST layer inherited the service account (review finding, 2026-07-31).
+  The defect was in the default, not in the branch that forgot to opt out.
+  Pinned by `tests/auth-public-surface.test.ts`.
 - Multi-repository tenancy — one server still targets one
   `WLO_REPOSITORY_URL` (confirmed reading: "different rights" = different
   accounts/roles within one instance).
@@ -327,18 +335,79 @@ envelope).
   residual risk accepted (worst case: a call runs anonymous **and visibly
   says so** via the missing `_auth` block — no silent wrong data, and the
   user can re-paste).
-- SSE response mode breaks ALS propagation → dedicated integration test in
-  P1; fallback documented (explicit threading) but not expected.
+- ~~SSE response mode breaks ALS propagation~~ → **discharged 2026-07-31.**
+  It does not: measured through a real `node:http` server with `MCP_SSE=1`,
+  including three concurrent users overlapping in flight. Pinned by
+  `tests/auth-sse-integration.test.ts`, which was confirmed to go red when the
+  propagation is deliberately broken.
 - ChatGPT connector descriptor sync lag (known from the stale-URI incident)
   → new tools appear only after reconnect; documented in DEPLOYMENT.
 
-## Verified facts (filled by P0 — empty until then)
+## Verified facts (P0 executed 2026-07-30, staging + prod)
 
-- [ ] Auth mechanism available on staging (OIDC code+PKCE / password grant)
-- [ ] Exact token endpoint(s) + client id/registration requirements
-- [ ] `Authorization: Bearer` accepted by `validateSession` + `ngsearch`
-- [ ] Upstream token lifetime / refresh behaviour
-- [ ] Identity endpoint for display name
+- [x] **No OIDC discovery.** `/.well-known/openid-configuration`,
+      `/.well-known/oauth-protected-resource` and
+      `/.well-known/oauth-authorization-server` are 404 on both the host root
+      and under `/edu-sharing`, on staging AND prod. No Dynamic Client
+      Registration, so a host cannot self-configure OAuth against WLO.
+- [x] **`Authorization: Bearer` is NOT a supported scheme.** The repository's
+      own OpenAPI (`/rest/openapi.json`) declares exactly:
+      `{"basicAuth":{"type":"http","scheme":"basic"},
+        "cookieAuth":{"type":"apiKey","name":"JSESSIONID","in":"cookie"}}`.
+      A Bearer header is ignored, not rejected.
+- [x] **`POST <repo>/oauth2/token` exists** but is edu-sharing's own app
+      registration: it answers `401 {"error":"invalid client_secret"}` for an
+      unregistered client and `401 {"error":"trustless client_id"}` with no
+      body. Usable only with a client registered by the WLO operators — and
+      even then the REST API does not declare Bearer, so a token from it is of
+      unverified use for our calls.
+- [x] ~~**Wrong credentials do not fail.**~~ **CORRECTED 2026-07-31.** The
+      2026-07-30 entry recorded `200` with `isGuest: true` for `Basic <wrong>`.
+      Re-measured against production, wrong credentials are **rejected with
+      `401`** — on `/iam/v1/people/-home-/-me-` and on the ngsearch endpoint
+      alike, for a wrong password on a real account as well as for an unknown
+      user. Only the ABSENCE of a header yields `200`/`esguest`; that part
+      holds. The likely origin of the wrong reading is a header that never
+      parsed as Basic at all and was therefore ignored — indistinguishable from
+      sending nothing.
+
+      Consequence, and it is the opposite of what was written: a mistyped
+      password does not quietly serve public data. It breaks every upstream
+      call, and until 2026-07-31 that surfaced as "0 results" everywhere with
+      `isError: false` (see the reranker fix). The boot check keeps its value —
+      the reason changed, not the need.
+- [x] **Identity endpoint:** `GET /rest/iam/v1/people/-home-/-me-` returns
+      `person.authorityName` (`esguest` when unauthenticated) plus the profile
+      name. (`/rest/iam/v1/people/-me-` without the repository segment is 404.)
+
+### Consequence for this design
+
+The chosen approach B (server-issued paste-back envelope) assumed a Bearer
+token could be forwarded upstream. It cannot. **The transport is HTTP Basic**,
+and the design is superseded for the parts below:
+
+- **Implemented instead (2026-07-30):** a credential CHAIN — service account
+  from the environment (HTTP Basic) → anonymous. See
+  `src/auth/credential.ts`, `src/auth/identity.ts`, `src/tools/auth.ts`.
+  This covers "open, no auth" and "one fixed user for everyone".
+- **Implemented (2026-07-31): per-user login via the host's own connector
+  settings.** The third rung needed no login page after all. A person enters
+  their WLO credentials once where their AI host stores connector auth; the
+  host sends `Authorization: Basic` with every request; `credentialFromHeader`
+  scopes it to that request (`http-app.ts`). The model never sees the secret
+  and the server never stores it. Verified through the real SSE transport,
+  including concurrency (`tests/auth-sse-integration.test.ts`).
+
+  Two consequences of forwarding a client-supplied credential upstream, both
+  handled: the endpoint could be used to guess WLO logins from our address
+  (capped by distinct logins per client, `AUTH_CREDENTIAL_LIMIT`), and the
+  account name is caller-controlled text in model-facing output (sanitized via
+  `text-sanitize.ts`).
+
+- **Still open — a login page.** Only needed for hosts that cannot set a
+  custom `Authorization` header on an MCP connector. Whether ChatGPT and Claude
+  can is untested; until someone tries, mode 3 is "available where the host
+  supports it", not "available everywhere".
 
 ## Open questions
 
