@@ -94,7 +94,6 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
       log.error('access registry is unreadable — per-user access stays off', { path, code });
       return null;
     }
-    log.info('access registry does not exist yet — starting empty', { path });
   }
 
   if (raw !== null) {
@@ -104,6 +103,26 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
       return null;
     }
     for (const e of parsed) entries.set(e.jti, e);
+  } else {
+    // A first start WRITES the empty registry instead of assuming it could.
+    //
+    // Reading proves nothing about writing, and the two come apart in exactly
+    // the deployment this ships for: a Docker named volume mounted where the
+    // image never created the directory belongs to root, while the container
+    // runs as `node` (measured 2026-08-05). The read then answers ENOENT — "first
+    // start" — the server logs `access blocks are enabled`, and the failure waits
+    // for the first person who tries to fetch a block. One line in the boot log
+    // is worth more than a correct-looking startup and a 500 for a stranger.
+    try {
+      await writeFile(path, JSON.stringify({ v: FORMAT_VERSION, entries: [] }), 'utf8');
+      log.info('access registry created — starting empty', { path });
+    } catch (err) {
+      log.error('access registry cannot be written — per-user access stays off', {
+        path,
+        code: (err as NodeJS.ErrnoException).code,
+      });
+      return null;
+    }
   }
 
   // Writes are serialised through this chain because they share one temp path:

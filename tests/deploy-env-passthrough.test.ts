@@ -25,11 +25,18 @@ const root = new URL('../', import.meta.url);
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
 
 /**
- * Deliberately NOT forwarded. `PORT` would desynchronise the container from the
- * `…:3000` port mapping that compose hardcodes, so the image's own default is
- * the only correct value; the host side is chosen with `HOST_PORT` instead.
+ * Deliberately NOT forwarded into the container.
+ *
+ *   PORT                 — would desynchronise the container from the `…:3000`
+ *                          port mapping compose hardcodes, so the image's own
+ *                          default is the only correct value.
+ *   BIND_ADDR, HOST_PORT — configure that mapping itself (the `ports:` line),
+ *                          which is compose's business and not the server's.
+ *                          They belong in `.env.example` because that is where
+ *                          an operator looks for "how do I publish this", and
+ *                          `docker compose` reads them from the same file.
  */
-const NOT_FORWARDED = new Set(['PORT']);
+const NOT_FORWARDED = new Set(['PORT', 'BIND_ADDR', 'HOST_PORT']);
 
 /** Variable names documented in .env.example, whether or not they are commented out. */
 function documentedVars(): string[] {

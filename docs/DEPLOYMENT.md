@@ -23,13 +23,29 @@ matters.
 ```bash
 git clone https://github.com/janschachtschabel/wlo-mcp-sc.git && cd wlo-mcp-sc
 cp .env.example .env          # optional — defaults work without it
+
+# Optional: let people sign in with their own WLO account (see §3).
+# Without this the server reads anonymously and /auth says it issues no access.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out authkey.pem
+# The `tail -c1` guard is not decoration: an .env whose last line has no newline
+# would otherwise get the key glued onto it, and compose fails to parse the file
+# at all (hit in the field, 2026-08-05).
+[ -n "$(tail -c1 .env)" ] && echo >> .env
+printf 'WLO_AUTH_PRIVATE_KEY="%s"\n' "$(cat authkey.pem)" >> .env
+chmod 600 authkey.pem .env    # this key decrypts every issued block
+docker compose config > /dev/null && echo "env OK"   # parses the .env like `up` does
+
 docker compose up -d --build
 curl localhost:3000/health    # -> {"status":"ok",...,"widgets":{"browse":"<hash>",...}}
-# `widgets` is the DEPLOY FINGERPRINT: the content-addressed build hash per
-# widget. After a deploy, compare it with the local build (the hash in each
-# dist-widgets file's ui:// URI, printed by `npm run build`) — if they match,
-# the new code is provably live; no byte-diff probing needed.
 ```
+
+`widgets` is the **deploy fingerprint**: a build hash per widget. Note the hash
+covers the widget HTML *and* its `_meta`, and that meta carries the configured
+edu-sharing origin — so two servers running identical code but different
+`WLO_REPOSITORY_URL` values have different hashes **by design**. Compare it
+against **the same server before the deploy**, not against a local build
+pointing somewhere else; a mismatch across differently-configured servers proves
+nothing either way (measured 2026-08-05).
 
 The container listens on port 3000 inside; compose publishes it on
 `127.0.0.1:3000` by default (loopback — meant to sit behind the reverse proxy).
@@ -53,7 +69,7 @@ tracked compose file. The full list with defaults is in
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | One shared WLO identity for every call on `POST /mcp` — the mode a chatbot or portal deployment uses. Unset = anonymous, public content only. It applies to the MCP endpoint **alone**: the public `/api/*` surface and the launcher stay anonymous by design and never inherit these rights. Wrong credentials do not degrade to public — edu-sharing answers `401` and the server can then answer nothing at all; the startup log names that case. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | Lets the service account use the 13 curation (write) tools. Off by default: a change under a shared account is attributable to nobody — the history records the account, not the person who asked. A caller with their own WLO login may always write and needs nothing here. Accepted: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. |
 | `WLO_INBOX_ID` | _(unset)_ | nodeId of the shared inbox new records are filed in under the service account; editing existing records does not need it. No default on purpose — node ids are repository-bound, so a hardcoded one points at a different collection on staging than on production. Unset ⇒ service-account creation is refused with a message naming this variable. |
-| `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | Switches on **personal access blocks**: a user fetches an encrypted block at `https://<host>/auth`, pastes it once into their AI host's `Authorization` field, and revokes it at `/auth-revoke.html`. Unset = off; the `/auth/…` endpoints answer 404 and the pages say the server is not issuing access. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **It decrypts every issued block into a live WLO password** — `.env` on the server only, never the image. Multi-line: pass as `WLO_AUTH_PRIVATE_KEY="$(cat key.pem)"`. |
+| `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | Switches on **personal access blocks**: a user fetches an encrypted block at `https://<host>/auth`, pastes it once into their AI host's `Authorization` field, and revokes it at `/auth-revoke.html`. Unset = off; the `/auth/…` endpoints answer 404 and the pages say the server is not issuing access. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **It decrypts every issued block into a live WLO password** — `.env` on the server only, never the image. Multi-line value: a `.env` file is **not** a shell, so `"$(cat key.pem)"` there is stored as that literal text and the key is rejected at startup (measured). Write the PEM itself, in double quotes — `printf 'WLO_AUTH_PRIVATE_KEY="%s"\n' "$(cat authkey.pem)" >> .env` does it in one step. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(unset)_ | The previous key during a rotation, so a key change does not invalidate every user's configuration at once. Remove it after the overlap window. An unusable value switches the feature off rather than silently dropping the window. |
 | `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | The allow-list of issued access ids — ids, user names and issue times, never a credential. Must point into the `wlo-access-registry` volume; anywhere else is read-only and the feature stays off with an error in the log. |
 | `BIND_ADDR` | `127.0.0.1` | Host interface compose publishes on. Set `0.0.0.0` **only** with `TRUST_PROXY=0` for direct exposure. |

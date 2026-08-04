@@ -138,6 +138,28 @@ npm install
 npm run build
 ```
 
+**Optional — damit sich Leute mit ihrem eigenen WLO-Konto anmelden können**
+(HTTP-Modus). Ohne diesen Schritt liest der Server anonym, und `/auth` sagt, dass
+dieser Server keine Zugänge ausgibt.
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out authkey.pem
+[ -n "$(tail -c1 .env)" ] && echo >> .env   # .env endet evtl. ohne Zeilenumbruch
+printf 'WLO_AUTH_PRIVATE_KEY="%s"\n' "$(cat authkey.pem)" >> .env
+chmod 600 authkey.pem .env
+docker compose config > /dev/null && echo "env OK"   # unter Docker: Parse-Test
+```
+
+Eine `.env` ist **keine Shell**: Wer dort `WLO_AUTH_PRIVATE_KEY="$(cat key.pem)"`
+hineinschreibt, speichert genau diesen Text, und der Schlüssel wird beim Start
+abgelehnt. Das `printf` oben trägt den PEM selbst ein. Der `tail -c1`-Schutz ist
+keine Zierde: Hängt man an eine Datei an, deren letzte Zeile keinen Umbruch hat,
+klebt der Schlüssel an dieser Zeile — und Compose kann die Datei dann überhaupt
+nicht mehr lesen (im Feld passiert, 2026-08-05). Der öffentliche Schlüssel
+wird daraus abgeleitet — eine zweite Variable gibt es bewusst nicht. **Wer diesen
+Schlüssel hat, kann jeden ausgestellten Block zu einem lebenden WLO-Passwort
+entschlüsseln**: nur auf den Server, nie ins Image und nie ins Repository.
+
 ## Konfiguration
 
 Die gesamte Konfiguration erfolgt über Umgebungsvariablen. Kopieren Sie

@@ -121,6 +121,25 @@ npm install
 npm run build
 ```
 
+**Optional — let people sign in with their own WLO account** (HTTP mode). Skip
+this and the server reads anonymously; `/auth` then says it issues no access.
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out authkey.pem
+[ -n "$(tail -c1 .env)" ] && echo >> .env   # .env may lack a trailing newline
+printf 'WLO_AUTH_PRIVATE_KEY="%s"\n' "$(cat authkey.pem)" >> .env
+chmod 600 authkey.pem .env
+docker compose config > /dev/null && echo "env OK"   # under Docker: parse check
+```
+
+A `.env` file is **not** a shell: writing `WLO_AUTH_PRIVATE_KEY="$(cat key.pem)"`
+into it stores that literal text and the key is rejected at startup. The `printf`
+above writes the PEM itself. The `tail -c1` guard matters — appending to a file
+whose last line has no newline glues the key onto that line, and compose then
+refuses to parse the file at all (hit in the field, 2026-08-05). The public key is derived from it — there is no
+second variable. **Whoever holds this key can decrypt every issued block back
+into a live WLO password**: server only, never the image or the repository.
+
 ## Configuration
 
 All configuration is via environment variables. Copy `.env.example` to `.env`

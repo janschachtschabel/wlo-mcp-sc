@@ -31,6 +31,16 @@ COPY public/ ./public/
 
 EXPOSE 3000
 
+# The one writable path: the access-block allow-list (WLO_AUTH_REGISTRY_PATH,
+# a named volume in docker-compose.yml). Created HERE and owned by `node`,
+# because Docker initialises an empty named volume from the image's directory —
+# ownership included. Without this the volume is created root:root, the server
+# runs as uid 1000, and the registry cannot be written. That failure is silent
+# in the worst way: the read answers ENOENT, which reads as "first start", so
+# the boot log says `access blocks are enabled` and the first person to fetch a
+# block gets the error instead (measured 2026-08-05).
+RUN mkdir -p /data && chown node:node /data
+
 # Run as the unprivileged `node` user (uid 1000, ships with the base image)
 # instead of root, shrinking the blast radius of any RCE.
 USER node

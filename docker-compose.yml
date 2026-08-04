@@ -37,16 +37,46 @@ services:
       # AND TRUST_PROXY=0 (otherwise a client can spoof X-Forwarded-For to defeat
       # the per-IP rate limits). HOST_PORT = host side; the container listens on 3000.
       - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+    # ── DO NOT EDIT THIS BLOCK TO CONFIGURE THE SERVER ───────────────────────
+    #
+    # Every line below is a PASS-THROUGH, not a setting: `${VAR:-default}` takes
+    # the value from the `.env` next to this file. Put your values THERE — this
+    # file is what a `git pull` overwrites, and a value edited in here is also a
+    # value that ends up in the repository.
+    #
+    # The sections mirror `.env.example`, which explains what each one is for and
+    # — more usefully — which ones you can ignore. The short version: for an
+    # anonymous read-only deployment you set NOTHING, and for personal logins you
+    # set exactly one thing (§2).
+    #
+    # Empty defaults (`${VAR:-}`) are deliberate: they let `src/wlo-config.ts`
+    # own every number, next to the measurement that justifies it.
     environment:
+
+      # ── 1 — which repository ────────────────────────────────────────────────
       WLO_REPOSITORY_URL: "${WLO_REPOSITORY_URL:-https://redaktion.openeduhub.net/edu-sharing}"
-      # Real SSE streaming (image default) for ChatGPT developer mode. Set 0 for
-      # single-JSON responses (curl / simple clients).
-      MCP_SSE: "${MCP_SSE:-1}"
-      # Derive the client IP from X-Forwarded-For (rightmost, proxy-appended hop)
-      # for per-client rate limiting behind a proxy. Set 0 if directly exposed.
-      TRUST_PROXY: "${TRUST_PROXY:-1}"
-      # Optional service account (HTTP Basic). Both unset → the server reads
-      # fully anonymously, which is the default and needs no configuration.
+      # Only needed on an edu-sharing that is neither WLO instance — node ids are
+      # repository-bound, and the two known hosts get a per-host default.
+      WLO_ROOT_COLLECTION_ID: "${WLO_ROOT_COLLECTION_ID:-}"
+
+      # ── 2 — personal logins (the recommended way for people) ────────────────
+      # Unset = feature off: the /auth/… endpoints answer 404, the pages say so,
+      # and a Bearer header is refused, exactly as before. Setting the key is all
+      # it takes; the other two lines here are the rotation window and a path that
+      # already matches the volume below.
+      #
+      # The private key decrypts EVERY issued block back into a live WLO password,
+      # so keep it in the .env on the server — never in the image, never in the
+      # repository.
+      WLO_AUTH_PRIVATE_KEY: "${WLO_AUTH_PRIVATE_KEY:-}"
+      WLO_AUTH_PRIVATE_KEY_PREVIOUS: "${WLO_AUTH_PRIVATE_KEY_PREVIOUS:-}"
+      # Must point INTO the volume below; anywhere else is read-only and the
+      # feature would stay off with the registry error in the log.
+      WLO_AUTH_REGISTRY_PATH: "${WLO_AUTH_REGISTRY_PATH:-/data/access-registry.json}"
+
+      # ── 3 — shared service account (one identity for everybody) ─────────────
+      # Both unset → the server reads fully anonymously, which is the default and
+      # needs no configuration. Redundant once §2 is in use.
       #
       # Set them in the .env NEXT TO THIS FILE, and QUOTE the password:
       #     WLO_SERVICE_PASSWORD='geheim#mit!zeichen'
@@ -61,24 +91,19 @@ services:
       # login and would otherwise expose whatever the account can see.
       WLO_SERVICE_USER: "${WLO_SERVICE_USER:-}"
       WLO_SERVICE_PASSWORD: "${WLO_SERVICE_PASSWORD:-}"
-      # How many DISTINCT logins one client address may present per 10 minutes
-      # (per-user mode forwards the client's credential upstream, so this caps
-      # using the server to guess WLO logins). 0 disables; empty = the code's
-      # default of 10.
-      AUTH_CREDENTIAL_LIMIT: "${AUTH_CREDENTIAL_LIMIT:-}"
-      # Capability gates — these decide which tools EXIST, not just how they
-      # behave, so leaving one out of this list silently removes a feature.
-      # Unset is the safe default everywhere (the code reads every one as
-      # `(raw ?? '').trim()`, so an empty value means "not configured").
-      #   WLO_ALLOW_SERVICE_WRITES – lets the shared service account write; without
-      #     it the 13 curation tools are not registered at all in service mode.
+      # Only for the SERVICE account: with a personal login, writing is always on.
+      #   WLO_ALLOW_SERVICE_WRITES – lets the shared account write; without it the
+      #     13 curation tools are not registered at all in service mode.
       #   WLO_INBOX_ID             – where service-account creates are filed;
       #     required before that account can create anything.
-      #   WLO_SKILLS_COLLECTION_ID – registers `find_wlo_skills` and gives
-      #     GET /api/skills its default collection.
       WLO_ALLOW_SERVICE_WRITES: "${WLO_ALLOW_SERVICE_WRITES:-}"
       WLO_INBOX_ID: "${WLO_INBOX_ID:-}"
-      WLO_SKILLS_COLLECTION_ID: "${WLO_SKILLS_COLLECTION_ID:-}"
+
+      # ── 4 — which tools exist ───────────────────────────────────────────────
+      # These decide which tools EXIST, not just how they behave, so leaving one
+      # out of this list silently removes a feature. Unset is the safe default
+      # (the code reads each as `(raw ?? '').trim()`, so empty = not configured).
+      #
       # Tools that declare themselves UNSAFE (see .env.example for what that
       # means and which one it currently is). Defaulted to "all" — the opposite
       # of the code's own default — because a deployment is exactly where the
@@ -90,40 +115,50 @@ services:
       # `${VAR:-all}` would also override an explicitly EMPTY value — and then
       # the documented way to switch the tools on would silently not work.
       WLO_DISABLE_UNSAFE_TOOLS: "${WLO_DISABLE_UNSAFE_TOOLS-all}"
+      # Registers `find_wlo_skills` and gives GET /api/skills its default collection.
+      WLO_SKILLS_COLLECTION_ID: "${WLO_SKILLS_COLLECTION_ID:-}"
       # Text extraction (optional external service). Unset → full text comes from
       # the repository's own /textContent only; the server logs that at startup.
       WLO_TEXT_EXTRACTION_URL: "${WLO_TEXT_EXTRACTION_URL:-}"
-      WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"
-      # Apps-SDK widget identity. WLO_WIDGET_DOMAIN must stay unset for Claude and
-      # every non-ChatGPT host — see the README env table.
-      WLO_WIDGET_DOMAIN: "${WLO_WIDGET_DOMAIN:-}"
-      WLO_WIDGET_MIME: "${WLO_WIDGET_MIME:-}"
-      # Optional tuning. Every default here is EMPTY on purpose, so the number
-      # lives in exactly one place — `src/wlo-config.ts`, next to the measurement
-      # that justifies it. Restating one here silently wins over the code: this
-      # file pinned WLO_FETCH_TIMEOUT_MS at 10000 long after the code moved to
-      # 20000, so every container ran the timeout that was measured too short and
-      # cut a 4.2–8.0 s create off mid-flight. `.env.example` documents the
-      # current defaults; `tests/deploy-env-passthrough.test.ts` enforces this.
-      RATE_LIMIT_RPM: "${RATE_LIMIT_RPM:-}"
-      API_RATE_LIMIT_RPM: "${API_RATE_LIMIT_RPM:-}"
-      WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-}"
-      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-}"
-      WLO_POOL_SIZE: "${WLO_POOL_SIZE:-}"
-      WLO_TOPIC_POOL: "${WLO_TOPIC_POOL:-}"
-      WLO_ROOT_COLLECTION_ID: "${WLO_ROOT_COLLECTION_ID:-}"
-      # Personal access blocks. Unset = feature off: /auth* answers 404 and a
-      # Bearer header is refused, exactly as before. The private key decrypts
-      # EVERY issued block back into a live WLO password, so keep it in the .env
-      # on the server — never in the image, never in the repository.
-      WLO_AUTH_PRIVATE_KEY: "${WLO_AUTH_PRIVATE_KEY:-}"
-      WLO_AUTH_PRIVATE_KEY_PREVIOUS: "${WLO_AUTH_PRIVATE_KEY_PREVIOUS:-}"
-      # Must point INTO the volume below; anywhere else is read-only and the
-      # feature would stay off with the registry error in the log.
-      WLO_AUTH_REGISTRY_PATH: "${WLO_AUTH_REGISTRY_PATH:-/data/access-registry.json}"
+
+      # ── 5 — network and operation ───────────────────────────────────────────
+      # Both already correct for the setup this file describes (behind a
+      # TLS-terminating proxy). Touch them only when running without one.
+      #
+      # Real SSE streaming (image default) for ChatGPT developer mode. Set 0 for
+      # single-JSON responses (curl / simple clients).
+      MCP_SSE: "${MCP_SSE:-1}"
+      # Derive the client IP from X-Forwarded-For (rightmost, proxy-appended hop)
+      # for per-client rate limiting behind a proxy. Set 0 if directly exposed.
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
       # PORT is deliberately absent: the port mapping above hardcodes the
       # container side as 3000, so overriding it would leave the server
       # listening where nothing is published. Change the HOST side with HOST_PORT.
+
+      # ── 6 — limits and timings (leave alone unless you have a reason) ───────
+      # Every default here is EMPTY on purpose, so the number lives in exactly one
+      # place — `src/wlo-config.ts`, next to the measurement that justifies it.
+      # Restating one here silently wins over the code: this file pinned
+      # WLO_FETCH_TIMEOUT_MS at 10000 long after the code moved to 20000, so every
+      # container ran the timeout that was measured too short and cut a 4.2–8.0 s
+      # create off mid-flight. `tests/deploy-env-passthrough.test.ts` enforces it.
+      RATE_LIMIT_RPM: "${RATE_LIMIT_RPM:-}"
+      API_RATE_LIMIT_RPM: "${API_RATE_LIMIT_RPM:-}"
+      # How many DISTINCT logins one client address may present per 10 minutes
+      # (a personal login is forwarded upstream, so this caps using the server to
+      # guess WLO logins). 0 disables; empty = the code's default of 10.
+      AUTH_CREDENTIAL_LIMIT: "${AUTH_CREDENTIAL_LIMIT:-}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-}"
+      WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-}"
+      WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"
+      WLO_POOL_SIZE: "${WLO_POOL_SIZE:-}"
+      WLO_TOPIC_POOL: "${WLO_TOPIC_POOL:-}"
+
+      # ── 7 — widgets / ChatGPT submission (special case) ─────────────────────
+      # WLO_WIDGET_DOMAIN must stay unset for Claude and every non-ChatGPT host —
+      # see the README env table.
+      WLO_WIDGET_DOMAIN: "${WLO_WIDGET_DOMAIN:-}"
+      WLO_WIDGET_MIME: "${WLO_WIDGET_MIME:-}"
     # Resource + privilege hardening. The server is a DoS/amplification surface,
     # so cap memory/CPU (a spike can't OOM the host, only the container), drop all
     # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege

@@ -14,7 +14,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_BLOCKS_PER_LABEL, openRegistry, type AccessRegistry } from '../src/auth/access-registry.js';
@@ -39,6 +39,30 @@ test('a missing file is the ordinary first start, not a failure', async (t) => {
   const path = join(tempDir(t), 'registry.json');
   const registry = await opened(path);
   assert.equal(registry.has('anything'), false);
+});
+
+/**
+ * Measured in Docker, not imagined (2026-08-05): a named volume mounted at a
+ * path the image never creates belongs to root:root, the container runs as
+ * `node`, and the registry file cannot be written. READING it still succeeds —
+ * ENOENT reads as "first start" — so the server logged `access blocks are
+ * enabled` and only broke when the first person tried to fetch a block.
+ *
+ * That is the shape of failure this project keeps hunting: enabled at startup,
+ * broken at first use, with nothing in between to warn anyone. So a first start
+ * WRITES the empty registry rather than assuming it could, and an unwritable
+ * path is one loud line in the boot log instead of a 500 for a stranger.
+ */
+test('a registry path that cannot be written fails at startup, not at first use', async (t) => {
+  const path = join(tempDir(t), 'missing-directory', 'registry.json');
+  assert.equal(await openRegistry(path), null, 'no registry rather than one that cannot record');
+});
+
+test('a first start leaves the empty registry on disk, proving the path writable', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  await opened(path);
+  assert.ok(existsSync(path), 'written before anyone uses it, not at the first issuance');
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { v: 1, entries: [] });
 });
 
 test('an existing file is loaded', async (t) => {
