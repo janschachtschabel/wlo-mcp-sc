@@ -2540,3 +2540,59 @@ mit `1`. Die Beschreibung in `src/mcp-transport.ts` behauptet, SSE sei „requir
 by ChatGPT developer mode" — diese Aussage stammt jedoch aus der Zeit, in der
 ChatGPT sich nie verbinden konnte, ist also **nicht unter den heutigen
 Bedingungen gemessen**. Sie gehört nachgemessen, bevor man sich auf sie verlässt.
+
+### Die Ursache — gefunden 2026-08-05
+
+Der Gegentest fiel eindeutig aus: **ohne Authentifizierung verbindet sich
+ChatGPT, mit OAuth nicht.** Damit lag es an den 13 Werkzeugen, die eine
+Identität hinzufügt — und der einzige strukturelle Unterschied war:
+
+```
+Lesewerkzeuge     _meta.securitySchemes: [{ "type": "noauth" }]
+Kurationswerkzeuge _meta.securitySchemes: [{ "type": "http" }]
+```
+
+Die Apps-SDK-Dokumentation (developers.openai.com/apps-sdk/build/auth) zählt die
+gültigen Typen auf: **`noauth` und `oauth2`, mehr gibt es nicht.** `http` war aus
+OpenAPI entliehen. Ein unbekannter Typ verwirft die **ganze** Werkzeugliste —
+deshalb kam im Server-Log nichts an: die Anfrage wurde korrekt beantwortet, der
+Client nahm die Antwort nur nicht an.
+
+**Behoben:** `[{ type: 'oauth2', scopes: ['wlo'] }]`, aus **einer** Konstante
+(`OAUTH_SECURITY_SCHEMES` in `apps/tool-defaults.ts`) statt dreizehn Literalen;
+der Scope kommt aus `SCOPES` in `auth/oauth-metadata.ts`, damit Werkzeug und
+Autorisierungsserver nicht auseinanderlaufen können.
+
+`tests/tool-security-schemes.test.ts` prüft die Regel über **alle** Werkzeuge in
+beiden Betriebsarten — ein einziges mit unbekanntem Typ reicht, und dann ist
+nicht ein Werkzeug kaputt, sondern die Verbindung.
+
+Ein bestehender Test (`tools-curation-gating.test.ts`) nagelte den falschen Wert
+fest. Die geprüfte Eigenschaft blieb, nur der erwartete Wert stammte aus der
+falschen Annahme; die Änderung trägt einen datierten Kommentar.
+
+**Nachweis:** `npm test` → 1306/1306, `tsc` exit 0.
+**Live-Nachweis steht aus** — er braucht einen Deploy und einen neuen
+ChatGPT-Anlauf.
+
+### Offen, davon unabhängig
+
+Im anonymen Betrieb arbeitet das Volltext-Werkzeug nicht wie erwartet: auf
+„frage den Inhalt des Übungsblattes ab" reagiert ChatGPT nicht, auf ausdrückliche
+Nachfrage ruft es Werkzeuge auf und erfindet danach Inhalte. Das ist ein
+**eigener** Befund, kein Auth-Problem.
+
+**Erste Messung dazu (2026-08-05, live gegen Produktion, anonym):** das Werkzeug
+liefert. Acht von acht Materialien aus einer echten Suche nach „Bruchrechnung
+Arbeitsblatt" gaben `source: "repository"` mit 937 bis 53 986 Zeichen echtem
+Text; kein einziges `source: "none"`. Der Guard, den man hier vermuten würde
+(leere Antwort ⇒ Modell ergänzt), ist vorhanden und greift nicht ein, weil es
+nichts zu greifen gibt: bei fehlendem Text kommt `source: "none"` mit `reason`
+und im Markdown „_Kein Volltext verfügbar (…)_".
+
+Damit ist die naheliegende Erklärung ausgeschlossen. Was bleibt: entweder ruft
+das Modell das Werkzeug nicht auf (Beschreibung/Auslöser), oder die Rückgabe
+erreicht es nicht (das Werkzeug trägt `openai/outputTemplate` — ein Widget).
+**Das nächste, was fehlt, ist der Werkzeugaufruf-Verlauf aus ChatGPTs eigener
+Oberfläche** (Aufruf aufklappen): was gesendet und was zurückgegeben wurde.
+Ohne den ist alles Weitere geraten.

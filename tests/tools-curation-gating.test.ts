@@ -76,6 +76,13 @@ test('a write tool does not declare itself callable without authentication', asy
   // Every read tool carries `_meta.securitySchemes: [{type:'noauth'}]`. Claiming
   // that for a tool that refuses anonymous callers would be a false declaration
   // to the host.
+  //
+  // Changed 2026-08-05: this used to expect `[{type:'http'}]`, borrowed from
+  // OpenAPI. The Apps SDK knows exactly two scheme types — `noauth` and
+  // `oauth2` — and an unknown one refuses the WHOLE tool list, which is what
+  // made ChatGPT connect anonymously and fail on every login. The property this
+  // test guards is unchanged; only the value it was pinned to was wrong. The
+  // rule now also holds for all 38 tools in `tool-security-schemes.test.ts`.
   const client = await connectedClient('user');
   try {
     const { tools } = await client.listTools();
@@ -84,7 +91,8 @@ test('a write tool does not declare itself callable without authentication', asy
     assert.ok(write, 'the write tool is present — otherwise this test proves nothing');
     assert.ok(read, 'and a read tool to compare against');
     assert.deepEqual((read._meta as { securitySchemes?: unknown }).securitySchemes, [{ type: 'noauth' }]);
-    assert.deepEqual((write._meta as { securitySchemes?: unknown }).securitySchemes, [{ type: 'http' }]);
+    assert.deepEqual((write._meta as { securitySchemes?: unknown }).securitySchemes,
+      [{ type: 'oauth2', scopes: ['wlo'] }]);
   } finally {
     await client.close();
   }

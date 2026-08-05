@@ -17,6 +17,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { registerWloTool } from '../apps/register.js';
+import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { deleteContentNode } from '../services/write/nodes-lifecycle.js';
@@ -48,7 +49,7 @@ export function registerCurationDeleteTools(server: McpServer): void {
       'in denen es vorkommt. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
-    securitySchemes: [{ type: 'http' }],
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: (params) => runDeletion(params, {
       kind: 'content',
       whatItMeans:
@@ -68,7 +69,7 @@ export function registerCurationDeleteTools(server: McpServer): void {
       'confirmToken wird nur gezeigt, was gelöscht würde. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
-    securitySchemes: [{ type: 'http' }],
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: (params) => runDeletion(params, {
       kind: 'collection',
       whatItMeans:

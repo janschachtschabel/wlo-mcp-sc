@@ -17,6 +17,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { registerWloTool } from '../apps/register.js';
+import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
@@ -82,7 +83,7 @@ export function registerCurationContentTools(server: McpServer): void {
     inputSchema: updateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     // Not `noauth`: this tool refuses a caller without an identity.
-    securitySchemes: [{ type: 'http' }],
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -166,7 +167,7 @@ export function registerCurationContentTools(server: McpServer): void {
       'wlo_submit_content. Erfordert eine Anmeldung.',
     inputSchema: createSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: [{ type: 'http' }],
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -238,7 +239,7 @@ export function registerCurationContentTools(server: McpServer): void {
       'Erfordert eine Anmeldung.',
     inputSchema: submitSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: [{ type: 'http' }],
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

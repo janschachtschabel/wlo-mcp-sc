@@ -9,6 +9,23 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed — the curation tools declared a security scheme no client knows (2026-08-05)
+
+They carried `_meta.securitySchemes: [{ type: 'http' }]`, borrowed from OpenAPI.
+The Apps SDK knows exactly two types — `noauth` and `oauth2` — and **one
+unrecognised type refuses the entire tool list**. That is why ChatGPT connected
+happily without authentication (25 tools, all `noauth`) and reported "a problem
+occurred while connecting" on every attempt that carried a login: the 13
+curation tools joined the list and took it down. Nothing appeared in the server
+log, because the request was answered correctly — the client simply would not
+accept the answer.
+
+They now declare `[{ type: 'oauth2', scopes: ['wlo'] }]`, from one shared
+constant instead of thirteen literals, with the scope taken from the
+authorization server's own metadata so the two cannot drift.
+`tests/tool-security-schemes.test.ts` holds the rule over the whole surface in
+both modes.
+
 ### Fixed — `/auth` offers the block without the `Bearer` prefix too (2026-08-05)
 
 The field on the access page is labelled "value for the Authorization field", so

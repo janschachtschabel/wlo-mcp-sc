@@ -15,6 +15,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { registerWloTool } from '../apps/register.js';
+import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet, type ChangeSet } from '../services/write/change-set.js';
 import {
@@ -42,7 +43,6 @@ const CONFIRM_TOKEN = z.string().optional()
   .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.');
 
 const WRITE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
-const HTTP_AUTH = [{ type: 'http' }];
 
 /**
  * A collection's own title and description. Both are written by these tools, so
@@ -81,7 +81,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       confirmToken: CONFIRM_TOKEN,
     },
     annotations: WRITE_ANNOTATIONS,
-    securitySchemes: HTTP_AUTH,
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -132,7 +132,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       confirmToken: CONFIRM_TOKEN,
     },
     annotations: WRITE_ANNOTATIONS,
-    securitySchemes: HTTP_AUTH,
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -185,7 +185,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       confirmToken: CONFIRM_TOKEN,
     },
     annotations: WRITE_ANNOTATIONS,
-    securitySchemes: HTTP_AUTH,
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: (params) => referenceHandler(params, {
       verb: 'Aufnehmen',
       action: (material, collection, ids) =>
@@ -211,7 +211,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       confirmToken: CONFIRM_TOKEN,
     },
     annotations: WRITE_ANNOTATIONS,
-    securitySchemes: HTTP_AUTH,
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: (params) => referenceHandler(params, {
       verb: 'Herausnehmen',
       action: (material, collection, ids) =>

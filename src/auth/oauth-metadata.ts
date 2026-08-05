@@ -19,8 +19,14 @@
  * reason it documents there.
  */
 
-/** The one scope. It mirrors whatever the WLO account itself may do. */
-const SCOPES = ['wlo'];
+/**
+ * The one scope. It mirrors whatever the WLO account itself may do.
+ *
+ * Exported because the curation tools name it in their own `securitySchemes`
+ * declaration: a scope a tool asks for that the authorization server does not
+ * offer would be advertised on a consent screen and then refused.
+ */
+export const SCOPES = ['wlo'];
 
 export interface IssuerEnv {
   /** `WLO_PUBLIC_BASE_URL` — the authoritative answer when set. */

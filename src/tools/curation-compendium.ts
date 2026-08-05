@@ -16,6 +16,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { registerWloTool } from '../apps/register.js';
+import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, deleteProperty } from '../services/write/nodes.js';
@@ -53,7 +54,7 @@ export function registerCurationCompendiumTool(server: McpServer): void {
         .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: [{ type: 'http' }],
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

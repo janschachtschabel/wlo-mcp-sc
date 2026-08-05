@@ -36,10 +36,28 @@
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 
+import { SCOPES } from '../auth/oauth-metadata.js';
 import { toolStatusMeta } from './tool-status.js';
 
 /** Apps-SDK no-auth declaration: the tool is callable anonymously. */
 const NOAUTH_SECURITY_SCHEMES: ReadonlyArray<{ type: 'noauth' }> = [{ type: 'noauth' }];
+
+/**
+ * The declaration for a tool that needs an identity.
+ *
+ * Exactly two scheme types exist — `noauth` and `oauth2` (measured 2026-08-05
+ * against developers.openai.com/apps-sdk/build/auth). The curation tools used
+ * to declare `{ type: 'http' }`, borrowed from OpenAPI, and it cost a live
+ * afternoon: ChatGPT connected anonymously and then refused every connection
+ * that carried a login, because ONE unknown scheme type takes the whole tool
+ * list down with it. Nothing appeared in our log — the request was answered
+ * correctly; the client simply would not accept the answer.
+ *
+ * One constant rather than thirteen literals, and the scope comes from the
+ * authorization server's own metadata so the two cannot drift apart.
+ */
+export const OAUTH_SECURITY_SCHEMES: ReadonlyArray<{ type: 'oauth2'; scopes: string[] }> =
+  [{ type: 'oauth2', scopes: [...SCOPES] }];
 
 /**
  * Human-readable titles for the tools registered via plain `server.tool`,
