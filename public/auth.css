@@ -155,3 +155,12 @@ li { margin-bottom: 0.4rem; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Who is asking, on the authorization page. A description list because that is
+   what it is — a label and its value — and it reflows to two lines on a narrow
+   screen without anything being cut off. Layout only: no new colours, so the
+   contrast argument for this stylesheet stays the one already made above. */
+.who { margin: 0 0 var(--space); }
+.who dt { font-weight: 600; margin-top: 0.6rem; }
+.who dt:first-child { margin-top: 0; }
+.who dd { margin: 0.15rem 0 0; overflow-wrap: anywhere; }

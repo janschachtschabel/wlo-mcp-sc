@@ -9,6 +9,50 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — OAuth login: the exchange, and with it the whole flow (2026-08-05)
+
+`POST /oauth/token` completes the login: a one-time authorization code becomes
+the access itself. What comes back **is** the `wlo2.…` access block — there is
+no second credential, which is why one revocation on `/auth-revoke.html` ends
+both the pasted block and the OAuth token at once. No `refresh_token` and no
+`expires_in`: nothing here expires on a clock, it ends when the holder revokes
+it or changes their WLO password.
+
+PKCE is proof, not decoration: the verifier is hashed and compared in constant
+time, and the code is removed from the store **before** any check runs, so a
+failed attempt cannot be retried. A native client may come back on a different
+loopback port (RFC 8252 §7.3); everything else about the redirect target must
+match character for character.
+
+`tests/oauth-flow.test.ts` walks the whole way through a real server —
+discovery, registration, consent, exchange, a tool call with the token,
+revocation, and then the two lines that matter most: the revoked token is
+refused, and a request with no header still gets the full anonymous tool list.
+
+### Added — OAuth login: the consent page (2026-08-05)
+
+`GET /oauth/authorize` shows a page where a WLO editor logs in and allows a
+client to act as them; `POST /oauth/authorize` verifies that login and hands the
+client a one-time authorization code. Both are off (404) wherever access blocks
+are off.
+
+The order is the point: **the request is checked before anyone is shown a
+password field.** An unknown client, a redirect target that was not registered,
+`code_challenge_method` other than `S256`, a `response_type` we do not
+implement — each is refused with a page in German and **no redirect**, because
+bouncing an error to an address we did not recognise would make this server a
+redirector for anyone who can write a link.
+
+The password is encrypted in the browser exactly as on `/auth`, and the
+resulting block waits in memory — as ciphertext, never opened — for
+`/oauth/token` (package 4). Codes live one minute, work once, are stored under
+their SHA-256, and are capped in number.
+
+The page names the client that is asking. That name comes back from this server,
+not from the query string: `client_id` is a ciphertext only the server can open,
+so `GET /oauth/authorize` with `Accept: application/json` answers with the values
+it recognised, and the page shows those.
+
 ### Added — OAuth discovery (2026-08-05)
 
 The server now publishes the two OAuth metadata documents an MCP client looks

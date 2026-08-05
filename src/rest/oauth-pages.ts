@@ -5,10 +5,17 @@
  * `false` for anything else so the caller falls through, and an error boundary
  * that turns an unexpected throw into a generic 500 with the reason in the log.
  *
- * P1 serves discovery only:
+ * This module is the ROUTER plus the two surfaces that need no login:
  *
- *   GET /.well-known/oauth-authorization-server[/mcp]  → RFC 8414
- *   GET /.well-known/oauth-protected-resource[/mcp]    → RFC 9728
+ *   GET  /.well-known/oauth-authorization-server[/mcp]  → RFC 8414
+ *   GET  /.well-known/oauth-protected-resource[/mcp]    → RFC 9728
+ *   POST /oauth/register                                → RFC 7591
+ *
+ * The login flow lives beside it — `oauth-consent.ts` for `/oauth/authorize`,
+ * `oauth-token.ts` for `/oauth/token` — and what they share sits in
+ * `oauth-http.ts`. Split when this file passed 300 lines with distinct reasons
+ * to change: publishing metadata, taking somebody's password, and redeeming a
+ * one-time code are three different things to get wrong.
  *
  * Both spellings of each, because clients differ on whether the resource path is
  * appended (RFC 8414 §3.1 prescribes it for an issuer WITH a path component;
@@ -25,40 +32,29 @@
  */
 
 import { currentAccessSupport } from '../auth/credential.js';
+import type { AuthKeys } from '../auth/access-token.js';
+import {
+  MAX_REDIRECT_URIS,
+  encodeClientId,
+  isValidRedirectUri,
+} from '../auth/oauth-clients.js';
 import {
   authorizationServerMetadata,
   protectedResourceMetadata,
 } from '../auth/oauth-metadata.js';
 import { log } from '../logger.js';
-import type { RateLimiter } from '../rate-limit.js';
 import { parseRequestUrl } from '../request-url.js';
-
-export interface OAuthEndpointDeps {
-  /** Client key for the limiter (already resolved through TRUST_PROXY). */
-  ip: string;
-  /** Requests per address — the public-surface limiter. */
-  rateLimiter: RateLimiter;
-  /** This deployment's public origin, or null when it could not be established. */
-  issuer: string | null;
-}
-
-/**
- * Async-iterable because the endpoints from P2 onward read a body; the discovery
- * paths do not. Same shape as `AuthEndpointDeps`' request, so both modules can
- * be driven by the same kind of stub.
- */
-interface OAuthReq extends AsyncIterable<Buffer | Uint8Array> {
-  method?: string;
-  url?: string;
-}
-interface OAuthRes {
-  writeHead: (status: number, headers?: Record<string, string>) => void;
-  end: (body?: string) => void;
-  /** node:http sets this; the mocks in the tests do not, which reads as false. */
-  headersSent?: boolean;
-}
-
-const JSON_HEADERS = { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' };
+import { flattenText } from '../text-sanitize.js';
+import { grantConsent, showConsent } from './oauth-consent.js';
+import { exchangeCode } from './oauth-token.js';
+import {
+  JSON_HEADERS,
+  readJsonBody,
+  send,
+  type OAuthEndpointDeps,
+  type OAuthReq,
+  type OAuthRes,
+} from './oauth-http.js';
 
 /** Five minutes: long enough to spare the round trip, short enough that a
  *  corrected issuer reaches clients the same day. */
@@ -72,11 +68,21 @@ const DISCOVERY: Record<string, (issuer: string) => Record<string, unknown>> = {
   '/.well-known/oauth-protected-resource/mcp': protectedResourceMetadata,
 };
 
-function send(res: OAuthRes, status: number, body: unknown, headers: Record<string, string> = {}): true {
-  res.writeHead(status, { ...JSON_HEADERS, ...headers });
-  res.end(JSON.stringify(body));
-  return true;
-}
+const REGISTER_PATH = '/oauth/register';
+const AUTHORIZE_PATH = '/oauth/authorize';
+const TOKEN_PATH = '/oauth/token';
+
+/** Paths this module owns, with the methods each accepts. */
+const ROUTES: Record<string, readonly ('GET' | 'POST')[]> = {
+  ...Object.fromEntries(Object.keys(DISCOVERY).map((p) => [p, ['GET'] as const])),
+  [REGISTER_PATH]: ['POST'],
+  [AUTHORIZE_PATH]: ['GET', 'POST'],
+  [TOKEN_PATH]: ['POST'],
+};
+
+/** Shown on the consent screen when a client registers without a name. */
+const FALLBACK_CLIENT_NAME = 'MCP-Client';
+const MAX_CLIENT_NAME = 100;
 
 /**
  * Error boundary, for the reason `auth-pages.ts` documents: node:http ignores a
@@ -106,15 +112,17 @@ async function route(req: OAuthReq, res: OAuthRes, deps: OAuthEndpointDeps): Pro
   const parsed = parseRequestUrl(req.url);
   if (!parsed) return false;
 
-  const document = DISCOVERY[parsed.pathname];
-  if (!document) return false;
+  const wanted = ROUTES[parsed.pathname];
+  if (!wanted) return false;
 
-  if (!currentAccessSupport() || !deps.issuer) {
+  const support = currentAccessSupport();
+  if (!support || !deps.issuer) {
     return send(res, 404, { error: 'OAuth ist auf diesem Server nicht eingerichtet.' });
   }
 
-  if (req.method !== 'GET') {
-    return send(res, 405, { error: 'Method not allowed. Use GET.' }, { Allow: 'GET' });
+  if (!wanted.includes(req.method as 'GET' | 'POST')) {
+    const allow = wanted.join(', ');
+    return send(res, 405, { error: `Method not allowed. Use ${allow}.` }, { Allow: allow });
   }
 
   if (deps.rateLimiter.check(deps.ip, Date.now())) {
@@ -122,5 +130,72 @@ async function route(req: OAuthReq, res: OAuthRes, deps: OAuthEndpointDeps): Pro
       { 'Retry-After': '60' });
   }
 
-  return send(res, 200, document(deps.issuer), { 'Cache-Control': METADATA_CACHE });
+  const document = DISCOVERY[parsed.pathname];
+  if (document) return send(res, 200, document(deps.issuer), { 'Cache-Control': METADATA_CACHE });
+
+  if (parsed.pathname === AUTHORIZE_PATH) {
+    return req.method === 'POST'
+      ? grantConsent(req, res, deps, support)
+      : showConsent(req, res, parsed.searchParams, support.keys);
+  }
+
+  if (parsed.pathname === TOKEN_PATH) return exchangeCode(req, res, deps);
+
+  return registerClient(req, res, deps, support.keys);
+}
+
+/** RFC 7591 error shape. Two codes, and the caller never learns more. */
+function metadataError(res: OAuthRes, description: string, status = 400): true {
+  return send(res, status, { error: 'invalid_client_metadata', error_description: description });
+}
+
+/**
+ * Dynamic Client Registration (RFC 7591) — open, as the MCP specification
+ * expects, and harmless because it grants nothing: the resulting `client_id`
+ * carries only where a code may be sent, and getting a code still requires a
+ * WLO login in the user's own browser.
+ */
+async function registerClient(
+  req: OAuthReq,
+  res: OAuthRes,
+  deps: OAuthEndpointDeps,
+  keys: AuthKeys,
+): Promise<true> {
+  const body = await readJsonBody(req, deps.maxBodyBytes);
+  if (body === 'too-large') return metadataError(res, 'Request body is too large.', 413);
+  if (!body) return metadataError(res, 'Body must be a JSON object.');
+
+  const uris = body['redirect_uris'];
+  if (
+    !Array.isArray(uris) || uris.length === 0 || uris.length > MAX_REDIRECT_URIS
+    || !uris.every((u): u is string => typeof u === 'string' && isValidRedirectUri(u))
+  ) {
+    return send(res, 400, {
+      error: 'invalid_redirect_uri',
+      error_description:
+        `redirect_uris must be 1–${MAX_REDIRECT_URIS} absolute https URLs (http only on localhost), without a fragment.`,
+    });
+  }
+
+  // The name is caller-chosen text that will be shown to a person about to type
+  // their password. `flattenText` drops invisible characters and flattens
+  // control ones, so it cannot forge a second line on that screen; the cap keeps
+  // it from pushing the rest of the screen out of view.
+  const rawName = body['client_name'];
+  const name = (typeof rawName === 'string' ? flattenText(rawName).slice(0, MAX_CLIENT_NAME).trim() : '')
+    || FALLBACK_CLIENT_NAME;
+
+  const clientId = encodeClientId({ redirectUris: uris, name }, keys);
+  log.info('oauth client registered', { name, redirectUris: uris.length });
+
+  // No `client_secret`: public clients with PKCE only. There is nowhere to keep
+  // a secret anyway — see `auth/oauth-clients.ts` on why the id is self-contained.
+  return send(res, 201, {
+    client_id: clientId,
+    client_name: name,
+    redirect_uris: uris,
+    token_endpoint_auth_method: 'none',
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+  }, { 'Cache-Control': 'no-store' });
 }

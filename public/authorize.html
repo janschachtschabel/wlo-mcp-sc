@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zugriff erlauben · WirLernenOnline</title>
+  <meta name="description" content="Ein KI-Programm möchte über den WLO-MCP-Server mit deinem WLO-Konto arbeiten. Das Passwort wird im Browser verschlüsselt und verlässt das Gerät nur als Chiffretext." />
+  <link rel="stylesheet" href="/auth.css" />
+</head>
+<body>
+<main>
+  <h1>Zugriff auf dein WLO-Konto erlauben</h1>
+  <p class="lede">
+    Ein KI-Programm möchte über WirLernenOnline mit deinen Rechten arbeiten.
+    Melde dich an, wenn du das erlauben willst.
+  </p>
+  <p class="lang-note" lang="en">English: an AI client is asking to use the WLO MCP server with your account.</p>
+
+  <div class="card">
+    <h2 id="who-heading">Wer fragt</h2>
+    <!-- Both values are filled in by the script from data this server checked.
+         Never from the query string: the point of the screen is to say what was
+         recognised, not to repeat back what the caller wrote. -->
+    <dl class="who" aria-labelledby="who-heading">
+      <dt>Programm</dt>
+      <dd id="client-name" dir="auto">wird geprüft …</dd>
+      <dt>Weiterleitung nach der Anmeldung</dt>
+      <dd id="redirect-origin" class="mono">wird geprüft …</dd>
+    </dl>
+    <p class="hint">
+      Das Programm kann danach in deinem Namen suchen und — soweit dein Konto es
+      erlaubt — Inhalte bearbeiten. Du kannst den Zugang jederzeit auf
+      <a href="/auth-revoke.html">„Zugang sperren"</a> beenden.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2 id="form-heading">Anmelden</h2>
+    <!-- No native submit: the form is handled in JS so the password is
+         encrypted before anything leaves the page. The CSP forbids form-action
+         entirely, so a scripting failure cannot fall back to a plain POST. -->
+    <form id="authorize-form" novalidate aria-labelledby="form-heading">
+      <div class="field">
+        <label for="user">WLO-Benutzername</label>
+        <input id="user" name="user" type="text" autocomplete="username"
+               required aria-describedby="user-hint" />
+        <p class="hint" id="user-hint">Derselbe Name, mit dem du dich auf WirLernenOnline anmeldest.</p>
+      </div>
+      <div class="field">
+        <label for="secret">WLO-Passwort</label>
+        <input id="secret" name="secret" type="password" autocomplete="current-password"
+               required aria-describedby="secret-hint" />
+        <p class="hint" id="secret-hint">
+          Wird <strong>in deinem Browser verschlüsselt</strong> und verlässt dieses Gerät nur als
+          unlesbarer Block. Wir speichern es nicht.
+        </p>
+      </div>
+      <div class="actions">
+        <button type="submit" id="submit" disabled>Anmelden und erlauben</button>
+        <button type="button" id="deny" class="secondary">Ablehnen</button>
+      </div>
+    </form>
+
+    <!-- polite, not assertive: the result follows a deliberate action, so it
+         should not interrupt what a screen reader is saying. -->
+    <p class="status" id="status" role="status" aria-live="polite">Anfrage wird geprüft …</p>
+
+    <!-- The button starts disabled, and without JavaScript nothing ever enables
+         it. That is not a bug to work around: the password is encrypted in the
+         browser, so a page without scripting has no safe way to send it. Say so
+         rather than leaving a dead button. -->
+    <noscript>
+      <p class="status error">Für diese Seite wird JavaScript benötigt — dein Passwort wird
+        im Browser verschlüsselt, bevor irgendetwas gesendet wird.</p>
+    </noscript>
+  </div>
+
+  <div class="warn">
+    <p><strong>Nur anmelden, wenn du dieses Programm gerade selbst verbunden hast.</strong>
+      Wer den Zugriff bekommt, kann bis zur Sperrung mit deinen WLO-Rechten arbeiten.</p>
+  </div>
+
+  <footer>
+    <p>WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
+  </footer>
+</main>
+<script type="module" src="/authorize.js"></script>
+</body>
+</html>

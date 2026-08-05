@@ -137,3 +137,25 @@ test('services and the REST layer do not import from the tool layer', () => {
     'move the shared thing to a leaf module instead — a lower layer must not depend on tools/',
   );
 });
+
+/**
+ * A call to the authority check. `checkIdentity()` is the rule the sentence
+ * "a 200 is not proof of a login" hangs on: at this API an absent credential
+ * still answers 200, with the guest authority in the body.
+ */
+const AUTHORITY_CHECK = /\bcheckIdentity\(/;
+
+test('the authority check has one caller per purpose, not a copy per endpoint', () => {
+  // `/auth/issue` and `/oauth/authorize` perform the identical step — verify the
+  // login inside an access block, then list its id. The second one was written
+  // by MOVING the first into `auth/access-issue.ts` rather than copying it,
+  // because a copy is exactly where the authority reading gets replaced by
+  // `res.ok` and the endpoint starts handing out accesses for logins that do not
+  // work. `tools/auth.ts` is the other legitimate caller: it reports the current
+  // identity to the user and gates nothing.
+  assert.deepEqual(
+    offenders(AUTHORITY_CHECK, ['auth/identity.ts', 'auth/access-issue.ts', 'tools/auth.ts']),
+    [],
+    'call issueAccessBlock from auth/access-issue.ts — it is where the authority rule lives',
+  );
+});

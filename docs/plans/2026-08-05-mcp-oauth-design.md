@@ -1,6 +1,6 @@
 # Design: OAuth 2.1 — ein Anmeldeweg für alle MCP-Clients
 
-**Status:** Entwurf, wartet auf Freigabe · **Datum:** 2026-08-05
+**Status:** in Umsetzung — P1 fertig und live, offener Punkt 1 positiv gemessen · **Datum:** 2026-08-05
 
 ## Goal
 
@@ -214,7 +214,7 @@ leichtesten kaputt macht.
 
 | # | Frage | Wie zu klären |
 |---|---|---|
-| 1 | **Findet ein Client OAuth ohne 401?** Wir antworten anonym mit 200; die Spezifikation sieht den 401 als Einstieg vor. Wenn ChatGPT zwingend einen 401 braucht, kollidiert das mit Anforderung 1. | **Paket 1 IST das Experiment** — siehe unten. |
+| 1 | ~~Findet ein Client OAuth ohne 401?~~ | **BEANTWORTET 2026-08-05: ja.** Gemessen an der produktiven Instanz — siehe unten. |
 | 2 | Akzeptiert Claude denselben Weg? Die Referenz sagt ja, aber dort antwortet `/mcp` immer 401. | Nach Paket 1 live probieren |
 | 3 | Welche Scopes erwartet ChatGPT? Die Felder „Basis-Scopes"/„Standard-Scopes" sind Pflichtfelder-artig. | Aus dem Experiment |
 | 4 | `expires_in` ohne Ablauf — verweigern Clients einen Token ohne Ablaufzeit? | Aus dem Experiment |
@@ -224,16 +224,32 @@ stehen nur zwei Wege offen: OAuth erzwingen (anonymes Lesen fällt) oder eine
 zweite URL anbieten, auf der `/mcp` mit 401 antwortet, während die
 Haupt-URL anonym bleibt.
 
-**Wie er geklärt wird — korrigiert 2026-08-05.** Der ursprünglich gedachte
-Weg (Endpunkt-Felder von Hand füllen) klärt nichts: die Felder zeigen auf
-Endpunkte, die noch 404 antworten, also scheitert der Versuch aus dem falschen
-Grund. Der Befund, der am 2026-08-05 gemessen wurde, zeigt zugleich den
-richtigen Weg — ChatGPT hat `/.well-known/oauth-protected-resource` **von sich
-aus abgefragt** und 404 bekommen. Der Client sucht also, ohne dass ein 401 ihn
-schickt. **Paket 1 liefert genau diese Dokumente und ist damit das Experiment.**
-Es ist billig, für jeden weiteren Weg ohnehin Voraussetzung, und danach steht
-die Antwort fest, statt geschätzt zu werden. Die Pakete 2–5 werden erst nach
-dieser Messung freigegeben.
+**Entschieden am 2026-08-05, gemessen statt geschätzt.** Nach dem Deploy von
+Paket 1 wurde ein ChatGPT-Connector auf `…/mcp` gezeigt, Authentifizierung
+`OAuth`, alle vier Endpunkt-Felder **leer**. Ergebnis:
+
+```
+Dynamic client registration failed: registration endpoint returned 404
+(Not found. Use POST /mcp)
+```
+
+Der Text in Klammern ist unsere eigene 404-Antwort. Die Kette lautet also:
+`does not implement OAuth` ist verschwunden → ChatGPT hat
+`/.well-known/oauth-authorization-server` **von sich aus** gelesen, ohne dass ein
+401 es dorthin geschickt hätte → daraus `registration_endpoint` entnommen →
+`POST /oauth/register` versucht → dieser Endpunkt ist Paket 2.
+
+**Damit fällt der Zielkonflikt weg.** Anonymes Lesen und OAuth stehen
+nebeneinander auf derselben URL; welcher Weg gilt, entscheidet der Nutzer im
+Auswahlfeld seines Clients. Weder eine zweite URL noch ein erzwungener 401 ist
+nötig. Pakete 2–5 sind freigegeben.
+
+**Zum Unterschied gegenüber der Referenz**, der beim Testen auffiel: dort wählt
+man „keine Authentifizierung" und landet trotzdem in der Anmeldung — weil jener
+Server anonymen Zugriff nicht kennt und mit 401 antwortet
+(`lib/oauth/routing.ts`). Bei uns heißt „keine Authentifizierung" wirklich
+anonym. Das ist dieselbe eine Zeile, die dieses Design von Anfang an umdreht,
+und sie kostet nichts: die Discovery funktioniert ohne sie.
 
 ## Aufwand
 

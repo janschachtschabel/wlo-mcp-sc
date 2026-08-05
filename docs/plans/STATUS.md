@@ -2222,6 +2222,17 @@ Anmeldungs-Begrenzer kommen mit ihrem ersten Aufrufer.
 
 Stand: **1233 Tests grün** (vorher 1219), Typecheck sauber.
 
+**Live gegen die produktive Instanz bestätigt (2026-08-05, nach dem Deploy).**
+`WLO_PUBLIC_BASE_URL` im Container angekommen, `access blocks are enabled` im
+Start-Log, beide Discovery-Dokumente liefern die konfigurierte Herkunft,
+`POST /mcp` ohne Kopf antwortet weiterhin mit der Werkzeugliste (SSE), und
+`Bearer erfunden` bekommt `HTTP/2 401` mit dem `resource_metadata`-Zeiger.
+Damit ist P1 nicht nur getestet, sondern im Betrieb gemessen — die Klasse von
+Nachweis, deren Fehlen bei den Kurationswerkzeugen zwei Defekte durchgelassen
+hat. Beiläufig behoben: der Healthcheck meldet wieder `healthy` (das Alpine-Image
+bringt seinen eigenen mit `wget` mit, der frühere rief ein nicht vorhandenes
+`curl`).
+
 ### T1.6 — die Messung, und warum sie das Tor ist
 
 Der Entwurf wollte sie „vor dem ersten Paket". Das ging nicht: der gedachte
@@ -2232,7 +2243,30 @@ Befund vom 2026-08-05 zeigt zugleich den richtigen Weg — ChatGPT hat
 sucht also, ohne dass ein 401 ihn schickt. **P1 liefert genau das und ist damit
 das Experiment.**
 
-**Offen (Betreiberin), bevor P2 beginnt:**
+### T1.6 — durchgeführt 2026-08-05, Ergebnis POSITIV
+
+ChatGPT-Connector auf `…/mcp`, Authentifizierung `OAuth`, alle vier
+Endpunkt-Felder leer. Antwort:
+
+```
+Dynamic client registration failed: registration endpoint returned 404
+(Not found. Use POST /mcp)
+```
+
+Der Klammertext ist unsere eigene 404-Antwort. Die Kette: `does not implement
+OAuth` verschwunden → `/.well-known/oauth-authorization-server` **von sich aus**
+gelesen → `registration_endpoint` entnommen → `POST /oauth/register` versucht.
+
+**Der Zielkonflikt existiert nicht.** Anonymes Lesen und OAuth stehen
+nebeneinander auf derselben URL; der Nutzer entscheidet im Auswahlfeld seines
+Clients. Keine zweite URL, kein erzwungener 401. **P2–P5 sind freigegeben.**
+
+Beim Testen aufgefallen und erklärt: in der Referenz wählt man „keine
+Authentifizierung" und landet trotzdem in der Anmeldung — weil jener Server
+anonymen Zugriff nicht kennt und mit 401 antwortet. Bei uns heißt „keine
+Authentifizierung" wirklich anonym; wer sich anmelden will, wählt OAuth.
+
+**Erledigt (Betreiberin) am 2026-08-05:**
 1. `WLO_PUBLIC_BASE_URL=https://wlo-mcp.87.106.195.152.nip.io` in die `.env`,
    hochladen, neu bauen, neu starten.
 2. `curl -s https://wlo-mcp.87.106.195.152.nip.io/.well-known/oauth-protected-resource`
@@ -2244,3 +2278,187 @@ das Experiment.**
 
 Fällt die Messung negativ aus, ist die nächste Handlung eine **Design-Änderung**
 (zweite URL, die mit 401 antwortet, oder OAuth erzwingen) — nicht P2.
+
+---
+
+## OAuth — P2 abgeschlossen 2026-08-05
+
+`POST /oauth/register` (RFC 7591) steht, plus das Modul, an dem die Sicherheit
+des ganzen Vorhabens hängt.
+
+**`src/auth/oauth-clients.ts`** — die Redirect-Regel und die zustandslose
+`client_id`.
+- `isValidRedirectUri`: `https` überall, `http` **nur** auf Loopback; kein
+  Fragment, keine Zugangsdaten im URI, kein anderes Schema (`javascript:`,
+  `data:`, `file:`, App-Schemata).
+- `redirectUriMatches`: zeichengenau — **außer** beide Seiten sind Loopback,
+  dann sind Port und Loopback-Schreibweise frei (RFC 8252 §7.3: ein nativer
+  Client wählt seinen Port zur Laufzeit, und Clients schreiben mal `localhost`,
+  mal `127.0.0.1`). Schema, Pfad und Query bleiben auch dort gebunden.
+  `localhost.evil.example` ist **kein** Loopback — die Namen werden exakt
+  verglichen, nicht als Präfix.
+- `client_id` = `wloc1.<iv>.<ct>`, AES-256-GCM unter einem per HKDF aus dem
+  vorhandenen privaten Schlüssel abgeleiteten Schlüssel, eigene `info`-Zeichen-
+  kette zur Zweck-Trennung. Kein Speicher, neustartfest, überlebt eine
+  Schlüsselrotation (alle Schlüssel werden probiert).
+
+**`POST /oauth/register`** — offen wie die Spezifikation es erwartet, und
+harmlos: eine Registrierung gewährt nichts, es folgt immer noch eine Anmeldung
+im Browser. Kein `client_secret`. Der `client_name` läuft durch `flattenText`
+und wird auf 100 Zeichen gekappt — er steht später auf dem Bildschirm, auf dem
+jemand sein Passwort tippt, und eine eingeschmuggelte Zeile dort wäre eine
+zweite, gefälschte Aussage.
+
+Stand: **1256 Tests grün** (vorher 1233), Typecheck sauber.
+
+**Kein Deploy nötig.** P2 allein ändert für einen Client nichts Sichtbares: die
+Registrierung gelänge, dann scheiterte `/oauth/authorize` (P3). Sinnvoll wird
+der nächste Live-Test nach P4.
+
+---
+
+## OAuth — P3 abgeschlossen 2026-08-05
+
+**Stand:** `/oauth/authorize` steht — beide Hälften. Ein Client, der diesen
+Server einträgt, kommt jetzt bis zur Anmeldeseite, meldet sich an und erhält
+einen Autorisierungscode. Was noch fehlt, ist der Tausch dieses Codes gegen den
+Zugang: **P4 (`/oauth/token`)**.
+
+**Nachweis:** `npm test` → **1290 Tests, 1290 bestanden** (vor P3: 1266).
+`npx tsc -p tsconfig.typecheck.json --noEmit` → exit 0. Dazu ein Durchlauf gegen
+einen echten lokalen Server im Browser (siehe „Was das Ausführen fand").
+
+### Was gebaut wurde
+
+| Datei | Rolle |
+|---|---|
+| `src/auth/oauth-codes.ts` | der einzige Zustand: Codes, eine Minute, einmal nutzbar, unter SHA-256 abgelegt, in der Zahl begrenzt |
+| `src/auth/access-issue.ts` | die Ausstellung, aus `rest/auth-pages.ts` **verschoben** (nicht kopiert) |
+| `src/auth/oauth-authorize.ts` | was eine Autorisierungsanfrage annehmbar macht — rein, von GET und POST geteilt |
+| `src/rest/oauth-consent.ts` | `GET`/`POST /oauth/authorize` obendrauf — eigenes Modul, weil `oauth-pages.ts` sonst zwei Änderungsgründe trägt |
+| `src/rest/oauth-http.ts` | was beide OAuth-Module teilen (eine `send`-Fassung, ein Kopfsatz) |
+| `src/rest/static.ts` | `sendAsset` herausgelöst, `AUTH_CSP`/`AUTHORIZE_ASSET` exportiert |
+| `public/authorize.html`, `public/authorize.js` | die Seite, auf der jemand sein Passwort tippt |
+| `src/http-app.ts` | ein Code-Speicher je Prozess, an den Endpunkt gereicht |
+
+### Die drei Festlegungen, die tragen
+
+1. **Erst prüfen, dann fragen.** Unbekannter Client, nicht registrierte
+   Rückleitung, `plain` statt `S256`, fremder `response_type` → 400 mit einer
+   deutschen Seite und **ohne Weiterleitung**. Ein Fehler an eine Adresse zu
+   schicken, die wir nicht anerkannt haben, machte diesen Server zum Umleiter
+   für jeden, der einen Link schreiben kann.
+2. **Der Block bleibt Chiffrat.** Er wartet im Speicher auf `/oauth/token`; wir
+   könnten ihn öffnen, tun es nicht. Das ist der Unterschied zum verworfenen
+   Tresor, und `oauth-codes.ts` importiert `access-token.ts` deshalb nicht.
+3. **Eine Prüffassung für beide Hälften.** GET entscheidet, was gezeigt wird,
+   POST, was geprägt wird — mit zwei Fassungen verschwindet die PKCE-Pflicht
+   irgendwann auf dem Pfad, der den Code wirklich ausgibt.
+
+### Was das Ausführen fand — und kein Test sah
+
+Ein lokaler Durchlauf im Browser (eigener Wegwerf-Schlüssel, Repository auf eine
+tote Adresse gesetzt, damit **keine** Anmeldung irgendwo ankommt) zeigte sofort:
+jede Einwilligung endete mit „Dieser Anfragetyp wird nicht unterstützt".
+
+Die Seite sendete `response_type` nicht mit; der Endpunkt verlangt es. **Beide
+Seiten waren grün getestet** — jede gegen die Vorstellung des Autors vom Körper
+der Anfrage. Genau die Lehre, die in `CLAUDE.md` schon für die Kuratierung
+steht, hier ein zweites Mal.
+
+Der Test dagegen (`oauth-authorize-page.test.ts`) liest die Feldnamen **aus der
+Seite** und gibt sie der **echten** Prüffunktion. Er wäre rot gewesen.
+
+Live bestätigt: Seite mit Programmname und Rückleitungsziel, Ablehnen-Knopf
+liefert `?error=access_denied&state=…` an den Callback, falsche Anmeldedaten
+ergeben den deutschen Text und die Eingaben bleiben stehen, keine
+CSP-Verletzung in der Konsole.
+
+**Nicht live geprüft:** der Erfolgsfall — er braucht echte WLO-Zugangsdaten.
+Abgedeckt ist er durch die Endpunkt-Tests mit gefälschter Autorität; der
+Live-Nachweis gehört nach P4 in einen Durchlauf gegen Staging.
+
+### Hochladen
+
+Nicht nötig für P3 allein: ein Client käme jetzt bis zur Anmeldung und
+scheiterte am Tausch. Der nächste sinnvolle Live-Test ist **nach P4**.
+
+Neu/geändert: `src/auth/oauth-codes.ts`, `src/auth/access-issue.ts`,
+`src/auth/oauth-authorize.ts`, `src/rest/oauth-pages.ts`, `src/rest/oauth-consent.ts`,
+`src/rest/oauth-http.ts`, `src/rest/static.ts`,
+`src/rest/auth-pages.ts`, `src/http-app.ts`, `public/authorize.html`,
+`public/authorize.js`, `public/auth.css`, `tests/oauth-codes.test.ts`,
+`tests/oauth-authorize-page.test.ts`, `tests/oauth-endpoints.test.ts`,
+`tests/shared-rule-discipline.test.ts`, `CHANGELOG.md`,
+`docs/plans/2026-08-05-mcp-oauth-tasks.md`, `docs/plans/STATUS.md`.
+
+---
+
+## OAuth — P4 abgeschlossen 2026-08-05
+
+**Stand:** Der Anmeldeweg ist **vollständig**. Ein Client findet den Server,
+registriert sich, schickt den Nutzer zur Anmeldung, tauscht den Code und
+arbeitet danach mit dessen WLO-Rechten. Offen ist nur noch **P5**: der
+Live-Durchlauf gegen ChatGPT und Claude plus Doku.
+
+**Nachweis:** `npm test` → **1302 Tests, 1302 bestanden** (vor P4: 1291).
+`npx tsc -p tsconfig.typecheck.json --noEmit` → exit 0.
+
+### Was gebaut wurde
+
+| Datei | Rolle |
+|---|---|
+| `src/rest/oauth-token.ts` | `POST /oauth/token` — der Tausch. Eigenes Modul, nicht in `oauth-pages.ts`: Metadaten ausliefern, ein Passwort entgegennehmen und einen Einmal-Code einlösen sind drei verschiedene Dinge |
+| `src/rest/oauth-pages.ts` | `/oauth/token` in die Route-Tabelle |
+| `tests/oauth-flow.test.ts` | der ganze Weg durch einen echten `node:http`-Server |
+
+### Die drei Festlegungen
+
+1. **Das Token IST der Block.** Kein zweites Geheimnis, kein Speicher, keine
+   Lebensdauer, die wir nicht einhalten könnten — und genau deshalb beendet ein
+   Widerruf auf `/auth-revoke.html` beide Wege gleichzeitig. Kein
+   `refresh_token`, kein `expires_in`.
+2. **Verbraucht ist verbraucht.** Der Code wird aus dem Speicher genommen,
+   **bevor** irgendeine Prüfung läuft. Bliebe er nach einem falschen
+   PKCE-Nachweis liegen, wäre der Einmal-Code ein Rateorakel.
+3. **Ein Fehlertext für jeden Fehlschlag.** `invalid_grant` mit derselben
+   Beschreibung für unbekannten Code, fremden Client, abweichendes Ziel und
+   falschen Verifier: welcher Teil nicht stimmte, ist genau das, was jemand mit
+   einem gestohlenen Code gern wüsste.
+
+### Der Fluss-Test, und warum er nicht geschenkt ist
+
+`tests/oauth-flow.test.ts` geht neun Schritte: zwei Discovery-Dokumente,
+Registrierung, Einwilligung, Tausch, ein `tools/list` mit dem Token (die
+Kurations-Werkzeuge sind dabei), Widerruf, dasselbe Token → **401**, und ohne
+Kopf → **200 mit der anonymen Liste**. Die letzten beiden sind der Zweck: die
+Zusicherung, die das Design gibt, und die, die dieses Vorhaben am leichtesten
+kaputt macht.
+
+Weil der Test nach dem Code entstand, wurde er **durch Mutation geprüft** statt
+behauptet:
+
+| Mutation | Ergebnis |
+|---|---|
+| `access_token` ist nicht mehr der Block | Fluss-Test rot |
+| `consume` löscht den Eintrag nicht | Fluss-Test rot („zweimal einlösen") |
+| Code bleibt nach dem Einlösen im Speicher | Endpunkt-Tests rot (`store.size()`) |
+
+Dazu ein Riss, den vorher nichts abdeckte: das Discovery-Dokument verspricht
+Clients drei Pfade, und eine Umbenennung der Route hätte es still gebrochen —
+der Client folgt dem Dokument in ein 404 und meldet „kein OAuth hier". Jetzt
+prüft ein Test, dass jeder genannte Pfad auch geführt wird.
+
+`tsc` fand außerdem einen Typfehler in meinem eigenen Test, den `npm test` nicht
+sehen kann (tsx prüft keine Typen) — beides gehört in jeden Durchlauf.
+
+### Hochladen — jetzt lohnt es
+
+Nach P4 ist der Weg zum ersten Mal live prüfbar. Neu/geändert gegenüber dem
+Stand auf dem Server: alles aus dem P3-Abschnitt oben **plus**
+`src/rest/oauth-token.ts`, `src/rest/oauth-pages.ts`, `tests/oauth-flow.test.ts`,
+`tests/oauth-endpoints.test.ts`, `CHANGELOG.md`,
+`docs/plans/2026-08-05-mcp-oauth-tasks.md`, `docs/plans/STATUS.md`.
+
+**Vor dem Live-Test bedenken:** die Anmeldeseite verlangt echte WLO-Zugangsdaten
+— dieser Schritt ist bisher nur mit gefälschter Autorität geprüft.

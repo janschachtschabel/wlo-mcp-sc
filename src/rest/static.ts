@@ -63,7 +63,7 @@ const JS = 'text/javascript; charset=utf-8';
  * encrypting in the browser. `form-action 'none'` closes the other door: if the
  * page's JS ever failed, a native submit would post the password in clear.
  */
-const AUTH_CSP =
+export const AUTH_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -94,6 +94,9 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/auth.css': { relPath: 'auth.css', contentType: CSS },
   '/auth.js': { relPath: 'auth.js', contentType: JS },
   '/auth-revoke.js': { relPath: 'auth-revoke.js', contentType: JS },
+  // The script only; `authorize.html` is served by `GET /oauth/authorize` after
+  // its parameters check out (see AUTHORIZE_ASSET).
+  '/authorize.js': { relPath: 'authorize.js', contentType: JS },
   '/access-block.js': { relPath: 'access-block.js', contentType: JS },
 };
 
@@ -122,16 +125,62 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'pub
 
 /** Minimal request/response surface the adapter needs (satisfied by node:http). */
 interface StaticReq { method?: string; url?: string }
-interface StaticRes {
+export interface StaticRes {
   writeHead: (status: number, headers?: Record<string, string>) => void;
   end: (body?: string) => void;
 }
 
 /**
- * HTTP adapter for `http.ts`: dispatch via `resolveStaticRoute`, read and write
- * the mapped file, and report whether the request was handled (so the caller can
- * fall through when it wasn't). A missing/unreadable asset is a server-side
- * misconfiguration → logged and reported as a generic 500 (no detail leaks).
+ * The authorization page. Deliberately NOT in `STATIC_ROUTES`: it is served only
+ * by `GET /oauth/authorize`, and only after the request's parameters have been
+ * checked. Showing a password field first and validating afterwards would mean
+ * someone could be asked for their WLO password on behalf of a client we never
+ * recognised.
+ */
+export const AUTHORIZE_ASSET: StaticAsset = {
+  relPath: 'authorize.html',
+  contentType: HTML,
+  csp: AUTH_CSP,
+};
+
+/**
+ * Write one asset from `public/`. Shared by `handleStaticRequest` and by
+ * `rest/oauth-pages.ts`, which serves the authorization page itself — one copy,
+ * so the CSP and the `nosniff` header cannot drift apart between them.
+ *
+ * A missing or unreadable asset is a server-side misconfiguration → logged and
+ * reported as a generic 500 (no detail leaks).
+ */
+export async function sendAsset(res: StaticRes, asset: StaticAsset): Promise<void> {
+  try {
+    // relPath is a constant from this module, never from the URL → no traversal.
+    const body = await readFile(join(publicDir, asset.relPath), 'utf8');
+    // nosniff: the declared Content-Type is authoritative; browsers must not
+    // second-guess it (defense-in-depth for the public static surface).
+    res.writeHead(200, {
+      'Content-Type': asset.contentType,
+      'X-Content-Type-Options': 'nosniff',
+      ...(asset.csp
+        ? { 'Content-Security-Policy': asset.csp }
+        : asset.contentType.startsWith('text/html')
+          ? { 'Content-Security-Policy': LAUNCHER_CSP }
+          : {}),
+    });
+    res.end(body);
+  } catch (err) {
+    log.error('static asset read failed', {
+      relPath: asset.relPath,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Internal server error' }));
+  }
+}
+
+/**
+ * HTTP adapter for `http.ts`: dispatch via `resolveStaticRoute`, write the
+ * mapped file through `sendAsset`, and report whether the request was handled
+ * (so the caller can fall through when it wasn't).
  */
 export async function handleStaticRequest(req: StaticReq, res: StaticRes): Promise<boolean> {
   const result = resolveStaticRoute(req.method, req.url);
@@ -141,28 +190,6 @@ export async function handleStaticRequest(req: StaticReq, res: StaticRes): Promi
     res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
     return true;
   }
-  try {
-    // relPath is a constant from STATIC_ROUTES, never from the URL → no traversal.
-    const body = await readFile(join(publicDir, result.asset.relPath), 'utf8');
-    // nosniff: the declared Content-Type is authoritative; browsers must not
-    // second-guess it (defense-in-depth for the public static surface).
-    res.writeHead(200, {
-      'Content-Type': result.asset.contentType,
-      'X-Content-Type-Options': 'nosniff',
-      ...(result.asset.csp
-        ? { 'Content-Security-Policy': result.asset.csp }
-        : result.asset.contentType.startsWith('text/html')
-          ? { 'Content-Security-Policy': LAUNCHER_CSP }
-          : {}),
-    });
-    res.end(body);
-  } catch (err) {
-    log.error('static asset read failed', {
-      relPath: result.asset.relPath,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Internal server error' }));
-  }
+  await sendAsset(res, result.asset);
   return true;
 }

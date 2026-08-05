@@ -9,20 +9,17 @@
  * makes it a guessing oracle with our address as the origin. It therefore passes
  * BOTH limiters: requests per address, and distinct logins per address.
  *
- * The rule that shapes issuance came out of the P0 probe: **at this API a 200 is
- * not proof of a login**. `/iam/v1/people/-home-/-me-` answers 200 with the
- * guest authority for absent credentials, and an anonymous read of
- * `-userhome-/children` answers 200 as well. So the check reads the reported
- * AUTHORITY. Trusting `res.ok` would hand out blocks for logins that do not
- * work, and the holder would discover it days later as "the tools return
- * nothing".
+ * Issuance itself lives in `auth/access-issue.ts` — decode, limit, verify the
+ * login at the AUTHORITY (not the status code), list the id. It was moved there
+ * when `/oauth/authorize` needed the identical step; this module keeps the HTTP
+ * shape around it, including the `Retry-After` the 429 carries.
  *
  * Returns `false` for a path it does not own so the caller falls through.
  */
 
+import { issueAccessBlock } from '../auth/access-issue.js';
 import { decodeAccessToken } from '../auth/access-token.js';
-import { currentAccessSupport, runWithCredential, type WloCredential } from '../auth/credential.js';
-import { checkIdentity } from '../auth/identity.js';
+import { currentAccessSupport } from '../auth/credential.js';
 import { log } from '../logger.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { readBodyWithLimit } from '../read-body.js';
@@ -77,12 +74,6 @@ async function readToken(req: AuthReq, maxBodyBytes: number): Promise<string | n
   } catch {
     return null;
   }
-}
-
-/** Does this login actually work? The authority decides, not the status code. */
-async function loginWorks(credential: WloCredential): Promise<boolean> {
-  const identity = await runWithCredential(credential, () => checkIdentity());
-  return identity.authenticated;
 }
 
 /**
@@ -158,14 +149,13 @@ async function route(
   const token = await readToken(req, deps.maxBodyBytes);
   if (!token) return send(res, 400, { error: 'Es wurde kein Zugangsblock übermittelt.' });
 
-  const payload = decodeAccessToken(token, support.keys);
-  if (!payload) {
-    // No detail about WHY: a wrong key, a tampered block and a foreign one must
-    // look identical from outside.
-    return send(res, 400, { error: 'Dieser Zugangsblock ist ungültig oder gehört nicht zu diesem Server.' });
-  }
-
   if (parsed.pathname === '/auth/revoke') {
+    const payload = decodeAccessToken(token, support.keys);
+    if (!payload) {
+      // No detail about WHY: a wrong key, a tampered block and a foreign one
+      // must look identical from outside.
+      return send(res, 400, { error: 'Dieser Zugangsblock ist ungültig oder gehört nicht zu diesem Server.' });
+    }
     const revoked = await support.registry.remove(payload.jti);
     // Sanitized because NOTHING here has verified `u`: anyone can encrypt a
     // block against our public key, so the name is caller-chosen text on its way
@@ -177,40 +167,18 @@ async function route(
     return send(res, 200, { revoked });
   }
 
-  const credential: WloCredential = {
-    header: `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`,
-    label: payload.u,
-    source: 'user',
-  };
-
-  // Counted AFTER decoding, so only logins we would really try upstream count —
-  // and counted before the upstream call, so a guesser never reaches WLO.
-  if (deps.authAbuseLimiter.check(deps.ip, credential.header, Date.now())) {
-    log.warn('too many distinct logins offered for issuance', { ip: deps.ip });
-    res.writeHead(429, { ...JSON_HEADERS, 'Retry-After': '600' });
-    res.end(JSON.stringify({ error: 'Zu viele verschiedene Anmeldungen von dieser Adresse.' }));
-    return true;
+  const outcome = await issueAccessBlock(
+    token,
+    { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
+    Date.now(),
+  );
+  if (!outcome.ok) {
+    if (outcome.status === 429) {
+      res.writeHead(429, { ...JSON_HEADERS, 'Retry-After': '600' });
+      res.end(JSON.stringify({ error: outcome.error }));
+      return true;
+    }
+    return send(res, 400, { error: outcome.error });
   }
-
-  if (!(await loginWorks(credential))) {
-    log.info('issuance refused — credentials not accepted', { label: sanitizeText(payload.u) });
-    return send(res, 400, {
-      error: 'Diese Zugangsdaten hat WLO nicht akzeptiert. Bitte Benutzername und Passwort prüfen.',
-    });
-  }
-
-  // Past this point WLO has accepted `u`, so the stored label is a real user
-  // name and goes in unaltered — the registry groups its per-account cap by it,
-  // and a capped label could fold two accounts into one bucket.
-  //
-  // `iat` is OURS, not `payload.iat`: the one inside the block comes from the
-  // browser's clock and is whatever the issuer put there. An operator pruning or
-  // auditing the list needs a timestamp this server stands behind.
-  await support.registry.add({
-    jti: payload.jti,
-    label: payload.u,
-    iat: Math.floor(Date.now() / 1000),
-  });
-  log.info('access block issued', { label: sanitizeText(payload.u) });
-  return send(res, 200, { ok: true, label: payload.u });
+  return send(res, 200, { ok: true, label: outcome.label });
 }

@@ -9,14 +9,14 @@ erweist, ändert zuerst das Design.
 | Paket | Inhalt | Zustand |
 |---|---|---|
 | P1 | Discovery-Dokumente + Vier-Wege-Entscheidung + 401-Kette | **fertig 2026-08-05** (T1.6 offen: Messung) |
-| P2 | `/oauth/register` — die Redirect-Prüfung | gesperrt bis Messung P1 |
-| P3 | `/oauth/authorize` + Anmeldeseite | gesperrt |
-| P4 | `/oauth/token` | gesperrt |
-| P5 | Live-Durchlauf, Doku, Abschluss | gesperrt |
+| P2 | `/oauth/register` — die Redirect-Prüfung | **fertig 2026-08-05** |
+| P3 | `/oauth/authorize` + Anmeldeseite | **fertig 2026-08-05** |
+| P4 | `/oauth/token` | **fertig 2026-08-05** |
+| P5 | Live-Durchlauf, Doku, Abschluss | freigegeben |
 
-**P2–P5 sind gesperrt, bis die Messung am Ende von P1 vorliegt.** Fällt sie
-negativ aus (ein Client findet OAuth ohne 401 nicht), ist die nächste Handlung
-eine Design-Änderung, keine Aufgabe aus diesem Plan.
+**Die Sperre ist am 2026-08-05 aufgehoben.** Die Messung (T1.6) fiel positiv
+aus: ChatGPT findet die Discovery-Dokumente ohne 401 und scheitert erst an
+`/oauth/register` — dem ersten Stück von Paket 2.
 
 ---
 
@@ -367,7 +367,7 @@ Nicht von mir ausführbar: braucht den Deploy und einen echten Client.
 
 ---
 
-# P2 — `/oauth/register` (gesperrt bis T1.6)
+# P2 — `/oauth/register`
 
 **Schritt 0: `/better-coding-workflow` aufrufen.**
 
@@ -418,7 +418,7 @@ Auskunft darüber wäre ein Orakel.
 
 **Schritte**
 
-- [ ] Test zuerst (rot). Die Prüfungen, die zählen:
+- [x] Test zuerst (rot). Die Prüfungen, die zählen:
   - `isValidRedirectUri`: `https://a.example/cb` ✓ · `http://localhost:1234/cb` ✓
     · `http://127.0.0.1/cb` ✓ · `http://a.example/cb` ✗ · `https://a.example/cb#x` ✗
     · `javascript:alert(1)` ✗ · `data:text/html,x` ✗ · `/relativ` ✗
@@ -435,8 +435,8 @@ Auskunft darüber wäre ein Orakel.
   - `client_id`: Rundlauf erhält `redirectUris` und `name`; ein Zeichen im
     Chiffrat gekippt → `null`; unter einem **anderen** Schlüssel erzeugt → `null`;
     `'wloc1.aaa.bbb'` → `null`; leerer String → `null`
-- [ ] Modul schreiben, grün
-- [ ] `npm test` (auch `shared-rule-discipline` — das Modul schreibt nicht auf Platte)
+- [x] Modul schreiben, grün
+- [x] `npm test` (auch `shared-rule-discipline` — das Modul schreibt nicht auf Platte)
 
 **Nachweis:** `node --import tsx --test tests/oauth-clients.test.ts` grün.
 
@@ -469,7 +469,7 @@ Fehler `400` `{ "error": "invalid_redirect_uri" | "invalid_client_metadata",
 
 **Schritte**
 
-- [ ] Tests zuerst (rot):
+- [x] Tests zuerst (rot):
   - ohne Support → 404
   - gültige Registrierung → 201, `client_id` beginnt `wloc1.`, kein
     `client_secret` im Körper
@@ -479,12 +479,12 @@ Fehler `400` `{ "error": "invalid_redirect_uri" | "invalid_client_metadata",
   - kein JSON → 400 `invalid_client_metadata`
   - `GET /oauth/register` → 405
   - der zurückgegebene `client_id` überlebt `decodeClientId` mit denselben URIs
-- [ ] Umsetzen, grün
-- [ ] `npm test`
+- [x] Umsetzen, grün
+- [x] `npm test`
 
 ---
 
-# P3 — `/oauth/authorize` + Anmeldeseite (gesperrt)
+# P3 — `/oauth/authorize` + Anmeldeseite
 
 **Schritt 0: `/better-coding-workflow` **und** `/better-coding-frontend`
 aufrufen** (dieses Paket enthält eine Seite, auf der jemand sein Passwort tippt).
@@ -531,7 +531,7 @@ Kommentar hinein.
 
 **Schritte**
 
-- [ ] Test zuerst (rot):
+- [x] Test zuerst (rot):
   - `mint` → `consume` liefert den Satz zurück
   - zweites `consume` → `null` (Einmaligkeit)
   - `consume` bei `now > expiresAt` → `null`
@@ -539,8 +539,8 @@ Kommentar hinein.
   - `MAX_CODES + 1` Prägungen → `size() === MAX_CODES`, die älteste weg
   - zwei Prägungen liefern verschiedene Codes
   - der rohe Code taucht in `JSON.stringify` des internen Zustands **nicht** auf
-- [ ] Modul, grün
-- [ ] `npm test`
+- [x] Modul, grün
+- [x] `npm test`
 
 ---
 
@@ -575,12 +575,12 @@ erhalten. `/auth/issue` ruft es fortan auf; `/oauth/authorize` (T3.4) ebenfalls.
 
 **Schritte**
 
-- [ ] `npm test` **vorher** → `auth-endpoints.test.ts` grün, Ausgang notieren
-- [ ] Verschieben, `auth-pages.ts` ruft auf
-- [ ] `npm test` **nachher** → **derselbe** Ausgang. Kein Test angefasst.
+- [x] `npm test` **vorher** → `auth-endpoints.test.ts` grün, Ausgang notieren
+- [x] Verschieben, `auth-pages.ts` ruft auf
+- [x] `npm test` **nachher** → **derselbe** Ausgang. Kein Test angefasst.
       Muss einer angepasst werden, war es kein Verschieben, sondern eine
       Änderung — dann anhalten und sagen, welche.
-- [ ] Regel ergänzen in `tests/shared-rule-discipline.test.ts`: `checkIdentity(` in
+- [x] Regel ergänzen in `tests/shared-rule-discipline.test.ts`: `checkIdentity(` in
       `src/**` nur in `auth/identity.ts` und `auth/access-issue.ts`. Begründung als
       Kommentar: die Autoritätsprüfung ist die Regel, an der „200 heißt nicht
       angemeldet" hängt; eine zweite Fassung würde genau die vergessen.
@@ -619,12 +619,12 @@ ruft ihn ebenfalls: eine Fassung, nicht zwei (dieselbe Regel wie T3.2).
 
 **Schritte**
 
-- [ ] Tests zuerst (rot): jeder Ablehnungsfall oben → 400 **und** `location`-Kopf
+- [x] Tests zuerst (rot): jeder Ablehnungsfall oben → 400 **und** `location`-Kopf
       fehlt; gültige Anfrage → 200, `content-type` HTML, CSP-Kopf gesetzt
-- [ ] `sendAsset` herauslösen, `handleStaticRequest` darauf umstellen,
+- [x] `sendAsset` herauslösen, `handleStaticRequest` darauf umstellen,
       `rest-static.test.ts` muss unverändert grün bleiben
-- [ ] Umsetzen, grün
-- [ ] `npm test`
+- [x] Umsetzen, grün
+- [x] `npm test`
 
 ---
 
@@ -658,7 +658,7 @@ im Speicher und verlässt uns erst über `/oauth/token`.
 
 **Schritte**
 
-- [ ] Tests zuerst (rot):
+- [x] Tests zuerst (rot):
   - gültiger Ablauf (gefälschtes WLO wie in `auth-endpoints.test.ts`, Autorität
     gesetzt) → 200, `redirect` beginnt mit der registrierten URI, trägt `code`
     und `state`
@@ -668,10 +668,29 @@ im Speicher und verlässt uns erst über `/oauth/token`.
   - kein `token` → 400
   - `state` fehlt → `redirect` ohne `state`
   - der geprägte Satz trägt den Block, und der Antwortkörper trägt ihn **nicht**
-- [ ] Umsetzen, grün
-- [ ] `npm test`
+- [x] Umsetzen, grün
+- [x] `npm test`
 
 ---
+
+> **Abweichungen von diesem Paket, bewusst und gemessen (2026-08-05):**
+>
+> 1. **`GET /oauth/authorize` beantwortet `Accept: application/json` mit den
+>    geprüften Anzeigedaten** (`{client_name, redirect_uri}`). Der Entwurf ließ
+>    offen, woher die Seite den Namen nimmt — sie kann ihn nicht selbst haben:
+>    `client_id` ist ein Chiffrat, das nur der Server öffnet. Die Alternativen
+>    waren, den Namen in die Seite zu schreiben (Templating auf genau der Seite,
+>    auf der jemand sein Passwort tippt) oder ihn aus der Query zu übernehmen
+>    (dann sagt die Einwilligungsseite, was der Aufrufer will). Beides schlechter
+>    als eine zweite Darstellung desselben Endpunkts.
+> 2. **T3.5 wurde vor T3.3 gebaut.** Der 200-Fall von T3.3 liefert diese Datei
+>    aus; ohne sie hätte der Test rot bleiben müssen, bis T3.5 kam.
+> 3. **Die Prüfung liegt in `src/auth/oauth-authorize.ts`**, nicht in
+>    `oauth-pages.ts`: GET und POST prüfen dieselbe Anfrage, und zwei Fassungen
+>    sind genau die Stelle, an der die PKCE-Pflicht auf dem Pfad, der den Code
+>    wirklich ausgibt, still verschwindet.
+> 4. **`src/rest/static.ts` exportiert `AUTH_CSP` und `AUTHORIZE_ASSET`**, damit
+>    Ablehnungsseite und Einwilligungsseite unter derselben Richtlinie stehen.
 
 ### T3.5 — Die Anmeldeseite
 
@@ -701,7 +720,7 @@ den Feldern (kein Platzhalter als Beschriftung), `autocomplete="username"` /
 
 **Schritte**
 
-- [ ] Tests zuerst (rot):
+- [x] Tests zuerst (rot):
   - `tests/launcher-contrast.test.ts` um `authorize.html` erweitern, falls es
     eigene Farben mitbringt — sonst erbt es `auth.css` und ist abgedeckt;
     **nachsehen, nicht annehmen**
@@ -709,16 +728,22 @@ den Feldern (kein Platzhalter als Beschriftung), `autocomplete="username"` /
   - jedes Eingabefeld hat ein `<label for>`
   - `authorize.js` sendet an `/oauth/authorize` und nirgends sonst
     (Quelltext-Prüfung wie in `access-block-browser.test.ts`)
-- [ ] Seite und Skript schreiben, in `static.ts` eintragen, grün
-- [ ] `npm test`
+- [x] Seite und Skript schreiben, in `static.ts` eintragen, grün
+- [x] `npm test`
 
 ---
 
-# P4 — `/oauth/token` (gesperrt)
+# P4 — `/oauth/token`
 
 **Schritt 0: `/better-coding-workflow` aufrufen.**
 
 ---
+
+> **Abweichung, bewusst (2026-08-05):** der Endpunkt liegt in
+> `src/rest/oauth-token.ts`, nicht in `oauth-pages.ts`. Der Plan wurde vor der
+> Teilung in P3 geschrieben; „Metadaten veröffentlichen", „ein Passwort
+> entgegennehmen" und „einen Einmal-Code einlösen" sind drei verschiedene Dinge,
+> die man falsch machen kann.
 
 ### T4.1 — Der Tausch
 
@@ -747,7 +772,7 @@ Reihenfolge:
 
 **Schritte**
 
-- [ ] Tests zuerst (rot):
+- [x] Tests zuerst (rot):
   - vollständiger Ablauf: register → authorize → token → `access_token` ist
     genau der geprägte Block
   - derselbe Code ein zweites Mal → 400 `invalid_grant`
@@ -757,8 +782,8 @@ Reihenfolge:
   - Loopback mit **anderem Port** → **200** (RFC 8252, der Fall, für den die Regel da ist)
   - `grant_type=refresh_token` → 400 `unsupported_grant_type`
   - Antwort trägt `cache-control: no-store` und kein `expires_in`
-- [ ] Umsetzen, grün
-- [ ] `npm test`
+- [x] Umsetzen, grün
+- [x] `npm test`
 
 ---
 
@@ -791,13 +816,13 @@ dieses Vorhaben am leichtesten kaputt macht.
 
 **Schritte**
 
-- [ ] Test schreiben; er muss an der Stelle rot sein, die noch nicht steht
-- [ ] Grün bekommen, ohne eine Zusicherung abzuschwächen
-- [ ] `npm test`
+- [x] Test schreiben; er muss an der Stelle rot sein, die noch nicht steht
+- [x] Grün bekommen, ohne eine Zusicherung abzuschwächen
+- [x] `npm test`
 
 ---
 
-# P5 — Live, Doku, Abschluss (gesperrt)
+# P5 — Live, Doku, Abschluss
 
 **Schritt 0: `/better-coding-workflow` aufrufen. Vor jeder Fertig-Aussage
 zusätzlich `/better-coding-verify`.**

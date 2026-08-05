@@ -1,0 +1,168 @@
+/**
+ * rest/oauth-consent.ts – `/oauth/authorize`, both halves.
+ *
+ * The GET decides whether anyone is shown a password field; the POST decides
+ * whether a code is minted. They share one check (`auth/oauth-authorize.ts`)
+ * because they are the same request seen twice, and two copies of that rule are
+ * where the PKCE requirement quietly disappears from the path that actually
+ * hands out the code.
+ *
+ * Two properties hold on both halves:
+ *
+ * - **Check first, ask second.** Nothing is shown and nothing is minted until
+ *   the client, the redirect target, the response type and the PKCE method are
+ *   all recognised.
+ * - **A refusal never redirects.** Sending an error to a `redirect_uri` we did
+ *   not recognise would make this server a way to bounce people to arbitrary
+ *   targets with our domain as the referrer.
+ *
+ * German user text on purpose: it is read by the person in front of the screen.
+ */
+
+import { issueAccessBlock } from '../auth/access-issue.js';
+import type { AuthKeys } from '../auth/access-token.js';
+import type { AccessSupport } from '../auth/credential.js';
+import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-authorize.js';
+import { log } from '../logger.js';
+import { send, readJsonBody, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
+import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
+
+/** Does the caller want data rather than the page? The page's own fetch does. */
+function wantsJson(req: OAuthReq): boolean {
+  const accept = req.headers?.['accept'];
+  return (Array.isArray(accept) ? accept.join(',') : accept ?? '').includes('application/json');
+}
+
+/**
+ * A refusal, as a page. No interpolation of anything the caller sent: the text
+ * is one of a fixed set from `oauth-authorize.ts`, so there is nothing here that
+ * needs escaping and nothing a client can make this page say.
+ */
+function refusalPage(message: string): string {
+  return `<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Anfrage abgelehnt · WirLernenOnline</title>
+<link rel="stylesheet" href="/auth.css" />
+</head>
+<body>
+<main>
+  <h1>Diese Anfrage wurde abgelehnt</h1>
+  <div class="card">
+    <p>${message}</p>
+    <p class="hint">Es wurde nichts an dein Konto weitergegeben und keine Anmeldung versucht.
+      Bitte die Verbindung im Programm neu einrichten.</p>
+  </div>
+  <footer><p>WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p></footer>
+</main>
+</body>
+</html>
+`;
+}
+
+/**
+ * `GET /oauth/authorize` — check first, ask second.
+ *
+ * The JSON form exists because the consent screen has to name who is asking, and
+ * the `client_id` is a ciphertext the browser cannot open. The page therefore
+ * asks this same URL what was recognised, rather than repeating the caller's own
+ * query back at the person about to type their password.
+ */
+export async function showConsent(
+  req: OAuthReq,
+  res: OAuthRes,
+  params: URLSearchParams,
+  keys: AuthKeys,
+): Promise<true> {
+  const checked = checkAuthorizeParams((name) => params.get(name), keys);
+  if (!checked.ok) {
+    log.info('authorization request refused', { reason: checked.error });
+    if (wantsJson(req)) return send(res, 400, { error: checked.error });
+    res.writeHead(400, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': AUTH_CSP,
+    });
+    res.end(refusalPage(checked.error));
+    return true;
+  }
+
+  if (wantsJson(req)) {
+    return send(res, 200, {
+      client_name: checked.request.client.name,
+      redirect_uri: checked.request.redirectUri,
+    }, { 'Cache-Control': 'no-store' });
+  }
+
+  await sendAsset(res, AUTHORIZE_ASSET);
+  return true;
+}
+
+/**
+ * `POST /oauth/authorize` — the consent itself.
+ *
+ * JSON, not a form. `form-action 'none'` is in the page's policy, and a JSON
+ * body cannot be sent cross-origin without a preflight the browser will refuse
+ * here (`/oauth/authorize` carries no CORS header, by the rule from P1). That
+ * closes CSRF without a token of our own — and CSRF on this endpoint would mean
+ * a page elsewhere getting a code minted for a login it does not have anyway.
+ *
+ * The parameters are re-checked even though the GET already checked them: the
+ * GET decided what to SHOW, this decides what to MINT, and only one of the two
+ * can be trusted to have happened.
+ *
+ * What comes back is a redirect TARGET, not a redirect: the page navigates. A
+ * 302 would work for a browser and would also let anything else discover the
+ * code by following it.
+ */
+export async function grantConsent(
+  req: OAuthReq,
+  res: OAuthRes,
+  deps: OAuthEndpointDeps,
+  support: AccessSupport,
+): Promise<true> {
+  const body = await readJsonBody(req, deps.maxBodyBytes);
+  if (!body || body === 'too-large') {
+    return send(res, 400, { error: 'Die Anfrage konnte nicht gelesen werden.' });
+  }
+
+  const checked = checkAuthorizeParams(
+    (name) => (typeof body[name] === 'string' ? (body[name] as string) : null),
+    support.keys,
+  );
+  if (!checked.ok) {
+    log.info('consent refused before any login was tried', { reason: checked.error });
+    return send(res, 400, { error: checked.error });
+  }
+
+  const token = typeof body['token'] === 'string' ? body['token'] : '';
+  if (!token) return send(res, 400, { error: 'Es wurde kein Zugangsblock übermittelt.' });
+
+  // The same issuance `/auth/issue` performs: decode, limit, and verify the
+  // login at the AUTHORITY rather than at the status code.
+  const outcome = await issueAccessBlock(
+    token,
+    { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
+    Date.now(),
+  );
+  if (!outcome.ok) {
+    return send(res, outcome.status, { error: outcome.error },
+      outcome.status === 429 ? { 'Retry-After': '600' } : {});
+  }
+
+  const code = deps.codeStore.mint({
+    clientId: checked.request.clientId,
+    redirectUri: checked.request.redirectUri,
+    challenge: checked.request.challenge,
+    // Still a ciphertext. It waits here for `/oauth/token` and is never opened
+    // in between — the password is not part of this path.
+    block: token,
+    label: outcome.label,
+  }, Date.now());
+
+  log.info('authorization code issued', { client: checked.request.client.name, label: outcome.label });
+  return send(res, 200, { redirect: authorizationRedirect(checked.request, code) },
+    { 'Cache-Control': 'no-store' });
+}

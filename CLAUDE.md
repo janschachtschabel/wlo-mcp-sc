@@ -130,7 +130,7 @@ The current rebuild/extension is designed in:
   rejection forward, and a failed write is undone rather than left granting what
   it could not record.
 
-- **OAuth 2.1 für alle Clients — IN ARBEIT, P1 läuft (2026-08-05):**
+- **OAuth 2.1 für alle Clients — IN ARBEIT, P1–P4 fertig, nur P5 (live + Doku) offen (2026-08-05):**
   - Design: `docs/plans/2026-08-05-mcp-oauth-design.md`
   - Tasks:  `docs/plans/2026-08-05-mcp-oauth-tasks.md` (17 tasks, 5 packages)
 
@@ -145,10 +145,39 @@ The current rebuild/extension is designed in:
   block, so no credential ever rests on disk (the rejected vault) and no session
   store is needed; and a request with NO `Authorization` keeps answering 200
   anonymously — the 401 fires only for a presented-but-unusable OAuth token.
-  **Open point 1 is a gate, not a detail:** whether a client discovers OAuth
-  without a 401. **P1 IS that measurement** — it ships the discovery documents
-  and nothing that depends on the answer; P2–P5 stay locked until it is taken
-  (T1.6). A negative result means a design change, not the next task.
+  Open point 1 — whether a client discovers OAuth without a 401 — was the gate
+  and was **measured positive on 2026-08-05**: ChatGPT read both discovery
+  documents unprompted and reached `/oauth/register`. Anonymous reading and
+  OAuth therefore coexist on the same URL; no second URL, no forced 401.
+
+  Rules P3 adds, and they bind any change to the login flow: **the request is
+  checked before anyone is shown a password field**, and a refused one gets a
+  page, never a redirect — sending an error to a `redirect_uri` we did not
+  recognise turns this server into a redirector. The check lives ONCE, in
+  `src/auth/oauth-authorize.ts`, because GET decides what to show and POST what
+  to mint, and a second copy is where the PKCE requirement quietly disappears
+  from the path that actually issues the code. The consent page learns who is
+  asking from `GET /oauth/authorize` with `Accept: application/json`, not from
+  the query string — `client_id` is a ciphertext only the server opens, and
+  repeating the caller's own text back would let it name itself. The access
+  block waits in `oauth-codes.ts` as a CIPHERTEXT until `/oauth/token`; that
+  module deliberately does not import `access-token.ts`.
+
+  Rules P4 adds: the access token **IS** the block, which is the only reason one
+  revocation ends both ways in — do not wrap it in a second credential. No
+  `refresh_token`, no `expires_in`. The code is removed from the store BEFORE
+  any check runs (a failed PKCE proof must not leave it retryable), and every
+  failure answers the same `invalid_grant` text, because which check failed is
+  what a holder of a stolen code would like to learn.
+
+  Measured lesson from P3, the second time this shape has appeared: page and
+  endpoint were each green against the author's own idea of the request body and
+  **disagreed** (`response_type` was missing, so every consent failed). Only
+  running it found that. `tests/oauth-authorize-page.test.ts` now takes the
+  field names out of the PAGE and feeds them to the REAL check, and
+  `tests/oauth-flow.test.ts` walks all nine steps through a real server —
+  ending on the two lines that matter: a revoked token gets 401, and a request
+  with no header still gets the full anonymous list.
 
   Three implementation decisions the tasks add on top of the design: the
   `client_id` carries its own content (AES-GCM under a key derived from the

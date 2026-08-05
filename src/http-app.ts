@@ -24,6 +24,7 @@ import { clientKey } from './rate-limit.js';
 import { readBodyWithLimit } from './read-body.js';
 import { parseRequestUrl } from './request-url.js';
 import type { streamableHttpOptions } from './mcp-transport.js';
+import { createCodeStore } from './auth/oauth-codes.js';
 import { bearerChallenge, resolveIssuer } from './auth/oauth-metadata.js';
 import { handleAuthEndpoint } from './rest/auth-pages.js';
 import { handleOAuthEndpoint } from './rest/oauth-pages.js';
@@ -68,6 +69,11 @@ export function createHttpRequestHandler(
   const {
     rateLimiter, apiRateLimiter, authAbuseLimiter, maxBodyBytes, trustProxy, streamOptions, publicBaseUrl,
   } = opts;
+
+  // One store per process, held here rather than passed in: it takes no
+  // configuration, and `/oauth/authorize` and `/oauth/token` must share the very
+  // same instance or a code minted by one is unknown to the other.
+  const codeStore = createCodeStore();
 
   // Everything this server exposes to the internet runs ANONYMOUS by default,
   // and the one branch that needs rights takes them deliberately (see the MCP
@@ -338,7 +344,10 @@ export function createHttpRequestHandler(
     // makes that a constant anyway.
     if (await handleOAuthEndpoint(req, res, {
       ip: clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy),
+      maxBodyBytes,
       rateLimiter: apiRateLimiter,
+      authAbuseLimiter,
+      codeStore,
       issuer: resolveIssuer({
         configured: publicBaseUrl,
         host: req.headers['host'],
