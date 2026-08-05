@@ -9,6 +9,34 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — one log line per MCP request, naming the surface it was served (2026-08-05)
+
+`mcp request` with the JSON-RPC `method` and the resolved `mode`
+(`none` / `user` / `service`). Written after a day of live debugging in which
+the log answered everything except the question that mattered: it could say
+"nobody called us" — which twice ruled out the server in one step — but never
+"somebody called us, and this is the tool list they got".
+
+No label, no credential, no params: the question is which surface a request was
+served, not who read what. A test asserts both the fields and their absence.
+
+### Changed — `get_wlo_content_text` says when to reach for it (2026-08-05)
+
+Live: "hole den Volltext" called the tool, "zeig mir den Inhalt des
+Arbeitsblatts" did not. The description named the capability but not the
+phrasings a teacher uses, and a model picks a tool from its description.
+
+It now leads with the triggers ("zeig mir den Inhalt", "was steht in dem
+Arbeitsblatt", "den ganzen Text", "den vollen Inhalt anzeigen", "zusammenfassen"
+…), names `get_node_details` as the tool NOT to use for content, and says
+explicitly that a missing text is an answer to report — **not** something to
+invent around. `get_node_details` points back for the content in German.
+
+Rewritten rather than extended: the description was 1162 characters, over the
+1024 commonly enforced on function descriptions, and a cap that truncates
+mid-sentence would cut exactly this guidance. It is now under the limit, and a
+test holds it there.
+
 ### Fixed — the curation tools declared a security scheme no client knows (2026-08-05)
 
 They carried `_meta.securitySchemes: [{ type: 'http' }]`, borrowed from OpenAPI.
@@ -24,7 +52,14 @@ They now declare `[{ type: 'oauth2', scopes: ['wlo'] }]`, from one shared
 constant instead of thirteen literals, with the scope taken from the
 authorization server's own metadata so the two cannot drift.
 `tests/tool-security-schemes.test.ts` holds the rule over the whole surface in
-both modes.
+both modes. Confirmed live on 2026-08-05: the connector now links without an
+error and its tools are available in the chat.
+
+Worth knowing when using it: ChatGPT asks for a **per-conversation** consent
+("wlo verbinden") that only appears once a request triggers it. A connector
+linked in the settings is not automatically active in a conversation, and a
+model with no tools attached answers as if it had searched — plausibly, and
+entirely made up.
 
 ### Fixed — `/auth` offers the block without the `Bearer` prefix too (2026-08-05)
 

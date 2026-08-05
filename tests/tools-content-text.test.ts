@@ -112,3 +112,37 @@ test('get_wlo_content_text is registered and describes what it is for', async ()
     await client.close();
   }
 });
+
+test('the description tells the model WHEN to reach for the full text', async () => {
+  // Live 2026-08-05: "hole den Volltext" triggered the tool, "zeig mir den
+  // Inhalt des Arbeitsblatts" did not — the description named the capability
+  // but not the phrasings a teacher actually uses. A model picks a tool from
+  // its description; the trigger words have to be IN it.
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    const text = tools.find(x => x.name === 'get_wlo_content_text')!;
+    const details = tools.find(x => x.name === 'get_node_details')!;
+    const d = (text.description ?? '').toLowerCase();
+
+    for (const phrase of ['inhalt', 'ganzen text', 'zusammenfass', 'steht']) {
+      assert.ok(d.includes(phrase), `the description never mentions "${phrase}"`);
+    }
+    // The two are confused with each other, so each has to name the other.
+    assert.ok(d.includes('get_node_details'),
+      'it must say which tool NOT to use for the content');
+    assert.ok((details.description ?? '').includes('get_wlo_content_text'),
+      'and the metadata tool must point here for the content');
+
+    // Function descriptions are commonly capped at 1024 characters; a cap that
+    // truncates mid-sentence would cut exactly the guidance above.
+    assert.ok((text.description ?? '').length <= 1024,
+      `description is ${(text.description ?? '').length} characters, over the 1024 cap`);
+
+    // The model must not fill a missing text with invention — the one failure
+    // mode that looks like success.
+    assert.ok(d.includes('erfind'), 'it must say what to do when there is no text');
+  } finally {
+    await client.close();
+  }
+});

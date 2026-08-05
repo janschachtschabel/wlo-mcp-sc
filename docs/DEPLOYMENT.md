@@ -219,6 +219,25 @@ prompts from [`apps-sdk-submission-checklist.md`](apps-sdk-submission-checklist.
 Confirm each widget renders and the `search` / `fetch` tools resolve. This is the
 only check that cannot be automated offline (see the P3.6 note in the plan).
 
+**Two things that look like server faults and are not** (both measured
+2026-08-05):
+
+- **ChatGPT asks a second time, inside the conversation.** A connector linked in
+  the settings is not yet active in a chat: ChatGPT shows a card — "wlo
+  verbinden · ChatGPT benötigt Zugriff auf wlo" — and it only appears once a
+  request calls for it. Until it is confirmed, the model has no tools, and a
+  model with no tools answers as if it had searched: fluently, and entirely made
+  up. Tell users to ask about WLO once and confirm the card.
+- **Read the server log before anything else.** Every MCP request builds a
+  server and logs at least one line. An empty log means the client never called,
+  which rules out this server in one step. Both of the above cost an afternoon
+  of searching in the right place for the wrong thing.
+
+With `WLO_AUTH_PRIVATE_KEY` set, choose **OAuth** as the authentication method;
+the connector registers itself and sends the user to `/oauth/authorize` to log
+in with their own WLO account. Without a key, choose "no authentication" — the
+25 read tools work anonymously.
+
 ## 7. Stdio variant (local MCP clients)
 
 For a desktop MCP client that speaks stdio instead of HTTP, override the image

@@ -26,10 +26,11 @@ export function registerContentTextTool(server: McpServer, readingWidgetUri?: st
     name: 'get_wlo_content_text',
     widgetUri: readingWidgetUri,
     title: 'WLO Volltext',
-    description: `Hole den VOLLTEXT eines WLO-Inhalts — den eigentlichen Text eines Arbeitsblatts, Artikels oder Materials, nicht nur seine Metadaten. Nutze dies, wenn du mit dem Inhalt arbeiten sollst: zusammenfassen, Aufgaben daraus ableiten, an eine Klassenstufe anpassen, Fragen dazu beantworten.
-Gib die "nodeId" aus einer WLO-Suche an. Der Text kommt bevorzugt aus dem Repository; nur wenn dort nichts hinterlegt ist und das Material extern verlinkt ist, wird der Text von der verlinkten Seite geholt (\`source\` sagt, welcher Weg es war).
-Gibt es keinen Text, ist das kein Fehler: \`source: "none"\` mit einem \`reason\` — \`access_denied\` (Material ist nicht öffentlich), \`no_text_no_url\`, \`extraction_failed\`, \`node_not_found\`. Lange Texte werden gekürzt (\`truncated\`), \`maxChars\` steuert die Grenze.
-ABWÄGUNG: Der Repository-Weg ist schnell (live gemessen ~0,3 s); nur der Rückfall auf den Extraktionsdienst bei extern verlinktem Material dauert länger. Brauchst du ausschließlich Titel, Fach, Lizenz oder Link, nimm get_node_details. Geht es um den Inhalt selbst, ist dies das richtige Werkzeug — auch dann, wenn die nodeId schon aus einer früheren Antwort im Gespräch stammt.`,
+    description: `Der INHALT eines WLO-Materials — der eigentliche Text des Arbeitsblatts, Artikels oder Dokuments, nicht seine Metadaten.
+NIMM DIES, sobald es um den Inhalt geht: „zeig mir den Inhalt", „was steht in dem Arbeitsblatt", „den ganzen Text", „den vollen Inhalt anzeigen", „lies das Dokument", „zusammenfassen", „mach Aufgaben daraus", „passe es an Klasse 7 an". Auch dann, wenn die nodeId schon aus einer früheren Antwort im Gespräch stammt — dann genügt sie.
+NICHT get_node_details: das liefert nur Metadaten (Titel, Fach, Lizenz, Link) und ist die Detailansicht, nicht der Inhalt.
+Der Text kommt aus dem Repository (~0,3 s) oder, bei extern verlinktem Material, von der verlinkten Seite (\`source\`). Lange Texte werden gekürzt (\`truncated\`, \`maxChars\`).
+Gibt es keinen Text, kommt \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_url\`, \`extraction_failed\`, \`node_not_found\`). Das ist kein Fehler, sondern die Auskunft, dass es wirklich keinen Text gibt: dann sag das — und **erfinde keinen Inhalt**.`,
     inputSchema: {
       nodeId: z.string().describe('nodeId of the material (from any WLO search result).'),
       maxChars: z.number().int().min(500).max(50000).optional().default(DEFAULT_MAX_CHARS)

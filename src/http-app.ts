@@ -291,7 +291,20 @@ export function createHttpRequestHandler(
         // Resolved before the server is built, because the tool list this
         // request sees depends on it: without an identity that may write, the
         // curation tools are not registered at all.
-        server = createMcpServer(resolveWriteMode(effective, ALLOW_SERVICE_WRITES));
+        const writeMode = resolveWriteMode(effective, ALLOW_SERVICE_WRITES);
+        // One line per request, naming the method and the SURFACE it was served.
+        // Added 2026-08-05 after a day of live debugging: the log could say
+        // "nobody called us" — which twice ruled out this server in one step —
+        // but never "somebody called us, and this is the tool list they got".
+        // Deliberately no label and no params: the question is which surface,
+        // not who read what.
+        log.info('mcp request', {
+          method: typeof (body as { method?: unknown } | undefined)?.method === 'string'
+            ? (body as { method: string }).method
+            : 'unknown',
+          mode: writeMode,
+        });
+        server = createMcpServer(writeMode);
         const transport = new StreamableHTTPServerTransport({ ...streamOptions });
         await server.connect(transport);
         await (effective

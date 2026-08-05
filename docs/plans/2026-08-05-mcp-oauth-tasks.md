@@ -12,7 +12,7 @@ erweist, ändert zuerst das Design.
 | P2 | `/oauth/register` — die Redirect-Prüfung | **fertig 2026-08-05** |
 | P3 | `/oauth/authorize` + Anmeldeseite | **fertig 2026-08-05** |
 | P4 | `/oauth/token` | **fertig 2026-08-05** |
-| P5 | Live-Durchlauf, Doku, Abschluss | freigegeben |
+| P5 | Live-Durchlauf, Doku, Abschluss | **ChatGPT live bestätigt 2026-08-05**; Claude offen |
 
 **Die Sperre ist am 2026-08-05 aufgehoben.** Die Messung (T1.6) fiel positiv
 aus: ChatGPT findet die Discovery-Dokumente ohne 401 und scheitert erst an

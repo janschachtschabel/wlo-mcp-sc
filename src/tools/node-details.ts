@@ -70,6 +70,9 @@ Fast by default (~0.3 s): metadata only. The full text of the material is a
 SEPARATE, slower concern — use get_wlo_content_text when you actually need the
 content itself (it also falls back to the linked page and reports why a text is
 missing). \`includeTextContent\` here is the quick variant without that fallback.
+Auf Deutsch gefragt: dies ist die DETAILANSICHT (Titel, Fach, Lizenz, Link).
+Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung des Materials
+will, braucht get_wlo_content_text — nicht dieses Werkzeug.
 
 Returns the SAME field structure as search tools (formatNode):
 title, description, keywords, disciplines (labels), educationalContexts (labels),

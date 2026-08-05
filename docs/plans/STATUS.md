@@ -2572,8 +2572,9 @@ fest. Die geprüfte Eigenschaft blieb, nur der erwartete Wert stammte aus der
 falschen Annahme; die Änderung trägt einen datierten Kommentar.
 
 **Nachweis:** `npm test` → 1306/1306, `tsc` exit 0.
-**Live-Nachweis steht aus** — er braucht einen Deploy und einen neuen
-ChatGPT-Anlauf.
+**Live bestätigt 2026-08-05 nach dem Deploy:** der OAuth-Connector wird in
+ChatGPT ohne Fehler angelegt, die Anmeldung läuft durch, die Werkzeuge stehen
+zur Verfügung. Damit ist die Ursache belegt, nicht nur begründet.
 
 ### Offen, davon unabhängig
 
@@ -2596,3 +2597,68 @@ erreicht es nicht (das Werkzeug trägt `openai/outputTemplate` — ein Widget).
 **Das nächste, was fehlt, ist der Werkzeugaufruf-Verlauf aus ChatGPTs eigener
 Oberfläche** (Aufruf aufklappen): was gesendet und was zurückgegeben wurde.
 Ohne den ist alles Weitere geraten.
+
+
+## ChatGPT verlangt eine Zustimmung PRO UNTERHALTUNG (2026-08-05)
+
+Nach dem erfolgreichen Deploy war der Connector verbunden — und im Chat trotzdem
+unbenutzbar: das Modell behauptete, es habe keinen Zugriff, und **im Server-Log
+kam nichts an**. Kein Serverproblem: ChatGPT hatte schlicht nicht angerufen.
+
+Die Lösung ist eine Eigenschaft des Clients, keine unserer: ChatGPT zeigt eine
+eigene Karte **„wlo verbinden — ChatGPT benötigt Zugriff auf wlo"** mit einem
+`Verbinden`-Knopf, und die erscheint erst, wenn eine Anfrage sie auslöst
+(hier: „kannst du bei wlo nach inhalten suchen?"). Ein in den Einstellungen
+verbundener Connector ist **nicht** automatisch in einer Unterhaltung aktiv.
+
+**Folgen, die man kennen muss:**
+
+1. Für jede Fehlersuche gilt: **erst ins Log sehen.** Leeres Log heißt „der
+   Client hat nicht angerufen" und schließt den Server als Ursache aus. Das hat
+   hier in einem Schritt entschieden, was vorher eine Stunde Suche war.
+2. **Ein Modell ohne angehängte Werkzeuge erfindet.** Der frühere Befund
+   „ruft Werkzeuge auf, liefert dann ausgedachte Daten" stammt sehr
+   wahrscheinlich aus genau diesem Zustand. Er ist damit **nicht bestätigt** und
+   gehört mit einer wirklich verbundenen Unterhaltung neu beobachtet, bevor am
+   Volltext-Werkzeug etwas geändert wird.
+3. Gehört in die Bedienungsanleitung für Redakteure: nach dem Verbinden in den
+   Einstellungen im Chat einmal nach WLO fragen und die Karte bestätigen.
+
+## Erste echte Nutzung im Chat — vier Beobachtungen (2026-08-05)
+
+**1. Zustimmung pro Unterhaltung ist ungewöhnlich, aber erklärbar.** Andere
+MCP-Server verbinden beim Eintragen. Der Unterschied dürfte sein, dass wir
+`_meta.securitySchemes` überhaupt deklarieren — und seit heute 13 Werkzeuge mit
+`oauth2`. Ein Server, der nichts deklariert, gibt dem Client nichts zu fragen.
+**Nicht gemessen**, und die Alternative wäre eine falsche Angabe (Schreibwerkzeuge
+als `noauth` auszuweisen), also bleibt es so. Gehört in die Anleitung, nicht in
+den Code.
+
+**2. „Failed to fetch template", Ergebnisse 5–6 s später.** Gemessen gegen
+Produktion: `resources/list` in 197 ms, alle vier Widgets lesbar in 40–140 ms,
+und **alle 13 Werkzeuge mit Vorlage zeigen auf eine Ressource, die es gibt** —
+kein toter Verweis. Der Ladefehler war vorübergehend und der zweite Versuch
+erfolgreich. Ohne Log-Zeile aus genau diesem Moment ist nicht zu sagen, ob die
+Anfrage uns überhaupt erreichte. **Wenn es wiederkommt:** sofort
+`docker compose logs --since 2m mcp-server` — leeres Log heißt clientseitig.
+
+**3. Häkchen allein reichen nicht.** Die Auswahl liegt im Widget-Zustand
+(`setWidgetState`), und den sieht das Modell nicht. Erst „Auswahl verwenden"
+schickt eine Nachricht mit Titel und `nodeId` jedes Stücks und nennt
+`get_nodes_details` als nächsten Schritt (`widgets/search-results/selection.ts`).
+Das ist so gebaut und richtig — aber es muss jemand wissen.
+
+**4. Volltext-Auslöser verbessert.** „hole den Volltext" wirkte, „zeig mir den
+Inhalt des Arbeitsblatts" nicht. Die Beschreibung nannte die Fähigkeit, nicht die
+Formulierungen. Jetzt stehen die Auslöser vorn, `get_node_details` ist als das
+falsche Werkzeug benannt, und ein fehlender Text ist ausdrücklich eine Auskunft —
+**nichts erfinden**. Neu geschrieben statt verlängert: 1162 → unter 1024 Zeichen.
+Ein Test hält beides fest (`tests/tools-content-text.test.ts`).
+
+### Offen, ohne Beleg
+
+Fünf Beschreibungen liegen über 1024 Zeichen (`search_wlo_topic_pages` 1573,
+`get_node_details`, `get_wlo_content_text` — jetzt behoben —,
+`search_wlo_collections`, `search_wlo_all`). Ob ChatGPT das erzwingt, ist
+**nicht gemessen**; der Connector arbeitet damit. Nicht auf Verdacht kürzen —
+erst messen, ob eine Beschreibung abgeschnitten ankommt.
