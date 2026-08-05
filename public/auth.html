@@ -53,11 +53,15 @@
         <label for="block">Wert für das Feld „Authorization" deines KI-Programms</label>
         <textarea id="block" readonly spellcheck="false" aria-describedby="block-hint"></textarea>
         <p class="hint" id="block-hint">
-          Vollständig kopieren, inklusive <code class="mono">Bearer</code> am Anfang.
+          Für ein Kopfzeilen-Feld (Header) vollständig kopieren, inklusive
+          <code class="mono">Bearer</code> am Anfang. Fragt ein Feld dagegen nur nach dem
+          Block selbst, nimm den zweiten Knopf — <code class="mono">Bearer</code> zweimal
+          im Kopf ergibt einen ungültigen Zugang.
         </p>
       </div>
       <div class="actions">
-        <button type="button" id="copy" class="secondary">Kopieren</button>
+        <button type="button" id="copy" class="secondary">Mit „Bearer" kopieren</button>
+        <button type="button" id="copy-plain" class="secondary">Nur den Block kopieren</button>
         <span class="status" id="copy-status" role="status" aria-live="polite"></span>
       </div>
 

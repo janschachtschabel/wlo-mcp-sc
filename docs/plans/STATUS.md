@@ -2462,3 +2462,81 @@ Stand auf dem Server: alles aus dem P3-Abschnitt oben **plus**
 
 **Vor dem Live-Test bedenken:** die Anmeldeseite verlangt echte WLO-Zugangsdaten
 — dieser Schritt ist bisher nur mit gefälschter Autorität geprüft.
+
+---
+
+## OAuth — P5 Live-Durchlauf 2026-08-05: OAuth funktioniert, ChatGPT verbindet trotzdem nicht
+
+**Kurz:** Der gesamte Anmeldeweg ist gegen Produktion **nachgewiesen**. ChatGPT
+durchläuft ihn vollständig und meldet danach „Beim Herstellen der Verbindung ist
+ein Problem aufgetreten". Die Ursache liegt **nicht** in P1–P4.
+
+### Was live belegt ist (2026-08-05, `wlo-mcp.87.106.195.152.nip.io`)
+
+Server-Log eines echten ChatGPT-Anlaufs:
+
+```
+oauth client registered      name: ChatGPT, redirectUris: 1
+access block issued          label: janschachtschabel
+authorization code issued    client: ChatGPT
+access token issued          label: janschachtschabel
+→ danach sechs bediente MCP-Anfragen in 450 ms, KEIN 401, kein Fehler
+```
+
+Sechs Anfragen in dieser Zeit entsprechen der üblichen Connector-Abfolge
+(`initialize`, `notifications/initialized`, `tools/list`, `resources/list`,
+`prompts/list`, `resources/templates/list`). Alle wurden bedient.
+
+Eigene Messung durch Caddy und TLS:
+
+| Prüfung | Ergebnis |
+|---|---|
+| `initialize` anonym | 200, korrekte Aushandlung, `text/event-stream` |
+| `tools/list` anonym | 200, 75 825 B, 25 Werkzeuge |
+| `tools/list` mit gültigem Block | 200, 93 218 B, **38** Werkzeuge |
+| Versionsaushandlung `2024-11-05` … `2026-01-01` | jeweils korrekt beantwortet |
+| `GET /mcp` | 405 mit `Allow: POST` — spezifikationskonform |
+| `prompts/list` | `-32601`, korrekt: `initialize` bietet nur `resources` und `tools` an |
+
+### Was damit AUSGESCHLOSSEN ist — nicht erneut prüfen
+
+- **OAuth in jedem Schritt** (Discovery, Registrierung, Einwilligung, Tausch)
+- **Das Token** — ein gültiger Block liefert live 38 Werkzeuge
+- **Caddy, TLS, SSE, zustandsloser Transport**
+- **Handshake, Fähigkeiten, Protokollversion**
+- **Identitätstrennung** — anonym 25 / Nutzer 38 / danach wieder 25, in beiden
+  Betriebsarten. (Eine erste Messung schien ein Leck zu zeigen; das war ein
+  Fehler im Prüfskript: `call(m, p, undefined, id)` löst in JavaScript den
+  Vorgabewert aus, der Durchlauf lief also mit demselben Token.)
+- **Werkzeug-Schemata** — kein `anyOf`, `oneOf`, `allOf`, `$ref`, `const` in
+  keinem der 38; kein Name über 64 Zeichen. Das größte Schema
+  (`search_wlo_all`, 3097 B) steht bereits in der anonymen Liste, die 13
+  Kurationswerkzeuge sind allesamt kleiner.
+
+### Zwei falsche Fährten, die Zeit gekostet haben
+
+1. Ein 401 auf einen frisch geholten Block — das mitkopierte Wort `Bearer` aus
+   dem Textfeld der Seite ergab `Authorization: Bearer Bearer wlo2…`.
+   **Behoben am selben Tag:** `/auth` hat jetzt zwei Kopfknöpfe — „Mit ‚Bearer'
+   kopieren" für ein Kopfzeilenfeld und „Nur den Block kopieren" für ein Feld,
+   das nur den Block will. Die Statuszeile nennt, welche Form in der
+   Zwischenablage liegt. Festgenagelt in `tests/auth-pages-static.test.ts`.
+2. `MAX_BLOCKS_PER_LABEL = 10` mit Verdrängung des ältesten Eintrags erklärt
+   401-Fälle bei ÄLTEREN Blöcken, war hier aber nicht die Ursache.
+
+### Was offen ist — genau ein Bit
+
+**Nimmt ChatGPT eine Verbindung zu diesem Server überhaupt an?** Das ist nie
+gemessen worden: vor OAuth kam der Connector nie so weit. Ohne diese Antwort ist
+jeder nächste Schritt geraten.
+
+- Connector mit **„Keine Authentifizierung"** anlegen.
+  - scheitert ebenfalls → unabhängig von der Identität; nächster Verdächtiger
+    ist die Größe der Werkzeugliste (75,8 KB anonym / 92,7 KB angemeldet)
+  - verbindet sich → es liegt an dem, was die Nutzer-Identität hinzufügt
+
+Zweiter Kandidat, falls der erste nichts bringt: **`MCP_SSE`**. Produktion läuft
+mit `1`. Die Beschreibung in `src/mcp-transport.ts` behauptet, SSE sei „required
+by ChatGPT developer mode" — diese Aussage stammt jedoch aus der Zeit, in der
+ChatGPT sich nie verbinden konnte, ist also **nicht unter den heutigen
+Bedingungen gemessen**. Sie gehört nachgemessen, bevor man sich auf sie verlässt.

@@ -19,7 +19,11 @@ const status = document.getElementById('status');
 const result = document.getElementById('result');
 const blockOut = document.getElementById('block');
 const copyButton = document.getElementById('copy');
+const copyPlainButton = document.getElementById('copy-plain');
 const copyStatus = document.getElementById('copy-status');
+
+/** The block WITHOUT the header prefix; empty until one has been issued. */
+let plainBlock = '';
 
 /** Set the live region. `kind` drives the styling; the words carry the meaning. */
 function say(text, kind) {
@@ -69,6 +73,7 @@ form.addEventListener('submit', async (event) => {
       throw new Error(detail?.error ?? 'Der Zugang konnte nicht erzeugt werden.');
     }
 
+    plainBlock = block;
     blockOut.value = `Bearer ${block}`;
     result.hidden = false;
     say('Zugang erzeugt. Er gilt, bis du ihn sperrst.', 'ok');
@@ -83,16 +88,29 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-copyButton.addEventListener('click', async () => {
+/**
+ * Two ways to copy, because there are two places the value goes and they want
+ * different things: a header field takes `Bearer <block>`, a field that asks for
+ * the block alone takes the block. Copying the prefix into the second one yields
+ * `Bearer Bearer …`, which the server refuses as an unusable token — measured
+ * the hard way on 2026-08-05.
+ *
+ * The message names WHICH form was copied, so the live region is useful rather
+ * than merely reassuring.
+ */
+async function copy(text, what) {
   try {
-    await navigator.clipboard.writeText(blockOut.value);
-    copyStatus.textContent = 'Kopiert.';
+    await navigator.clipboard.writeText(text);
+    copyStatus.textContent = `${what} kopiert.`;
     copyStatus.className = 'status ok';
   } catch {
     // Clipboard access can be denied, and an unusable button with no
     // explanation is worse than none: the text is selectable either way.
     blockOut.select();
-    copyStatus.textContent = 'Kopieren nicht erlaubt — der Block ist jetzt markiert.';
+    copyStatus.textContent = 'Kopieren nicht erlaubt — der Wert ist jetzt markiert.';
     copyStatus.className = 'status busy';
   }
-});
+}
+
+copyButton.addEventListener('click', () => copy(blockOut.value, 'Kopfzeilen-Wert'));
+copyPlainButton.addEventListener('click', () => copy(plainBlock, 'Block'));

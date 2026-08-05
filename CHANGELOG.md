@@ -9,6 +9,17 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed — `/auth` offers the block without the `Bearer` prefix too (2026-08-05)
+
+The field on the access page is labelled "value for the Authorization field", so
+`Bearer <block>` belongs in it. Somebody pasting that where only the block is
+wanted ends up sending `Authorization: Bearer Bearer wlo2…`, which the server
+correctly refuses — and the message says the access is invalid, not that the
+word is in there twice. Found the hard way during the live run.
+
+The page now has two buttons ("Mit „Bearer" kopieren" / "Nur den Block
+kopieren"), and the status line names which form went to the clipboard.
+
 ### Added — OAuth login: the exchange, and with it the whole flow (2026-08-05)
 
 `POST /oauth/token` completes the login: a one-time authorization code becomes

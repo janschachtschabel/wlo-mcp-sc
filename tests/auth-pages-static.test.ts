@@ -69,3 +69,24 @@ test('the pages carry no inline script or style for that policy to break', () =>
 test('a non-GET on a page path is 405', () => {
   assert.equal(resolveStaticRoute('POST', '/auth.html')?.status, 405);
 });
+
+test('the block can be copied both as a header value and on its own', () => {
+  // Measured on 2026-08-05: the field is labelled "Wert für das Feld
+  // Authorization", so `Bearer …` belongs in it — but somebody using the block
+  // where only the block is wanted copies the word too and gets
+  // `Authorization: Bearer Bearer wlo2…`, which the server rejects as an
+  // unusable token. Both uses are real, so the page offers both.
+  const html = read('auth.html');
+  const js = read('auth.js');
+
+  for (const id of ['copy', 'copy-plain']) {
+    assert.ok(html.includes(`id="${id}"`), `the page has no #${id} button`);
+    assert.ok(js.includes(`getElementById('${id}')`), `#${id} is never wired up`);
+  }
+  // Both are real buttons, not links or divs, so they answer to Enter and Space.
+  assert.match(html, /<button type="button" id="copy-plain"/);
+
+  // The textarea keeps the prefix: that is what its own label promises.
+  assert.match(js, /`Bearer \$\{block\}`/,
+    'the Authorization value must still carry the prefix');
+});
