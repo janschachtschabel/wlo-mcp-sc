@@ -330,11 +330,18 @@ test('http dispatch: anonymous MCP calls are untouched by the credential guard',
 });
 
 test('an Authorization header we cannot use does NOT borrow the service account', async () => {
-  // Presenting a header means "act as me". A scheme we refuse (Bearer, Digest)
-  // used to fall through to `configuredServiceCredential()`, so the caller
-  // quietly acted as a shared identity with rights they never asked for — and
-  // with WLO_ALLOW_SERVICE_WRITES set, could have written under it. Anonymous
-  // is the honest downgrade: the request still works, the rights do not lie.
+  // Presenting a header means "act as me". A scheme we refuse used to fall
+  // through to `configuredServiceCredential()`, so the caller quietly acted as a
+  // shared identity with rights they never asked for — and with
+  // WLO_ALLOW_SERVICE_WRITES set, could have written under it. Anonymous is the
+  // honest downgrade: the request still works, the rights do not lie.
+  //
+  // The header here is `Digest` since 2026-08-05, not `Bearer`. An unusable
+  // BEARER is now refused outright with 401 (it is one of OUR tokens failing, so
+  // the client is told where to get a new one — see oauth-routing.test.ts). That
+  // is strictly stronger than this rule: a refused request forwards nothing at
+  // all. `Digest` is the case that still reaches the downgrade, so it is what
+  // keeps this rule under test rather than merely stated.
   const { setServiceCredentialForTest } = await import('../src/auth/credential.js');
   const { server, base } = await startServer();
   const realFetch = globalThis.fetch;
@@ -354,7 +361,7 @@ test('an Authorization header we cannot use does NOT borrow the service account'
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
-        'Authorization': 'Bearer nicht-verwendbar',
+        'Authorization': 'Digest nicht-verwendbar',
       },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'tools/call',
@@ -372,12 +379,17 @@ test('an Authorization header we cannot use does NOT borrow the service account'
   }
 });
 
-test('a REVOKED access block does not borrow the service account either', async () => {
-  // Different input from the test above, same rule. `Bearer nicht-verwendbar`
-  // is refused by the scheme check; this block DECODES cleanly and is refused
-  // only by the allow-list. That is the revocation path, and it must land on
-  // anonymous — a revoked user silently acting as the shared account would be
-  // the worst possible outcome of pressing "revoke".
+test('a REVOKED access block is refused outright and borrows nothing', async () => {
+  // Same rule as the test above, from the input that matters most: this block
+  // DECODES cleanly and is refused only by the allow-list. That is the
+  // revocation path, and a revoked user silently acting as the shared account
+  // would be the worst possible outcome of pressing "revoke".
+  //
+  // Since 2026-08-05 the answer is a 401 rather than an anonymous 200: a block
+  // that was valid and now is not is precisely the case where "fetch a new one"
+  // is useful, and the 401 carries the pointer to where. The rule this test
+  // exists for is satisfied more strongly than before — the request is never
+  // served, so nothing is borrowed and nothing reaches the repository.
   const { setServiceCredentialForTest, setAccessSupport } = await import('../src/auth/credential.js');
   const { encodeAccessToken, loadAuthKeys } = await import('../src/auth/access-token.js');
   const { openRegistry } = await import('../src/auth/access-registry.js');
@@ -425,9 +437,9 @@ test('a REVOKED access block does not borrow the service account either', async 
         params: { name: 'wlo_auth_status', arguments: {} },
       }),
     });
-    const body = await r.json() as { result?: { structuredContent?: { mode?: string } } };
-    assert.equal(body.result?.structuredContent?.mode, 'anonymous', 'not the shared account');
-    for (const a of auths) assert.equal(a, null, 'the revoked credential never reached the repository');
+    assert.equal(r.status, 401, 'a revoked block is refused, not quietly downgraded');
+    assert.match(r.headers.get('www-authenticate') ?? '', /error="invalid_token"/);
+    assert.deepEqual(auths, [], 'nothing at all was sent upstream — no shared account, no revoked login');
   } finally {
     setAccessSupport(null);
     setServiceCredentialForTest(null);
@@ -530,6 +542,11 @@ test('http dispatch: headers we never forward do not consume the credential budg
   // is refused by credentialFromHeader and never leaves this server, so it is
   // not a guessing attempt — and a host rotating such tokens must not be locked
   // out for something it did not do.
+  //
+  // What each rotation gets is a 401 (since 2026-08-05: an unusable token of
+  // ours, with the pointer to where a new one is issued). The assertion is that
+  // it is never a **429** — that would be the lockout this guard exists to
+  // prevent, and it would arrive from the third token onwards.
   const { server, base } = await startServer({
     authAbuseLimiter: createDistinctValueLimiter(2, 600_000),
   });
@@ -544,7 +561,9 @@ test('http dispatch: headers we never forward do not consume the credential budg
         },
         body: INITIALIZE,
       });
-      assert.equal(r.status, 200, `rotating bearer token ${i} must pass`);
+      // 401 = "this token is no good"; 429 would be the lockout, and would
+      // arrive from the third distinct token onwards if the budget counted them.
+      assert.equal(r.status, 401, `rotating bearer token ${i}: refused as a token, never as abuse`);
     }
   } finally { await close(server); }
 });
@@ -582,6 +601,58 @@ test('http dispatch: an unparseable request target is answered, not left hanging
     for (const target of ['//[', '//[bad]x', '//user@[::1]x']) {
       const status = await rawRequest(port, target);
       assert.match(status, /^HTTP\/1\.1 400 /, `${target} must get a 400, not silence`);
+    }
+  } finally { await close(server); }
+});
+
+/**
+ * The OAuth discovery surface, as reached through the real dispatch (P1/T1.3).
+ *
+ * No access support is installed here, so the documents are correctly withheld —
+ * what this pins is that the paths REACH `rest/oauth-pages.ts` at all (a 404 with
+ * its German body, not the dispatch's generic `Not found. Use POST /mcp`).
+ */
+test('http dispatch: a discovery path reaches the OAuth module even when the feature is off', async () => {
+  const { server, base } = await startServer();
+  try {
+    for (const path of [
+      '/.well-known/oauth-authorization-server',
+      '/.well-known/oauth-protected-resource',
+      '/.well-known/oauth-protected-resource/mcp',
+    ]) {
+      const r = await fetch(`${base}${path}`);
+      assert.equal(r.status, 404, path);
+      const body = await r.json() as { error?: string };
+      assert.match(body.error ?? '', /OAuth/, `${path} was answered by the 404 fall-through instead`);
+    }
+  } finally { await close(server); }
+});
+
+/**
+ * CORS, and the two surfaces that must not get it.
+ *
+ * The discovery documents NEED the wildcard: they are public, secret-free, and
+ * clients fetch them cross-origin. `/oauth/authorize` must not have it, for the
+ * reason `/auth*` must not — from P3 it checks a WLO password, and both abuse
+ * limiters count per client ADDRESS, so a wildcard origin would let a page spend
+ * every visitor's quota on a guess and read which one worked.
+ *
+ * Pinned NOW, one package before the endpoint exists, because the alternative is
+ * needing the exception exactly when nobody is thinking about it any more.
+ */
+test('http dispatch: discovery is cross-origin readable, the authorize path is not', async () => {
+  const { server, base } = await startServer();
+  try {
+    const discovery = await fetch(`${base}/.well-known/oauth-authorization-server`);
+    assert.equal(discovery.headers.get('access-control-allow-origin'), '*', 'clients fetch this cross-origin');
+
+    for (const path of ['/oauth/authorize', '/auth', '/auth/issue']) {
+      const r = await fetch(`${base}${path}`);
+      assert.equal(
+        r.headers.get('access-control-allow-origin'),
+        null,
+        `${path} must not be readable from a foreign page`,
+      );
     }
   } finally { await close(server); }
 });

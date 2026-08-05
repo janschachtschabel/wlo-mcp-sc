@@ -77,6 +77,10 @@ const httpServer = http.createServer(createHttpRequestHandler({
   maxBodyBytes: MAX_BODY_BYTES,
   trustProxy: TRUST_PROXY,
   streamOptions,
+  // The origin the OAuth discovery documents name as their own. Read here and
+  // passed in, like every other environment value: `auth/oauth-metadata.ts` is
+  // pure so the decision it makes is testable, which this file is not.
+  publicBaseUrl: process.env['WLO_PUBLIC_BASE_URL'],
 }));
 
 // Bound how long a client may take to SEND a request (slow-body / slow-header

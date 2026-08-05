@@ -150,6 +150,22 @@ export function isUnusableAuthorization(raw: string | undefined): boolean {
 }
 
 /**
+ * The narrower case: a **Bearer** was presented and we could not open it —
+ * forged, revoked, or encrypted for a key we do not hold.
+ *
+ * Separate from `isUnusableAuthorization` because the two lead somewhere
+ * different. A Bearer we cannot use is OUR token failing, and the honest answer
+ * is `401` with the pointer to where a new one is issued (see
+ * `oauth-metadata.ts`). A `Basic` header we cannot parse is a WLO login the
+ * caller got wrong; sending them into an authorization flow would answer a
+ * question they did not ask, so that one keeps degrading to anonymous.
+ */
+export function isUnusableBearer(raw: string | undefined): boolean {
+  const value = (raw ?? '').trim();
+  return /^Bearer\s/i.test(value) && credentialFromHeader(value) === null;
+}
+
+/**
  * True when sending a credential to this repository would put it on the wire in
  * the clear. HTTP Basic is base64, not encryption, so `http://` exposes the
  * password to anyone on the path — and nothing in the response would reveal it.

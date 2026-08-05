@@ -2168,3 +2168,79 @@ Stand: **1195 Tests grün** (vorher 1125), Typecheck sauber, Build sauber
 **Offen (Betreiberin):** Schlüssel erzeugen und in die `.env` auf dem Server;
 `log_credentials` im Caddyfile prüfen; die sieben Entscheidungsfragen F1–F7 im
 Team-Papier [`2026-08-04-auth-optionen-entscheidung.md`](2026-08-04-auth-optionen-entscheidung.md).
+
+---
+
+## OAuth 2.1 für alle Clients — P1 abgeschlossen 2026-08-05
+
+Design: [`2026-08-05-mcp-oauth-design.md`](2026-08-05-mcp-oauth-design.md) ·
+Aufgaben: [`2026-08-05-mcp-oauth-tasks.md`](2026-08-05-mcp-oauth-tasks.md)
+
+| Paket | Stand |
+|---|---|
+| P1 Discovery + Vier-Wege-Entscheidung + 401 | ✅ fertig (2026-08-05) |
+| P2 `/oauth/register` | ⛔ gesperrt bis zur Messung T1.6 |
+| P3 `/oauth/authorize` + Anmeldeseite | ⛔ gesperrt |
+| P4 `/oauth/token` | ⛔ gesperrt |
+| P5 Live-Durchlauf + Doku | ⛔ gesperrt |
+
+**Warum überhaupt.** Am 2026-08-05 gemessen: ChatGPTs Connector-Dialog bietet
+**kein** Header- oder API-Key-Feld — nur OAuth, keine Authentifizierung oder
+gemischt. Der fertige Zugangsblock ist dort also nicht eintragbar. OAuth ist der
+einzige Weg, der jeden Client erreicht.
+
+**Was P1 gebaut hat.**
+- `src/auth/oauth-metadata.ts` — die beiden Dokumente (RFC 8414, RFC 9728), die
+  Herkunftsauflösung und der `WWW-Authenticate`-Text. Rein, ohne HTTP.
+- `src/rest/oauth-pages.ts` — vier `GET`-Pfade: beide Dokumente je einmal blank
+  und einmal mit `/mcp`-Anhang, weil Clients unterschiedlich raten. 404 statt
+  500, wenn die Funktion aus ist (kein Schlüsselmaterial ODER keine Herkunft).
+- `src/http-app.ts` — Verdrahtung, die CORS-Ausnahme und der 401.
+- `WLO_PUBLIC_BASE_URL` in `.env.example`, `docker-compose.yml`, beiden READMEs
+  und `DEPLOYMENT.md`.
+
+**Die eine Verhaltensänderung.** Ein `Bearer`, den wir nicht öffnen können
+(gefälscht, gesperrt, fremder Schlüssel), bekommt jetzt `401` mit dem Zeiger auf
+das Discovery-Dokument statt einer anonymen Antwort. Unverändert bleiben die
+zwei Zeilen, die zählen: **ohne** `Authorization` weiterhin `200` mit der vollen
+anonymen Werkzeugliste, und ein unlesbarer `Basic`-Kopf degradiert weiterhin auf
+anonym — ein falsches WLO-Passwort ist kein ungültiges Token von uns.
+
+Drei bestehende Tests wurden dadurch rot und **begründet** angepasst, nicht
+stillschweigend: zweimal wanderte die Regel „ein unbrauchbarer Kopf leiht sich
+nie das Dienstkonto" auf `Digest` bzw. auf die stärkere Zusicherung (die Anfrage
+wird gar nicht erst bedient, es geht also nichts nach oben), einmal lautet die
+Zusicherung jetzt „401, niemals 429" statt „200" — die Regel dort war immer, dass
+rotierende Bearer-Token das Kontingent für verschiedene Anmeldungen nicht
+verbrauchen dürfen, und die gilt unverändert.
+
+**Zwei Festlegungen, die P1 vorwegnimmt.** Die CORS-Ausnahme für
+`/oauth/authorize` steht schon jetzt, ein Paket bevor der Endpunkt existiert —
+sie in P3 nachzureichen hieße, sie genau dann zu brauchen, wenn niemand mehr an
+sie denkt. Und `OAuthEndpointDeps` trägt nur, was P1 benutzt; Body-Grenze und
+Anmeldungs-Begrenzer kommen mit ihrem ersten Aufrufer.
+
+Stand: **1233 Tests grün** (vorher 1219), Typecheck sauber.
+
+### T1.6 — die Messung, und warum sie das Tor ist
+
+Der Entwurf wollte sie „vor dem ersten Paket". Das ging nicht: der gedachte
+Versuch (Endpunkt-Felder in ChatGPT von Hand füllen) hätte auf Endpunkte
+gezeigt, die 404 antworten, und wäre aus dem falschen Grund gescheitert. Der
+Befund vom 2026-08-05 zeigt zugleich den richtigen Weg — ChatGPT hat
+`/.well-known/oauth-protected-resource` **von sich aus** abgefragt. Der Client
+sucht also, ohne dass ein 401 ihn schickt. **P1 liefert genau das und ist damit
+das Experiment.**
+
+**Offen (Betreiberin), bevor P2 beginnt:**
+1. `WLO_PUBLIC_BASE_URL=https://wlo-mcp.87.106.195.152.nip.io` in die `.env`,
+   hochladen, neu bauen, neu starten.
+2. `curl -s https://wlo-mcp.87.106.195.152.nip.io/.well-known/oauth-protected-resource`
+   → muss das Dokument liefern, nicht 404.
+3. ChatGPT-Connector auf die MCP-URL zeigen, **ohne** Endpunkte von Hand.
+   Verschwindet `does not implement OAuth`? Welche Pfade fragt der Client ab
+   (Caddy-Zugriffslog)? Verlangt er einen 401?
+4. Dasselbe mit Claude.
+
+Fällt die Messung negativ aus, ist die nächste Handlung eine **Design-Änderung**
+(zweite URL, die mit 401 antwortet, oder OAuth erzwingen) — nicht P2.

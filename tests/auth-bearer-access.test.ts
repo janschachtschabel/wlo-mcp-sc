@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import {
   credentialFromHeader,
   isUnusableAuthorization,
+  isUnusableBearer,
   setAccessSupport,
 } from '../src/auth/credential.js';
 import { encodeAccessToken, loadAuthKeys, type AccessPayload } from '../src/auth/access-token.js';
@@ -130,4 +131,33 @@ test('a revoked or malformed block counts as an unusable header', async (t) => {
 
   await registry.add({ jti: payload.jti, label: payload.u, iat: payload.iat });
   assert.equal(isUnusableAuthorization(tokenFor()), false, 'listed blocks are usable');
+});
+
+/**
+ * `isUnusableBearer` narrows `isUnusableAuthorization` to the one scheme where a
+ * 401 is the right answer (P1/T1.4).
+ *
+ * The distinction matters because the two lead to different places. A Bearer we
+ * cannot open is OUR token failing — the client should be told to authorize
+ * again, and the 401 carries the pointer to where. A Basic header we cannot
+ * parse is a WLO login the caller got wrong; sending them into an OAuth flow
+ * would answer a question they did not ask, so that case keeps degrading to
+ * anonymous exactly as before.
+ */
+test('only a Bearer counts as an unusable TOKEN — a broken Basic is a login problem', async (t) => {
+  const registry = await withSupport(t);
+
+  assert.equal(isUnusableBearer('Bearer nonsense'), true, 'not one of ours');
+  assert.equal(isUnusableBearer(tokenFor()), true, 'decodable but not listed');
+  assert.equal(isUnusableBearer(tokenFor(payload, FOREIGN_KEY)), true, 'a foreign key');
+  assert.equal(isUnusableBearer('bearer nonsense'), true, 'the scheme is case-insensitive');
+
+  assert.equal(isUnusableBearer('Basic !!!'), false, 'unusable, but not as a token');
+  assert.equal(isUnusableBearer(basic('anna', 'geheim')), false);
+  assert.equal(isUnusableBearer(undefined), false, 'nothing presented is not a failure');
+  assert.equal(isUnusableBearer(''), false);
+  assert.equal(isUnusableBearer('   '), false);
+
+  await registry.add({ jti: payload.jti, label: payload.u, iat: payload.iat });
+  assert.equal(isUnusableBearer(tokenFor()), false, 'a listed block is usable');
 });

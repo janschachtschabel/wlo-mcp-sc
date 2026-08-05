@@ -130,6 +130,35 @@ The current rebuild/extension is designed in:
   rejection forward, and a failed write is undone rather than left granting what
   it could not record.
 
+- **OAuth 2.1 für alle Clients — IN ARBEIT, P1 läuft (2026-08-05):**
+  - Design: `docs/plans/2026-08-05-mcp-oauth-design.md`
+  - Tasks:  `docs/plans/2026-08-05-mcp-oauth-tasks.md` (17 tasks, 5 packages)
+
+  Measured 2026-08-05: ChatGPT's connector offers **no header or API-key field**
+  at all — only OAuth / none / mixed — so the access block cannot be entered
+  there. Its probe fails with `does not implement OAuth`, and every discovery
+  path on our server answers 404. OAuth is therefore the only mechanism that
+  reaches every client, and a working reference exists at
+  `C:\Users\jan\github\mcp-wiki-js-ai` (1331 lines, no new dependency).
+
+  Two decisions the design locks: the access token IS the existing `wlo2.…`
+  block, so no credential ever rests on disk (the rejected vault) and no session
+  store is needed; and a request with NO `Authorization` keeps answering 200
+  anonymously — the 401 fires only for a presented-but-unusable OAuth token.
+  **Open point 1 is a gate, not a detail:** whether a client discovers OAuth
+  without a 401. **P1 IS that measurement** — it ships the discovery documents
+  and nothing that depends on the answer; P2–P5 stay locked until it is taken
+  (T1.6). A negative result means a design change, not the next task.
+
+  Three implementation decisions the tasks add on top of the design: the
+  `client_id` carries its own content (AES-GCM under a key derived from the
+  existing private key) rather than living in a store, because the allow-list is
+  the only disk writer and an in-memory store would break every client on every
+  deploy; the issuance path is EXTRACTED into `src/auth/access-issue.ts` rather
+  than copied, because the authority check is the rule "200 is not proof of a
+  login" hangs on; and the issuer origin comes from `WLO_PUBLIC_BASE_URL`, from
+  the `Host` header only under `TRUST_PROXY`.
+
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context
 before the next package.

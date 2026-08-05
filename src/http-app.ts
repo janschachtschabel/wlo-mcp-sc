@@ -13,6 +13,7 @@ import {
   configuredServiceCredential,
   credentialFromHeader,
   isUnusableAuthorization,
+  isUnusableBearer,
   runAnonymous,
   runWithCredential,
 } from './auth/credential.js';
@@ -23,7 +24,9 @@ import { clientKey } from './rate-limit.js';
 import { readBodyWithLimit } from './read-body.js';
 import { parseRequestUrl } from './request-url.js';
 import type { streamableHttpOptions } from './mcp-transport.js';
+import { bearerChallenge, resolveIssuer } from './auth/oauth-metadata.js';
 import { handleAuthEndpoint } from './rest/auth-pages.js';
+import { handleOAuthEndpoint } from './rest/oauth-pages.js';
 import { handleRestRequest } from './rest/routes.js';
 import { handleStaticRequest } from './rest/static.js';
 import { widgetBuildIds } from './apps/resources.js';
@@ -39,15 +42,32 @@ export interface HttpAppOptions {
   maxBodyBytes: number;
   /** Derive the client IP from X-Forwarded-For (TRUST_PROXY; see clientKey). */
   trustProxy: boolean;
+  /**
+   * `WLO_PUBLIC_BASE_URL` — this deployment's public origin, which the OAuth
+   * discovery documents name as their own. Without it OAuth is only reachable
+   * under TRUST_PROXY, and off otherwise (see `auth/oauth-metadata.ts`).
+   */
+  publicBaseUrl?: string;
   /** MCP response mode (JSON vs. real SSE), resolved once from MCP_SSE. */
   streamOptions: ReturnType<typeof streamableHttpOptions>;
+}
+
+/**
+ * Paths where someone's WLO password is checked, and which therefore get no
+ * CORS header at all. Over-inclusive on purpose: denying a cross-origin read to
+ * a path that does not exist costs nothing, while the reverse is an oracle.
+ */
+function isCredentialSurface(path: string): boolean {
+  return path.startsWith('/auth') || path.startsWith('/oauth/authorize');
 }
 
 /** Build the request handler `http.ts` mounts on its node:http server. */
 export function createHttpRequestHandler(
   opts: HttpAppOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const { rateLimiter, apiRateLimiter, authAbuseLimiter, maxBodyBytes, trustProxy, streamOptions } = opts;
+  const {
+    rateLimiter, apiRateLimiter, authAbuseLimiter, maxBodyBytes, trustProxy, streamOptions, publicBaseUrl,
+  } = opts;
 
   // Everything this server exposes to the internet runs ANONYMOUS by default,
   // and the one branch that needs rights takes them deliberately (see the MCP
@@ -98,7 +118,15 @@ export function createHttpRequestHandler(
     // every visitor guess from their own address — defeating the per-address cap
     // — and read which guess worked. The access-block pages are served from this
     // origin and fetch from it, so they need nothing here.
-    if (!path.startsWith('/auth')) {
+    //
+    // `/oauth/authorize` joins that exception for exactly the same reason: from
+    // P3 it checks a WLO password too. Excluded ALREADY, one package before that
+    // endpoint exists, because the alternative is needing the exception at the
+    // moment nobody is thinking about it any more. The rest of the OAuth surface
+    // keeps the wildcard and needs it — the discovery documents are public and
+    // secret-free, and clients fetch them cross-origin; `/oauth/register` and
+    // `/oauth/token` carry no password and are useless without a code.
+    if (!isCredentialSurface(path)) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
@@ -150,6 +178,38 @@ export function createHttpRequestHandler(
       // connector settings sends them here. Parsed once, up front, because the
       // abuse guard below must only weigh credentials we would actually forward.
       const userCred = credentialFromHeader(req.headers['authorization']);
+
+      // A Bearer we were GIVEN and cannot open is the one case that earns a 401,
+      // and it is the doorway the MCP specification prescribes into OAuth
+      // discovery: the `resource_metadata` pointer tells the client where to
+      // read who may authorize it.
+      //
+      // Narrow on purpose. A request with NO header keeps answering 200 with the
+      // public tools — that is requirement number one and the property this
+      // whole undertaking most easily breaks. A `Basic` header we cannot parse
+      // also keeps degrading to anonymous below: that is a WLO login the caller
+      // got wrong, not a token of ours, and an authorization flow would answer a
+      // question they did not ask. A REVOKED block, by contrast, lands here and
+      // should — "fetch a new one" is exactly the right answer, and the 401 is
+      // how a client learns where.
+      //
+      // Before the body is read (cheap rejection) and before the abuse limiter,
+      // which deliberately weighs only credentials we would forward upstream —
+      // a Bearer never leaves this server.
+      if (!userCred && isUnusableBearer(req.headers['authorization'])) {
+        log.info('unusable bearer token — answering 401 with the discovery pointer', { ip });
+        res.writeHead(401, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': bearerChallenge(resolveIssuer({
+            configured: publicBaseUrl,
+            host: req.headers['host'],
+            forwardedProto: req.headers['x-forwarded-proto'],
+            trustProxy,
+          })),
+        });
+        res.end(JSON.stringify({ error: 'The access token is invalid or has been revoked.' }));
+        return;
+      }
 
       // That forwarding is what makes this endpoint usable as a relay for
       // guessing WLO logins from our address. Cap the number of DISTINCT logins
@@ -267,6 +327,24 @@ export function createHttpRequestHandler(
       maxBodyBytes,
       rateLimiter: apiRateLimiter,
       authAbuseLimiter,
+    })) return;
+
+    // OAuth surface (discovery in P1; register/authorize/token follow). Like the
+    // access-block endpoints it returns false for a path it does not own, and it
+    // answers 404 — not 500 — when the feature is not configured.
+    //
+    // The issuer is resolved per request rather than once at startup because the
+    // fallback reads this request's headers; the configured value, when set,
+    // makes that a constant anyway.
+    if (await handleOAuthEndpoint(req, res, {
+      ip: clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy),
+      rateLimiter: apiRateLimiter,
+      issuer: resolveIssuer({
+        configured: publicBaseUrl,
+        host: req.headers['host'],
+        forwardedProto: req.headers['x-forwarded-proto'],
+        trustProxy,
+      }),
     })) return;
 
     // Static prompt launcher (public, GET-only). Placed AFTER the MCP branch so

@@ -131,6 +131,11 @@ services:
       # Derive the client IP from X-Forwarded-For (rightmost, proxy-appended hop)
       # for per-client rate limiting behind a proxy. Set 0 if directly exposed.
       TRUST_PROXY: "${TRUST_PROXY:-1}"
+      # The public address of this deployment, exactly as a client types it.
+      # Required for the OAuth login flow: without it the OAuth paths answer 404,
+      # unless TRUST_PROXY=1 lets the address be derived from the request's Host
+      # header — which the caller chooses. Set it; it costs one line.
+      WLO_PUBLIC_BASE_URL: "${WLO_PUBLIC_BASE_URL:-}"
       # PORT is deliberately absent: the port mapping above hardcodes the
       # container side as 3000, so overriding it would leave the server
       # listening where nothing is published. Change the HOST side with HOST_PORT.

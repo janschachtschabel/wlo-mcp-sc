@@ -9,6 +9,36 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — OAuth discovery (2026-08-05)
+
+The server now publishes the two OAuth metadata documents an MCP client looks
+for — `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource`, each under both the plain and the
+`/mcp`-suffixed path clients variously guess. They name the endpoints of the
+login flow that packages 2–4 will build; today they exist so that a client
+stops concluding this server has no OAuth at all. Off (404) without
+`WLO_AUTH_PRIVATE_KEY` or without a resolvable public origin.
+
+New: `WLO_PUBLIC_BASE_URL`, the address clients type in. The documents name it
+as their own, so it is deliberately NOT taken from the request's `Host` header
+unless `TRUST_PROXY` is set — a forged header would otherwise point somebody's
+client at a login page this server does not own.
+
+### Changed — an unusable Bearer token now answers 401 (2026-08-05)
+
+A `Bearer` header that cannot be turned into a credential — forged, revoked, or
+encrypted for a key this server does not hold — is answered with `401` and a
+`WWW-Authenticate` challenge pointing at the protected-resource document, rather
+than being served anonymously. That is how a client learns where to authorize,
+and a revoked block now says "fetch a new one" instead of quietly returning less
+than it used to.
+
+Two things deliberately did **not** change: a request with **no** `Authorization`
+still answers `200` with the full anonymous tool list, and a `Basic` header that
+cannot be parsed still degrades to anonymous — a wrong WLO password is not an
+invalid token of ours, and an authorization flow would answer a question the
+caller did not ask.
+
 ### Added — personal access blocks (2026-08-04)
 
 A user can now sign in with their own WLO account without handing their password
