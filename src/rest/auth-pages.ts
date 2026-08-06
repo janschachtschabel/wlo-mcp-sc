@@ -22,7 +22,7 @@ import { decodeAccessToken } from '../auth/access-token.js';
 import { currentAccessSupport } from '../auth/credential.js';
 import { log } from '../logger.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
-import { readBodyWithLimit } from '../read-body.js';
+import { isJsonContentType, readBodyWithLimit } from '../read-body.js';
 import { parseRequestUrl } from '../request-url.js';
 import { sanitizeText } from '../text-sanitize.js';
 
@@ -39,6 +39,8 @@ export interface AuthEndpointDeps {
 interface AuthReq extends AsyncIterable<Buffer | Uint8Array> {
   method?: string;
   url?: string;
+  /** Only `content-type` is read — see the 415 below. */
+  headers?: Record<string, string | string[] | undefined>;
 }
 interface AuthRes {
   writeHead: (status: number, headers?: Record<string, string>) => void;
@@ -144,6 +146,18 @@ async function route(
 
   if (parsed.pathname === '/auth/public-key') {
     return send(res, 200, { publicKey: support.keys.publicKeyPem });
+  }
+
+  // Both remaining paths carry a block in the body, and `/auth/issue` checks the
+  // password inside it. Refusing a body that is not DECLARED JSON is what keeps
+  // a cross-origin form out of here: it makes the request non-simple, so the
+  // browser must preflight, and the preflight fails because this surface sends
+  // no CORS header (see `isCredentialSurface` in http-app.ts). Without it a page
+  // could spend every visitor's address on a guess — the exact thing
+  // `authAbuseLimiter` is here to bound. All three access-block pages send the
+  // header already.
+  if (!isJsonContentType(req.headers?.['content-type'])) {
+    return send(res, 415, { error: 'Dieser Endpunkt erwartet einen JSON-Body (Content-Type: application/json).' });
   }
 
   const token = await readToken(req, deps.maxBodyBytes);

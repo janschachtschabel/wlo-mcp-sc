@@ -265,3 +265,161 @@ eine eigene Verwaltungsseite alle entfallen. Vier bis fünf Pakete:
 
 Euer Entscheidungspapier schätzte „6–8 Pakete"; die Referenz und die
 stateless-Variante senken das.
+
+---
+
+## Nachtrag 2026-08-05: ein zweiter Pfad, der immer 401 antwortet — ÜBERHOLT
+
+> **Zurückgezogen am selben Tag.** Das offizielle Beispiel-Repository von OpenAI
+> (`openai/openai-apps-sdk-examples`, Verzeichnis `authenticated_server_python`)
+> löst genau diesen Fall anders und besser. Siehe den Abschnitt darunter. Der
+> Text hier bleibt stehen, weil die Messung am Wiki-JS-Server korrekt ist — nur
+> die daraus gezogene Schlussfolgerung war es nicht.
+
+**Beobachtung nach dem Live-Durchlauf.** Der Anmeldeweg funktioniert, aber die
+Bedienung ist schlechter als beim Referenzserver `mcp-wiki-js-ai`: dort genügt
+die URL, bei uns muss der Nutzer im Aufklappmenü **OAuth** wählen, und in jeder
+Unterhaltung erscheint zusätzlich eine Verbinden-Karte.
+
+**Gemessen, warum.** `lib/oauth/routing.ts` des Referenzservers:
+
+```ts
+if (/^bearer\s+/i.test(auth)) return false;  // explizites BYOK
+return true;  // nichts mitgeschickt → OAuth-Pfad gibt 401 + Discovery
+```
+
+Er hat **keinen anonymen Betrieb**. Wer nichts mitschickt, bekommt 401, und der
+Client folgt der `WWW-Authenticate`-Kette von selbst. Deshalb steht er in ChatGPT
+als „keine Authentifizierung" eingetragen und meldet sich trotzdem an.
+
+Bei uns ist anonymes Lesen Anforderung Nummer eins, also 200 — und damit sieht
+der Client nie einen Anlass, OAuth zu beginnen.
+
+**Zweiter Unterschied, nicht die Ursache:** der Referenzserver deklariert auf
+seinen Werkzeugen **kein `_meta` und kein `securitySchemes`**; wir tun es auf
+allen 38. Das wäre ein Kandidat für die Verbinden-Karte — aber der Stempel steht
+dort mit Absicht (Apps-SDK, Frage F6) und ist in
+`docs/apps-sdk-submission-checklist.md` bereits als geprüft abgehakt. Er wird
+**nicht** angefasst, bevor der einfachere Weg gemessen ist.
+
+**Ausgeschlossen:** die Einwilligungsstufe. Mit `Alle Aktionen zulassen`
+erscheint die Karte unverändert (gemessen 2026-08-05).
+
+### Festlegung
+
+Ein zweiter MCP-Pfad, der **immer** mit `401` + `WWW-Authenticate` antwortet:
+
+| URL | Verhalten |
+|---|---|
+| `…/mcp` | unverändert — ohne Kopf anonym, 25 Werkzeuge |
+| `…/mcp/user` (Name offen) | ohne brauchbaren Zugang **immer** 401 + Discovery-Verweis |
+
+Additiv: am bestehenden Pfad ändert sich nichts, die Anforderung „anonymes Lesen
+bleibt" ist unberührt. Redakteure bekommen die URL mit dem Zusatz, alle anderen
+die kurze — und für Redakteure entfällt die Auswahl im Aufklappmenü.
+
+### Was beim Umsetzen zu beachten ist
+
+- **Der 401 muss auch für eine Anfrage ohne `Authorization` gelten** — genau die
+  Zeile, die auf `/mcp` bewusst umgedreht ist. Das ist die einzige inhaltliche
+  Änderung; sie darf ausschließlich für den neuen Pfad gelten
+  (`tests/oauth-routing.test.ts` hält die alte Regel für `/mcp` fest und muss
+  unverändert grün bleiben — das ist der Nachweis).
+- Der Pfad gehört in `protected_resource_metadata`? **Nein, prüfen:** RFC 9728
+  nennt genau eine Ressource; zwei Pfade auf dasselbe Dokument zeigen zu lassen
+  ist zu klären, bevor beide ausgeliefert werden.
+- Ratenbegrenzung, CORS und der Body-Deckel gelten unverändert; der neue Pfad
+  ist derselbe Handler mit einer anderen Vorentscheidung.
+- **Offen und nur live messbar:** ob damit auch die Verbinden-Karte pro
+  Unterhaltung entfällt. Bleibt sie, ist `securitySchemes` der nächste
+  Verdächtige — dann aber als eigener Versuch, nicht zusammen mit diesem.
+
+
+---
+
+## Nachtrag 2026-08-05 (zweiter): das offizielle Muster für gemischte Server
+
+Quelle: `openai/openai-apps-sdk-examples`, `authenticated_server_python/main.py`
+— ein Server von OpenAI selbst, der genau unseren Fall hat: manches anonym,
+manches nur angemeldet. Vier Unterschiede zu dem, was wir tun.
+
+**1. Ein Werkzeug, das beides kann, deklariert beides.**
+
+```python
+MIXED_TOOL_SECURITY_SCHEMES = [{"type": "noauth"},
+                               {"type": "oauth2", "scopes": RESOURCE_SCOPES}]
+OAUTH_ONLY_SECURITY_SCHEMES = [{"type": "oauth2", "scopes": RESOURCE_SCOPES}]
+```
+
+Unsere Lesewerkzeuge sind `noauth`-only. Sie arbeiten aber angemeldet **anders**
+— nämlich mit den Rechten der Person, die auch nicht-öffentliches Material sieht.
+Ehrlich wäre also die gemischte Form.
+
+**2. Die geschützten Werkzeuge stehen IMMER in `tools/list`.** `PAST_ORDERS_TOOL`
+ist unabhängig von jedem Zugang gelistet, deklariert `oauth2` und verweigert beim
+Aufruf. Wir registrieren die Kurationswerkzeuge anonym gar nicht erst.
+
+**3. Die Anmeldung wird IN DER WERKZEUGANTWORT angefordert, nicht per 401:**
+
+```python
+types.CallToolResult(
+    content=[...],
+    _meta={"mcp/www_authenticate": [f'Bearer error="...", resource_metadata="..."']},
+    isError=True,
+)
+```
+
+Der Transport bleibt bei 200 — anonymes Lesen ist unberührt —, und der Client
+bekommt trotzdem den Anlass, die Anmeldung zu starten. **Das ist der Mechanismus,
+der uns fehlt**, und er löst genau das Problem, für das der zweite Pfad oben
+gedacht war: ohne zweite URL und ohne Auswahl im Aufklappmenü.
+
+**4. `securitySchemes` steht doppelt:** als Feld auf `types.Tool` **und** in
+`_meta`. Unser SDK (`@modelcontextprotocol/sdk` 1.30.0) kennt das Feld
+weiterhin nicht (geprüft 2026-08-05: null Treffer im ganzen Paket), also können
+wir nur `_meta` senden. Dass ChatGPT `_meta` liest, ist belegt — es hat heute an
+unserem ungültigen `{"type":"http"}` DORT die Verbindung verweigert.
+
+### Was daraus folgt
+
+Der zweite 401-Pfad wird **nicht** gebaut. Stattdessen, in dieser Reihenfolge:
+
+1. ✅ **UMGESETZT 2026-08-05.** Kurationswerkzeuge auch anonym listen, mit
+   `oauth2` deklariert, und beim Aufruf ohne Identität mit
+   `_meta["mcp/www_authenticate"]` + `isError` antworten.
+   **Das berührt eine bindende Regel** („Schreibwerkzeuge fehlen im anonymen
+   Betrieb UND verweigern zur Aufrufzeit"): die Verweigerung bleibt absolut, die
+   Unsichtbarkeit fällt. Vom Nutzer ausdrücklich entschieden, bevor gebaut wurde.
+2. ✅ **UMGESETZT 2026-08-05.** Lesewerkzeuge auf die gemischte Form
+   (`noauth` + `oauth2`), weil sie angemeldet mehr sehen.
+3. ⏳ Offen: das Feld `securitySchemes` zusätzlich zum `_meta`-Eintrag ausgeben,
+   sobald das TypeScript-SDK es kennt (1.30.0 kennt es nicht).
+
+### Wie 1 und 2 gebaut wurden (2026-08-05)
+
+Das Tor sitzt an **einer** Stelle: `registerCurationTool` in
+`src/tools/curation-shared.ts`. Es setzt die `oauth2`-Deklaration und prüft vor
+dem Handler, ob der Aufruf schreiben darf. Vorher stand die Deklaration
+dreizehnmal als Literal da — und genau diese Vervielfältigung war am Morgen der
+Grund für den ungültigen `{"type":"http"}`-Wert. Ein Quelltext-Scan in
+`tests/shared-rule-discipline.test.ts` schlägt fehl, sobald ein Kurationswerkzeug
+am Tor vorbei registriert wird; das ist notwendig, weil die Werkzeuge jetzt
+sichtbar und aufrufbar sind und das Tor das Einzige ist, was zwischen einer
+anonymen Anfrage und der Schreib-Pipeline steht.
+
+Zwei Folgeentscheidungen:
+
+- **`createMcpServer` nimmt keinen Schreibmodus mehr**, sondern den öffentlichen
+  Ursprung (`issuer`). Die Werkzeugliste hängt nicht mehr vom Aufrufenden ab, der
+  Parameter wäre also tot gewesen; gebraucht wird stattdessen der
+  `resource_metadata`-Zeiger in der Aufforderung. Er wird pro Anfrage aufgelöst
+  und als **Abschluss** an die Registrierung übergeben — eine Modulvariable
+  würde ihn unter `TRUST_PROXY` zwischen gleichzeitigen Anfragen vermischen.
+- **`requireWrite()` bleibt zusätzlich in jedem Handler.** Redundant, mit Absicht:
+  das Tor ist die Regel, `requireWrite` die Zusicherung, die ein am Tor vorbei
+  registriertes Werkzeug noch trägt. Der Text kommt aus `writeRefusal()`, damit
+  es genau eine Begründung gibt statt zweier, die auseinanderlaufen.
+
+Belegt durch `tests/curation-auth-challenge.test.ts` — die tragende Zusicherung
+ist dabei nicht der Text der Antwort, sondern dass bei einem anonymen Aufruf
+**null** Anfragen nach oben gehen.

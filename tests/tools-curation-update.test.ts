@@ -30,7 +30,7 @@ const STORED: Record<string, string[]> = {
 async function curationClient(): Promise<Client> {
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   applyReadOnlyToolDefaults(server);
-  registerCurationContentTools(server);
+  registerCurationContentTools(server, 'Bearer error="invalid_request"');
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

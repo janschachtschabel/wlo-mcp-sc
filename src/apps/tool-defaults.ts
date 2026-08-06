@@ -5,10 +5,11 @@
  * authentication, so they share two descriptor traits that the Apps-SDK wants
  * declared explicitly:
  *
- *   1. `_meta.securitySchemes: [{ type: 'noauth' }]` — the "callable
- *      anonymously" declaration (F6), applied as a DEFAULT: a tool that sets
- *      its own scheme at the registration site keeps it, which is how the
- *      curation tools avoid claiming they are callable without an identity.
+ *   1. `_meta.securitySchemes: [{ type: 'noauth' }, { type: 'oauth2', … }]` —
+ *      the "callable anonymously, and better with a login" declaration (F6),
+ *      applied as a DEFAULT: a tool that sets its own scheme at the
+ *      registration site keeps it, which is how the curation tools avoid
+ *      claiming they are callable without an identity.
  *      The Apps-SDK auth doc shows a top-level
  *      `securitySchemes` descriptor field, but the SDK does not know or
  *      serialise that field (re-verified against @modelcontextprotocol/sdk
@@ -39,8 +40,20 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { SCOPES } from '../auth/oauth-metadata.js';
 import { toolStatusMeta } from './tool-status.js';
 
-/** Apps-SDK no-auth declaration: the tool is callable anonymously. */
-const NOAUTH_SECURITY_SCHEMES: ReadonlyArray<{ type: 'noauth' }> = [{ type: 'noauth' }];
+/**
+ * The declaration for a tool that works BOTH ways.
+ *
+ * Every read tool is callable anonymously — and a logged-in caller gets more out
+ * of it, because the search runs with the rights of a person who also sees
+ * material that is not public. `noauth` alone would state only half of that.
+ *
+ * The mixed form is what OpenAI's own mixed-auth example declares for exactly
+ * this case (`authenticated_server_python`, read 2026-08-05): the array lists
+ * the schemes a tool ACCEPTS, so naming both says "works without a login, works
+ * better with one" rather than "needs a login".
+ */
+const MIXED_SECURITY_SCHEMES: ReadonlyArray<{ type: 'noauth' } | { type: 'oauth2'; scopes: string[] }> =
+  [{ type: 'noauth' }, { type: 'oauth2', scopes: [...SCOPES] }];
 
 /**
  * The declaration for a tool that needs an identity.
@@ -88,13 +101,13 @@ const TOOL_TITLES: Readonly<Record<string, string>> = {
 
 function applyDefaults(tool: RegisteredTool, name: unknown): RegisteredTool {
   const statusMeta = typeof name === 'string' ? toolStatusMeta(name) : {};
-  // `noauth` is the default, not a rule: a curation tool declares its own
+  // The mixed form is the default, not a rule: a curation tool declares its own
   // scheme at the registration site and must not be overwritten with a claim
   // that it is callable without an identity.
   const existing = (tool._meta as { securitySchemes?: unknown } | undefined)?.securitySchemes;
   tool._meta = {
     ...(tool._meta ?? {}),
-    securitySchemes: existing ?? NOAUTH_SECURITY_SCHEMES,
+    securitySchemes: existing ?? MIXED_SECURITY_SCHEMES,
     ...statusMeta,
   };
   if (typeof name === 'string') tool.title ??= TOOL_TITLES[name];

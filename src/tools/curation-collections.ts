@@ -14,8 +14,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { registerWloTool } from '../apps/register.js';
-import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet, type ChangeSet } from '../services/write/change-set.js';
 import {
@@ -28,6 +26,8 @@ import type { MutationOutcome } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
+  registerCurationTool,
+  type WriteAuthChallenge,
   previewReply,
   confirmOrExplain,
   errorText,
@@ -67,8 +67,8 @@ function gate(params: Record<string, unknown>, cs: ChangeSet, whatHappensNext: s
   return confirmOrExplain(token, cs);
 }
 
-export function registerCurationCollectionTools(server: McpServer): void {
-  registerWloTool(server, {
+export function registerCurationCollectionTools(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
     name: 'wlo_create_collection',
     title: 'WLO Sammlung anlegen',
     description:
@@ -80,8 +80,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       parentId: z.string().optional().describe('nodeId der übergeordneten Sammlung; weglassen für oberste Ebene.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: WRITE_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -119,7 +118,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
     },
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_rename_collection',
     title: 'WLO Sammlung umbenennen',
     description:
@@ -131,8 +130,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       description: z.string().optional().describe('Neue Beschreibung.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: WRITE_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -172,7 +170,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
     },
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_add_to_collection',
     title: 'WLO Material in Sammlung aufnehmen',
     description:
@@ -184,8 +182,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       nodeId: z.string().describe('nodeId des Materials.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: WRITE_ANNOTATIONS,
     handler: (params) => referenceHandler(params, {
       verb: 'Aufnehmen',
       action: (material, collection, ids) =>
@@ -197,7 +194,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
     }),
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_remove_from_collection',
     title: 'WLO Material aus Sammlung nehmen',
     description:
@@ -210,8 +207,7 @@ export function registerCurationCollectionTools(server: McpServer): void {
       nodeId: z.string().describe('nodeId des Materials.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: WRITE_ANNOTATIONS,
     handler: (params) => referenceHandler(params, {
       verb: 'Herausnehmen',
       action: (material, collection, ids) =>

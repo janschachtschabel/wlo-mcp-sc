@@ -238,6 +238,12 @@ the connector registers itself and sends the user to `/oauth/authorize` to log
 in with their own WLO account. Without a key, choose "no authentication" — the
 25 read tools work anonymously.
 
+The curation tools are listed either way. Without a usable login they refuse and
+answer with the challenge that asks the client to start the OAuth flow, so a
+connector set up as "no authentication" can still be told to sign in. If
+`WLO_AUTH_PRIVATE_KEY` is unset there is nothing to sign in to, and the refusal
+is simply final.
+
 ## 7. Stdio variant (local MCP clients)
 
 For a desktop MCP client that speaks stdio instead of HTTP, override the image

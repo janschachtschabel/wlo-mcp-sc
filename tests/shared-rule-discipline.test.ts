@@ -159,3 +159,24 @@ test('the authority check has one caller per purpose, not a copy per endpoint', 
     'call issueAccessBlock from auth/access-issue.ts — it is where the authority rule lives',
   );
 });
+
+/** A direct registration call — the thing a curation tool must NOT do. */
+const DIRECT_REGISTRATION = /registerWloTool\s*\(/;
+
+test('every curation tool is registered through the seam that gates it', () => {
+  // `registerCurationTool` (tools/curation-shared.ts) does two things no
+  // curation tool may be without: it stamps the `oauth2` declaration, and it
+  // refuses the call when the caller may not write, answering with the OAuth
+  // challenge that makes the host offer a login.
+  //
+  // Since 2026-08-05 these tools are listed for EVERY caller, so that gate is
+  // the only thing standing between an anonymous request and the write
+  // pipeline. A tool registered past it would be visible, callable, and
+  // ungated — the one failure this whole arrangement must not have.
+  const offending = sourceFiles(srcDir)
+    .map(rel)
+    .filter(name => /^tools\/curation-/.test(name) && name !== 'tools/curation-shared.ts')
+    .filter(name => DIRECT_REGISTRATION.test(readFileSync(join(srcDir, name), 'utf8')));
+  assert.deepEqual(offending, [],
+    'use registerCurationTool from tools/curation-shared.ts — it is where the write gate lives');
+});

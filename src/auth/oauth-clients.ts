@@ -95,6 +95,11 @@ export function isValidRedirectUri(uri: string): boolean {
  * `localhost` versus `127.0.0.1` between registering and calling back. Those two
  * differences are forgiven; scheme, path and query are not, and for any other
  * host nothing is forgiven at all.
+ *
+ * Userinfo is refused on this path as well. `isValidRedirectUri` rejects it at
+ * registration for a reason that applies just as much here — it hides the
+ * effective host from anyone reading the URI — and the final redirect is built
+ * from the PRESENTED value, so forgiving it here would undo the check there.
  */
 export function redirectUriMatches(registered: string, presented: string): boolean {
   const r = parse(registered);
@@ -102,6 +107,7 @@ export function redirectUriMatches(registered: string, presented: string): boole
   if (!r || !p) return false;
   if (registered === presented) return true;
   if (!isLoopbackHost(r.hostname) || !isLoopbackHost(p.hostname)) return false;
+  if (p.username || p.password) return false;
   return r.protocol === p.protocol && r.pathname === p.pathname && r.search === p.search && !p.hash;
 }
 
@@ -136,12 +142,20 @@ export function encodeClientId(client: OAuthClient, keys: AuthKeys): string {
   return [PREFIX, iv.toString('base64url'), body.toString('base64url')].join('.');
 }
 
-/** Reject anything whose shape would otherwise reach the redirect check. */
+/**
+ * Reject anything whose shape would otherwise reach the redirect check.
+ *
+ * The redirect targets are held to the SAME rule registration applies, not
+ * merely to "non-empty string". The AEAD already proves we minted the id, so
+ * this cannot be reached from outside today — but this is the last gate before
+ * a code is sent somewhere, and a second way to mint an id (a migration, a test
+ * seam, a future admin path) must not be able to smuggle a target past it.
+ */
 function validate(value: unknown): OAuthClient | null {
   if (typeof value !== 'object' || value === null) return null;
   const { r, n } = value as Record<string, unknown>;
   if (!Array.isArray(r) || r.length === 0 || r.length > MAX_REDIRECT_URIS) return null;
-  if (!r.every((u): u is string => typeof u === 'string' && u.length > 0)) return null;
+  if (!r.every((u): u is string => typeof u === 'string' && isValidRedirectUri(u))) return null;
   if (typeof n !== 'string') return null;
   return { redirectUris: r, name: n };
 }

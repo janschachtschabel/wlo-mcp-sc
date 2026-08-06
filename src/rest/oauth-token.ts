@@ -39,6 +39,18 @@ const s256 = (verifier: string): string =>
   createHash('sha256').update(verifier).digest('base64url');
 
 /**
+ * The verifier length RFC 7636 §4.1 prescribes.
+ *
+ * The floor is the part that does work. A merely WRONG verifier already fails
+ * the comparison below, so this only bites where the client CHOSE a short one
+ * and registered its challenge — and that is the case the RFC bounds: whoever
+ * intercepted the redirect holds the code and the challenge both, and a short
+ * verifier is then searchable.
+ */
+const VERIFIER_MIN = 43;
+const VERIFIER_MAX = 128;
+
+/**
  * Compare two challenge strings without leaking where they differ.
  *
  * Both sides are hashes here, so a timing leak is of limited use — but the
@@ -83,7 +95,11 @@ export async function exchangeCode(
   if (!redirectUriMatches(record.redirectUri, form.get('redirect_uri') ?? '')) {
     return refuse('redirect target does not match the one the code was issued for');
   }
-  if (!sameChallenge(s256(form.get('code_verifier') ?? ''), record.challenge)) {
+  const verifier = form.get('code_verifier') ?? '';
+  if (verifier.length < VERIFIER_MIN || verifier.length > VERIFIER_MAX) {
+    return refuse('PKCE verifier is outside the length RFC 7636 §4.1 prescribes');
+  }
+  if (!sameChallenge(s256(verifier), record.challenge)) {
     return refuse('PKCE verifier does not match the challenge');
   }
 

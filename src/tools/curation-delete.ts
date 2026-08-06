@@ -16,8 +16,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { registerWloTool } from '../apps/register.js';
-import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { deleteContentNode } from '../services/write/nodes-lifecycle.js';
@@ -25,7 +23,15 @@ import { deleteCollection } from '../services/write/collections.js';
 import type { MutationOutcome } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
-import { previewReply, confirmOrExplain, errorText, reportMutation, timeoutOrError } from './curation-shared.js';
+import {
+  registerCurationTool,
+  type WriteAuthChallenge,
+  previewReply,
+  confirmOrExplain,
+  errorText,
+  reportMutation,
+  timeoutOrError,
+} from './curation-shared.js';
 
 /** Said in the preview of every deletion, and never contradicted afterwards. */
 const NO_WAY_BACK =
@@ -38,8 +44,8 @@ const deleteSchema = {
     .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
 };
 
-export function registerCurationDeleteTools(server: McpServer): void {
-  registerWloTool(server, {
+export function registerCurationDeleteTools(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
     name: 'wlo_delete_content',
     title: 'WLO Inhalt löschen',
     description:
@@ -49,7 +55,6 @@ export function registerCurationDeleteTools(server: McpServer): void {
       'in denen es vorkommt. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: (params) => runDeletion(params, {
       kind: 'content',
       whatItMeans:
@@ -60,7 +65,7 @@ export function registerCurationDeleteTools(server: McpServer): void {
     }),
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_delete_collection',
     title: 'WLO Sammlung löschen',
     description:
@@ -69,7 +74,6 @@ export function registerCurationDeleteTools(server: McpServer): void {
       'confirmToken wird nur gezeigt, was gelöscht würde. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: (params) => runDeletion(params, {
       kind: 'collection',
       whatItMeans:

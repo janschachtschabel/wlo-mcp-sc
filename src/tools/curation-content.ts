@@ -16,8 +16,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { registerWloTool } from '../apps/register.js';
-import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
@@ -27,6 +25,8 @@ import { verifyWrite } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import {
+  registerCurationTool,
+  type WriteAuthChallenge,
   collectDesired,
   rejectionReply,
   previewReply,
@@ -70,8 +70,8 @@ const submitSchema = {
   confirmToken: CONFIRM_TOKEN,
 };
 
-export function registerCurationContentTools(server: McpServer): void {
-  registerWloTool(server, {
+export function registerCurationContentTools(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
     name: 'wlo_update_content',
     title: 'WLO Inhalt bearbeiten',
     description:
@@ -82,8 +82,7 @@ export function registerCurationContentTools(server: McpServer): void {
       'Erfordert eine Anmeldung. NICHT für neue Inhalte und nicht zum Löschen.',
     inputSchema: updateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    // Not `noauth`: this tool refuses a caller without an identity.
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    // Not `noauth`: this tool refuses a caller without an identity.
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -156,7 +155,7 @@ export function registerCurationContentTools(server: McpServer): void {
     },
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_create_content',
     title: 'WLO Inhalt anlegen',
     description:
@@ -166,8 +165,7 @@ export function registerCurationContentTools(server: McpServer): void {
       'entsteht als Entwurf und geht NICHT automatisch in die redaktionelle Prüfung — dafür gibt es ' +
       'wlo_submit_content. Erfordert eine Anmeldung.',
     inputSchema: createSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -229,7 +227,7 @@ export function registerCurationContentTools(server: McpServer): void {
     },
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_submit_content',
     title: 'WLO Inhalt zur Prüfung einreichen',
     description:
@@ -238,8 +236,7 @@ export function registerCurationContentTools(server: McpServer): void {
       'versehentlich in der Redaktions-Warteschlange landet. ZWEISTUFIG: ohne confirmToken nur Vorschau. ' +
       'Erfordert eine Anmeldung.',
     inputSchema: submitSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

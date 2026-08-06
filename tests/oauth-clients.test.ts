@@ -180,3 +180,30 @@ test('the cap on redirect targets is a real number the endpoint can use', () => 
   assert.equal(typeof MAX_REDIRECT_URIS, 'number');
   assert.ok(MAX_REDIRECT_URIS >= 1 && MAX_REDIRECT_URIS <= 20);
 });
+
+test('the loopback loosening does not extend to userinfo', () => {
+  // `isValidRedirectUri` rejects userinfo at REGISTRATION, and for a reason it
+  // states: it hides the effective host from anyone reading the URI, the consent
+  // screen included. The loopback branch compares scheme, path and query — so
+  // without this the PRESENTED target could add credentials the registered one
+  // never had, and `authorizationRedirect` builds the final URL from the
+  // presented value.
+  assert.equal(redirectUriMatches('http://localhost:1455/cb', 'http://a:b@localhost:9/cb'), false);
+  assert.equal(redirectUriMatches('http://localhost:1455/cb', 'http://a@127.0.0.1:9/cb'), false);
+  // The loosening itself is untouched: port and loopback spelling stay free.
+  assert.equal(redirectUriMatches('http://localhost:1455/cb', 'http://127.0.0.1:9/cb'), true);
+});
+
+test('a client id whose redirect list would not pass registration is not opened', () => {
+  // Defence in depth: the AEAD already proves we minted the id, and
+  // `/oauth/register` validates. But `validate()` is the last gate before the
+  // redirect check, and "non-empty string" is not the rule this module enforces
+  // everywhere else.
+  const keys = KEYS;
+  const smuggled = encodeClientId(
+    { redirectUris: ['http://evil.example/cb'], name: 'Schmuggler' }, keys);
+  assert.equal(decodeClientId(smuggled, keys), null, 'plain http off loopback is not a redirect target');
+
+  const fragment = encodeClientId({ redirectUris: ['https://ok.example/cb#x'], name: 'X' }, keys);
+  assert.equal(decodeClientId(fragment, keys), null, 'a fragment is refused here too');
+});

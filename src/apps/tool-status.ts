@@ -47,6 +47,27 @@ export const TOOL_STATUS: Readonly<Record<string, ToolStatus>> = {
   wlo_health_check: { invoking: 'Verbindung wird geprüft…', invoked: 'Status geprüft' },
   search: { invoking: 'WirLernenOnline wird durchsucht…', invoked: 'Ergebnisse bereit' },
   fetch: { invoking: 'Inhalt wird geladen…', invoked: 'Inhalt geladen' },
+
+  // The curation tools. They have been listed for every caller since
+  // 2026-08-05, so their status copy is no longer optional.
+  //
+  // Deliberately non-committal about the outcome: each of these is two-step, so
+  // the FIRST call only produces a preview and writes nothing. "Gespeichert"
+  // would be a lie on that call — and the second call may still report that the
+  // repository dropped the value. What actually landed is in the reply text.
+  wlo_update_content: { invoking: 'Änderung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_create_content: { invoking: 'Inhalt wird angelegt…', invoked: 'Ergebnis liegt vor' },
+  wlo_submit_content: { invoking: 'Einreichung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_create_collection: { invoking: 'Sammlung wird angelegt…', invoked: 'Ergebnis liegt vor' },
+  wlo_rename_collection: { invoking: 'Sammlung wird umbenannt…', invoked: 'Ergebnis liegt vor' },
+  wlo_add_to_collection: { invoking: 'Material wird eingeordnet…', invoked: 'Ergebnis liegt vor' },
+  wlo_remove_from_collection: { invoking: 'Material wird herausgenommen…', invoked: 'Ergebnis liegt vor' },
+  wlo_update_compendium: { invoking: 'Kompendialtext wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_suggest_metadata: { invoking: 'Vorschlag wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_list_suggestions: { invoking: 'Vorschläge werden geladen…', invoked: 'Vorschläge geladen' },
+  wlo_decide_suggestion: { invoking: 'Vorschlag wird entschieden…', invoked: 'Ergebnis liegt vor' },
+  wlo_delete_content: { invoking: 'Löschung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_delete_collection: { invoking: 'Löschung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
 };
 
 /**

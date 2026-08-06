@@ -33,7 +33,7 @@ import { registerCurationCompendiumTool } from './tools/curation-compendium.js';
 import { registerCurationDeleteTools } from './tools/curation-delete.js';
 import { registerCurationSuggestionTools } from './tools/curation-suggestions.js';
 import { registerCurationDecisionTool } from './tools/curation-decide.js';
-import { writeMode, type WriteMode } from './services/write/credential-gate.js';
+import { writeAuthChallenge } from './auth/oauth-metadata.js';
 import { registerWidgets } from './apps/resources.js';
 import { applyReadOnlyToolDefaults } from './apps/tool-defaults.js';
 import { WLO_SERVER_INSTRUCTIONS } from './apps/instructions.js';
@@ -41,14 +41,19 @@ import { WLO_SERVER_INSTRUCTIONS } from './apps/instructions.js';
 export type { QueryMeta } from './tools/shared.js';
 export type { LabeledCriterion } from './filter-criteria.js';
 
-/**
- * @param mode – whether this server may offer curation (write) tools. Resolved
- *   by the caller, because the HTTP entry point knows the request's credential
- *   before it builds the server, while stdio has only the environment. Omitted
- *   ⇒ derived from whatever credential is in scope, which is `none` when there
- *   is none — the safe default for a surface that forgot to pass it.
- */
-export function createMcpServer(mode: WriteMode = writeMode()): McpServer {
+export interface McpServerOptions {
+  /**
+   * This deployment's public origin, used for the `resource_metadata` pointer a
+   * curation tool sends when the caller may not write. Resolved by the caller
+   * (see `auth/oauth-metadata.ts`) — the HTTP entry point knows the request, and
+   * under `TRUST_PROXY` the origin is per-request, so it must not be cached in a
+   * module variable shared by concurrent calls. Absent ⇒ no pointer, which is
+   * the honest answer when the origin is unknown.
+   */
+  issuer?: string | null;
+}
+
+export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpServer {
   // The repository URL comes globally from the ``WLO_REPOSITORY_URL`` env (see
   // ``wlo-api.ts``). Each server instance addresses a single edu-sharing
   // endpoint — switching between prod/staging happens via a separate
@@ -62,15 +67,15 @@ export function createMcpServer(mode: WriteMode = writeMode()): McpServer {
     { instructions: WLO_SERVER_INSTRUCTIONS },
   );
 
-  // Declare the READ-ONLY defaults once — this wraps the two registration
-  // methods so all tools below (seam + plain) carry `_meta.securitySchemes`
-  // (F6) and the required `destructiveHint`/`openWorldHint` annotations.
+  // Declare the defaults once — this wraps the two registration methods so all
+  // tools below (seam + plain) carry `_meta.securitySchemes` (F6) and the
+  // required `destructiveHint`/`openWorldHint` annotations.
   //
-  // Defaults, not a rule about the server: the reading tools serve public OER
-  // data with no authentication, while the curation tools registered at the
-  // bottom of this function declare their own `securitySchemes` and keep them
-  // (see `apps/tool-defaults.ts`). Claiming `noauth` for those would tell the
-  // host something untrue about when they can be called.
+  // Defaults, not a rule about the server: a read tool accepts both `noauth`
+  // and `oauth2` (it works anonymously and sees more with a login), while the
+  // curation tools registered at the bottom of this function declare `oauth2`
+  // alone and keep it (see `apps/tool-defaults.ts`). Claiming `noauth` for
+  // those would tell the host something untrue about when they can be called.
   applyReadOnlyToolDefaults(server);
 
   // Register the built Apps-SDK widget resources (if any) and get their `ui://`
@@ -102,19 +107,27 @@ export function createMcpServer(mode: WriteMode = writeMode()): McpServer {
   if (WLO_SKILLS_COLLECTION_ID) registerSkillsTool(server, WLO_SKILLS_COLLECTION_ID); // find_wlo_skills
   registerAuthTools(server);            // wlo_auth_status
 
-  // Curation tools are registered ONLY when this call has an identity that may
-  // write. A model cannot misuse a tool it cannot see — and each of them also
-  // refuses at call time, because a host may serve a cached tool list.
-  if (mode !== 'none') {
-    registerCurationContentTools(server);    // wlo_update_content, wlo_create_content, wlo_submit_content
-    registerCurationCollectionTools(server); // create/rename collection, add/remove material
-    registerCurationCompendiumTool(server);  // wlo_update_compendium
-    registerCurationSuggestionTools(server); // wlo_suggest_metadata, wlo_list_suggestions — proposals only
-    registerCurationDecisionTool(server);    // wlo_decide_suggestion — the one that applies a proposal
-    // Deleting comes last, so the destructive pair sits at the end of the list
-    // rather than next to the tools that merely change a field.
-    registerCurationDeleteTools(server);     // wlo_delete_content, wlo_delete_collection
-  }
+  // Curation tools are registered ALWAYS, including for a caller with no
+  // identity — and each refuses at call time with the OAuth challenge that asks
+  // the host to offer a login (`tools/curation-shared.ts`).
+  //
+  // This reverses the earlier rule "write tools are absent in anonymous mode",
+  // deliberately and with the user's decision (2026-08-05). Hiding them looked
+  // safer and was the reason the login never started: a model that never sees a
+  // write tool never calls one, so nothing ever asks the host to authenticate,
+  // and the connector stayed anonymous forever. It is also what OpenAI's own
+  // mixed-auth example does — the protected tool is always listed and refuses
+  // on invocation. The refusal itself is unchanged and absolute; only the
+  // invisibility is gone.
+  const challenge = writeAuthChallenge(issuer);
+  registerCurationContentTools(server, challenge);    // wlo_update_content, wlo_create_content, wlo_submit_content
+  registerCurationCollectionTools(server, challenge); // create/rename collection, add/remove material
+  registerCurationCompendiumTool(server, challenge);  // wlo_update_compendium
+  registerCurationSuggestionTools(server, challenge); // wlo_suggest_metadata, wlo_list_suggestions — proposals only
+  registerCurationDecisionTool(server, challenge);    // wlo_decide_suggestion — the one that applies a proposal
+  // Deleting comes last, so the destructive pair sits at the end of the list
+  // rather than next to the tools that merely change a field.
+  registerCurationDeleteTools(server, challenge);     // wlo_delete_content, wlo_delete_collection
 
   return server;
 }

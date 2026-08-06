@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { assertRejectsWithoutUpstream, connectedClient } from './fetchMock.js';
+import { CURATION_TOOLS, MUTATING_TOOLS } from './curation-tools.js';
 
 const EXPECTED_TOOLS = [
   'search_wlo_collections',
@@ -37,10 +38,10 @@ const EXPECTED_TOOLS = [
   // that could not work.
 ];
 
-test('createMcpServer registers exactly the 25 unconditional read tools', async () => {
+test('createMcpServer registers exactly the 25 read tools and the 13 curation tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS].sort());
+  assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS, ...CURATION_TOOLS].sort());
   await client.close();
 });
 
@@ -65,12 +66,16 @@ test('search_wlo_content rejects an over-long excludeNodeIds array (no network)'
   await client.close();
 });
 
-test('every tool advertises a non-empty description and readOnlyHint (Apps-SDK metadata)', async () => {
+test('every tool advertises a non-empty description, and the read tools say readOnlyHint', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
+  const mutating = new Set(MUTATING_TOOLS);
   for (const t of tools) {
     assert.ok((t.description ?? '').trim().length > 0, `${t.name} has a description`);
-    assert.equal(t.annotations?.readOnlyHint, true, `${t.name} is readOnlyHint:true (all WLO tools are read-only)`);
+    // Both directions, not just one: a read tool that dropped the hint and a
+    // mutating tool that claimed it are the same kind of false declaration.
+    assert.equal(t.annotations?.readOnlyHint, !mutating.has(t.name),
+      `${t.name}: readOnlyHint must say whether it changes data`);
   }
   // Wikipedia reaches an open-world external source → openWorldHint.
   const wiki = tools.find(t => t.name === 'get_wikipedia_summary');
@@ -78,15 +83,18 @@ test('every tool advertises a non-empty description and readOnlyHint (Apps-SDK m
   await client.close();
 });
 
-test('every tool declares the no-auth security scheme (Apps-SDK read-only stance)', async () => {
+test('every tool declares the security scheme that matches what it needs', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
+  const curation = new Set(CURATION_TOOLS);
   for (const t of tools) {
     const schemes = (t._meta as { securitySchemes?: unknown } | undefined)?.securitySchemes;
     assert.deepEqual(
       schemes,
-      [{ type: 'noauth' }],
-      `${t.name} declares _meta.securitySchemes = [{ type: 'noauth' }]`,
+      curation.has(t.name)
+        ? [{ type: 'oauth2', scopes: ['wlo'] }]
+        : [{ type: 'noauth' }, { type: 'oauth2', scopes: ['wlo'] }],
+      `${t.name}: _meta.securitySchemes`,
     );
   }
   await client.close();
@@ -97,7 +105,11 @@ test('every tool declares the required destructiveHint + openWorldHint annotatio
   const { tools } = await client.listTools();
   for (const t of tools) {
     // The Apps-SDK marks readOnlyHint/destructiveHint/openWorldHint as required.
-    assert.equal(t.annotations?.destructiveHint, false, `${t.name} declares destructiveHint:false`);
+    // `destructiveHint` is true for exactly the two deletions and false for
+    // everything else — asserted by name so a tool cannot pick up the dangerous
+    // one by copying a neighbour.
+    assert.equal(t.annotations?.destructiveHint, t.name.startsWith('wlo_delete_'),
+      `${t.name}: destructiveHint`);
     assert.equal(typeof t.annotations?.openWorldHint, 'boolean', `${t.name} declares openWorldHint`);
   }
   await client.close();

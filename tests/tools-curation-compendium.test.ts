@@ -26,7 +26,7 @@ const PROPERTY = 'ccm:oeh_collection_compendium_text';
 async function client(): Promise<Client> {
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   applyReadOnlyToolDefaults(server);
-  registerCurationCompendiumTool(server);
+  registerCurationCompendiumTool(server, 'Bearer error="invalid_request"');
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const c = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(st), c.connect(ct)]);

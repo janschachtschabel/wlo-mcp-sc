@@ -9,6 +9,89 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed — the password-checking endpoints were reachable from any web page (2026-08-06)
+
+`/auth/issue`, `/auth/revoke` and `POST /oauth/authorize` parsed whatever body
+arrived, without looking at `Content-Type`. The CSRF argument in the source —
+"a JSON body cannot be sent cross-origin without a preflight" — only holds if the
+server *requires* `application/json`. A `<form enctype="text/plain">` is a
+**simple** request, needs no preflight, and its body can be crafted to parse as
+JSON.
+
+What that allowed: a page could make every visitor submit an attacker-built
+access block from the visitor's own address. The response stays unreadable
+cross-origin, but the author holds the block and learns the outcome by presenting
+it at `/mcp` afterwards. `authAbuseLimiter` — the guard both modules name, which
+counts distinct logins per **address** — was therefore bypassable by spreading
+the guessing across visitors.
+
+All three now answer `415` unless the body is declared `application/json`
+(parameters such as `; charset=utf-8` allowed). That makes the request
+non-simple, so a browser must preflight, and the preflight fails on the missing
+CORS header. All three access-block pages already send the header, so nothing on
+our own surface changes. `/oauth/register` and `/oauth/token` are deliberately
+left alone: neither carries a credential, the token endpoint is form-encoded by
+RFC 6749 §4.1.3, and requiring a type there would only risk breaking a conforming
+client. The rule itself is one function, `isJsonContentType` in `read-body.ts`.
+
+### Fixed — four smaller findings from the auth review (2026-08-06)
+
+- **`WWW-Authenticate` values are escaped** (`auth/oauth-metadata.ts`). Every
+  caller passes a `URL.origin` whose host has already been through the `HOST`
+  pattern, so no quote can arrive today — but that invariant lives two modules
+  away, and the builder gained a second caller when the write tools began
+  sending a challenge inside a tool result.
+- **The loopback loosening no longer forgives userinfo**
+  (`auth/oauth-clients.ts`). `isValidRedirectUri` rejects `user:pass@` at
+  registration; the RFC 8252 §7.3 branch compared only scheme, path and query, so
+  a *presented* target could add credentials the registered one never had — and
+  the final redirect is built from the presented value.
+- **A `client_id`'s redirect list is held to the registration rule when it is
+  opened**, not merely to "non-empty string". Unreachable from outside (the AEAD
+  proves we minted the id), but it is the last gate before a code is sent
+  somewhere.
+- **`code_verifier` must be 43–128 characters** (RFC 7636 §4.1). Only bites where
+  a client *chose* a short verifier and registered its challenge — which is the
+  case the RFC bounds, because an interceptor holds the code and the challenge
+  both.
+
+Plus a corrected claim: `access-registry.ts` said "revoking a block requires
+holding it". It does not — `remove` is keyed on the access id, and anyone can
+build a block carrying one, since the public key is published. The trade is
+deliberate, but it makes the id the secret, so it must never be logged or
+returned. A test now pins both halves.
+
+### Changed — the curation tools are listed for everyone and ask for the login themselves (2026-08-05)
+
+Until now a caller with no identity got 25 tools and no hint that thirteen more
+existed. That looked like the safe choice and was the reason the login never
+started: a model that never sees a write tool never calls one, so nothing ever
+asks the host to authenticate, and a connector added without OAuth stayed
+anonymous forever — which is exactly what happened live.
+
+The pattern that replaces it is the one OpenAI's own mixed-auth example uses
+(`authenticated_server_python`, read 2026-08-05):
+
+- **Every caller gets the same tool list.** The curation tools declare
+  `securitySchemes: [{type:'oauth2', scopes:['wlo']}]` and are always present.
+- **They refuse without a write identity**, answering with an error result that
+  carries `_meta["mcp/www_authenticate"]` — an RFC 6750 challenge with the
+  `resource_metadata` pointer. That is the client's cue to run the OAuth flow.
+  The HTTP status stays `200`, so anonymous reading is untouched.
+- **The read tools now declare both schemes** (`noauth` + `oauth2`). They work
+  without a login and see more with one; saying only `noauth` stated half of it.
+
+The refusal itself is unchanged and absolute: an anonymous call reaches no write
+code and makes no upstream request (asserted against the recorded fetch calls,
+not against the reply text). The gate lives in ONE place —
+`registerCurationTool` in `tools/curation-shared.ts`, which every curation tool
+now goes through; a source scan in `tests/shared-rule-discipline.test.ts` fails
+if one is ever registered past it.
+
+`createMcpServer` consequently no longer takes a write mode — the list does not
+depend on the caller any more — and takes the public origin instead, for the
+pointer in that challenge.
+
 ### Added — one log line per MCP request, naming the surface it was served (2026-08-05)
 
 `mcp request` with the JSON-RPC `method` and the resolved `mode`

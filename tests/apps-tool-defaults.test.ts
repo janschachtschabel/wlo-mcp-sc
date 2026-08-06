@@ -1,8 +1,9 @@
 /**
  * apps-tool-defaults.test.ts – `applyReadOnlyToolDefaults` stamps the uniform
  * read-only descriptor defaults onto BOTH registration paths (plain
- * `server.tool` and the `registerWloTool` seam): the no-auth security scheme
- * and the required `destructiveHint`/`openWorldHint` annotations. It MERGES
+ * `server.tool` and the `registerWloTool` seam): the mixed `noauth` + `oauth2`
+ * security declaration and the required `destructiveHint`/`openWorldHint`
+ * annotations. It MERGES
  * with, rather than clobbers, existing widget `_meta` and explicit per-tool
  * annotations.
  */
@@ -18,8 +19,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { registerWloTool } from '../src/apps/register.js';
 import { createMcpServer } from '../src/server.js';
+import { CURATION_TOOLS } from './curation-tools.js';
 
-test('EVERY tool carries the full Apps-SDK metadata set (title, hints, noauth, status)', async () => {
+test('EVERY tool carries the full Apps-SDK metadata set (title, hints, schemes, status)', async () => {
   // Conformance pin for all current AND future tools: the Apps SDK requires a
   // human-readable title alongside the machine name, the three annotation
   // hints, an auth declaration, and (ChatGPT extension) the invocation status
@@ -32,14 +34,24 @@ test('EVERY tool carries the full Apps-SDK metadata set (title, hints, noauth, s
   await Promise.all([server.connect(st), client.connect(ct)]);
   const { tools } = await client.listTools();
   assert.ok(tools.length >= 22, `expected the full tool set, got ${tools.length}`);
+  const curation = new Set(CURATION_TOOLS);
   for (const t of tools) {
     const title = (t as { title?: string }).title ?? t.annotations?.title;
     assert.ok(title && title.trim().length > 0, `${t.name}: missing human-readable title`);
-    assert.equal(t.annotations?.readOnlyHint, true, `${t.name}: readOnlyHint`);
-    assert.equal(t.annotations?.destructiveHint, false, `${t.name}: destructiveHint`);
+    // Since 2026-08-05 the list contains the curation tools too, for every
+    // caller. What every tool must carry is the same; what it may SAY differs,
+    // so the two halves are asserted apart rather than loosened into one.
+    assert.equal(typeof t.annotations?.readOnlyHint, 'boolean', `${t.name}: readOnlyHint`);
+    assert.equal(typeof t.annotations?.destructiveHint, 'boolean', `${t.name}: destructiveHint`);
     assert.equal(typeof t.annotations?.openWorldHint, 'boolean', `${t.name}: openWorldHint`);
     const m = (t as { _meta?: Record<string, unknown> })._meta ?? {};
-    assert.deepEqual(m.securitySchemes, [{ type: 'noauth' }], `${t.name}: securitySchemes`);
+    assert.deepEqual(
+      m.securitySchemes,
+      curation.has(t.name)
+        ? [{ type: 'oauth2', scopes: ['wlo'] }]
+        : [{ type: 'noauth' }, { type: 'oauth2', scopes: ['wlo'] }],
+      `${t.name}: securitySchemes`,
+    );
     assert.ok(m['openai/toolInvocation/invoking'], `${t.name}: invoking status`);
     assert.ok(m['openai/toolInvocation/invoked'], `${t.name}: invoked status`);
   }
@@ -58,14 +70,15 @@ async function listToolsFrom(register: (server: McpServer) => void) {
   return tools;
 }
 
-test('applyReadOnlyToolDefaults stamps noauth + required hints on a plain server.tool', async () => {
+test('applyReadOnlyToolDefaults stamps the mixed schemes + required hints on a plain server.tool', async () => {
   const tools = await listToolsFrom(server => {
     server.tool('plain', 'A plain tool.', {}, { readOnlyHint: true }, async () => ({
       content: [{ type: 'text' as const, text: 'ok' }],
     }));
   });
   const tool = tools.find(t => t.name === 'plain')!;
-  assert.deepEqual((tool._meta as { securitySchemes?: unknown }).securitySchemes, [{ type: 'noauth' }]);
+  assert.deepEqual((tool._meta as { securitySchemes?: unknown }).securitySchemes,
+    [{ type: 'noauth' }, { type: 'oauth2', scopes: ['wlo'] }]);
   assert.equal(tool.annotations?.readOnlyHint, true);
   assert.equal(tool.annotations?.destructiveHint, false);
   assert.equal(tool.annotations?.openWorldHint, false);
@@ -100,8 +113,8 @@ test('applyReadOnlyToolDefaults merges defaults WITHOUT clobbering widget _meta 
     ui?: { resourceUri?: string; widgetAccessible?: boolean; visibility?: string[] };
     'openai/outputTemplate'?: string;
   };
-  // no-auth stamped …
-  assert.deepEqual(meta?.securitySchemes, [{ type: 'noauth' }]);
+  // the mixed declaration stamped …
+  assert.deepEqual(meta?.securitySchemes, [{ type: 'noauth' }, { type: 'oauth2', scopes: ['wlo'] }]);
   // … the pre-existing widget keys survived the merge …
   assert.equal(meta?.ui?.resourceUri, 'ui://widget/demo.html');
   assert.deepEqual(meta?.ui?.visibility, ['model', 'app']);

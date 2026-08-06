@@ -12,15 +12,67 @@
  * reason to change.
  */
 
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
 import { validateField, applyLicenceDefaults, WRITABLE_FIELDS } from '../services/write/fields.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
 import { toolError } from './shared.js';
 import { renderChangeSet, hasSomethingToConfirm, type ChangeSet } from '../services/write/change-set.js';
 import { mintToken, consumeToken } from '../services/write/confirm.js';
+import { writeRefusal } from '../services/write/credential-gate.js';
 import type { FieldWriteStatus } from '../services/write/nodes.js';
 import type { VerifyResult, MutationOutcome } from '../services/write/verify.js';
-import type { WloToolResult } from '../apps/register.js';
+import { registerWloTool, type WloToolDef, type WloToolResult } from '../apps/register.js';
+import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
+
+/**
+ * The `WWW-Authenticate` value a curation tool answers with when the caller may
+ * not write. Built once per server (it depends only on the public origin) and
+ * handed to the registration functions — a module-level copy would be shared by
+ * concurrent requests, and under `TRUST_PROXY` the origin is per-request.
+ */
+export type WriteAuthChallenge = string;
+
+/**
+ * Register a curation tool.
+ *
+ * Two things every one of them needs, in ONE place rather than thirteen:
+ *
+ *   1. the `oauth2` security declaration — thirteen literals were thirteen
+ *      chances to write a scheme type the client does not know, and one such
+ *      type refuses the WHOLE tool list (measured 2026-08-05);
+ *   2. the call-time gate. The tools are listed even without an identity —
+ *      that is what lets a client discover a login exists at all — so the
+ *      refusal has to hold on its own, and it carries
+ *      `_meta["mcp/www_authenticate"]` so the host knows to offer that login
+ *      instead of just showing an error (OpenAI's own
+ *      `authenticated_server_python`, read 2026-08-05).
+ *
+ * The gate runs BEFORE the handler, so no curation code path can be entered
+ * without a write identity. Each handler additionally calls `requireWrite()`:
+ * redundant here on purpose, because it is the guarantee that survives a tool
+ * registered past this seam.
+ */
+export function registerCurationTool(
+  server: McpServer,
+  challenge: WriteAuthChallenge,
+  def: Omit<WloToolDef, 'securitySchemes'>,
+): void {
+  registerWloTool(server, {
+    ...def,
+    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    handler: async (args, extra) => {
+      const refusal = writeRefusal();
+      if (refusal === null) return def.handler(args, extra);
+      return {
+        content: [{ type: 'text' as const, text: refusal }],
+        _meta: { 'mcp/www_authenticate': [challenge] },
+        isError: true,
+      };
+    },
+  });
+}
 
 /** Tool parameter name → the repository property it writes. */
 export type ParamMap = Readonly<Record<string, string>>;

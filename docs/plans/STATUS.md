@@ -2662,3 +2662,107 @@ Fünf Beschreibungen liegen über 1024 Zeichen (`search_wlo_topic_pages` 1573,
 `search_wlo_collections`, `search_wlo_all`). Ob ChatGPT das erzwingt, ist
 **nicht gemessen**; der Connector arbeitet damit. Nicht auf Verdacht kürzen —
 erst messen, ob eine Beschreibung abgeschnitten ankommt.
+
+## Offener Wunsch: Inhalt als DATEI anlegen, nicht nur als URL (2026-08-05)
+
+Live entstanden: `wlo_create_content` verlangt eine Quell-URL, also lässt sich
+etwas, das im Chat erarbeitet wurde (Markdown, ein erzeugtes Bild), nicht
+ablegen. Gewünscht: beides unterstützen — URL, Datei, oder beides — und dort,
+wo es unklar ist (Inhalt erarbeitet, URL war nur die Quelle), **fragen**.
+
+**Das ist ein Entwurfsvorhaben, kein Handgriff.** Drei Bedingungen binden es:
+
+1. **Fingerabdruck.** Der Bestätigungs-Token ist an die gezeigte Änderungsmenge
+   gebunden; alles, was der Aufruf sendet, muss darin stehen. Hochgeladene Bytes
+   sind Nutzlast — sonst genehmigt jemand „Knoten anlegen" und wir laden
+   zusätzlich etwas hoch, das er nie gesehen hat.
+2. **Rücklesen.** Nach dem Upload prüfen, dass der Knoten den Inhalt trägt.
+   edu-sharing verwirft Schreibvorgänge und antwortet trotzdem mit 200.
+3. **Erst messen.** Der Content-Upload ist ein Endpunkt, den wir noch nie
+   benutzt haben. Lehre vom 2026-08-02: ein Test gegen `fetchMock` beweist, dass
+   wir senden, was wir uns ausgedacht haben — nie, dass das Repository es
+   annimmt. Also zuerst eine Messung gegen **Staging**, dann der Entwurf.
+
+Offene Entwurfsfragen für diese Messung: welcher Endpunkt und welche
+Reihenfolge (Knoten anlegen → Inhalt hochladen?), welche MIME-Typen und welche
+Größenbegrenzung, was in der Vorschau steht (Name, Typ, Größe, Prüfsumme?), und
+ob das ein eigenes Werkzeug wird oder ein Feld an `wlo_create_content`.
+
+## Randbefund: ChatGPT drosselt (2026-08-05)
+
+Im Chat sichtbar: „Capabilities reduced until … Responses may have lower quality
+and **some tools are unavailable**." Ein Teil des sprunghaften Verhaltens —
+mal zwei Werkzeuge, mal keins — kommt von dort und nicht von diesem Server. Bei
+jeder künftigen „das Werkzeug fehlt"-Meldung: erst diese Zeile suchen, dann das
+Log (`mcp request` nennt jetzt `method` und `mode`), dann den Server verdächtigen.
+
+## Gemischte Authentifizierung nach offiziellem Muster — FERTIG (2026-08-05)
+
+Punkte 1 und 2 aus dem zweiten Nachtrag in
+`docs/plans/2026-08-05-mcp-oauth-design.md` sind umgesetzt. Punkt 3 (das Feld
+`securitySchemes` statt nur `_meta`) bleibt vom SDK blockiert.
+
+**Was sich ändert:** die dreizehn Kurationswerkzeuge stehen jetzt in jeder
+`tools/list` — auch ohne Anmeldung — und verweigern beim Aufruf mit
+`_meta["mcp/www_authenticate"]`, womit der Client die Anmeldung startet. Die
+Lesewerkzeuge deklarieren beide Schemata (`noauth` + `oauth2`).
+
+**Die Regel, die dabei gekippt wurde,** ist in `CLAUDE.md` ersetzt, nicht
+gelöscht: „Schreibwerkzeuge fehlen im anonymen Betrieb" war als
+Sicherheitsmaßnahme gedacht und war der Grund, warum die Anmeldung nie begann.
+Die Verweigerung selbst ist unverändert und absolut.
+
+**Belege:**
+
+- `npx tsc -p tsconfig.typecheck.json --noEmit` → Exit 0
+- Volle Suite → 1311/1311 (mit `--test-concurrency=3`; siehe Hinweis unten)
+- `tests/curation-auth-challenge.test.ts` (5 Fälle): die tragende Zusicherung ist
+  **null** Anfragen nach oben bei einem anonymen Aufruf, nicht der Antworttext.
+- `tests/shared-rule-discipline.test.ts`: neuer Quelltext-Scan — kein
+  Kurationswerkzeug darf am Tor `registerCurationTool` vorbei registriert werden.
+
+**Betriebshinweis zur Suite:** `npm test` lässt den Node-Runner mit voller
+Parallelität laufen. Auf einer Maschine unter Speicherdruck (gemessen
+2026-08-05: 0,6 GB frei von 15,3 GB) brechen die Kindprozesse reihenweise mit
+`FATAL ERROR: Zone Allocation failed - process out of memory` ab — das sieht wie
+Dutzende fehlgeschlagene Tests aus und ist keins. Gegenprobe mit
+`--test-concurrency=3`, bevor jemand den Fehler im Code sucht.
+
+**Noch offen aus P5:** Test mit Claude als Client; `/better-coding-review` über
+den gesamten OAuth-Diff.
+
+## Review der Auth-Integration und dessen Behebung — FERTIG (2026-08-06)
+
+Vollständiger Review über `src/auth/*`, `src/rest/oauth-*.ts`, `auth-pages.ts`,
+die Seitenskripte und die Einbindung in `http-app.ts`. Sechs Befunde, alle
+behoben, jeder mit einem vorher rot gesehenen Test.
+
+**Der tragende (MAJOR):** `/auth/issue`, `/auth/revoke` und `POST
+/oauth/authorize` haben den Body ohne Blick auf `Content-Type` geparst. Die
+CSRF-Begründung im Quelltext („JSON braucht einen Preflight") gilt nur, wenn der
+Server `application/json` **verlangt** — ein `<form enctype="text/plain">` ist
+eine simple request und sein Body kann als JSON gebaut werden. Damit ließ sich
+jeder Besucher einer fremden Seite zu einem Rateversuch von **seiner** Adresse
+aus bringen; die Rückmeldung holt sich die Angreiferin, indem sie den selbst
+gebauten Block danach bei `/mcp` vorlegt. Der `authAbuseLimiter`, der pro Adresse
+zählt, war so zu umgehen. Jetzt 415 ohne den Header.
+
+Vier kleinere: Maskierung im RFC-6750-Challenge, Userinfo im Loopback-Zweig von
+`redirectUriMatches`, `isValidRedirectUri` auch beim Öffnen einer `client_id`,
+`code_verifier` auf 43–128 Zeichen (RFC 7636 §4.1).
+
+**Eine korrigierte Zusicherung:** `access-registry.ts` behauptete „revoking a
+block requires holding it". Falsch — `remove` geht über die Zugangs-id, und
+Blöcke kann mit dem veröffentlichten Schlüssel jede:r bauen. Der Handel ist
+gewollt (wer eine Kompromittierung bemerkt, muss sofort sperren können), macht
+aber **die id zum Geheimnis**: sie darf nie geloggt und nie zurückgegeben werden.
+Beide Hälften sind jetzt in `tests/auth-endpoints.test.ts` festgehalten.
+
+**Belege:** `npx tsc -p tsconfig.typecheck.json --noEmit` → Exit 0;
+volle Suite → 1320/1320 (`--test-concurrency=3`, siehe Speicherhinweis oben).
+
+**Lehre für die nächste Runde:** der erste Test zur Verifier-Länge war grün, ohne
+dass die Prüfung existierte — ein zu kurzer Verifier scheitert ohnehin am
+Hashvergleich. Erst ein Code, dessen `code_challenge` das echte S256 des kurzen
+Verifiers ist, trennt die beiden Zustände. Ein Test, der auch ohne die Änderung
+grün ist, belegt nichts.

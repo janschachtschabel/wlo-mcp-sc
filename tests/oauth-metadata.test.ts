@@ -22,6 +22,7 @@ import {
   bearerChallenge,
   protectedResourceMetadata,
   resolveIssuer,
+  writeAuthChallenge,
 } from '../src/auth/oauth-metadata.js';
 
 // ── the issuer ──────────────────────────────────────────────────────────────
@@ -158,4 +159,25 @@ test('the challenge is a single header line — no newline can be smuggled in', 
 test('neither document carries anything secret', () => {
   const both = JSON.stringify([authorizationServerMetadata(ISSUER), protectedResourceMetadata(ISSUER)]);
   assert.ok(!/secret|private|password|passwort/i.test(both), `discovery documents are public: ${both}`);
+});
+
+test('a quotation mark in the origin cannot break out of the challenge', () => {
+  // The value is a quoted string in an HTTP header. Today every caller passes a
+  // `URL.origin` whose host has already been through the HOST pattern, so no
+  // quote can arrive — but that invariant lives two modules away, and this
+  // function has had a second caller since the write tools began sending it in
+  // a tool result.
+  const value = bearerChallenge('https://evil"; x="y');
+  const quoted = /resource_metadata="([^"]*)"/.exec(value);
+  assert.ok(quoted, `no resource_metadata pointer in: ${value}`);
+  assert.ok(!/x="y/.test(value), `the injected parameter survived: ${value}`);
+});
+
+test('the write challenge says no token was provided, not that one was rejected', () => {
+  const value = writeAuthChallenge('https://mcp.example');
+  assert.match(value, /^Bearer /);
+  assert.match(value, /error="invalid_request"/);
+  assert.match(value, /resource_metadata="https:\/\/mcp\.example\/\.well-known\/oauth-protected-resource"/);
+  // `invalid_token` would claim we were given one and found it wanting.
+  assert.doesNotMatch(value, /invalid_token/);
 });

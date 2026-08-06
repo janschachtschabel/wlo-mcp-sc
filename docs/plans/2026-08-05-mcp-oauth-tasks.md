@@ -828,24 +828,24 @@ dieses Vorhaben am leichtesten kaputt macht.
 zusätzlich `/better-coding-verify`.**
 
 ### T5.1 — Live gegen ChatGPT und Claude
-- [ ] Nutzer lädt hoch und startet neu
-- [ ] Verbinden **ohne** manuelle Endpunkte; Anmeldung mit einem echten WLO-Konto
+- [x] Nutzer lädt hoch und startet neu
+- [x] Verbinden **ohne** manuelle Endpunkte; Anmeldung mit einem echten WLO-Konto
       gegen **Staging**
-- [ ] Prüfen: Werkzeugliste enthält die Kurationswerkzeuge; ein Lesewerkzeug
+- [x] Prüfen: Werkzeugliste enthält die Kurationswerkzeuge; ein Lesewerkzeug
       liefert; Widerruf auf `/auth-revoke.html` beendet den Zugang
 - [ ] Dasselbe mit Claude
 - [ ] Die offenen Punkte 2–4 des Designs mit dem **gemessenen** Ergebnis
       beantworten — besonders, ob ein Client ohne `expires_in` zufrieden ist
 
 ### T5.2 — Doku
-- [ ] README/README.de: Abschnitt „Anmelden per OAuth" mit den drei Schritten,
+- [x] README/README.de: Abschnitt „Anmelden per OAuth" mit den drei Schritten,
       die eine Person wirklich tut
-- [ ] `docs/DEPLOYMENT.md`: `WLO_PUBLIC_BASE_URL`, und warum ohne sie nichts geht
-- [ ] `CHANGELOG.md`
-- [ ] `CLAUDE.md`: Entwurfs-Eintrag → umgesetzt, mit den bindenden Regeln
+- [x] `docs/DEPLOYMENT.md`: `WLO_PUBLIC_BASE_URL`, und warum ohne sie nichts geht
+- [x] `CHANGELOG.md`
+- [x] `CLAUDE.md`: Entwurfs-Eintrag → umgesetzt, mit den bindenden Regeln
       (kein Credential auf Platte · anonym bleibt 200 · Redirect zeichengenau
       außer Loopback · Code einmalig)
-- [ ] `docs/plans/STATUS.md`
+- [x] `docs/plans/STATUS.md`
 
 ### T5.3 — Abschluss
 - [ ] `/better-coding-review` über den gesamten Diff

@@ -11,11 +11,12 @@ It exposes **26 read tools** (25 unconditional; `find_wlo_skills` appears only w
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-With an identity, **curation tools** appear on top of those 25 (thirteen of them: creating,
-editing, submitting, collections, compendium texts, metadata proposals, deleting).
-They are registered only for a caller who may write, and
-they refuse at call time as well. Every change is previewed and confirmed before
-it happens, and read back afterwards — see [Curation](#curation-writing-to-wlo).
+On top of those 25 sit **thirteen curation tools** (creating, editing,
+submitting, collections, compendium texts, metadata proposals, deleting). They
+are *listed* for every caller — that is how a client learns a login is worth
+starting — and **refuse without one**, answering with the challenge that asks the
+host to sign the user in. Every change is previewed and confirmed before it
+happens, and read back afterwards — see [Curation](#curation-writing-to-wlo).
 
 ---
 
@@ -30,6 +31,7 @@ it happens, and read back afterwards — see [Curation](#curation-writing-to-wlo
 - [REST API](#rest-api-public-read-only)
 - [Prompt launcher](#prompt-launcher)
 - [Tools](#tools)
+- [Signing in with OAuth](#signing-in-with-oauth)
 - [Curation](#curation-writing-to-wlo)
 - [Output formats](#output-formats)
 - [Filters & vocabulary](#filters--vocabulary)
@@ -156,7 +158,7 @@ else has sensible defaults.
 | `WLO_POOL_SIZE` | `25` | all | Candidate pool size **per search variant** for reranking (`enhancedSearch`) — **not** the number of returned hits (that is `maxResults`). Smaller = faster/smaller fetches at minimally lower recall. |
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | all | Per-request timeout (ms) for every upstream edu-sharing call. Prevents a hung backend socket from blocking a tool call. Sized from measurement (staging, 2026-08-02): creating a record takes 4.2–8.0 s, every other call under 2.5 s. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | all | Optional service account. Unset (default) → the server reads **anonymously**, public content only, exactly as before. Both set → every call authenticates as that one account via HTTP Basic, so **all** users of this MCP see the same elevated content. Use a purpose-made, read-only account: whatever it can see, every user can see, and edu-sharing's audit trail shows the service account rather than the person. Half a credential is treated as none. **Wrong credentials do not downgrade to public content** — the repository answers `401` (measured against production 2026-07-31, on the identity and the search endpoints alike), so every query fails and the server returns nothing at all. Unset both variables to run anonymously instead. Check with the `wlo_auth_status` tool: `mode: "service"` together with `authenticated: false` means the credentials are being rejected. HTTP Basic is used because it is the only scheme besides the session cookie that edu-sharing's own OpenAPI declares. **Scope:** the service account applies to the MCP endpoint only. The public REST layer (`GET /api/*`) and the launcher stay anonymous by design — they are reachable from the internet without any login, so letting them inherit the account would make everything it can see world-readable. A credential over a non-`https` repository URL is sent in the clear (Basic is base64, not encryption); the server warns about this at startup. |
-| `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can and does not even see the tools. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
+| `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page). Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(unset)_ | http | The previous key during a rotation. Blocks are always issued with the current key but opened with either, so a rotation does not invalidate every user's configuration at once; remove it once the overlap window is over. An unusable value here switches the feature **off** rather than silently dropping the window — otherwise exactly what the window exists for would break, and you would hear about it from users instead of from the boot log. |
 | `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Where the allow-list of issued access ids lives. It holds ids, user names and issue times — **never a credential**. It is a POSITIVE list: lose it and every issued block stops working (inconvenient) rather than every revoked block starting to work again (unsafe). In Docker this is the one writable volume; `read_only: true` still covers everything else. **Back it up.** |
@@ -565,6 +567,45 @@ a redirect is never second-guessed (a rule cannot relate "Bruchrechnen" and
 "Bruchrechnung" without a stemmer), and an article that merely *mentions* the
 topic is not accepted for it — `Stabi Berlin` is not the answer to
 `Stadt Berlin`, though a plain word-occurrence check would take it.
+
+## Signing in with OAuth
+
+To work with your own WLO rights, sign in from the client — nothing to copy.
+Requires `WLO_AUTH_PRIVATE_KEY` and `WLO_PUBLIC_BASE_URL`; without them every
+OAuth path answers 404.
+
+1. Enter the MCP URL in the client and choose **OAuth**. The client discovers
+   the flow itself via `/.well-known/oauth-authorization-server` and registers.
+2. It sends the browser to `/oauth/authorize`, which names **who** is asking and
+   where the answer goes, then asks for the WLO user name and password. The
+   password is encrypted **in the browser** and leaves the device only as an
+   unreadable block — the same mechanism as `/auth`.
+3. Back in the client, the curation tools work — they were listed all along and
+   were refusing until now.
+
+**The login can start from a tool call.** The curation tools are in `tools/list`
+even for a caller with no identity, declared `oauth2`; calling one without a
+usable login returns an error result carrying
+`_meta["mcp/www_authenticate"]`, which is the client's cue to run the flow
+above. Hiding those tools instead — what this server did until 2026-08-05 —
+meant the model never called one, so nothing ever asked the host to sign anyone
+in, and a connector added without OAuth simply stayed anonymous forever. The
+refusal itself is unchanged: anonymous callers write nothing.
+
+**There is no second secret.** The issued access token *is* the `wlo2.…` block.
+One revocation on `/auth-revoke.html` therefore ends both routes at once — the
+pasted block and the OAuth connection. No `refresh_token`, no expiry: the access
+ends when it is revoked or the WLO password changes.
+
+**A request with no credential still reads anonymously.** It gets the same 25
+public tools. The `401` fires only for a token that was presented and cannot be
+used, and it carries the pointer to the discovery documents.
+
+> **In ChatGPT:** an app connected in the settings dialog is not yet active in a
+> conversation. ChatGPT shows its own card there ("connect wlo"), and it appears
+> only once a question triggers it — ask about WLO once and confirm. Without
+> that the model has no tools, and a model with no tools answers as if it had
+> searched.
 
 ## Curation (writing to WLO)
 

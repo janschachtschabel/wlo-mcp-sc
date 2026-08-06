@@ -34,9 +34,15 @@ function upstream(authority: string | null, status = 200) {
   return () => { globalThis.fetch = original; };
 }
 
-const req = (method: string, url: string, body?: string) => ({
+/**
+ * `content-type` defaults to what all three access-block pages actually send.
+ * The endpoints REQUIRE it (see the 415 tests below), so a helper that omitted
+ * it would test a request no real client makes.
+ */
+const req = (method: string, url: string, body?: string, contentType = 'application/json') => ({
   method,
   url,
+  headers: { 'content-type': contentType } as Record<string, string | string[] | undefined>,
   async *[Symbol.asyncIterator]() { if (body) yield Buffer.from(body); },
 });
 
@@ -321,4 +327,78 @@ test('a stream of DIFFERENT logins from one address is refused as guessing', asy
     codes.push(r.out.status);
   }
   assert.ok(codes.includes(429), `expected a 429 among ${codes.join(',')}`);
+});
+
+test('a body that is not declared JSON is refused before anything is read', async (t) => {
+  // The guessing guard on /auth/issue counts per client ADDRESS. A cross-origin
+  // `fetch` cannot reach here — no CORS header is sent, so the preflight fails —
+  // but a plain <form enctype="text/plain"> is a SIMPLE request that needs no
+  // preflight, and its body can be crafted to be valid JSON. Without this check
+  // a page could make every visitor submit a guess from their own address, and
+  // the author would read the outcome by presenting the block at /mcp later.
+  // That turns a per-address cap into no cap at all.
+  //
+  // Requiring the header is what makes the request non-simple again.
+  const { keys } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+
+  for (const path of ['/auth/issue', '/auth/revoke']) {
+    const r = res();
+    const body = JSON.stringify({ token: block(keys) });
+    await handleAuthEndpoint(req('POST', path, body, 'text/plain'), r, deps());
+    assert.equal(r.out.status, 415, `${path} refuses a text/plain body`);
+  }
+});
+
+test('a missing content-type is refused too, and the charset parameter is allowed', async (t) => {
+  const { keys } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+  const body = JSON.stringify({ token: block(keys) });
+
+  const missing = res();
+  await handleAuthEndpoint(req('POST', '/auth/revoke', body, ''), missing, deps());
+  assert.equal(missing.out.status, 415, 'absent is not "close enough"');
+
+  // `fetch` sends the charset on a string body in some runtimes; refusing that
+  // would break the very pages this server ships.
+  const charset = res();
+  await handleAuthEndpoint(
+    req('POST', '/auth/revoke', body, 'application/json; charset=utf-8'), charset, deps());
+  assert.equal(charset.out.status, 200, 'a parameter after the type is still JSON');
+});
+
+/**
+ * What revocation actually requires — pinned because the registry's own comment
+ * claimed something stronger until 2026-08-06 ("revoking a block requires
+ * holding it"), and the cap it argues for rests on this being understood right.
+ *
+ * Anyone can build a block: the public key is published so the browser can
+ * encrypt with it. So what `/auth/revoke` proves is knowledge of the access ID,
+ * not possession of the original block. That is deliberate — a compromised block
+ * must be revocable by whoever notices — but it means the ID is the secret, and
+ * a single log line or response field carrying one would turn this into "anyone
+ * can end anyone's access". The last two assertions are that boundary.
+ */
+test('revocation is authenticated by the access id, and the id never leaks', async (t) => {
+  const { keys, registry } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+
+  const issued = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-geheim')), issued, deps());
+  assert.equal(issued.out.status, 200);
+  assert.equal(registry.has('id-geheim'), true);
+  // The issuance answer carries the label and nothing that identifies the block.
+  assert.doesNotMatch(issued.out.body, /id-geheim/, 'the access id must not be handed back');
+
+  // A DIFFERENT block, built by anyone against the published key, carrying the
+  // same id — and it revokes.
+  const forged = encodeAccessToken(
+    { v: 2, jti: 'id-geheim', u: 'jemand-anders', secret: 'x', iat: 1 }, keys.publicKeyPem);
+  const revoked = res();
+  await handleAuthEndpoint(post('/auth/revoke', forged), revoked, deps());
+  assert.equal(revoked.json()?.['revoked'], true);
+  assert.equal(registry.has('id-geheim'), false);
 });

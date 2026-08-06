@@ -15,8 +15,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { registerWloTool } from '../apps/register.js';
-import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, deleteProperty } from '../services/write/nodes.js';
@@ -25,6 +23,8 @@ import { validateField } from '../services/write/fields.js';
 import { getNodeMetadata, readNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
+  registerCurationTool,
+  type WriteAuthChallenge,
   previewReply,
   confirmOrExplain,
   reportOutcome,
@@ -36,8 +36,8 @@ import {
 
 const PROPERTY = 'ccm:oeh_collection_compendium_text';
 
-export function registerCurationCompendiumTool(server: McpServer): void {
-  registerWloTool(server, {
+export function registerCurationCompendiumTool(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
     name: 'wlo_update_compendium',
     title: 'WLO Kompendialtext bearbeiten',
     description:
@@ -53,8 +53,7 @@ export function registerCurationCompendiumTool(server: McpServer): void {
       confirmToken: z.string().optional()
         .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

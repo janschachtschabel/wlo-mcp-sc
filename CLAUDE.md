@@ -66,7 +66,15 @@ The current rebuild/extension is designed in:
   single-use token) before it happens, and EVERYTHING the call will send must be
   in the previewed change set, because the token is bound to a fingerprint of it
   (a free-text note beside the change set is an approval for text nobody saw);
-  write tools are absent in anonymous mode AND refuse at call time;
+  write tools refuse at call time — and since 2026-08-05 they are LISTED for
+  every caller, which reverses the earlier half of this rule ("absent in
+  anonymous mode") deliberately and on the user's decision: a model that never
+  sees a write tool never calls one, so nothing ever asks the host to log the
+  user in, and a connector stays anonymous forever. The refusal is unchanged and
+  absolute; it now carries `_meta["mcp/www_authenticate"]` so the client starts
+  the login. Every curation tool goes through `registerCurationTool`
+  (`tools/curation-shared.ts`) — the one place that stamps `oauth2` and runs the
+  gate, enforced by `tests/shared-rule-discipline.test.ts`;
   `ccm:oeh_lrt_aggregated` is never written by us (the repository derives it);
   accepting a suggestion writes and reads back BEFORE it marks the suggestion
   accepted — an `ACCEPTED` proposal over a record that never got the value reads
@@ -260,7 +268,8 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 - `src/tools/*` — the 26 read tools (25 unconditional, of which `get_url_text`
   is declared `unsafe` and removable via `WLO_DISABLE_UNSAFE_TOOLS`;
   `find_wlo_skills` needs `WLO_SKILLS_COLLECTION_ID`) plus the 13 curation tools (`curation-*.ts`,
-  registered only with a write-capable identity; `curation-shared.ts` holds the
+  registered unconditionally and gated at call time; `curation-shared.ts` holds
+  `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm/report they share, `curation-fields.ts` the 13-field
   write surface both editing and proposing draw from), grouped by responsibility (collections,
   content-search, node-details, node-relations, vocabulary, topic-pages,

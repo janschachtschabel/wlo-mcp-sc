@@ -24,6 +24,7 @@ import type { AuthKeys } from '../auth/access-token.js';
 import type { AccessSupport } from '../auth/credential.js';
 import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-authorize.js';
 import { log } from '../logger.js';
+import { isJsonContentType } from '../read-body.js';
 import { send, readJsonBody, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
 import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
 
@@ -123,6 +124,17 @@ export async function grantConsent(
   deps: OAuthEndpointDeps,
   support: AccessSupport,
 ): Promise<true> {
+  // The header is the CSRF defence, not a formality. A `<form
+  // enctype="text/plain">` is a SIMPLE request — no preflight — and its body can
+  // be crafted to parse as JSON, so an endpoint that parses whatever arrives is
+  // reachable from any page in the world. Requiring `application/json` makes the
+  // request non-simple, and the preflight then fails on the missing CORS header.
+  // Without it a page could spend every visitor's address on a password guess,
+  // which is exactly what `authAbuseLimiter` counts per address to prevent.
+  if (!isJsonContentType(req.headers?.['content-type'])) {
+    return send(res, 415, { error: 'Dieser Endpunkt erwartet einen JSON-Body (Content-Type: application/json).' });
+  }
+
   const body = await readJsonBody(req, deps.maxBodyBytes);
   if (!body || body === 'too-large') {
     return send(res, 400, { error: 'Die Anfrage konnte nicht gelesen werden.' });

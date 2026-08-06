@@ -20,8 +20,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { registerWloTool } from '../apps/register.js';
-import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata } from '../services/write/nodes.js';
@@ -31,6 +29,8 @@ import { listSuggestions, setSuggestionStatus } from '../services/write/suggesti
 import { getNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
+  registerCurationTool,
+  type WriteAuthChallenge,
   previewReply,
   confirmOrExplain,
   reportOutcome,
@@ -45,8 +45,8 @@ import {
 } from './curation-shared.js';
 import { CONFIRM_TOKEN } from './curation-fields.js';
 
-export function registerCurationDecisionTool(server: McpServer): void {
-  registerWloTool(server, {
+export function registerCurationDecisionTool(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
     name: 'wlo_decide_suggestion',
     title: 'WLO Vorschlag annehmen oder ablehnen',
     description:
@@ -61,8 +61,7 @@ export function registerCurationDecisionTool(server: McpServer): void {
       decision: z.enum(['accept', 'decline']).describe('accept übernimmt den Wert, decline lehnt ihn ab.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

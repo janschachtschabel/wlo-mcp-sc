@@ -12,11 +12,11 @@ Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
 
-Mit einer Anmeldung kommen **kuratierende Werkzeuge** hinzu (derzeit dreizehn:
-Anlegen, Bearbeiten, Einreichen, Sammlungen, Kompendialtexte, Metadaten-
-Vorschläge, Löschen). Sie
-werden nur für Aufrufende registriert, die schreiben
-dürfen, und verweigern zusätzlich zur Aufrufzeit. Jede Änderung wird vorher
+Dazu kommen **dreizehn kuratierende Werkzeuge** (Anlegen, Bearbeiten,
+Einreichen, Sammlungen, Kompendialtexte, Metadaten-Vorschläge, Löschen). Sie
+werden für alle Aufrufenden *gelistet* — nur so erfährt ein Client, dass sich
+eine Anmeldung lohnt — und **verweigern ohne sie**: die Antwort trägt die
+Aufforderung, mit der der Client die Anmeldung startet. Jede Änderung wird vorher
 gezeigt und bestätigt und hinterher zurückgelesen — siehe
 [Kuratieren](#kuratieren-schreiben-in-wlo).
 
@@ -33,6 +33,7 @@ gezeigt und bestätigt und hinterher zurückgelesen — siehe
 - [REST-API](#rest-api-öffentlich-nur-lesend)
 - [Prompt-Launcher](#prompt-launcher)
 - [Tools](#tools)
+- [Anmelden per OAuth](#anmelden-per-oauth)
 - [Kuratieren](#kuratieren-schreiben-in-wlo)
 - [Ausgabeformate](#ausgabeformate)
 - [Filter & Vokabular](#filter--vokabular)
@@ -174,7 +175,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_POOL_SIZE` | `25` | alle | Größe des Kandidaten-Pools **pro Suchvariante** für das Reranking (`enhancedSearch`) — **nicht** die Anzahl der zurückgegebenen Treffer (das ist `maxResults`). Kleiner = schneller/kleinere Abrufe bei minimal geringerer Recall-Quote. |
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | alle | Timeout pro Anfrage (ms) für jeden Upstream-edu-sharing-Aufruf. Verhindert, dass ein hängender Backend-Socket einen Tool-Aufruf blockiert. Aus Messung abgeleitet (Staging, 2026-08-02): Anlegen eines Datensatzes 4,2–8,0 s, jeder andere Aufruf unter 2,5 s. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(nicht gesetzt)_ | alle | Optionales Dienstkonto. Nicht gesetzt (Standard) → der Server liest **anonym**, nur öffentliche Inhalte, exakt wie bisher. Beide gesetzt → jeder Aufruf meldet sich per HTTP Basic mit diesem einen Konto an, **alle** Nutzenden dieses MCP sehen also dieselben erweiterten Inhalte. Dafür ein eigens angelegtes, schreibgeschütztes Konto verwenden: was es sieht, sieht jede:r, und im edu-sharing-Protokoll steht das Dienstkonto statt der Person. Eine halbe Angabe gilt als keine. **Falsche Zugangsdaten schalten nicht auf „nur öffentlich“ zurück** — das Repository antwortet mit `401` (gemessen gegen die Produktion am 2026-07-31, auf dem Identitäts- wie auf dem Such-Endpunkt), damit schlägt jede Abfrage fehl und der Server liefert gar nichts. Wer anonym lesen will, lässt beide Variablen weg. Mit dem Werkzeug `wlo_auth_status` prüfen: `mode: "service"` zusammen mit `authenticated: false` heißt, die Zugangsdaten werden abgelehnt. HTTP Basic, weil es neben dem Session-Cookie das einzige Schema ist, das die edu-sharing-OpenAPI deklariert. **Geltungsbereich:** Das Dienstkonto gilt nur für den MCP-Endpunkt. Die öffentliche REST-Schnittstelle (`GET /api/*`) und die Launcher-Seite bleiben bewusst anonym — sie sind ohne Anmeldung aus dem Internet erreichbar; würden sie das Konto erben, wäre alles, was es sieht, für jede:n lesbar. Bei einer Repository-URL ohne `https` gehen die Zugangsdaten im Klartext über die Leitung (Basic ist base64, keine Verschlüsselung); der Server warnt darüber beim Start. |
-| `WLO_ALLOW_SERVICE_WRITES` | _(nicht gesetzt)_ | alle | Erlaubt dem **Dienstkonto** die kuratierenden (schreibenden) Werkzeuge. Standardmäßig aus: eine Änderung unter einem gemeinsamen Konto ist niemandem zuzuordnen — in der Historie des Repositorys steht der Kontoname, nicht die Person, die sie angefordert hat. Wer sich mit dem eigenen WLO-Login meldet, darf immer schreiben und braucht hier nichts; anonyme Aufrufende dürfen nie und sehen die Werkzeuge gar nicht. Gilt ebenso für den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als Dienstkonto gelten. Gültige Werte: `1`, `true`, `yes`, `on`; alles andere (auch `false`) lässt es aus. Siehe [Kuratieren](#kuratieren-schreiben-in-wlo). |
+| `WLO_ALLOW_SERVICE_WRITES` | _(nicht gesetzt)_ | alle | Erlaubt dem **Dienstkonto** die kuratierenden (schreibenden) Werkzeuge. Standardmäßig aus: eine Änderung unter einem gemeinsamen Konto ist niemandem zuzuordnen — in der Historie des Repositorys steht der Kontoname, nicht die Person, die sie angefordert hat. Wer sich mit dem eigenen WLO-Login meldet, darf immer schreiben und braucht hier nichts; anonyme Aufrufende dürfen nie — sie sehen die Werkzeuge (nur so lernt ihr Client, eine Anmeldung anzubieten), und jeder Aufruf wird abgelehnt. Gilt ebenso für den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als Dienstkonto gelten. Gültige Werte: `1`, `true`, `yes`, `on`; alles andere (auch `false`) lässt es aus. Siehe [Kuratieren](#kuratieren-schreiben-in-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(nicht gesetzt)_ | http | PKCS#8-PEM, das **persönliche Zugangsblöcke** einschaltet: Wer sich unter `/auth` einen verschlüsselten Block holt, trägt ihn einmal als `Bearer …` in das Authorization-Feld seines KI-Programms ein und kann ihn unter `/auth-revoke.html` (oder `/auth/revoke` — dieselbe Seite) sperren. Pro Konto gelten die zehn zuletzt geholten Blöcke. Nicht gesetzt heißt: Funktion komplett aus — die `/auth/…`-Endpunkte antworten 404, die Seiten sagen es, ein Bearer-Header wird abgelehnt wie bisher. Der öffentliche Schlüssel wird hieraus **abgeleitet**, es gibt also keine zweite Variable, die auseinanderdriften könnte. Erzeugen mit `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **Dieser Schlüssel entschlüsselt jeden ausgestellten Block zu einem lebenden WLO-Passwort** — er gehört in die `.env` auf dem Server, nie ins Image und nie ins Repository. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(nicht gesetzt)_ | http | Der vorherige Schlüssel während eines Wechsels. Ausgestellt wird immer mit dem aktuellen, geöffnet mit beiden — sonst würde ein Wechsel alle Nutzerkonfigurationen gleichzeitig ungültig machen. Nach dem Überlappungsfenster wieder entfernen. Ein unbrauchbarer Wert schaltet die Funktion **aus**, statt das Fenster still zu verwerfen: sonst bräche genau das, wofür es existiert, und man erführe es von Nutzerbeschwerden statt aus dem Start-Log. |
 | `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Ablageort der Positivliste ausgestellter Zugangs-IDs. Sie enthält IDs, Benutzernamen und Ausstellungszeitpunkt — **nie ein Credential**. Es ist eine POSITIV-Liste: Geht sie verloren, funktioniert kein Block mehr (unbequem) statt dass jeder widerrufene wieder gilt (unsicher). In Docker ist das das einzige beschreibbare Volume; `read_only: true` gilt für alles andere weiter. **Sichern.** |
@@ -590,6 +591,48 @@ Weiterleitung wird nie angezweifelt (ohne Stemmer lässt sich „Bruchrechnen" u
 „Bruchrechnung" durch keine Regel verbinden), und ein Artikel, der das Thema nur
 *erwähnt*, wird dafür nicht angenommen — `Stabi Berlin` ist nicht die Antwort auf
 `Stadt Berlin`, obwohl eine reine Wortvorkommen-Prüfung ihn nähme.
+
+## Anmelden per OAuth
+
+Wer mit den eigenen WLO-Rechten arbeiten will, meldet sich im Client an — ohne
+irgendetwas zu kopieren. Voraussetzungen: `WLO_AUTH_PRIVATE_KEY` und
+`WLO_PUBLIC_BASE_URL` sind gesetzt (ohne sie antworten alle OAuth-Pfade 404).
+
+1. Im Client die MCP-Adresse eintragen und als Authentifizierung **OAuth**
+   wählen. Der Client findet den Rahmen selbst über
+   `/.well-known/oauth-authorization-server` und registriert sich.
+2. Der Client schickt den Browser auf `/oauth/authorize`. Dort steht, **wer**
+   fragt und wohin zurückgeleitet wird; darunter Benutzername und Passwort.
+   Das Passwort wird **im Browser verschlüsselt** und verlässt das Gerät nur als
+   unlesbarer Block — genauso wie auf `/auth`.
+3. Zurück im Client funktionieren die Kurationswerkzeuge — gelistet waren sie
+   die ganze Zeit, sie haben bis dahin nur verweigert.
+
+**Die Anmeldung kann aus einem Werkzeugaufruf heraus beginnen.** Die
+Kurationswerkzeuge stehen auch ohne Identität in `tools/list`, als `oauth2`
+deklariert; ein Aufruf ohne brauchbare Anmeldung liefert eine Fehlerantwort mit
+`_meta["mcp/www_authenticate"]`, und das ist für den Client das Zeichen, den
+obigen Ablauf zu starten. Sie stattdessen zu verstecken — was dieser Server bis
+zum 2026-08-05 tat — hieß: das Modell ruft nie eines auf, also fordert nie
+jemand eine Anmeldung an, und ein ohne OAuth eingerichteter Connector blieb für
+immer anonym. Die Verweigerung selbst ist unverändert: anonym schreibt niemand.
+
+**Es gibt kein zweites Geheimnis.** Der ausgegebene Zugangstoken *ist* der
+`wlo2.…`-Block. Deshalb beendet ein einziger Widerruf auf
+[`/auth-revoke.html`](#) beide Wege gleichzeitig — den eingefügten Block und die
+OAuth-Verbindung. Es gibt kein `refresh_token` und keine Ablauffrist: der Zugang
+endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
+
+**Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
+`Authorization` bekommt unverändert die 25 öffentlichen Werkzeuge. Der `401`
+entsteht nur bei einem vorgelegten, aber unbrauchbaren Token — und trägt dann
+den Verweis auf die Discovery-Dokumente.
+
+> **In ChatGPT:** eine im Einstellungsdialog verbundene App ist in einer
+> Unterhaltung noch nicht aktiv. ChatGPT zeigt dort eine eigene Karte
+> („wlo verbinden"), und die erscheint erst, wenn eine Frage sie auslöst — einmal
+> nach WLO fragen und bestätigen. Ohne das hat das Modell keine Werkzeuge, und
+> ein Modell ohne Werkzeuge antwortet, als hätte es gesucht.
 
 ## Kuratieren (Schreiben in WLO)
 

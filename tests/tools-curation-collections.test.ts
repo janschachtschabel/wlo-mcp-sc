@@ -28,7 +28,7 @@ const REFERENCE = 'ref-1';
 async function client(): Promise<Client> {
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   applyReadOnlyToolDefaults(server);
-  registerCurationCollectionTools(server);
+  registerCurationCollectionTools(server, 'Bearer error="invalid_request"');
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const c = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(st), c.connect(ct)]);

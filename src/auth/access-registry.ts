@@ -41,10 +41,18 @@ const FORMAT_VERSION = 1;
 /**
  * How many blocks one WLO account may have listed at a time.
  *
- * A bound is needed because nothing else ever removes an entry: revoking a block
- * requires holding it, so every block someone fetched and lost would stay valid
- * for ever, and a working login could otherwise add an entry per request to a
- * file that is rewritten in full each time.
+ * A bound is needed because nothing else ever removes an entry: revoking one
+ * takes the ACCESS ID, and the only place that id exists is inside the block —
+ * so a block someone fetched and lost stays valid for ever, and a working login
+ * could otherwise add an entry per request to a file rewritten in full each time.
+ *
+ * Note what that says and what it does not. `remove` is keyed on `jti` alone,
+ * and `/auth/revoke` accepts ANY block carrying it — the public key is published
+ * so browsers can encrypt, so anyone can build one. Possession of the original
+ * block is therefore not what is being proven; knowledge of its id is. That is
+ * the intended trade (whoever notices a compromise must be able to act fast),
+ * and it makes the id the secret: it must never be logged, and never appear in a
+ * response. `tests/auth-endpoints.test.ts` pins both halves.
  *
  * Per LABEL, deliberately, and never a global ceiling — a global one would let a
  * single account push everyone else's access out. Ten is well above real use

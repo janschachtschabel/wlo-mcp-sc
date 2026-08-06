@@ -55,22 +55,30 @@ export function writeMode(): WriteMode {
 }
 
 /**
- * Throw unless the current call may write. The message is user-facing German
- * and says what to do about it, because it is surfaced by the tool to whoever
- * asked for the change.
+ * Why the current call may not write, in user-facing German — or null when it
+ * may. Returned rather than thrown because the same verdict is needed in two
+ * shapes: as the tool's refusal reply (which also carries the OAuth challenge,
+ * see `tools/curation-shared.ts`) and as the in-handler backstop below.
+ *
+ * The message says what to do about it, because whoever asked for the change
+ * reads it.
  */
-export function requireWrite(): void {
-  const mode = writeMode();
-  if (mode !== 'none') return;
-  const cred = currentCredential();
-  if (cred?.source === 'service') {
-    throw new Error(
-      'Änderungen sind für das gemeinsame Dienstkonto gesperrt, weil sie niemandem zuzuordnen wären. ' +
-        'Bitte mit den eigenen WLO-Zugangsdaten anmelden — oder die Betreiberin setzt WLO_ALLOW_SERVICE_WRITES.',
-    );
+export function writeRefusal(): string | null {
+  if (writeMode() !== 'none') return null;
+  if (currentCredential()?.source === 'service') {
+    return 'Änderungen sind für das gemeinsame Dienstkonto gesperrt, weil sie niemandem zuzuordnen wären. ' +
+      'Bitte mit den eigenen WLO-Zugangsdaten anmelden — oder die Betreiberin setzt WLO_ALLOW_SERVICE_WRITES.';
   }
-  throw new Error(
-    'Zum Ändern von Inhalten ist eine Anmeldung nötig. ' +
-      'Bitte die eigenen WLO-Zugangsdaten in den Verbindungseinstellungen hinterlegen und erneut anmelden.',
-  );
+  // Named both ways round on purpose: over HTTP the client shows a login card
+  // (the challenge beside this text triggers it), while a local stdio client has
+  // no such flow and needs its connector settings filled in instead.
+  return 'Zum Ändern von Inhalten ist eine Anmeldung mit einem eigenen WLO-Konto nötig. ' +
+    'Bitte anmelden — oder die eigenen WLO-Zugangsdaten in den Verbindungseinstellungen hinterlegen — ' +
+    'und den Vorgang danach wiederholen.';
+}
+
+/** Throw unless the current call may write. */
+export function requireWrite(): void {
+  const reason = writeRefusal();
+  if (reason) throw new Error(reason);
 }

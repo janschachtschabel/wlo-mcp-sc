@@ -11,15 +11,19 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import type { WloNode } from '../src/wlo-api.js';
 import { createMcpServer } from '../src/server.js';
-import type { WriteMode } from '../src/services/write/credential-gate.js';
 
 /**
  * Fresh MCP server wired to an in-memory client — the standard harness for
  * tool-level tests (was duplicated verbatim across ~19 test files). Callers
  * `await client.close()` in a finally.
+ *
+ * Takes no write mode any more: since 2026-08-05 every server offers the same
+ * tool list and the curation tools refuse at call time, so what a test needs to
+ * vary is the CREDENTIAL in scope (`setServiceCredentialForTest`), not the way
+ * the server was built.
  */
-export async function connectedClient(mode?: WriteMode): Promise<Client> {
-  const server = createMcpServer(mode);
+export async function connectedClient(): Promise<Client> {
+  const server = createMcpServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

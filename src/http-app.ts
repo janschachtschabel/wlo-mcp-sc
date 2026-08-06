@@ -288,9 +288,10 @@ export function createHttpRequestHandler(
           log.warn('Authorization header could not be used — serving this request anonymously', { ip });
         }
         const effective = userCred ?? (unusable ? null : configuredServiceCredential());
-        // Resolved before the server is built, because the tool list this
-        // request sees depends on it: without an identity that may write, the
-        // curation tools are not registered at all.
+        // Not a gate any more — every request gets the same tool list, and a
+        // curation tool refuses at call time (server.ts). Kept because the log
+        // line below is the one place that says which rights a call was served
+        // with, and that is what a live investigation reads.
         const writeMode = resolveWriteMode(effective, ALLOW_SERVICE_WRITES);
         // One line per request, naming the method and the SURFACE it was served.
         // Added 2026-08-05 after a day of live debugging: the log could say
@@ -304,7 +305,14 @@ export function createHttpRequestHandler(
             : 'unknown',
           mode: writeMode,
         });
-        server = createMcpServer(writeMode);
+        server = createMcpServer({
+          issuer: resolveIssuer({
+            configured: publicBaseUrl,
+            host: req.headers['host'],
+            forwardedProto: req.headers['x-forwarded-proto'],
+            trustProxy,
+          }),
+        });
         const transport = new StreamableHTTPServerTransport({ ...streamOptions });
         await server.connect(transport);
         await (effective

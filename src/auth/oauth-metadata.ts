@@ -122,13 +122,43 @@ export function authorizationServerMetadata(issuer: string): Record<string, unkn
  * worse than saying nothing.
  */
 export function bearerChallenge(issuer: string | null): string {
-  const parts = [
-    'error="invalid_token"',
-    'error_description="The access token is invalid or has been revoked."',
-  ];
-  if (issuer) parts.push(`resource_metadata="${issuer}/.well-known/oauth-protected-resource"`);
+  return challenge(issuer, 'invalid_token', 'The access token is invalid or has been revoked.');
+}
+
+/**
+ * The challenge a WRITE tool answers with when the call carries no identity
+ * that may change data.
+ *
+ * Not a transport-level `401`: the MCP-Apps pattern (OpenAI's own
+ * `authenticated_server_python`, read 2026-08-05) puts this value in the tool
+ * RESULT's `_meta["mcp/www_authenticate"]` and leaves the HTTP status at 200, so
+ * a client learns it should offer a login without anonymous reading being
+ * disturbed. `invalid_request` is the code that reference uses for "no token was
+ * provided" — `invalid_token` would claim we were given one.
+ */
+export function writeAuthChallenge(issuer: string | null): string {
+  return challenge(issuer, 'invalid_request', 'No access token was provided.');
+}
+
+/**
+ * RFC 6750 §3 challenge. The `resource_metadata` pointer (RFC 9728 §5.1) is
+ * what lets a client that never probed our well-known paths still find them; it
+ * is omitted rather than guessed when the public origin is unknown.
+ *
+ * Every value is escaped even though the only variable one is a `URL.origin`
+ * whose host has already passed `HOST` above. That invariant holds two modules
+ * away from here, and this builder gained a second caller when the write tools
+ * started sending a challenge in a tool result — an unescaped quote would end
+ * the quoted string and let the rest be read as further parameters.
+ */
+function challenge(issuer: string | null, error: string, description: string): string {
+  const parts = [`error="${quoted(error)}"`, `error_description="${quoted(description)}"`];
+  if (issuer) parts.push(`resource_metadata="${quoted(`${issuer}/.well-known/oauth-protected-resource`)}"`);
   return `Bearer ${parts.join(', ')}`;
 }
+
+/** RFC 9110 §5.6.4 quoted-string content: backslash and quote are escaped. */
+const quoted = (value: string): string => value.replace(/[\\"]/g, '\\$&');
 
 /** RFC 9728 — the MCP endpoint, and this server as the authority for it. */
 export function protectedResourceMetadata(issuer: string): Record<string, unknown> {

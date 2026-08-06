@@ -20,8 +20,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { registerWloTool } from '../apps/register.js';
-import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
 import { toolError } from './shared.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
@@ -36,6 +34,8 @@ import {
 import { getNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
+  registerCurationTool,
+  type WriteAuthChallenge,
   previewReply,
   confirmOrExplain,
   rejectionReply,
@@ -55,8 +55,8 @@ const STATUS_LABEL: Record<string, string> = {
   DECLINED: 'abgelehnt',
 };
 
-export function registerCurationSuggestionTools(server: McpServer): void {
-  registerWloTool(server, {
+export function registerCurationSuggestionTools(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
     name: 'wlo_suggest_metadata',
     title: 'WLO Metadaten vorschlagen',
     description:
@@ -77,8 +77,7 @@ export function registerCurationSuggestionTools(server: McpServer): void {
       })).min(1).describe('Ein Eintrag je Feld. Für mehrere Schlagwörter mehrere Einträge mit field="keywords".'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -90,7 +89,7 @@ export function registerCurationSuggestionTools(server: McpServer): void {
     },
   });
 
-  registerWloTool(server, {
+  registerCurationTool(server, challenge, {
     name: 'wlo_list_suggestions',
     title: 'WLO Vorschläge ansehen',
     description:
@@ -101,8 +100,7 @@ export function registerCurationSuggestionTools(server: McpServer): void {
       status: z.enum(['PENDING', 'ACCEPTED', 'DECLINED']).optional()
         .describe('Filter; ohne Angabe werden alle gezeigt. PENDING = noch offen.'),
     },
-    annotations: { readOnlyHint: true },
-    securitySchemes: OAUTH_SECURITY_SCHEMES,
+    annotations: { readOnlyHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

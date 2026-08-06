@@ -29,9 +29,15 @@ import { createDistinctValueLimiter, createRateLimiter } from '../src/rate-limit
 
 const ISSUER = 'https://mcp.example';
 
-const req = (method: string, url: string, body?: string) => ({
+/**
+ * `content-type` defaults to what the consent page actually sends. POST
+ * `/oauth/authorize` REQUIRES it (see the 415 test below), so a helper that
+ * omitted it would exercise a request no real client makes.
+ */
+const req = (method: string, url: string, body?: string, contentType = 'application/json') => ({
   method,
   url,
+  headers: { 'content-type': contentType } as Record<string, string | string[] | undefined>,
   async *[Symbol.asyncIterator]() { if (body) yield Buffer.from(body); },
 });
 
@@ -680,4 +686,73 @@ test('every endpoint the discovery document names is one this server actually ow
     assert.equal(handled, true, `${field} → ${path} is not routed here`);
     assert.equal(r.out.status, 405, `${field} → ${path}`);
   }
+});
+
+test('consent refuses a body that is not declared JSON, before any login is tried', async (t) => {
+  // Same reason as `/auth/issue` (tests/auth-endpoints.test.ts): this endpoint
+  // checks a WLO password, the guessing guard counts per client ADDRESS, and a
+  // <form enctype="text/plain"> is a SIMPLE request whose body can be crafted to
+  // parse as JSON. Requiring the header makes the request non-simple again, so
+  // the browser must preflight — and the preflight fails, because /oauth/authorize
+  // deliberately carries no CORS header.
+  await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+
+  const r = res();
+  await handleOAuthEndpoint(
+    req('POST', '/oauth/authorize', JSON.stringify(consentBody()), 'text/plain'), r, deps());
+  assert.equal(r.out.status, 415);
+});
+
+test('the endpoints that carry no credential are left alone', async (t) => {
+  // Deliberate asymmetry, not an oversight. /oauth/register grants nothing on
+  // its own and /oauth/token is form-encoded by RFC 6749 §4.1.3 and useless
+  // without a code — so requiring a content type there would only risk breaking
+  // a conforming client for no gain.
+  await support(t);
+
+  const registered = res();
+  await handleOAuthEndpoint(
+    req('POST', '/oauth/register', JSON.stringify({ redirect_uris: [REDIRECT] }), 'text/plain'),
+    registered, deps());
+  assert.equal(registered.out.status, 201, 'registration still works without the header');
+
+  const token = res();
+  await handleOAuthEndpoint(
+    req('POST', '/oauth/token', 'grant_type=authorization_code&code=nope',
+      'application/x-www-form-urlencoded'),
+    token, deps());
+  assert.equal(token.out.status, 400, 'the token endpoint reaches its own check, not a 415');
+  assert.equal(token.json()?.['error'], 'invalid_grant');
+});
+
+test('a verifier outside the length RFC 7636 prescribes is refused', async (t) => {
+  // §4.1: 43–128 characters, and the floor is the point. A verifier that is
+  // merely WRONG already fails the hash comparison, so the length rule only
+  // bites where the client CHOSE a short one and registered the matching
+  // challenge — exactly the case the RFC bounds, because whoever intercepted the
+  // redirect holds both the code and the challenge and can then search the
+  // verifier. So the challenges below are the real S256 of the short and the
+  // over-long verifier: without the check these exchanges succeed.
+  await support(t);
+  t.after(upstream('redakteurin'));
+  const store = createCodeStore();
+
+  const cases = [
+    { verifier: 'x'.repeat(20), challenge: '1PwdtmVEZQfcUbDJOS3ZZJKRWBv-G0jiQbKwgDKztkc' },
+    { verifier: 'y'.repeat(129), challenge: 'NRUrsFucSjtDpN2KcC6J5sOajH-3vJk4l1GC11h-yYY' },
+  ];
+  for (const { verifier, challenge } of cases) {
+    const minted = await mintCode(store, { code_challenge: challenge });
+    const r = await postToken(exchange(minted, { code_verifier: verifier }), store);
+    assert.equal(r.status, 400, `${verifier.length} characters`);
+    // Same message as every other failure: which check refused is what a holder
+    // of a stolen code would like to learn.
+    assert.equal(r.json?.['error'], 'invalid_grant', `${verifier.length} characters`);
+  }
+
+  // The ordinary case stays usable — 43 is what every standard client sends.
+  const ok = await postToken(exchange(await mintCode(store)), store);
+  assert.equal(ok.status, 200, ok.body);
 });

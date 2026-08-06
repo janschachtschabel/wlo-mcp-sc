@@ -24,12 +24,15 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { createMcpServer } from '../src/server.js';
+import { CURATION_TOOLS } from './curation-tools.js';
 
 /** The complete set the Apps SDK accepts. */
 const KNOWN_TYPES = new Set(['noauth', 'oauth2']);
 
-async function toolsOf(writeMode: Parameters<typeof createMcpServer>[0]) {
-  const server = createMcpServer(writeMode);
+const WRITE_TOOLS = new Set(CURATION_TOOLS);
+
+async function toolsOf() {
+  const server = createMcpServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'scheme-test', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -38,42 +41,44 @@ async function toolsOf(writeMode: Parameters<typeof createMcpServer>[0]) {
   return tools;
 }
 
-for (const mode of ['none', 'user'] as const) {
-  test(`every tool in ${mode} mode declares a scheme type the client knows`, async () => {
-    const tools = await toolsOf(mode);
-    assert.ok(tools.length > 0);
-    for (const tool of tools) {
-      const schemes = (tool._meta as { securitySchemes?: Array<Record<string, unknown>> } | undefined)
-        ?.securitySchemes;
-      assert.ok(Array.isArray(schemes) && schemes.length > 0, `${tool.name}: no securitySchemes`);
-      for (const scheme of schemes) {
+test('every tool declares a scheme type the client knows', async () => {
+  const tools = await toolsOf();
+  assert.ok(tools.length > 0);
+  for (const tool of tools) {
+    const schemes = (tool._meta as { securitySchemes?: Array<Record<string, unknown>> } | undefined)
+      ?.securitySchemes;
+    assert.ok(Array.isArray(schemes) && schemes.length > 0, `${tool.name}: no securitySchemes`);
+    for (const scheme of schemes) {
+      assert.ok(
+        KNOWN_TYPES.has(String(scheme['type'])),
+        `${tool.name}: "${String(scheme['type'])}" is not a scheme type the Apps SDK knows ` +
+          `(only ${[...KNOWN_TYPES].join(', ')}) — one unknown type refuses the whole connection`,
+      );
+      if (scheme['type'] === 'oauth2') {
         assert.ok(
-          KNOWN_TYPES.has(String(scheme['type'])),
-          `${tool.name}: "${String(scheme['type'])}" is not a scheme type the Apps SDK knows ` +
-            `(only ${[...KNOWN_TYPES].join(', ')}) — one unknown type refuses the whole connection`,
+          Array.isArray(scheme['scopes']) && scheme['scopes'].length > 0,
+          `${tool.name}: an oauth2 scheme must name the scopes, or the consent screen is wrong`,
         );
-        if (scheme['type'] === 'oauth2') {
-          assert.ok(
-            Array.isArray(scheme['scopes']) && scheme['scopes'].length > 0,
-            `${tool.name}: an oauth2 scheme must name the scopes, or the consent screen is wrong`,
-          );
-        }
       }
     }
-  });
-}
+  }
+});
 
-test('a tool that needs an identity says so, and one that does not says that', async () => {
-  const anonymous = new Set((await toolsOf('none')).map((t) => t.name));
-  for (const tool of await toolsOf('user')) {
+test('a tool that needs an identity says so, and one that does not says both', async () => {
+  // Since 2026-08-05 the tool list no longer depends on the caller, so the
+  // declaration is what tells the two apart — which is exactly what the Apps SDK
+  // reads it for. A read tool names both schemes because both work; a write tool
+  // names only `oauth2`, because anonymous is not one of its options.
+  for (const tool of await toolsOf()) {
     const schemes = (tool._meta as { securitySchemes?: Array<Record<string, unknown>> })
       .securitySchemes!;
     const types = schemes.map((s) => String(s['type']));
-    if (anonymous.has(tool.name)) {
-      assert.deepEqual(types, ['noauth'], `${tool.name} is callable without a login`);
-    } else {
+    if (WRITE_TOOLS.has(tool.name)) {
       assert.deepEqual(types, ['oauth2'],
-        `${tool.name} only exists with an identity, so it must not claim to be callable without one`);
+        `${tool.name} changes data, so it must not claim to be callable without an identity`);
+    } else {
+      assert.deepEqual(types, ['noauth', 'oauth2'],
+        `${tool.name} works anonymously and better with a login — it should say both`);
     }
   }
 });

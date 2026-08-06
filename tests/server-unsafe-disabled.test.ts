@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { connectedClient } from './fetchMock.js';
+import { CURATION_TOOLS } from './curation-tools.js';
 
 test('WLO_DISABLE_UNSAFE_TOOLS=all removes get_url_text and nothing else', async () => {
   const client = await connectedClient();
@@ -33,7 +34,8 @@ test('WLO_DISABLE_UNSAFE_TOOLS=all removes get_url_text and nothing else', async
     ]) {
       assert.equal(names.includes(kept), true, `${kept} must survive the switch`);
     }
-    assert.equal(names.length, 24, 'exactly one tool was removed');
+    // 24 read tools + the 13 curation tools, which the switch does not touch.
+    assert.equal(names.length, 24 + CURATION_TOOLS.length, 'exactly one tool was removed');
   } finally { await client.close(); }
 });
 
