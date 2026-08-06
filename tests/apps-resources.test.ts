@@ -11,6 +11,10 @@ import {
   widgetResourceMeta,
   WIDGET_MIME_TYPE,
 } from '../src/apps/resources.js';
+import { WLO_REPOSITORY_URL } from '../src/wlo-config.js';
+
+/** The origin the widget CSP must allow — whatever repository is configured. */
+const REPOSITORY_ORIGIN = new URL(WLO_REPOSITORY_URL).origin;
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -46,9 +50,11 @@ test('widgetResourceMeta whitelists the configured edu-sharing origin in its CSP
     ui: { domain?: string; csp: { connectDomains: string[]; resourceDomains: string[] } };
     'openai/widgetDomain'?: string;
   };
-  // Default WLO_REPOSITORY_URL is https://redaktion.openeduhub.net/edu-sharing.
-  assert.ok(meta.ui.csp.connectDomains.includes('https://redaktion.openeduhub.net'));
-  assert.ok(meta.ui.csp.resourceDomains.includes('https://redaktion.openeduhub.net'));
+  // Derived, not spelled out: the property is "the CONFIGURED repository origin",
+  // and pinning the host froze the default of the day — it broke when the
+  // default moved from production to staging on 2026-08-06.
+  assert.ok(meta.ui.csp.connectDomains.includes(REPOSITORY_ORIGIN));
+  assert.ok(meta.ui.csp.resourceDomains.includes(REPOSITORY_ORIGIN));
   // Claude's MCP-Apps host validates the widget domain against its OWN sandbox
   // format ({hash}.claudemcpcontent.com) and rejects the whole widget for
   // foreign values. It NORMALISES the vendor alias onto the standard key
@@ -134,7 +140,7 @@ test('widgetResourceMeta: WLO_WIDGET_DOMAIN emits both domain keys, and only the
     };
     assert.equal(meta.ui.domain, 'https://mcp.wirlernenonline.de');
     assert.equal(meta['openai/widgetDomain'], 'https://mcp.wirlernenonline.de');
-    assert.ok(meta.ui.csp.connectDomains.includes('https://redaktion.openeduhub.net'),
+    assert.ok(meta.ui.csp.connectDomains.includes(REPOSITORY_ORIGIN),
       'CSP keeps the edu-sharing origin');
   } finally {
     delete process.env['WLO_WIDGET_DOMAIN'];

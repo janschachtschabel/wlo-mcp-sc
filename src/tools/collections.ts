@@ -38,16 +38,9 @@ export function registerCollectionTools(server: McpServer, searchResultsWidgetUr
     widgetUri: searchResultsWidgetUri,
     title: 'WLO Sammlungssuche',
     description: `Finde WLO-Sammlungen zu einem Thema — kuratierte Bündel von Materialien nach Thema/Fach/Stufe. Für Anfragen wie "Themenseite Algebra", "Sammlung Klimawandel", "Portal Mathematik". Für einzelne Materialien (Videos/Arbeitsblätter) nutze stattdessen search_wlo_content oder search_wlo_all.
-Sammlung und Themenseite sind NICHT dasselbe: eine Themenseite ist eine Sammlung, die
-zusätzlich ein kuratiertes Seiten-Layout mit Schwimmlinien (Karussells) und
-Zielgruppen-Varianten trägt. Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen
-haben eine Themenseite (gemessen für "Mathematik": 5 Sammlungen, davon 1 mit Themenseite).
-Dieses Werkzeug findet ALLE Sammlungen; wenn ausschließlich Themenseiten gesucht sind, ist
-search_wlo_topic_pages das richtige.
-Use the returned nodeId with get_topic_page_content (Schwimmlinien) or get_collection_contents to retrieve the actual content items.
-Filters (discipline, educationalContext) accept German labels (e.g. "Mathematik", "Grundschule")
-or full URIs and are applied against each collection's own metadata — collections that do not
-carry a matching subject/level tag are excluded.`,
+Sammlung und Themenseite sind NICHT dasselbe: eine Themenseite ist eine Sammlung, die zusätzlich ein kuratiertes Seiten-Layout mit Schwimmlinien trägt. Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen haben eine (gemessen für "Mathematik": 5 Sammlungen, davon 1 mit Themenseite). Dieses Werkzeug findet ALLE Sammlungen; geht es ausschließlich um Themenseiten, ist search_wlo_topic_pages das richtige.
+Mit der nodeId weiter zu get_collection_contents (die Inhalte) oder get_topic_page_content (die Schwimmlinien).
+Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wirken auf die Metadaten der Sammlung selbst — ohne passenden Fach-/Stufen-Eintrag fällt sie heraus.`,
     inputSchema: {
       query: z.string().optional().default('').describe('Search query in German, e.g. "Klimawandel" or "Algebra". Leave empty to browse top-level collections.'),
       parentNodeId: z.string().optional().describe(

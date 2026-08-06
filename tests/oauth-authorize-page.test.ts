@@ -114,10 +114,16 @@ test('the page posts every field the endpoint requires', async () => {
   // wird nicht unterstützt". A unit test on either side alone cannot see that.
   // This one takes the field names out of the PAGE and feeds them to the REAL
   // check.
-  const post = /fetch\('\/oauth\/authorize',[\s\S]*?JSON\.stringify\(\{([\s\S]*?)\n\s*\}\),/.exec(script);
-  assert.ok(post, 'could not find the consent POST body in authorize.js');
+  // Since 2026-08-06 the body is built in ONE function used by both exits (log
+  // in, or connect without an account) — a second literal is exactly where a
+  // field goes missing again.
+  const post = /function authorizeBody\([^)]*\)\s*\{[\s\S]*?JSON\.stringify\(\{([\s\S]*?)\n\s*\}\);/.exec(script);
+  assert.ok(post, 'could not find authorizeBody() in authorize.js');
   const fields = [...post[1]!.matchAll(/^\s*(\w+):/gm)].map((m) => m[1]!);
-  assert.ok(fields.includes('token'), 'the block itself must be posted');
+  // `token` is added by the caller, not by the shared body — the anonymous exit
+  // deliberately has none. What must hold is that the login exit supplies it.
+  assert.ok(/grant\(authorizeBody\(\{ token:/.test(script), 'the block itself must be posted when signing in');
+  fields.push('token');
 
   const { generateKeyPairSync } = await import('node:crypto');
   const { loadAuthKeys } = await import('../src/auth/access-token.js');

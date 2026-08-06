@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatNode, renderToText, renderToJson, resolveFacetCounts } from '../src/formatter.js';
+import { formatNode, formatNodes, renderToText, renderToJson, resolveFacetCounts } from '../src/formatter.js';
 import { DISPLAY_PROPS } from '../src/wlo-api.js';
 import type { WloNode } from '../src/wlo-api.js';
+import { makeNode } from './fetchMock.js';
 
 const contentNode: WloNode = {
   ref: { id: 'node-1', repo: '-home-' },
@@ -146,7 +147,9 @@ test('formatNode: DISPLAYNAME duplicates are deduped case-insensitively', () => 
 test('renderToText: contains total, title, nodeId', () => {
   const text = renderToText([formatNode(contentNode)], 42);
   assert.match(text, /Gefundene Treffer gesamt: 42, zeige 1/);
-  assert.match(text, /## Bruchrechnung Übungen/);
+  // Seit 2026-08-06 verlinkt die Überschrift den Datensatz, wenn er eine URL
+  // trägt — der Titel steht weiterhin darin (siehe den Link-Test unten).
+  assert.match(text, /## \[?Bruchrechnung Übungen/);
   assert.match(text, /nodeId: node-1/);
 });
 
@@ -245,4 +248,41 @@ test('formatNode: field values keep their line breaks — only the renderer flat
     properties: { 'cclom:general_description': ['a\nb'] },
   };
   assert.equal(formatNode(node).description, 'a\nb');
+});
+
+test('die Überschrift verlinkt den Datensatz, und Klammern brechen sie nicht', () => {
+  // Warum überhaupt: Clients zeigen die URL und die nodeId oft nicht aus, weil
+  // das Modell die Ausgabe umformatiert und dabei nackten Text wegwirft. Einen
+  // fertigen Link übernimmt es meist — Formatierung wird kopiert, nicht neu
+  // erfunden. Die `nodeId:`- und `URL:`-Zeilen bleiben zusätzlich stehen.
+  //
+  // Titel und URL kommen beide aus dem Repository. Eine eckige Klammer im Titel
+  // oder eine runde in der URL würde den Link sprengen und den Rest der Zeile
+  // als Text ausgeben — dieselbe Klasse Fehler, gegen die `oneLine` schützt.
+  const text = renderToText(formatNodes([
+    makeNode('n1', 'Bruchrechnung [Teil 2] (Übung)', {
+      'ccm:wwwurl': ['https://example.org/a_(b)?x=1&y=2'],
+    }),
+  ]));
+
+  const heading = text.split('\n').find(l => l.startsWith('## '));
+  assert.ok(heading, `keine Überschrift in:\n${text}`);
+  // `includes`, nicht `new RegExp`: die maskierte Klammer IST hier der
+  // Prüfgegenstand, und in einem Muster wäre `\\[` eine Zeichenklasse — der
+  // Test wäre grün und würde nichts belegen. Dieselbe Falle steht seit
+  // 2026-08-05 in CLAUDE.md; ich bin beim Schreiben dieser Zeile hineingelaufen.
+  assert.ok(heading.includes('[Bruchrechnung \\[Teil 2\\] (Übung)]'),
+    `eckige Klammern im Titel müssen maskiert sein: ${heading}`);
+  // Die URL steht in spitzen Klammern, der CommonMark-Form, die runde Klammern
+  // in der Adresse verträgt.
+  assert.ok(heading.includes('(<https://example.org/a_(b)?x=1&y=2>)'), heading);
+  // Die maschinell lesbaren Zeilen bleiben, was sie waren.
+  assert.match(text, /^nodeId: n1$/m);
+  assert.match(text, /^URL: https:\/\/example\.org/m);
+});
+
+test('ohne URL bleibt die Überschrift schlichter Text', () => {
+  const text = renderToText(formatNodes([makeNode('n2', 'Ohne Link')]));
+  const heading = text.split('\n').find(l => l.startsWith('## '));
+  assert.equal(heading, '## Ohne Link');
 });

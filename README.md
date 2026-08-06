@@ -64,7 +64,7 @@ stateless proxy in front of edu-sharing.
 - **26 MCP read tools** (25 unconditional — `find_wlo_skills` is registered only when `WLO_SKILLS_COLLECTION_ID` is set, because unconfigured it could not work) — content search, collection search, combined search, topic
   pages and their swimlane content, subject portals, tree browsing, node
   details (single & bulk), vocabulary lookup, publisher lookup, health check,
-  Wikipedia summary, full compendium text, scoped in-collection search, related
+  Wikipedia (lead extract or the FULL article via `fullText`), full compendium text, scoped in-collection search, related
   content, collection statistics, node breadcrumb, **WLO skill discovery**, and
   the ChatGPT `search`/`fetch` knowledge tools.
 - **OpenAI Apps SDK support** — display tools return `structuredContent`
@@ -152,7 +152,7 @@ else has sensible defaults.
 
 | Variable | Default | Scope | Description |
 |---|---|---|---|
-| `WLO_REPOSITORY_URL` | `https://redaktion.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. |
+| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. **The default is STAGING; production must be named explicitly** (changed 2026-08-06 — a deployment whose `.env` lacked this line wrote into the live catalogue while everything around it said staging). Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. |
 | `WLO_ROOT_COLLECTION_ID` | per host | all | Root node of the collection hierarchy — **repository-bound**. The known WLO hosts (prod `redaktion.openeduhub.net`, staging `repository.staging.openeduhub.net`) get a per-host default automatically (the same id on both today, live-verified 2026-07-17, but maintained per host). Any **other** edu-sharing instance must set this explicitly — otherwise the server logs a startup warning and falls back to the WLO id, which will not exist there. |
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it. Unset → callers pass an explicit `?nodeId=`. |
 | `WLO_POOL_SIZE` | `25` | all | Candidate pool size **per search variant** for reranking (`enhancedSearch`) — **not** the number of returned hits (that is `maxResults`). Smaller = faster/smaller fetches at minimally lower recall. |
@@ -317,7 +317,7 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 10 | `wlo_health_check` | Reachability + latency of the WLO API | json |
 | 11 | `get_nodes_details` | Bulk metadata for many `nodeIds` in parallel | json |
 | 12 | `get_topic_page_content` | The swimlane **content structure** of a topic page, render-ready | markdown / json |
-| 13 | `get_wikipedia_summary` | Short Wikipedia lead extract (+ link) for a term — encyclopedic context | markdown / json |
+| 13 | `get_wikipedia_summary` | Wikipedia for a term: lead extract, or the FULL article text with `fullText` | markdown / json |
 | 14 | `get_compendium_text` | FULL editorial compendium text of one/more collections (bulk, ≤25) | markdown / json |
 | 15 | `search_wlo_within_collection` | Filtered full-text search scoped to one collection subtree | markdown / json |
 | 16 | `search` | ChatGPT knowledge convention: lightweight hits `{id,title,url}` across WLO | json (+ text) |
@@ -436,14 +436,21 @@ cards, resolved by executing the swimlane widget's saved query, with a `hasMore`
 flag and a `topicPageUrl` jump link. Use after `search_wlo_topic_pages`.
 
 **13. `get_wikipedia_summary`** — `query` (required, ≤200), `language?` (ISO-639,
-default `de`), `sections?` (1–3 leading paragraphs, default 1), `outputFormat?`.
+default `de`), `sections?` (1–3 leading paragraphs, default 1), **`fullText?`**
+(default false), `maxChars?` (500–100000, default 8000), `outputFormat?`.
 Returns a Wikipedia lead extract with a link (and optional thumbnail), resolving
 a fuzzy/misspelled query via search when the direct title misses. The summary
 carries `match`: `exact` for the title as asked (or a Wikipedia redirect from
 it), `fuzzy` when it was resolved by search — the Markdown output states the
 substitution in that case. When no candidate is on topic the tool returns
 nothing rather than the closest string; see
-[Wikipedia resolution](#wikipedia-resolution). For encyclopedic context
+[Wikipedia resolution](#wikipedia-resolution). With `fullText: true` it returns the WHOLE article as plain text instead of the
+lead extract (measured 2026-08-06: Apolda 366 characters as a summary, 123.682
+as an article — hence the `maxChars` cap, cut at a word boundary). The article is
+fetched for the RESOLVED title, i.e. after the relevance check above, and that
+second round trip is what the check costs: going straight from the raw query
+would be how a caller ends up attributing material to an article the question was
+not about. No extraction service is involved. For encyclopedic context
 alongside WLO material — not for OER material search.
 `readOnlyHint` + `openWorldHint`.
 
@@ -582,6 +589,15 @@ OAuth path answers 404.
    unreadable block — the same mechanism as `/auth`.
 3. Back in the client, the curation tools work — they were listed all along and
    were refusing until now.
+
+**Or connect without an account.** The consent page has a third button —
+*"Ohne eigenes WLO-Konto verbinden"* — next to signing in and refusing. It exists
+because a client that has found the discovery documents *wants a token* and
+cannot simply send no header: without it, someone who only wants to search has
+only "sign in" or "cancel", and cancelling is not a connection (measured on
+claude.ai, 2026-08-06). The token it issues grants exactly what a request with no
+`Authorization` grants — reading yes, writing no. See
+[`docs/AUTH.md`](docs/AUTH.md) for why it needs no key material of its own.
 
 **The login can start from a tool call.** The curation tools are in `tools/list`
 even for a caller with no identity, declared `oauth2`; calling one without a
@@ -803,6 +819,11 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   precision-recall log) to dogfood tool selection and confirm the widgets render.
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — the baseline privacy policy (stateless,
   read-only, no personal data stored) for operators to adapt and publish.
+- [`docs/AUTH.md`](docs/AUTH.md) — how signing in works and why: the access
+  block, the allow-list, the OAuth flow, the abuse limits, and the nine rules a
+  future change must not undo.
+- [`docs/TOOLS.md`](docs/TOOLS.md) — every tool and widget with the chat phrasing
+  that triggers it.
 
 ## Security & operations
 

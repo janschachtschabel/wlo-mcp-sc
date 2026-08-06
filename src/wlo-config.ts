@@ -46,14 +46,27 @@ export function sanitizeRepositoryUrl(raw: string): string {
 
 /**
  * Frontend base URL (e.g. ``https://redaktion.openeduhub.net/edu-sharing``).
- * Resolved once from ``WLO_REPOSITORY_URL`` at module load; defaults to
- * the WLO production redaction instance so unconfigured deploys still
- * work as before. Logs a warning when the configured value looks
- * suspicious (e.g. ends in ``/components`` or contains ``/edu-sharing``
- * twice) — those are typically the result of pasting a deep link
- * instead of the repository root.
+ * Resolved once from ``WLO_REPOSITORY_URL`` at module load. Logs a warning when
+ * the configured value looks suspicious (e.g. ends in ``/components`` or
+ * contains ``/edu-sharing`` twice) — those are typically the result of pasting a
+ * deep link instead of the repository root.
+ *
+ * **The default is STAGING, and that changed on 2026-08-06.** It used to be the
+ * production redaction instance, "so unconfigured deploys still work as before".
+ * What that actually produced: a deployment whose `.env` simply lacked the line
+ * — while `NODE_ENV`, the extraction service and the operator's own belief all
+ * said staging — wrote a record into the LIVE catalogue, with nothing in the log
+ * to say which repository was in use until someone read the render URL of the
+ * thing that had been created.
+ *
+ * Whichever way this points, a forgotten variable lands somewhere. The two
+ * outcomes are not symmetric: against staging a mistaken write is a test record,
+ * against production it is somebody's live catalogue. So the dangerous target is
+ * the one that has to be named out loud. `.env.example` ships the same value
+ * (pinned by `tests/deploy-env-passthrough.test.ts`, because a second copy of a
+ * default is how this went wrong in the first place).
  */
-const _DEFAULT_REPOSITORY_URL = 'https://redaktion.openeduhub.net/edu-sharing';
+const _DEFAULT_REPOSITORY_URL = 'https://repository.staging.openeduhub.net/edu-sharing';
 export const WLO_REPOSITORY_URL: string = (() => {
   const raw = process.env['WLO_REPOSITORY_URL'] ?? '';
   const cleaned = sanitizeRepositoryUrl(raw);

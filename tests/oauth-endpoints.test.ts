@@ -19,7 +19,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { handleOAuthEndpoint } from '../src/rest/oauth-pages.js';
-import { currentAccessSupport, setAccessSupport } from '../src/auth/credential.js';
+import { ANONYMOUS_ACCESS_TOKEN, currentAccessSupport, setAccessSupport } from '../src/auth/credential.js';
+import { installFetchMock } from './fetchMock.js';
 import { encodeAccessToken, loadAuthKeys } from '../src/auth/access-token.js';
 import { createCodeStore, type CodeStore } from '../src/auth/oauth-codes.js';
 import { MAX_REDIRECT_URIS, decodeClientId, encodeClientId } from '../src/auth/oauth-clients.js';
@@ -755,4 +756,41 @@ test('a verifier outside the length RFC 7636 prescribes is refused', async (t) =
   // The ordinary case stays usable — 43 is what every standard client sends.
   const ok = await postToken(exchange(await mintCode(store)), store);
   assert.equal(ok.status, 200, ok.body);
+});
+
+test('ohne eigenes Konto verbinden: Code ohne Anmeldung, Token ist der anonyme', async (t) => {
+  // Der dritte Ausgang der Zustimmungsseite. Kein Passwort, kein Zugangsblock,
+  // kein Eintrag in der Positivliste — und trotzdem ein Code, den der Client
+  // eintauschen kann. Nur so kommt ein Client, der die Discovery gefunden hat,
+  // überhaupt in den Zustand „verbunden", ohne sich anzumelden.
+  await support(t);
+  // Jeder Aufruf nach oben wäre hier ein Fehler: es gibt keine Zugangsdaten zu
+  // prüfen. Das ist die tragende Zusicherung, nicht der Antworttext.
+  const restore = installFetchMock((url) => { throw new Error(`unerwarteter Aufruf: ${url}`); });
+  t.after(restore.restore);
+  const store = createCodeStore();
+
+  const body = consentBody({ token: undefined, anonymous: true });
+  const r = await postConsent(body, store);
+  assert.equal(r.status, 200, r.body);
+  const code = new URL(String(r.json?.['redirect'])).searchParams.get('code')!;
+
+  const token = await postToken({
+    grant_type: 'authorization_code',
+    code,
+    client_id: String(body['client_id']),
+    redirect_uri: REDIRECT,
+    code_verifier: VERIFIER,
+  }, store);
+  assert.equal(token.status, 200, token.body);
+  assert.equal(token.json?.['access_token'], ANONYMOUS_ACCESS_TOKEN);
+});
+
+test('ohne „anonymous" bleibt ein fehlender Zugangsblock ein Fehler', async (t) => {
+  // Die Absicht muss dastehen. Ein Aufruf, der den Block schlicht vergessen hat,
+  // darf nicht stillschweigend als anonyme Verbindung enden.
+  await support(t);
+  const r = await postConsent(consentBody({ token: undefined }), createCodeStore());
+  assert.equal(r.status, 400);
+  assert.match(String(r.json?.['error']), /Zugangsblock/);
 });

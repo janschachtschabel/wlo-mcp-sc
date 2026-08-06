@@ -107,3 +107,51 @@ test('llms.txt states no tool count that can go stale', () => {
   assert.doesNotMatch(llms, /\b\d+\s+read-only tools\b/i,
     'drop the count rather than maintain it — tools/list is authoritative');
 });
+
+// ── The tool overviews ───────────────────────────────────────────────────────
+
+/**
+ * Every user-facing document that describes WHEN a tool is visible.
+ *
+ * The rule changed on 2026-08-05 — the curation tools are listed for every
+ * caller and refuse at call time — and three documents said the opposite in
+ * three different phrasings. A reader who believes the old sentence concludes
+ * "the login is broken" when they see thirteen tools they cannot use, which is
+ * the exact opposite of what they should conclude.
+ */
+const OVERVIEW_DOCS = ['README.md', 'README.de.md', 'docs/TOOLS.md'];
+
+test('no overview still claims the write tools are hidden without a login', () => {
+  for (const doc of OVERVIEW_DOCS) {
+    const body = read(doc);
+    // Narrow on purpose, and it took a second attempt to get right: "sichtbar,
+    // aber nur mit Anmeldung BENUTZBAR" is exactly the true sentence these docs
+    // now carry, and a first version of this test forbade it. What may not be
+    // said is that the tools are ABSENT — so the patterns below all require the
+    // visibility word to be the thing being conditioned.
+    for (const [pattern, why] of [
+      [/nur (mit|bei)[^.\n]{0,40}sichtbar/i, 'they are visible to everyone'],
+      [/curation tools[^.\n]{0,40}appear (only )?(with|when)/i, 'they are always listed'],
+      [/registered only (for|when)[^.\n]{0,30}(identity|login)/i, 'registration is unconditional'],
+    ] as ReadonlyArray<[RegExp, string]>) {
+      assert.doesNotMatch(body, pattern, `${doc}: ${why}`);
+    }
+  }
+});
+
+test('the auth document exists and names the rules it is there to protect', () => {
+  // AUTH.md is the one place a maintainer looks before changing the login. If a
+  // rule is missing from it, the next change undoes it without noticing.
+  const auth = read('docs/AUTH.md');
+  const mustMention: ReadonlyArray<[string, string]> = [
+    ['WLO_AUTH_PRIVATE_KEY', 'the switch that turns the whole feature on'],
+    ['allow-list', 'the direction the registry fails in'],
+    ['PKCE', 'the proof at the token endpoint'],
+    ['application/json', 'the CSRF defence on the password-carrying endpoints'],
+    ['esguest', 'why a 200 is not proof of a login'],
+    ['refresh_token', 'stated as absent, so nobody adds one'],
+  ];
+  for (const [needle, why] of mustMention) {
+    assert.ok(auth.includes(needle), `docs/AUTH.md must mention ${needle} — ${why}`);
+  }
+});

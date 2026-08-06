@@ -276,3 +276,88 @@ test('a code cannot be redeemed twice, even across a real server', async (t) => 
     await close(server);
   }
 });
+
+test('ohne eigenes Konto verbinden — durch den ganzen Ablauf, gegen einen echten Server', async (t) => {
+  // Der Fall, für den das gebaut wurde (gemessen 2026-08-06 bei claude.ai): der
+  // Client findet die Discovery, will einen Token und kann nicht „einfach nichts
+  // schicken". Ohne diesen Ausgang bleibt ihm nur Anmelden oder Abbrechen.
+  //
+  // Die beiden Zeilen am Schluss sind die eigentliche Zusicherung: der Token
+  // führt NICHT zu 401 (das wäre ein Fehler bei jedem Aufruf), und er liefert
+  // dieselbe Liste wie ein Aufruf ganz ohne Header.
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-oauth-anon-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  assert.ok(registry);
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  t.after(fakeWlo());
+
+  const server = http.createServer(createHttpRequestHandler({
+    rateLimiter: createRateLimiter(0),
+    apiRateLimiter: createRateLimiter(0),
+    authAbuseLimiter: createDistinctValueLimiter(0),
+    maxBodyBytes: 1_048_576,
+    trustProxy: false,
+    streamOptions: streamableHttpOptions({}),
+    publicBaseUrl: ISSUER,
+  }));
+  const base: string = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    });
+  });
+
+  try {
+    const registered = await fetch(`${base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'Anon-Client' }),
+    });
+    assert.equal(registered.status, 201);
+    const clientId = String((await registered.json() as Record<string, unknown>)['client_id']);
+
+    // Der dritte Knopf: kein Benutzername, kein Passwort, kein Zugangsblock.
+    const consent = await fetch(`${base}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        anonymous: true,
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        code_challenge: CHALLENGE,
+        code_challenge_method: 'S256',
+      }),
+    });
+    const consentBody = await consent.json() as Record<string, unknown>;
+    assert.equal(consent.status, 200, JSON.stringify(consentBody));
+    const code = new URL(String(consentBody['redirect'])).searchParams.get('code')!;
+
+    const token = await fetch(`${base}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        code_verifier: VERIFIER,
+      }).toString(),
+    });
+    const tokenBody = await token.json() as Record<string, unknown>;
+    assert.equal(token.status, 200, JSON.stringify(tokenBody));
+    const access = String(tokenBody['access_token']);
+
+    const connected = await listTools(base, `Bearer ${access}`);
+    assert.equal(connected.status, 200, 'kein 401 — sonst scheitert jeder Aufruf der Verbindung');
+    const withToken = await toolNames(connected);
+    const withoutHeader = await toolNames(await listTools(base));
+    assert.deepEqual(withToken.sort(), withoutHeader.sort(),
+      'anonym verbunden heißt: genau wie ohne Header, nicht weniger und nicht mehr');
+  } finally {
+    await close(server);
+  }
+});

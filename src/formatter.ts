@@ -272,6 +272,29 @@ export function oneLine(value: string): string {
   return value.replace(/\s*[\r\n]+\s*/g, ' ');
 }
 
+/**
+ * The record's heading — a Markdown link when the node has a URL.
+ *
+ * Why a link and not plain text: clients routinely dropped the address and the
+ * nodeId when presenting results, because a model reformats an answer and bare
+ * text is the first thing it rewrites away. Ready-made formatting it tends to
+ * carry over. The `nodeId:` and `URL:` lines below stay exactly as they were —
+ * this adds a second, more durable route to the same fact.
+ *
+ * Both halves are repository-supplied, so both are protected the way the rest of
+ * this renderer protects its delimiters. A `[` or `]` in the title would end the
+ * link text early and spill the remainder as prose; a `(` or `)` in the URL
+ * would end the target. Angle brackets are CommonMark's own answer to the
+ * second (a `<…>` target may contain parentheses), and `<`/`>` inside the URL
+ * are percent-encoded so they cannot close it.
+ */
+function headingFor(title: string, url: string): string {
+  const text = title.replace(/[[\]]/g, '\\$&');
+  if (!url) return `## ${text}`;
+  const target = url.replace(/</g, '%3C').replace(/>/g, '%3E');
+  return `## [${text}](<${target}>)`;
+}
+
 /** Render a list of FormattedNodes as a compact text format for LLM consumption. */
 export function renderToText(nodes: FormattedNode[], totalHits?: number): string {
   const lines: string[] = [];
@@ -280,7 +303,7 @@ export function renderToText(nodes: FormattedNode[], totalHits?: number): string
   }
   for (const n of nodes) {
     const parts: string[] = [];
-    parts.push(`## ${n.title || '(kein Titel)'}`);
+    parts.push(headingFor(n.title || '(kein Titel)', n.url || n.contentUrl || ''));
     parts.push(`nodeId: ${n.nodeId}`);
     if (n.description) parts.push(`Beschreibung: ${n.description.slice(0, 400)}${n.description.length > 400 ? '…' : ''}`);
     if (n.keywords.length)             parts.push(`Schlagworte: ${n.keywords.slice(0, 10).join(', ')}`);

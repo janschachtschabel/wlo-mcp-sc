@@ -54,7 +54,13 @@ services:
     environment:
 
       # ── 1 — which repository ────────────────────────────────────────────────
-      WLO_REPOSITORY_URL: "${WLO_REPOSITORY_URL:-https://redaktion.openeduhub.net/edu-sharing}"
+      # Empty pass-through like every other line here, and since 2026-08-06 for a
+      # demonstrated reason: this line used to repeat a default (production) that
+      # `src/wlo-config.ts` also defines. Two copies of one decision, and the one
+      # that decided was not the one anybody read — a deployment whose `.env`
+      # lacked the variable wrote into the LIVE catalogue while everything around
+      # it said staging. The code owns the default; it is staging.
+      WLO_REPOSITORY_URL: "${WLO_REPOSITORY_URL:-}"
       # Only needed on an edu-sharing that is neither WLO instance — node ids are
       # repository-bound, and the two known hosts get a per-host default.
       WLO_ROOT_COLLECTION_ID: "${WLO_ROOT_COLLECTION_ID:-}"

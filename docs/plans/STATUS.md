@@ -2766,3 +2766,160 @@ dass die Prüfung existierte — ein zu kurzer Verifier scheitert ohnehin am
 Hashvergleich. Erst ein Code, dessen `code_challenge` das echte S256 des kurzen
 Verifiers ist, trennt die beiden Zustände. Ein Test, der auch ohne die Änderung
 grün ist, belegt nichts.
+
+## Werkzeugbeschreibungen überarbeitet (2026-08-06)
+
+Anlass: Claude bekam „aus der Wikipedia-Seite von Apolda einen Inhalt bauen" und
+machte eine eigene Websuche, statt `get_url_text` zu nehmen. Dazu die
+Beobachtung des Nutzers, dass Lehrkräfte nicht „Bildungsinhalte" sagen, sondern
+„ein Video zu Bruchrechnung", und dass das Repository auch WirLernenOnline,
+edu-sharing oder openeduhub heißt.
+
+Vier Lücken, alle behoben und in `tests/tool-descriptions.test.ts` festgehalten:
+
+1. **Alltagssprache.** `search_wlo_all` führt jetzt mit den Formulierungen statt
+   mit der Form des Rückgabewerts und sagt, dass ein genanntes Medium ein FILTER
+   ist, kein Grund für ein anderes Werkzeug.
+2. **Die anderen Namen** stehen in den Server-Instructions — einmal gelesen, für
+   alle Werkzeuge gültig, statt dreizehnmal in Schreibwerkzeugen wiederholt.
+3. **Wikipedia → `get_url_text`.** Beide Werkzeuge nennen einander jetzt;
+   `get_wikipedia_summary` sagt ausdrücklich, dass es nur den Anriss liefert.
+4. **Länge.** Vier Beschreibungen lagen über 1024 Zeichen (bis 1573), jetzt keine
+   mehr; die längste hat 1006. Gekürzt wurde Implementierungsdetail, das auch in
+   den Parameterbeschreibungen steht — nie eine zugesagte Eigenschaft.
+
+**Ein Test hat mich dabei korrigiert:** beim Kürzen von `get_node_details` fielen
+die fünf `raw`-Feldnamen mit heraus. `node-details.test.ts` hält seit einem
+früheren Fund fest, dass die Beschreibung genau die Felder nennt, die geliefert
+werden — „eine Beschreibung, die breiter ist als das Verhalten, schickt
+Aufrufende nach Werten, die nie ankommen". Die Namen sind zurück, gekürzt wurde
+stattdessen die englische Einleitung.
+
+**Belege:** `npx tsc … --noEmit` → Exit 0; volle Suite → 1329/1329.
+
+**Ungemessen und bewusst so gelassen:** ob ein Host die 1024 Zeichen wirklich
+erzwingt. Unter der Grenze zu schreiben macht die Frage gegenstandslos, statt
+sie zu einem Risiko zu machen.
+
+## URLs, Werkzeugübersicht und Wikipedia-Volltext (2026-08-06)
+
+Drei Punkte aus dem Live-Test, alle umgesetzt.
+
+**1. URL und nodeId gehen in den Antworten verloren.** Beide standen längst in
+jedem Datensatz (`nodeId:` und `URL:`), aber Clients formatieren um und werfen
+nackten Text zuerst weg. Zwei Hebel statt einem: die Überschrift ist jetzt ein
+Markdown-Link (`## [Titel](<URL>)`) — fertige Formatierung wird kopiert, nicht
+neu erfunden —, und die Instructions sagen es zusätzlich ausdrücklich. Titel und
+URL sind beide repository-eigen, also maskiert `headingFor` eckige Klammern im
+Titel und nutzt die spitzklammrige CommonMark-Form für die Adresse; sonst wäre
+das eine neue Fälschungsmöglichkeit an derselben Stelle, an der `oneLine` eine
+geschlossen hat.
+
+**2. Sollen alle 38 Werkzeuge in den Instructions stehen? Nein.** Der Client hat
+`tools/list` mit allen Beschreibungen; eine Namensliste wäre eine zweite,
+driftende Kopie. Was fehlte, war die KATEGORIE: der Text las sich wie ein reiner
+Lesedienst, sodass „leg das bei WirLernenOnline an" den Namen fand, aber nicht
+die Zusage, dass Anlegen überhaupt geht. Jetzt genannt — lesen, Volltext,
+schreiben (zweistufig) — ohne Aufzählung.
+
+**3. Wikipedia liefert jetzt den ganzen Artikel.** Gemessen 2026-08-06 über
+`action=query&prop=extracts&explaintext=1`: Apolda 366 Zeichen als Anriss,
+**123.682** als Artikel; Photosynthese 354 vs. 105.632. Ein Aufruf, ohne
+Extraktionsdienst. `fullText=true` schaltet es ein, die Vorgabe bleibt der
+Anriss — 120k Zeichen als Standard würden jeden Kontext fluten. Kappung über
+`capText` (`maxChars`, Vorgabe 8000).
+
+**Die Reihenfolge ist dabei tragend:** der Volltext wird über den von
+`fetchWikipediaSummary` AUFGELÖSTEN Titel geholt, nie über die rohe Anfrage.
+Sonst umginge er die Relevanzprüfung aus `wikipedia-relevance.ts` — „Stadt
+Berlin" hat einmal den Schweizer Bundesort geliefert, und darunter schreibt ein
+Aufrufer „Quelle: Wikipedia-Artikel ‚X'". Der zusätzliche Rundlauf ist der Preis
+dieser Zusage; ein Test hält beides fest.
+
+**Belege:** `npx tsc … --noEmit` → Exit 0; volle Suite → 1333/1333.
+
+**Wieder in dieselbe Falle gelaufen:** der Heredoc frisst eine Backslash-Ebene,
+`\[` wurde zur Zeichenklasse. Steht seit dem 2026-08-05 in CLAUDE.md, und ich
+habe es trotzdem gemacht. Für maskierte Zeichen `String.includes` statt
+`new RegExp` — ein Muster wäre grün gewesen und hätte nichts belegt.
+
+## Doku nachgezogen + AUTH.md (2026-08-06)
+
+**Werkzeugübersichten geprüft, nicht angenommen:** ein Abgleich der in
+`README.md`, `README.de.md` und `docs/TOOLS.md` genannten Werkzeugnamen gegen die
+Liste des laufenden Servers ergab **keine fehlenden und keine erfundenen Namen**.
+Falsch waren zwei Aussagen:
+
+1. `docs/TOOLS.md` führte eine Sichtbarkeitstabelle „Mit Schreibrechten →
+   zusätzlich die 13 Kurations-Tools", und `README.de.md` schrieb „nur mit
+   Schreibrechten sichtbar". Beides gilt seit dem 2026-08-05 nicht mehr.
+2. Wikipedia war überall als „Kurzzusammenfassung" beschrieben, obwohl das
+   Werkzeug seit heute mit `fullText` den ganzen Artikel liefert.
+
+Beides korrigiert. Zwei neue Prüfungen in `tests/docs-claims.test.ts` halten es
+fest — eine gegen die alte Sichtbarkeitsbehauptung in allen drei Dokumenten, eine
+darauf, dass `docs/AUTH.md` die Regeln nennt, für die es existiert.
+
+**Nicht korrigiert, weil geprüft und richtig:** die Aussage, `get_url_text` sei
+im Docker-Deployment ab Werk abgeschaltet. `docker-compose.yml:123` setzt
+`${WLO_DISABLE_UNSAFE_TOOLS-all}` und `.env.example` liefert `all` aktiv aus. Auf
+dem vServer läuft eine eigene Compose-Datei ohne diese Zeile — das ist eine
+Abweichung des Deployments, kein Dokumentationsfehler.
+
+**Neu: `docs/AUTH.md`** — die Erklärung der Auth-Umsetzung an einer Stelle:
+warum es keinen Token zum Weiterreichen gibt (die Messung vom 2026-07-30), die
+drei Identitäten, das Format des Zugangsblocks, die Positivliste und was ein
+Widerruf wirklich beweist, beide Anmeldewege samt OAuth-Ablauf, die
+Missbrauchsschranken und ihre zwei Voraussetzungen (kein CORS-Header UND
+`application/json`), die Betreiber-Einstellungen — und zum Schluss neun Regeln,
+die eine spätere Änderung nicht unbemerkt aufheben darf.
+
+**Ein eigener Testfehler unterwegs:** mein erstes Muster gegen die alte
+Sichtbarkeitsbehauptung verbot auch den jetzt wahren Satz („für alle sichtbar,
+aber nur mit Anmeldung benutzbar"). Das Muster war falsch, nicht die Doku —
+korrigiert und beide Fälle gegengeprüft.
+
+**Belege:** `npx tsc … --noEmit` → Exit 0; volle Suite → 1335/1335.
+
+## Anonym verbinden ohne eigenes Konto — FERTIG (2026-08-06)
+
+Anlass, live gemessen bei claude.ai: MCP-Adresse eintragen genügt, der Client
+findet die Discovery-Dokumente und startet OAuth — und ab da will er einen
+Token. „Einfach nichts schicken" kann er nicht. Wer nur suchen wollte, hatte
+Anmelden oder Abbrechen, und Abbrechen ist keine Verbindung. Der Server war über
+diesen Client anonym gar nicht nutzbar.
+
+**Umgesetzt:** dritter Knopf auf der Zustimmungsseite, Token `wlo-anon.v1`.
+
+Entscheidung des Nutzers zur Bedeutung: *„anonym ist quasi wie vor Einführung der
+auth — API wird ohne konkrete Userlogins genutzt."* Also identisch zu einem
+Aufruf ohne Header, inklusive Dienstkonto-Rückfall, wo eines konfiguriert ist.
+
+**Warum das klein bleiben durfte:** der Token gewährt exakt das, was ein Aufruf
+ohne Header gewährt. Wer ihn fälscht, hat sich das Weglassen des Headers
+gespart. Also kein Schlüsselmaterial, kein Eintrag in der Positivliste, kein
+Widerruf, keine Ablauffrist — nichts davon würde etwas schützen, und jedes würde
+suggerieren, dass es das tut. Er funktioniert deshalb auch ohne eingerichtete
+Zugangsblöcke.
+
+**Zwei Eigenschaften halten ihn ehrlich**, beide als Test:
+
+1. Die Absicht muss dastehen (`anonymous: true`). Ein Aufruf, der den Block bloß
+   vergessen hat, scheitert weiterhin — sonst würde ein Fehler still zur anonymen
+   Verbindung.
+2. Exakter Vergleich. Ein Tippfehler im Token ist ein kaputter Token (401), kein
+   anonymer.
+
+Die ältere Regel „ein vorgelegter, unbrauchbarer Bearer ist ein 401" bleibt
+unangetastet; dies ist der eine Wert, bei dem „keine Zugangsdaten" die Antwort
+ist statt des Fehlers. Als Regel 10 in `docs/AUTH.md` aufgenommen.
+
+**Nebenbei entschärft:** die Zustimmungsseite baut ihren POST-Rumpf jetzt in
+EINER Funktion, die beide Ausgänge nutzen. Ein zweites Literal ist genau die
+Stelle, an der am 2026-08-05 `response_type` verschwand und jede Zustimmung
+scheitern ließ. `tests/oauth-authorize-page.test.ts` liest die Feldnamen jetzt
+aus dieser Funktion und schickt sie durch die echte Prüfung.
+
+**Belege:** `npx tsc … --noEmit` → Exit 0; volle Suite → 1342/1342. Der tragende
+Test läuft gegen einen echten Server durch den ganzen Ablauf und endet auf den
+zwei Zeilen, die zählen: kein 401, und dieselbe Werkzeugliste wie ohne Header.

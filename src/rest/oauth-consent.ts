@@ -21,12 +21,15 @@
 
 import { issueAccessBlock } from '../auth/access-issue.js';
 import type { AuthKeys } from '../auth/access-token.js';
-import type { AccessSupport } from '../auth/credential.js';
+import { ANONYMOUS_ACCESS_TOKEN, type AccessSupport } from '../auth/credential.js';
 import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-authorize.js';
 import { log } from '../logger.js';
 import { isJsonContentType } from '../read-body.js';
 import { send, readJsonBody, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
 import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
+
+/** What the log records for a connection made without an account. */
+const ANONYMOUS_LABEL = '(ohne Konto)';
 
 /** Does the caller want data rather than the page? The page's own fetch does. */
 function wantsJson(req: OAuthReq): boolean {
@@ -149,16 +152,31 @@ export async function grantConsent(
     return send(res, 400, { error: checked.error });
   }
 
+  // The third exit of the consent page: connect without an account of one's own.
+  // A client that found our discovery documents cannot simply send no header —
+  // it wants a token — so without this its only choices are signing in or
+  // cancelling, and cancelling is not a connection.
+  //
+  // Nothing is verified here because there is nothing to verify: the token that
+  // comes out grants exactly what a request with no `Authorization` grants (see
+  // `ANONYMOUS_ACCESS_TOKEN`). No upstream call, no allow-list entry, and the
+  // guessing limiter is not touched — it counts credentials, and there is none.
+  //
+  // The INTENT has to be stated. A request that merely forgot the block keeps
+  // failing below, rather than quietly ending up as an anonymous connection.
+  const anonymous = body['anonymous'] === true;
   const token = typeof body['token'] === 'string' ? body['token'] : '';
-  if (!token) return send(res, 400, { error: 'Es wurde kein Zugangsblock übermittelt.' });
+  if (!anonymous && !token) return send(res, 400, { error: 'Es wurde kein Zugangsblock übermittelt.' });
 
   // The same issuance `/auth/issue` performs: decode, limit, and verify the
   // login at the AUTHORITY rather than at the status code.
-  const outcome = await issueAccessBlock(
-    token,
-    { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
-    Date.now(),
-  );
+  const outcome = anonymous
+    ? ({ ok: true, label: ANONYMOUS_LABEL, jti: '' } as const)
+    : await issueAccessBlock(
+      token,
+      { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
+      Date.now(),
+    );
   if (!outcome.ok) {
     return send(res, outcome.status, { error: outcome.error },
       outcome.status === 429 ? { 'Retry-After': '600' } : {});
@@ -168,9 +186,9 @@ export async function grantConsent(
     clientId: checked.request.clientId,
     redirectUri: checked.request.redirectUri,
     challenge: checked.request.challenge,
-    // Still a ciphertext. It waits here for `/oauth/token` and is never opened
-    // in between — the password is not part of this path.
-    block: token,
+    // For a login: still a ciphertext. It waits here for `/oauth/token` and is
+    // never opened in between — the password is not part of this path.
+    block: anonymous ? ANONYMOUS_ACCESS_TOKEN : token,
     label: outcome.label,
   }, Date.now());
 

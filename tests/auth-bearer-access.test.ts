@@ -22,6 +22,7 @@ import {
   credentialFromHeader,
   isUnusableAuthorization,
   isUnusableBearer,
+  ANONYMOUS_ACCESS_TOKEN,
   setAccessSupport,
 } from '../src/auth/credential.js';
 import { encodeAccessToken, loadAuthKeys, type AccessPayload } from '../src/auth/access-token.js';
@@ -160,4 +161,41 @@ test('only a Bearer counts as an unusable TOKEN — a broken Basic is a login pr
 
   await registry.add({ jti: payload.jti, label: payload.u, iat: payload.iat });
   assert.equal(isUnusableBearer(tokenFor()), false, 'a listed block is usable');
+});
+
+/**
+ * ── Der ausdrücklich anonyme Token (2026-08-06) ────────────────────────────
+ *
+ * Ein Client, der die Discovery-Dokumente gefunden hat, will einen Token — er
+ * kann nicht „einfach nichts schicken". Ohne einen Ausgang für „ohne eigenes
+ * WLO-Konto" bleibt ihm nur Anmelden oder Abbrechen, und Abbrechen heißt nicht
+ * verbunden. Der Token dafür ist eine feste Zeichenkette, und das ist kein
+ * Versehen: er gewährt exakt das, was ein Aufruf ganz ohne Header bekommt. Wer
+ * ihn fälscht, hat sich das Weglassen des Headers gespart.
+ *
+ * Was er NICHT aufweichen darf, ist die ältere Regel: ein vorgelegter Bearer,
+ * den wir nicht öffnen können, ist ein 401.
+ */
+test('der anonyme Token ist kein unbrauchbarer Bearer', () => {
+  setAccessSupport(null);
+  assert.equal(isUnusableBearer(`Bearer ${ANONYMOUS_ACCESS_TOKEN}`), false,
+    'ausdrücklich anonym ist eine Aussage, kein Fehler — sonst 401 bei jedem Aufruf');
+  assert.equal(isUnusableAuthorization(`Bearer ${ANONYMOUS_ACCESS_TOKEN}`), false);
+  // Und nur genau dieser Wert. Ein Tippfehler darf nicht anonym durchrutschen,
+  // sondern muss als kaputter Token auffallen.
+  assert.equal(isUnusableBearer(`Bearer ${ANONYMOUS_ACCESS_TOKEN}x`), true);
+  assert.equal(isUnusableBearer('Bearer wlo-anon'), true);
+});
+
+test('er ergibt keine Zugangsdaten — er ist die Abwesenheit von welchen', () => {
+  setAccessSupport(null);
+  assert.equal(credentialFromHeader(`Bearer ${ANONYMOUS_ACCESS_TOKEN}`), null,
+    'null heißt hier „niemand", und der Aufrufer unterscheidet das über isUnusableBearer');
+});
+
+test('er funktioniert auch dann, wenn Zugangsblöcke gar nicht eingerichtet sind', () => {
+  // Kein Schlüsselmaterial nötig: es gibt nichts zu entschlüsseln. Damit bleibt
+  // die Aussage auf jedem Deployment gültig, auch einem ohne Anmeldung.
+  setAccessSupport(null);
+  assert.equal(isUnusableBearer(`Bearer ${ANONYMOUS_ACCESS_TOKEN}`), false);
 });

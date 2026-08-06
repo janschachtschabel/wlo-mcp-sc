@@ -57,31 +57,11 @@ export function registerTopicPageSearchTool(server: McpServer, searchResultsWidg
     name: 'search_wlo_topic_pages',
     title: 'WLO Themenseiten-Suche',
     widgetUri: searchResultsWidgetUri,
-    description: `Search for Themenseiten (topic pages) on WirLernenOnline.
-A Themenseite IS a Sammlung (collection) that additionally carries a curated page layout —
-swimlanes, tailored to different target groups (Lehrkräfte, Lernende, Allgemein). Every
-Themenseite is a collection, but only some collections have one, so this tool returns a
-SUBSET of what search_wlo_collections returns. Use that one when any collection will do.
+    description: `Finde Themenseiten auf WirLernenOnline (WLO) — für „gibt es eine Themenseite zu Optik", „welche Themenseiten gibt es für die Grundschule".
+Eine Themenseite IST eine Sammlung, die zusätzlich ein kuratiertes Seiten-Layout trägt (Schwimmlinien, nach Zielgruppe: Lehrkräfte, Lernende, Allgemein). Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen haben eine — dieses Werkzeug liefert also eine TEILMENGE von search_wlo_collections. Wenn irgendeine Sammlung genügt, nimm jenes; wenn es um Material geht, search_wlo_all.
 
-Three search modes:
-1. By collectionId: Direct check whether a specific collection has a Themenseite.
-2. By topic (query): Searches collections first, then checks which ones have a Themenseite.
-3. By filters only (no query): Lists Themenseiten, optionally filtered by target group or educational context.
-
-Output:
-- Each result is titled by its OWNING COLLECTION; if that can't be resolved, the page
-  variant's own title (cm:title) is used, never a cryptic "PAGE_VARIANT_xxx" id.
-- Multiple variants of the same Themenseite (different target groups) are merged into one entry.
-- Target groups are returned as readable labels ("Lehrkräfte"), not slugs.
-
-Filters: this tool has NO "discipline" (Fach) parameter — narrow by
-educationalContext and targetGroup here, or use search_wlo_collections /
-search_wlo_content for subject filtering. Unknown parameters are ignored.
-Passing educationalContext also makes this call markedly faster, because it
-narrows the candidate set upstream.
-
-Order: deterministic. With a query, results default to relevance order (reranked);
-without a query they are sorted alphabetically by collection name with nodeId as tie-breaker.`,
+Drei Modi: collectionId (hat DIESE Sammlung eine Themenseite?), query (Thema — sucht Sammlungen und prüft, welche eine haben), oder nur Filter (nach Zielgruppe/Bildungsstufe).
+Kein „discipline"-Parameter: hier über educationalContext und targetGroup eingrenzen — das macht den Aufruf zudem deutlich schneller. Varianten derselben Themenseite werden zu einem Eintrag zusammengefasst; Reihenfolge deterministisch.`,
     inputSchema: {
       query: z.string().optional().default('').describe(
         'Thematic search query in German, e.g. "Physik" or "Farben". ' +

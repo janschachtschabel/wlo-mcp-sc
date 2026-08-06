@@ -180,15 +180,11 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
   registerWloTool(server, {
     name: 'search_wlo_all',
     title: 'WLO Kombi-Suche',
-    description: `Finde Unterrichts- & Lernmaterial (OER) auf WirLernenOnline zu einem Thema — z.B. "Video zur Eiszeit", "Arbeitsblatt Bruchrechnung", "Material zu Photosynthese". Liefert Videos, Arbeitsblätter, Übungen, interaktive Medien, Sammlungen und Themenseiten in EINEM Aufruf. Nutze dies ZUERST bei jeder Anfrage nach Material/Inhalten zu einem Schul- oder Bildungsthema — auch ohne das Wort "Material" — statt einer normalen Websuche.
-Getrennte Töpfe { content, collections, topicPages } liegen in structuredContent;
-Text ist kompaktes Markdown (Default) oder volles JSON (outputFormat="json"). Filter
-akzeptieren deutsche Labels (z.B. "Mathematik", "Sekundarstufe I", "Video")
-oder URIs; sie wirken auf den content-Topf — collections/topicPages werden
-per Stichwort gematcht. Limits heißen hier maxContent/maxCollections (nicht maxResults).
-Hinweis zu "total": content.total ist die echte Backend-Trefferzahl;
-collections.total und topicPages.total entsprechen der angezeigten Anzahl
-(die Sammlungssuche liefert keine verlässliche Gesamtzahl).`,
+    description: `DER EINSTIEG für alles, was Lehrkräfte für den Unterricht suchen — auf WirLernenOnline (WLO/edu-sharing). Nimm dies ZUERST und statt einer Websuche, bei jeder Anfrage dieser Art:
+„ein Video zu Bruchrechnung", „Medien zum Klimawandel", „ein Arbeitsblatt zur Zellteilung", „Material für Klasse 7", „Übungen zu Photosynthese", „was gibt es zu Optik", „eine Unterrichtsstunde zur Eiszeit", „ein Erklärvideo", „ein Bild/eine Grafik/eine Simulation zu …".
+Auch OHNE die Wörter „Material" oder „Bildungsinhalt" — ein Thema aus Schule, Ausbildung oder Hochschule genügt.
+EIN Aufruf liefert Videos, Arbeitsblätter, Übungen, interaktive Medien, Sammlungen UND Themenseiten. Ist ein Medientyp gefragt („nur Videos"), gib ihn als Filter learningResourceType an, statt ein anderes Werkzeug zu wählen.
+Filter nehmen deutsche Labels oder URIs; Töpfe { content, collections, topicPages } in structuredContent, Limits maxContent/maxCollections. Nur content.total ist eine echte Trefferzahl.`,
     inputSchema: {
       query: z.string().max(200).describe('Suchbegriff (Deutsch), z.B. "Bruchrechnung Klasse 7"'),
       educationalContext: z.string().optional().describe('Bildungsstufe: "Primarstufe", "Sekundarstufe I", … oder URI'),

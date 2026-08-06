@@ -61,6 +61,20 @@
       </div>
     </form>
 
+    <!-- The third exit. A client that has found our discovery documents wants a
+         token and cannot simply send none, so without this its only choices are
+         signing in or cancelling — and cancelling is not a connection. -->
+    <div class="actions" id="anonymous-actions">
+      <button type="button" id="anonymous" class="secondary" disabled>
+        Ohne eigenes WLO-Konto verbinden
+      </button>
+      <p class="hint" id="anonymous-hint">
+        Du siehst dann alles, was auch ohne Anmeldung öffentlich ist — Suche, Sammlungen,
+        Themenseiten und Volltexte. <strong>Inhalte anlegen oder ändern geht damit nicht.</strong>
+        Du kannst dich später jederzeit anmelden, indem du die Verbindung neu einrichtest.
+      </p>
+    </div>
+
     <!-- polite, not assertive: the result follows a deliberate action, so it
          should not interrupt what a screen reader is saying. -->
     <p class="status" id="status" role="status" aria-live="polite">Anfrage wird geprüft …</p>

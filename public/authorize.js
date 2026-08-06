@@ -22,6 +22,7 @@ const userInput = document.getElementById('user');
 const secretInput = document.getElementById('secret');
 const submit = document.getElementById('submit');
 const deny = document.getElementById('deny');
+const anonymous = document.getElementById('anonymous');
 const status = document.getElementById('status');
 const clientName = document.getElementById('client-name');
 const redirectOrigin = document.getElementById('redirect-origin');
@@ -66,6 +67,7 @@ loadRequest().then((request) => {
   clientName.textContent = request.client_name;
   redirectOrigin.textContent = new URL(request.redirect_uri).origin;
   submit.disabled = false;
+  anonymous.disabled = false;
   say('', null);
   userInput.focus();
 }).catch((err) => {
@@ -73,6 +75,47 @@ loadRequest().then((request) => {
   redirectOrigin.textContent = 'unbekannt';
   say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
 });
+
+/**
+ * The authorization request, as the endpoint re-checks it.
+ *
+ * ONE place, used by both exits. Every parameter travels again because the POST
+ * is validated by the same function the GET used — and a field left out here is
+ * a request the endpoint refuses. That is not hypothetical: `response_type` was
+ * missing once, every consent failed, and page and endpoint were each green
+ * against their own idea of the body.
+ *
+ * `state` is the exception, deliberately: absent must stay absent, or a client
+ * that sent none gets an empty one back and compares it against nothing. An
+ * empty string it DID send is passed on unchanged.
+ */
+function authorizeBody(extra) {
+  return JSON.stringify({
+    client_id: params.get('client_id') ?? '',
+    redirect_uri: approvedRedirect,
+    response_type: params.get('response_type') ?? '',
+    code_challenge: params.get('code_challenge') ?? '',
+    code_challenge_method: params.get('code_challenge_method') ?? '',
+    ...(params.has('state') ? { state: params.get('state') } : {}),
+    ...extra,
+  });
+}
+
+/** Send a prepared body and follow the target the SERVER hands back. */
+async function grant(body) {
+  const res = await fetch('/oauth/authorize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || typeof data.redirect !== 'string') {
+    // The server distinguishes "WLO rejected these credentials" from everything
+    // else; showing its text means a typo says so plainly.
+    throw new Error(data?.error ?? 'Die Anmeldung konnte nicht abgeschlossen werden.');
+  }
+  return data.redirect;
+}
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -91,46 +134,21 @@ form.addEventListener('submit', async (event) => {
 
   submit.disabled = true;
   deny.disabled = true;
+  anonymous.disabled = true;
   say('Verschlüsseln und anmelden …', 'busy');
 
   try {
     const block = await encodeAccessBlock(user, secret, await publicKey());
-
-    const res = await fetch('/oauth/authorize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // Every parameter of the authorization request travels again: the POST is
-      // checked by the same function the GET used, so a field left out here is a
-      // request the endpoint refuses — which is exactly how it was found.
-      //
-      // `state` is the exception, and deliberately: absent must stay absent, or
-      // a client that sent none gets an empty one back and compares it against
-      // nothing. An empty string it DID send is passed on unchanged.
-      body: JSON.stringify({
-        token: block,
-        client_id: params.get('client_id') ?? '',
-        redirect_uri: approvedRedirect,
-        response_type: params.get('response_type') ?? '',
-        code_challenge: params.get('code_challenge') ?? '',
-        code_challenge_method: params.get('code_challenge_method') ?? '',
-        ...(params.has('state') ? { state: params.get('state') } : {}),
-      }),
-    });
-
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data || typeof data.redirect !== 'string') {
-      // The server distinguishes "WLO rejected these credentials" from
-      // everything else; showing its text means a typo says so plainly.
-      throw new Error(data?.error ?? 'Die Anmeldung konnte nicht abgeschlossen werden.');
-    }
+    const target = await grant(authorizeBody({ token: block }));
 
     // The password is done with; it should not sit in the field while the
     // browser navigates away.
     secretInput.value = '';
     say('Angemeldet. Zurück zum Programm …', 'ok');
-    location.assign(data.redirect);
+    location.assign(target);
   } catch (err) {
     say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    anonymous.disabled = false;
     submit.disabled = false;
     deny.disabled = false;
   }
@@ -148,4 +166,25 @@ deny.addEventListener('click', () => {
   const state = params.get('state');
   if (state !== null) target.searchParams.set('state', state);
   location.assign(target.toString());
+});
+
+anonymous.addEventListener('click', async () => {
+  // The third exit: connect, but as nobody in particular. Nothing is encrypted
+  // and nothing is sent upstream, because there is no credential involved — the
+  // token this yields grants exactly what a call with no Authorization grants.
+  if (!approvedRedirect) return;
+
+  submit.disabled = true;
+  deny.disabled = true;
+  anonymous.disabled = true;
+  say('Verbinden …', 'busy');
+
+  try {
+    location.assign(await grant(authorizeBody({ anonymous: true })));
+  } catch (err) {
+    say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    anonymous.disabled = false;
+    submit.disabled = false;
+    deny.disabled = false;
+  }
 });

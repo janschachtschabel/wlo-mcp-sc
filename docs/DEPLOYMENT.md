@@ -15,8 +15,9 @@ matters.
 - Docker + the Compose plugin (`docker compose version`).
 - For ChatGPT developer mode: a public domain with TLS, terminated by a reverse
   proxy (nginx / Traefik / Caddy) in front of the container.
-- Outbound network access to the WLO repository (`redaktion.openeduhub.net` by
-  default) and, when the Wikipedia tool is used, to `*.wikipedia.org`.
+- Outbound network access to the WLO repository (`repository.staging.openeduhub.net`
+  by default, `redaktion.openeduhub.net` for production) and, when the Wikipedia
+  tool is used, to `*.wikipedia.org`.
 
 ## 2. Quick start
 
@@ -59,7 +60,7 @@ tracked compose file. The full list with defaults is in
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WLO_REPOSITORY_URL` | `https://redaktion.openeduhub.net/edu-sharing` | Upstream edu-sharing repository (prod; set to the staging host if needed). |
+| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | Upstream edu-sharing repository. **Defaults to STAGING** — set `https://redaktion.openeduhub.net/edu-sharing` explicitly to write to production. |
 | `MCP_SSE` | `1` | `1` = real SSE streaming (needed by ChatGPT). `0` = single-JSON responses. |
 | `TRUST_PROXY` | `1` | Take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
 | `RATE_LIMIT_RPM` | `120` | Per-IP requests/min on `/mcp` (`0` disables). |

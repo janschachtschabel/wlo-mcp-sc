@@ -193,3 +193,44 @@ export async function fetchWikipediaSummary(
 
   return fetchSummaryByTitle(picked, safeLang, sections, 'fuzzy');
 }
+
+/**
+ * The FULL plain-text article for an exact title.
+ *
+ * `action=query&prop=extracts&explaintext=1` (the TextExtracts extension), not
+ * the REST summary: measured 2026-08-06, Apolda is 366 characters as a summary
+ * and 123.682 as an article. That is the whole point — and also why no caller
+ * may hand it on unbounded.
+ *
+ * **Takes a TITLE, never a user query.** The resolution and the relevance check
+ * live in `fetchWikipediaSummary`, and going around them here is how a caller
+ * ends up attributing teaching material to an article the question was not
+ * about ("Stadt Berlin" once answered with the Swiss federal city). One extra
+ * round trip is what that guarantee costs.
+ *
+ * Returns null on anything unusable — a missing page, an unreadable body, an
+ * empty extract — because "no article" is a normal answer here, not a fault.
+ */
+export async function fetchWikipediaArticle(title: string, lang = 'de'): Promise<string | null> {
+  const safeLang = /^[a-z]{2,3}$/.test(lang) ? lang : 'de';
+  const params = new URLSearchParams({
+    action: 'query',
+    prop: 'extracts',
+    explaintext: '1',
+    redirects: '1',
+    format: 'json',
+    formatversion: '2',
+    titles: title,
+  });
+  let res: Response;
+  try {
+    res = await wikiFetch(`https://${safeLang}.wikipedia.org/w/api.php?${params}`);
+  } catch (err) {
+    log.warn('wikipedia article fetch failed', { title, lang: safeLang, error: String(err) });
+    return null;
+  }
+  if (!res.ok) return null;
+  const data = await readJson<{ query?: { pages?: Array<{ extract?: string }> } }>(res, 'wikipedia article');
+  const extract = data?.query?.pages?.[0]?.extract;
+  return extract && extract.trim() ? extract : null;
+}

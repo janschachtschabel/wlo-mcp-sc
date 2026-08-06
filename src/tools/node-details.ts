@@ -65,28 +65,9 @@ export function registerNodeDetailTools(server: McpServer, searchResultsWidgetUr
     name: 'get_node_details',
     title: 'WLO Knoten-Details',
     widgetUri: searchResultsWidgetUri,
-    description: `Retrieve detailed METADATA (and optionally the stored text and/or parent collections) for a specific WLO node.
-Fast by default (~0.3 s): metadata only. The full text of the material is a
-SEPARATE, slower concern — use get_wlo_content_text when you actually need the
-content itself (it also falls back to the linked page and reports why a text is
-missing). \`includeTextContent\` here is the quick variant without that fallback.
-Auf Deutsch gefragt: dies ist die DETAILANSICHT (Titel, Fach, Lizenz, Link).
-Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung des Materials
-will, braucht get_wlo_content_text — nicht dieses Werkzeug.
-
-Returns the SAME field structure as search tools (formatNode):
-title, description, keywords, disciplines (labels), educationalContexts (labels),
-userRoles (labels), learningResourceTypes (labels), license (label), publisher,
-url, previewUrl, topicPageUrl, nodeType.
-
-Plus optional:
-- textContent: the crawled/stored full text of the linked web page or document
-- parents: the collection(s) this node belongs to (useful to find which Sammlung a content item is in)
-- raw: the UNRESOLVED values behind five of the label fields, for debugging and for
-  callers that need the vocabulary URIs — ccm:taxonid (disciplines),
-  ccm:educationalcontext, ccm:educationalintendedenduserrole (userRoles),
-  ccm:oeh_lrt_aggregated (learningResourceTypes) and the ccm:commonlicense_key.
-  It is NOT the node's full property bag; nothing else is included.`,
+    description: `Die DETAILANSICHT eines WLO-Datensatzes: Titel, Fach, Bildungsstufe, Lizenz, Anbieter, Link — die Metadaten, nicht der Inhalt. Schnell (~0,3 s).
+Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung des Materials will, braucht get_wlo_content_text — nicht dieses Werkzeug. Dort kommt der Text notfalls auch von der verlinkten Seite und es wird gesagt, warum keiner da ist; \`includeTextContent\` hier ist nur die schnelle Variante ohne diesen Rückfall.
+Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: textContent, parents (in welcher Sammlung der Datensatz liegt) und raw — Letzteres genau fünf Vokabular-URIs plus den Lizenzschlüssel (ccm:taxonid, ccm:educationalcontext, ccm:educationalintendedenduserrole, ccm:oeh_lrt_aggregated, ccm:commonlicense_key), NICHT den ganzen Property-Bag.`,
     inputSchema: {
       nodeId: z.string().describe('Node ID of a content item or collection (from search results)'),
       includeTextContent: z.boolean().optional().default(false).describe(

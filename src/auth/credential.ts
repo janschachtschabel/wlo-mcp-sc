@@ -25,6 +25,37 @@ import type { AccessRegistry } from './access-registry.js';
 /** The authority name edu-sharing reports for an unauthenticated caller. */
 export const ANONYMOUS_AUTHORITY = 'esguest';
 
+/**
+ * The token that means "connect me without a WLO account of my own".
+ *
+ * A client that has found our discovery documents cannot simply send no header
+ * — it wants a token, and without an answer for "no account" its only exits are
+ * signing in or cancelling, and cancelling is not a connection. This is that
+ * answer.
+ *
+ * **It is a constant, and that is deliberate.** It grants exactly what a request
+ * with no `Authorization` grants, so forging it saves the forger the trouble of
+ * omitting the header. No key material, no allow-list entry, no revocation, no
+ * expiry — none of that would protect anything. Which is also why it works on a
+ * deployment that has no access blocks configured at all.
+ *
+ * The version suffix is there so a future change of meaning gets a new value
+ * rather than silently changing what an issued one does.
+ */
+export const ANONYMOUS_ACCESS_TOKEN = 'wlo-anon.v1';
+
+/**
+ * Was this header the anonymous token, exactly?
+ *
+ * Exact match on purpose: a typo must surface as a broken token (401), not slip
+ * through as "anonymous". The scheme keyword is case-insensitive because HTTP
+ * says so; the value is not.
+ */
+export function isAnonymousToken(raw: string | undefined): boolean {
+  const m = /^Bearer\s+(\S+)$/i.exec((raw ?? '').trim());
+  return m?.[1] === ANONYMOUS_ACCESS_TOKEN;
+}
+
 export interface WloCredential {
   /** Ready-to-send `Authorization` header value. */
   header: string;
@@ -146,6 +177,7 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
  * they never asked for and attributes their changes to nobody.
  */
 export function isUnusableAuthorization(raw: string | undefined): boolean {
+  if (isAnonymousToken(raw)) return false;
   return (raw ?? '').trim().length > 0 && credentialFromHeader(raw) === null;
 }
 
@@ -161,6 +193,11 @@ export function isUnusableAuthorization(raw: string | undefined): boolean {
  * question they did not ask, so that one keeps degrading to anonymous.
  */
 export function isUnusableBearer(raw: string | undefined): boolean {
+  // The anonymous token is a Bearer that yields no credential ON PURPOSE. It is
+  // the one value where "no credential" is the answer rather than the failure,
+  // so it must not reach the 401 — which would turn a deliberate anonymous
+  // connection into an error on every single call.
+  if (isAnonymousToken(raw)) return false;
   const value = (raw ?? '').trim();
   return /^Bearer\s/i.test(value) && credentialFromHeader(value) === null;
 }

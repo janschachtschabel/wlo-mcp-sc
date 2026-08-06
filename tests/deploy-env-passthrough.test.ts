@@ -21,6 +21,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { WLO_REPOSITORY_URL } from '../src/wlo-config.js';
+
 const root = new URL('../', import.meta.url);
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
 
@@ -165,12 +167,20 @@ test('docker-compose restates no numeric default the code already owns', () => {
  *   WLO_REPOSITORY_URL       — the one setting a deployment must consciously see;
  *                              its value equals the code default, so copying it
  *                              changes nothing but reading it changes everything.
+ *   WLO_TEXT_EXTRACTION_URL  — active again since 2026-08-06, now that the
+ *                              repository above it is staging too. It was banned
+ *                              for pointing at a DIFFERENT environment than the
+ *                              repository, and that is what the pairing test
+ *                              below checks instead — the ban also cost every
+ *                              operator a lookup.
  *   PORT                     — same value as the image's own ENV.
  *   WLO_DISABLE_UNSAFE_TOOLS — shipped as "all" ON PURPOSE (2026-08-03): the
  *                              opposite of the code's default, because the
  *                              get_url_text redirect gap is unclosable from here.
  */
-const MAY_BE_ACTIVE = new Set(['WLO_REPOSITORY_URL', 'PORT', 'WLO_DISABLE_UNSAFE_TOOLS']);
+const MAY_BE_ACTIVE = new Set([
+  'WLO_REPOSITORY_URL', 'WLO_TEXT_EXTRACTION_URL', 'PORT', 'WLO_DISABLE_UNSAFE_TOOLS',
+]);
 
 test('.env.example activates no setting that a copy would silently adopt', () => {
   // `WLO_TEXT_EXTRACTION_URL=https://text-extraction.staging.openeduhub.net` sat
@@ -188,4 +198,64 @@ test('.env.example activates no setting that a copy would silently adopt', () =>
     [],
     'comment it out — this file is copied to .env, so an active line is a default nobody chose',
   );
+});
+
+/** Every ACTIVE `NAME=value` line of .env.example. */
+function activeSettings(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of read('.env.example').split('\n')) {
+    const m = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
+    if (m) out.set(m[1]!, m[2]!.trim());
+  }
+  return out;
+}
+
+/** Which WLO environment a URL belongs to, by host. */
+const environmentOf = (url: string): 'staging' | 'production' | 'other' =>
+  /(^|\.)staging\./.test(new URL(url).hostname) ? 'staging'
+    : /openeduhub\.net$/.test(new URL(url).hostname) ? 'production' : 'other';
+
+test('the repository and the extraction service shipped in .env.example are the same environment', () => {
+  // This replaces a blanket ban, and it guards the same accident. The extraction
+  // URL sat here ACTIVE pointing at staging while WLO_REPOSITORY_URL pointed at
+  // PRODUCTION, so `cp .env.example .env` sent the URLs of production material to
+  // a staging host. The ban ("never activate it") ended that — at the price of an
+  // operator having to look the value up.
+  //
+  // What actually went wrong was the MISMATCH, so that is what is checked now.
+  // Both may ship active, and they must belong together; the extraction service
+  // only ever receives public material URLs from the repository above it.
+  const active = activeSettings();
+  const repository = active.get('WLO_REPOSITORY_URL');
+  const extraction = active.get('WLO_TEXT_EXTRACTION_URL');
+  assert.ok(repository, 'the repository is the one setting this file ships active on purpose');
+  if (!extraction) return; // commented out is always safe
+
+  assert.equal(
+    environmentOf(extraction),
+    environmentOf(repository),
+    'a copy of this file would send material URLs from one environment to a service in another',
+  );
+});
+
+test('.env.example ships the repository the code defaults to, not a different one', () => {
+  // The value here beats the code (this file is copied to .env), so a divergence
+  // means the documented deployment and the unconfigured one talk to DIFFERENT
+  // repositories — and nothing says so. Measured 2026-08-06: a deployment whose
+  // .env simply lacked the line wrote a record to PRODUCTION while everything
+  // around it, NODE_ENV included, said staging.
+  assert.equal(
+    activeSettings().get('WLO_REPOSITORY_URL'),
+    WLO_REPOSITORY_URL,
+    '.env.example and src/wlo-config.ts must name the same repository',
+  );
+});
+
+test('the default repository is the staging instance, not production', () => {
+  // Deliberate direction, decided 2026-08-06 after the case above. Whichever way
+  // this points, a forgotten variable lands somewhere — and the two outcomes are
+  // not symmetric: against staging a mistaken write is a test record, against
+  // production it is someone's live catalogue. The dangerous target is the one
+  // that must be named explicitly.
+  assert.equal(WLO_REPOSITORY_URL, 'https://repository.staging.openeduhub.net/edu-sharing');
 });

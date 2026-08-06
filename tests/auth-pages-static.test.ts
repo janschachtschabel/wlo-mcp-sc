@@ -90,3 +90,22 @@ test('the block can be copied both as a header value and on its own', () => {
   assert.match(js, /`Bearer \$\{block\}`/,
     'the Authorization value must still carry the prefix');
 });
+
+test('die Zustimmungsseite bietet einen dritten Ausgang: ohne eigenes Konto', () => {
+  // Ohne ihn hat ein Client, der die Discovery gefunden hat, nur Anmelden oder
+  // Abbrechen — und Abbrechen ist keine Verbindung. Gemessen am 2026-08-06 bei
+  // claude.ai: die MCP-Adresse eintragen, nichts weiter, und der Browser landet
+  // auf unserer Anmeldeseite ohne Weg daran vorbei.
+  const html = read('authorize.html');
+  const js = read('authorize.js');
+
+  assert.ok(html.includes('id="anonymous"'), 'der Knopf fehlt auf der Seite');
+  // Der Text muss sagen, was passiert — „anonym" allein liest sich wie eine
+  // Zusicherung über Datenschutz, gemeint ist „ohne eigenes WLO-Konto".
+  assert.match(html, /ohne (eigenes )?(WLO-)?Konto/i, 'der Knopf muss benennen, was er tut');
+
+  // Und die Absicht muss im Rumpf stehen: der Endpunkt verweigert sonst, weil
+  // ein vergessener Zugangsblock nicht als anonyme Verbindung enden darf.
+  assert.ok(js.includes('anonymous: true'), 'die Absicht wird nicht mitgeschickt');
+  assert.ok(!js.includes('token: block, anonymous'), 'anonym und Anmeldung sind zwei Wege, nicht einer');
+});

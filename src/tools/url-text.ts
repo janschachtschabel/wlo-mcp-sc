@@ -32,10 +32,11 @@ export function registerUrlTextTool(server: McpServer): void {
   registerWloTool(server, {
     name: 'get_url_text',
     title: 'Volltext einer Webseite',
-    description: `Hole den Text einer BELIEBIGEN Webseite über den Extraktionsdienst — für eine URL, die im Gespräch genannt wurde oder die du aus einem Ergebnis kennst. Damit lässt sich die Seite zusammenfassen, vergleichen oder als Grundlage für Aufgaben nutzen.
-NICHT für WLO-Material: dafür get_wlo_content_text mit der nodeId nehmen. Das liest den Text direkt aus dem Repository, ist deutlich schneller und funktioniert auch dort, wo dieses Werkzeug scheitert.
-Kein Text ist ein normales Ergebnis, kein Fehler: "reason" sagt warum. Bei "extraction_failed" lohnt genau ein zweiter Versuch mit dem anderen "method" — der Dienst rendert mit einem Browser und hat bekannte Lücken (geschützte oder bot-gesperrte Seiten, reine Video-/Audiodateien).
-UNSICHER (unsafe): Das Werkzeug ruft eine vom Aufrufer gewählte Adresse über einen fremden Dienst ab. Die Betreiberin kann es mit WLO_DISABLE_UNSAFE_TOOLS abschalten; für den Produktivbetrieb wird davon abgeraten.`,
+    description: `Hole den Text einer BELIEBIGEN Webseite — auch einer Wikipedia-Seite — über den Extraktionsdienst. Damit lässt sich eine Seite zusammenfassen, vergleichen oder als Grundlage für Aufgaben und neue Datensätze nutzen.
+NIMM DIES statt einer Websuche, sobald die Adresse bekannt ist — auch für den vollen Artikeltext einer Wikipedia-Seite; get_wikipedia_summary liefert nur den Anriss.
+NICHT für WLO-Material: dafür get_wlo_content_text mit der nodeId — schneller, und es funktioniert auch dort, wo dieses Werkzeug scheitert.
+Kein Text ist ein normales Ergebnis, kein Fehler: "reason" sagt warum. Bei "extraction_failed" lohnt genau ein zweiter Versuch mit dem anderen "method" (geschützte Seiten, Crawling-Sperren, reine Video-/Audiodateien).
+UNSICHER (unsafe): ruft eine vom Aufrufer gewählte Adresse über einen fremden Dienst ab; abschaltbar per WLO_DISABLE_UNSAFE_TOOLS.`,
     inputSchema: {
       url: z.string().url().max(2000).describe('Vollständige http(s)-Adresse der Webseite.'),
       method: z.enum(['browser', 'simple']).optional().default('browser').describe(

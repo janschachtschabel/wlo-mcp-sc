@@ -66,7 +66,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 - **26 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
   Themenseiten und deren Swimlane-Inhalte, Fachportale, Baum-Navigation,
   Node-Details (einzeln & im Bulk), Vokabular-Abfrage, Anbieter-Abfrage,
-  Health-Check, Wikipedia-Zusammenfassung, voller Kompendiumstext, Volltext
+  Health-Check, Wikipedia (Anriss oder GANZER Artikel per `fullText`), voller Kompendiumstext, Volltext
   eines Materials, Suche innerhalb einer Sammlung, verwandte Inhalte,
   Sammlungsstatistik, Node-Breadcrumb, Sammlungs-Zugehörigkeit eines Materials,
   Anmeldestatus, **WLO-Skill-Suche** sowie die
@@ -74,7 +74,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   `find_wlo_skills` braucht eine konfigurierte Skills-Sammlung. Dazu kommt
   `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
   deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
-- **13 kuratierende MCP-Tools** — nur mit Schreibrechten sichtbar: Datensätze
+- **13 kuratierende MCP-Tools** — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
   anlegen, ändern, einreichen und löschen; Sammlungen anlegen, umbenennen,
   befüllen, leeren und löschen; Kompendialtexte schreiben; Metadaten
   vorschlagen, auflisten und entscheiden. Jede Änderung läuft über eine
@@ -169,7 +169,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 
 | Variable | Standard | Geltungsbereich | Beschreibung |
 |---|---|---|---|
-| `WLO_REPOSITORY_URL` | `https://redaktion.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. |
+| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. **Die Vorgabe ist STAGING; die Produktion muss ausdrücklich hingeschrieben werden** (geändert am 2026-08-06 — eine `.env` ohne diese Zeile legte einen Datensatz in der Live-Instanz an, während alles drumherum „staging" sagte). Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. |
 | `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
 | `WLO_POOL_SIZE` | `25` | alle | Größe des Kandidaten-Pools **pro Suchvariante** für das Reranking (`enhancedSearch`) — **nicht** die Anzahl der zurückgegebenen Treffer (das ist `maxResults`). Kleiner = schneller/kleinere Abrufe bei minimal geringerer Recall-Quote. |
@@ -340,7 +340,7 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 10 | `wlo_health_check` | Erreichbarkeit + Latenz der WLO-API | json |
 | 11 | `get_nodes_details` | Metadaten im Bulk für viele `nodeIds` parallel | json |
 | 12 | `get_topic_page_content` | Die Swimlane-**Inhaltsstruktur** einer Themenseite, render-fertig | markdown / json |
-| 13 | `get_wikipedia_summary` | Kurze Wikipedia-Zusammenfassung (+ Link) zu einem Begriff — enzyklopädischer Kontext | markdown / json |
+| 13 | `get_wikipedia_summary` | Wikipedia zu einem Begriff: Anriss — oder der GANZE Artikeltext mit `fullText` | markdown / json |
 | 14 | `get_compendium_text` | VOLLER redaktioneller Kompendiumstext einer/mehrerer Sammlungen (Bulk, ≤25) | markdown / json |
 | 15 | `search_wlo_within_collection` | Gefilterte Volltextsuche, auf einen Sammlungs-Teilbaum begrenzt | markdown / json |
 | 16 | `search` | ChatGPT-Knowledge-Konvention: leichte Treffer `{id,title,url}` über WLO | json (+ Text) |
@@ -461,9 +461,15 @@ Query des Swimlane-Widgets, mit einem `hasMore`-Flag und einem
 
 **13. `get_wikipedia_summary`** — `query` (erforderlich, ≤200), `language?`
 (ISO-639, Standard `de`), `sections?` (1–3 führende Absätze, Standard 1),
+**`fullText?`** (Standard false), `maxChars?` (500–100000, Standard 8000),
 `outputFormat?`. Liefert einen Wikipedia-Einleitungsauszug mit Link (und optional
 Thumbnail); löst einen unscharfen/falsch geschriebenen Begriff via opensearch auf,
-wenn der direkte Titel nicht trifft. Für enzyklopädischen Kontext neben
+wenn der direkte Titel nicht trifft. Mit `fullText: true` kommt statt des Anrisses der GANZE Artikel als Klartext
+(gemessen 2026-08-06: Apolda 366 Zeichen als Anriss, 123.682 als Artikel — daher
+die Kappung über `maxChars` an einer Wortgrenze). Geholt wird der Artikel zum
+AUFGELÖSTEN Titel, also nach der Relevanzprüfung; der zusätzliche Rundlauf ist
+genau der Preis dieser Prüfung. Kein Extraktionsdienst beteiligt.
+Für enzyklopädischen Kontext neben
 WLO-Material — nicht für die OER-Materialsuche. `readOnlyHint` + `openWorldHint`.
 
 **14. `get_compendium_text`** — `nodeId?` **oder** `nodeIds?` (Array, ≤25),
@@ -607,6 +613,16 @@ irgendetwas zu kopieren. Voraussetzungen: `WLO_AUTH_PRIVATE_KEY` und
    unlesbarer Block — genauso wie auf `/auth`.
 3. Zurück im Client funktionieren die Kurationswerkzeuge — gelistet waren sie
    die ganze Zeit, sie haben bis dahin nur verweigert.
+
+**Oder ohne Konto verbinden.** Neben Anmelden und Ablehnen steht auf der
+Zustimmungsseite ein dritter Knopf: *„Ohne eigenes WLO-Konto verbinden"*. Er
+existiert, weil ein Client, der die Discovery-Dokumente gefunden hat, einen
+Token WILL und nicht einfach nichts schicken kann — ohne ihn bleibt jemandem,
+der nur suchen möchte, nur Anmelden oder Abbrechen, und Abbrechen ist keine
+Verbindung (gemessen bei claude.ai am 2026-08-06). Der ausgestellte Token
+gewährt exakt das, was ein Aufruf ohne `Authorization` gewährt — lesen ja,
+schreiben nein. Warum er kein eigenes Schlüsselmaterial braucht, steht in
+[`docs/AUTH.md`](docs/AUTH.md).
 
 **Die Anmeldung kann aus einem Werkzeugaufruf heraus beginnen.** Die
 Kurationswerkzeuge stehen auch ohne Identität in `tools/list`, als `oauth2`
@@ -844,6 +860,11 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — die Basis-Datenschutzerklärung
   (zustandslos, nur lesend, keine Speicherung personenbezogener Daten), die
   Betreiber anpassen und veröffentlichen.
+- [`docs/AUTH.md`](docs/AUTH.md) — wie die Anmeldung funktioniert und warum:
+  Zugangsblock, Positivliste, OAuth-Ablauf, Missbrauchsschranken und die neun
+  Regeln, die eine spätere Änderung nicht aufheben darf (englisch).
+- [`docs/TOOLS.md`](docs/TOOLS.md) — jedes Tool und Widget mit der
+  Chat-Formulierung, die es auslöst.
 
 ## Sicherheit & Betrieb
 

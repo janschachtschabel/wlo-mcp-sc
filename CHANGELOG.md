@@ -9,6 +9,108 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — connect without a WLO account of your own (2026-08-06)
+
+The consent page has a third button next to "Anmelden" and "Ablehnen":
+**"Ohne eigenes WLO-Konto verbinden"**.
+
+Measured on claude.ai the same day: entering the MCP URL is enough for the client
+to find our discovery documents and start the OAuth flow, and from there it
+*wants a token* — it cannot simply send no header. So a person who only wanted to
+search had two choices, signing in or cancelling, and cancelling is not a
+connection. There was no way to use the server anonymously from that client at
+all.
+
+The new exit issues the token `wlo-anon.v1`. It is a constant, and deliberately
+so: it grants exactly what a request with no `Authorization` grants, so forging
+it saves the forger the trouble of omitting the header. No key material, no
+allow-list entry, no revocation, no expiry — none would protect anything, and
+each would suggest it did. It works on a deployment with no access blocks
+configured at all.
+
+"Anonymous" here means what it meant before authentication existed: the API is
+used without a personal login. On a deployment with a service account that is the
+account's identity, exactly as for a call with no header.
+
+Two properties keep it from becoming a hole. The **intent must be stated** — a
+consent request that merely forgot its access block still fails rather than
+quietly becoming an anonymous connection — and the **match is exact**, so a typo
+surfaces as a broken token (401) instead of slipping through. The 401 rule for a
+Bearer we cannot use is otherwise unchanged; this is the single value where "no
+credential" is the answer rather than the failure.
+
+Also in this change: the consent page builds its POST body in **one** function
+now, shared by both exits. A second literal is exactly where `response_type`
+went missing on 2026-08-05 and broke every consent.
+
+### Changed — the tool descriptions speak the user's language, not the repository's (2026-08-06)
+
+A model picks its tool from the description and nothing else, and several of ours
+were correct while never matching the request. Teachers do not ask for
+"Bildungsinhalte" — they ask for "ein Video zu Bruchrechnung", "Medien zum
+Klimawandel", "ein Arbeitsblatt", "Material für Klasse 7".
+
+- **`search_wlo_all` now leads with those phrasings** instead of with the shape
+  of its return value, and says explicitly that a named medium is a *filter*, not
+  a reason to pick a different tool.
+- **The server instructions name the repository's other names** — WirLernenOnline,
+  WLO, edu-sharing, openeduhub. Until now only one of the four appeared anywhere
+  in the surface, so "leg das bei WirLernenOnline an" matched nothing. One line
+  in the instructions rather than the same aliases in thirteen write-tool
+  descriptions.
+- **The Wikipedia gap is closed.** Measured live: asked to build a record from a
+  town's Wikipedia page, Claude ran its own web search. `get_wikipedia_summary`
+  advertises a *lead extract* — correct, and not what that task needed — and
+  nothing pointed from a Wikipedia URL to `get_url_text`, which returns the page.
+  Both now name the other.
+- **Every description is under 1024 characters** (longest: 1006; four were over,
+  up to 1573). Truncation cuts the end, which is where the "do NOT use this for …"
+  guidance sits — i.e. exactly the half that prevents a wrong pick. Whether
+  ChatGPT enforces the cap is still unmeasured; writing under it makes the
+  question moot. What was cut is implementation detail that also lives in the
+  parameter descriptions, never a stated behaviour: `get_node_details` keeps the
+  five `raw` field names, because a test pins that promise to what it delivers.
+
+`tests/tool-descriptions.test.ts` now holds the trigger words, the aliases and
+the length cap, so the next rewrite cannot quietly drop them.
+
+### Changed — the default repository is now STAGING, not production (2026-08-06)
+
+**Breaking for any deployment that relied on the default.** A server started
+without `WLO_REPOSITORY_URL` now talks to `https://repository.staging.openeduhub.net/edu-sharing`.
+Writing to production requires naming it.
+
+What prompted it: a deployment whose `.env` simply lacked the line created a
+record in the **live** catalogue. Everything around it said staging —
+`NODE_ENV=staging`, a staging text-extraction service, the operator's own belief
+— but `NODE_ENV` is read by nothing in this codebase, and the one variable that
+decides silently fell back to production. It only surfaced because someone read
+the render URL of the record that had been created.
+
+Whichever way the default points, a forgotten variable lands somewhere. The two
+outcomes are not symmetric: against staging a mistaken write is a test record,
+against production it is somebody's live catalogue — so the dangerous target is
+the one that has to be named out loud.
+
+Three further changes make the same class of mistake harder:
+
+- **`docker-compose.yml` no longer restates the default.** The line was
+  `${WLO_REPOSITORY_URL:-https://redaktion…}` — a second copy of a decision
+  `src/wlo-config.ts` already owned, and the copy that decided was not the one
+  anyone read. It is now an empty pass-through, like every other line there.
+- **`.env.example` ships staging active**, with production as a commented
+  alternative — and a test pins that its value equals the code default.
+- **`WLO_TEXT_EXTRACTION_URL` ships active again**, pointing at the staging
+  service. It was banned from being active after it once pointed at staging
+  while the repository pointed at production, sending production material URLs
+  to a foreign host. A test now enforces the actual rule — repository and
+  extraction service must name the **same** environment — instead of the blanket
+  ban, which also cost every operator a lookup. The code still has no default
+  for it: unset means the path stays off.
+
+Existing deployments: check `docker compose exec <service> printenv WLO_REPOSITORY_URL`
+before updating. If it is empty and you intended production, add the line.
+
 ### Fixed — the password-checking endpoints were reachable from any web page (2026-08-06)
 
 `/auth/issue`, `/auth/revoke` and `POST /oauth/authorize` parsed whatever body

@@ -5,14 +5,25 @@ Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **39 MCP-Too
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
-Wie viele davon eine Sitzung wirklich sieht, hängt von zwei Dingen ab:
+**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 13
+Kurations-Tools stehen immer in `tools/list`, deklarieren `oauth2` und
+**verweigern beim Aufruf**, solange keine schreibberechtigte Anmeldung vorliegt;
+die Antwort trägt dann die Aufforderung, mit der der Client die Anmeldung
+startet. Umgestellt am 2026-08-05: sie zu verstecken war der Grund, warum die
+Anmeldung nie begann — ein Modell, das ein Werkzeug nie sieht, ruft es nie auf,
+also fordert nichts jemals eine Anmeldung an.
+
+Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Anonym** (nichts konfiguriert) | 25 lesende Tools — `find_wlo_skills` fehlt ohne `WLO_SKILLS_COLLECTION_ID` |
-| **Mit Skills-Sammlung** | 26 lesende Tools |
-| **Mit Schreibrechten** (eigenes Login, oder Dienstkonto + `WLO_ALLOW_SERVICE_WRITES`) | zusätzlich die 13 Kurations-Tools |
-| **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` (im Docker-Deployment der Standard) |
+| **Standard** | 38 Tools — `find_wlo_skills` fehlt ohne `WLO_SKILLS_COLLECTION_ID` |
+| **Mit Skills-Sammlung** | 39 Tools |
+| **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
+
+Wer schreiben *darf*, entscheidet die Anmeldung: ein eigenes WLO-Login immer, das
+gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
+[AUTH.md](AUTH.md).
 
 ---
 
@@ -119,7 +130,7 @@ Wie viele davon eine Sitzung wirklich sieht, hängt von zwei Dingen ab:
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
 | `get_compendium_text` | Vollständiger redaktioneller Kompendiumstext einer Sammlung | *„Gib mir den ganzen Kompendiumstext dieser Sammlung“* |
-| `get_wikipedia_summary` | Kurzer Wikipedia-Überblick (Ergänzung, kein OER) | *„Gib mir einen kurzen Wikipedia-Überblick zu Zellatmung“* |
+| `get_wikipedia_summary` | Wikipedia: Anriss, oder mit `fullText` der ganze Artikeltext (Ergänzung, kein OER) | *„Gib mir den Wikipedia-Artikel zu Zellatmung“* |
 
 ### Vokabular & Anbieter
 | Tool | Funktion | Bester Chat-Trigger |
