@@ -105,3 +105,58 @@ test('renderThemePages: markdown output lists title, variant count and appends t
   assert.match(md, /Varianten \(2\)/);
   assert.deepEqual(res.content[1], META);
 });
+
+/**
+ * A collection can own SEVERAL page-config folders while its own
+ * `ccm:page_config_ref` names the ACTIVE one (measured live 2026-08-07: one
+ * production collection holds three). Each folder is resolved separately, so
+ * the variants of one Themenseite can arrive with the superseded folder FIRST.
+ *
+ * The merged entry must still lead with the variant the page renders: the tool
+ * description promises it, and `search_wlo_topic_pages(includeContent: true)`
+ * resolves `variants[0]` — leading with a superseded variant renders the wrong
+ * version of the page.
+ */
+const supersededVariant: ThemePageInfo = {
+  variantId: 'v-old',
+  variantName: 'PAGE_VARIANT_old',
+  variantTitle: 'Alte Fassung',
+  targetGroup: '',
+  educationalContexts: [],
+  isTemplate: false,
+  topicPageUrl: 'https://wlo/optik',
+  collectionId: 'coll-optik',
+  collectionName: 'Optik',
+  isDefault: false,
+};
+const renderedVariant: ThemePageInfo = {
+  variantId: 'v-live',
+  variantName: 'PAGE_VARIANT_live',
+  variantTitle: 'Aktuelle Fassung',
+  targetGroup: '',
+  educationalContexts: [],
+  isTemplate: false,
+  topicPageUrl: 'https://wlo/optik',
+  collectionId: 'coll-optik',
+  collectionName: 'Optik',
+  isDefault: true,
+};
+
+test('mergeThemePages: the rendered variant leads, even when it arrives last', () => {
+  const out = mergeThemePages([supersededVariant, renderedVariant], { merge: true, sort: 'alpha', maxResults: 5 });
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].variants.map(v => v.variantId), ['v-live', 'v-old']);
+  assert.equal(out[0].variants[0].isDefault, true);
+});
+
+test('mergeThemePages: an already-leading rendered variant is not moved', () => {
+  const out = mergeThemePages([renderedVariant, supersededVariant], { merge: true, sort: 'alpha', maxResults: 5 });
+  assert.deepEqual(out[0].variants.map(v => v.variantId), ['v-live', 'v-old']);
+});
+
+test('mergeThemePages: without any default the arrival order is kept', () => {
+  const a = { ...supersededVariant, variantId: 'v-a' };
+  const b = { ...supersededVariant, variantId: 'v-b' };
+  const out = mergeThemePages([a, b], { merge: true, sort: 'alpha', maxResults: 5 });
+  assert.deepEqual(out[0].variants.map(v => v.variantId), ['v-a', 'v-b']);
+});

@@ -11,10 +11,11 @@ import { z } from 'zod';
 import { WLO_REPOSITORY_URL } from '../wlo-api.js';
 import type { TargetGroup } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
-import { labelFromUri, resolveVocab } from '../vocabs.js';
+import { labelFromUri } from '../vocabs.js';
 import { registerWloTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
+import { buildFilterCriteria, formatUnresolvedHint } from '../filter-criteria.js';
 import { queryMetaContent, toolError } from './shared.js';
 import { mapPool } from '../concurrency.js';
 import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
@@ -27,25 +28,41 @@ import { mergeThemePages, renderThemePages, themePagesAsNodeList } from './topic
  * translating the caller's filters into labeled criteria.
  */
 function buildTopicPagesMeta(
-  params: { query?: string; collectionId?: string; targetGroup?: string; educationalContext?: string; maxResults?: number },
+  params: { query?: string; collectionId?: string; withinCollectionId?: string; targetGroup?: string; educationalContext?: string; maxResults?: number },
   queryType: string,
   total: number,
+  eduUri: string | undefined,
 ): { type: 'text'; text: string } {
   const tpCriteria: LabeledCriterion[] = [];
-  if (params.query?.trim()) tpCriteria.push({ property: 'ngsearchword', values: [params.query] });
-  if (params.collectionId) tpCriteria.push({ property: 'collectionId', values: [params.collectionId] });
+  // Only what the DISPATCHED mode used. Three of the four modes ignore
+  // parameters the caller may have passed alongside — the dispatch takes the
+  // most specific one and drops the rest — and `criteria` is the machine-
+  // readable statement of what was searched. Listing an `ngsearchword` that
+  // never reached the repository makes a downstream consumer misreport the
+  // query as a full-text search.
+  const usedQuery = queryType === 'topic_pages_by_keyword' && !!params.query?.trim();
+  if (usedQuery) tpCriteria.push({ property: 'ngsearchword', values: [params.query!] });
+  if (queryType === 'topic_pages_by_collection' && params.collectionId) {
+    tpCriteria.push({ property: 'collectionId', values: [params.collectionId] });
+  }
+  if (queryType === 'topic_pages_below_collection' && params.withinCollectionId) {
+    tpCriteria.push({ property: 'virtual:parent_recursive', values: [params.withinCollectionId] });
+  }
   if (params.targetGroup) {
     const tgLabel = labelFromUri(params.targetGroup, 'targetGroup');
     tpCriteria.push({ property: 'targetGroup', values: [params.targetGroup], label: tgLabel });
   }
-  if (params.educationalContext) {
-    const eduUri = resolveVocab(params.educationalContext, 'educationalContext') ?? params.educationalContext;
+  // The RESOLVED uri, handed in — not re-derived. A value the vocabulary could
+  // not resolve is dropped from the search, so listing it here would state a
+  // narrowing that never happened, which is the same defect the comment above
+  // describes for `ngsearchword`.
+  if (params.educationalContext && eduUri) {
     tpCriteria.push({ property: 'ccm:educationalcontext', values: [eduUri], label: params.educationalContext });
   }
   return queryMetaContent({
     toolName: 'search_wlo_topic_pages',
     queryType,
-    searchTerm: params.query ?? '',
+    searchTerm: usedQuery ? params.query! : '',
     criteria: tpCriteria,
     pagination: { maxItems: params.maxResults ?? 5, skipCount: 0, totalResults: total },
     repositoryUrl: WLO_REPOSITORY_URL,
@@ -60,22 +77,31 @@ export function registerTopicPageSearchTool(server: McpServer, searchResultsWidg
     description: `Finde Themenseiten auf WirLernenOnline (WLO) — für „gibt es eine Themenseite zu Optik", „welche Themenseiten gibt es für die Grundschule".
 Eine Themenseite IST eine Sammlung, die zusätzlich ein kuratiertes Seiten-Layout trägt (Schwimmlinien, nach Zielgruppe: Lehrkräfte, Lernende, Allgemein). Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen haben eine — dieses Werkzeug liefert also eine TEILMENGE von search_wlo_collections. Wenn irgendeine Sammlung genügt, nimm jenes; wenn es um Material geht, search_wlo_all.
 
-Drei Modi: collectionId (hat DIESE Sammlung eine Themenseite?), query (Thema — sucht Sammlungen und prüft, welche eine haben), oder nur Filter (nach Zielgruppe/Bildungsstufe).
-Kein „discipline"-Parameter: hier über educationalContext und targetGroup eingrenzen — das macht den Aufruf zudem deutlich schneller. Varianten derselben Themenseite werden zu einem Eintrag zusammengefasst; Reihenfolge deterministisch.`,
+Vier Modi: collectionId (hat DIESE Sammlung eine Themenseite?), withinCollectionId (alle Themenseiten UNTERHALB einer Sammlung, z. B. eines Fachportals), query (Thema — sucht Sammlungen und prüft, welche eine haben), oder nur Filter (Zielgruppe/Bildungsstufe).
+Kein „discipline"-Parameter: über educationalContext und targetGroup eingrenzen. Varianten einer Themenseite werden zusammengefasst; die erste ist die, die die Seite anzeigt (\`isDefault\`). Reihenfolge deterministisch.`,
     inputSchema: {
       query: z.string().optional().default('').describe(
         'Thematic search query in German, e.g. "Physik" or "Farben". ' +
         'Searches collections and checks for linked Themenseiten. Leave empty to list all.'
       ),
       targetGroup: z.enum(['teacher', 'learner', 'general']).optional().describe(
-        'Target audience: "teacher" (Lehrkräfte), "learner" (Lernende), "general" (Allgemein)'
+        'Target audience: "teacher" (Lehrkräfte), "learner" (Lernende), "general" (Allgemein). ' +
+        'Variants that declare NO target group are kept — the field is unset on ~90 % of WLO ' +
+        'topic pages, so excluding them would hide most of the catalogue.'
       ),
       educationalContext: z.string().optional().describe(
-        'Educational level: e.g. "Grundschule", "Sekundarstufe I", "Schule", or full URI'
+        'Educational level: e.g. "Grundschule", "Sekundarstufe I", "Schule", or full URI. ' +
+        'Variants that declare no educational context are kept, for the same reason as targetGroup.'
       ),
       collectionId: z.string().optional().describe(
         'Directly check a specific collection (nodeId) for its Themenseite. ' +
         'Bypasses the search – useful when you already have a collection from search_wlo_collections.'
+      ),
+      withinCollectionId: z.string().optional().describe(
+        'List every Themenseite BELOW this collection (nodeId), including its ' +
+        'sub-collections — e.g. all topic pages of the Physik portal. Unlike ' +
+        'collectionId, which only checks that one collection. Takes precedence ' +
+        'over query; collectionId wins over both.'
       ),
       mergeVariants: z.boolean().optional().default(true).describe(
         'When true (default), multiple variants of the same Themenseite (different target groups) ' +
@@ -102,14 +128,31 @@ Kein „discipline"-Parameter: hier über educationalContext und targetGroup ein
     outputSchema: nodeListSchema,
     annotations: { readOnlyHint: true },
     handler: async (params) => {
-      const tg = params.targetGroup as TargetGroup | undefined;
+      // The label→URI mapping belongs here; everything below compares URIs. A
+      // value that does not resolve is DROPPED, not passed on raw: raw text
+      // never equals a URI, so it used to hide every variant that declares a
+      // context and keep only those that declare none — a typo turned into a
+      // silent, wrong narrowing. `buildFilterCriteria` is the one place that
+      // rule lives (same property, same "did you mean" suggestions), so the
+      // resolution is borrowed from it rather than repeated.
+      const { criteria: eduCriteria, unresolved } = buildFilterCriteria({
+        educationalContext: params.educationalContext,
+      });
+      const filters = {
+        targetGroup: params.targetGroup as TargetGroup | undefined,
+        educationalContext: eduCriteria[0]?.values[0],
+      };
+      const unresolvedHint = formatUnresolvedHint(unresolved);
+      const unresolvedBlock = unresolvedHint
+        ? [{ type: 'text' as const, text: unresolvedHint }]
+        : [];
       // For a topic query, default = relevance (uses the collection reranking);
       // for pure listing (Mode C, no query) it stays alphabetical.
       const sort = params.sort ?? (params.query?.trim() ? 'relevance' : 'alpha');
       const merge = params.mergeVariants !== false;
 
       try {
-        const { results, queryType } = await collectThemePages(params, tg, merge);
+        const { results, queryType } = await collectThemePages(params, filters);
 
         if (results.length === 0) {
           const hint = params.query
@@ -118,7 +161,10 @@ Kein „discipline"-Parameter: hier über educationalContext und targetGroup ein
           // A miss still satisfies the schema, so the widget shows its empty
           // state instead of the host failing on a missing structuredContent.
           return {
-            content: [{ type: 'text' as const, text: hint }],
+            // An ignored filter matters MOST here: "keine Themenseiten" plus a
+            // typo the caller cannot see is the pair that sends someone looking
+            // for pages that exist.
+            content: [{ type: 'text' as const, text: hint }, ...unresolvedBlock],
             structuredContent: { total: 0, count: 0, results: [] },
           };
         }
@@ -133,18 +179,27 @@ Kein „discipline"-Parameter: hier über educationalContext und targetGroup ein
             // The variant id is already in hand from the merge — passing it lets
             // getTopicPageContent read variant and collection in parallel
             // instead of walking the page-config folder (measured 1238 → 774 ms).
+            //
+            // Only when we KNOW it is the one the page renders. A collection can
+            // own several page-config folders and the listing may have resolved
+            // none of the active one's variants (measured live 2026-08-07), and
+            // then `variants[0]` is an arbitrary superseded copy. Handing over no
+            // variant costs one round-trip and takes the authoritative chain:
+            // collection → ccm:page_config_ref → ccm:page_config.default.
+            const rendered = p.variants.find(v => v.isDefault)?.variantId;
             const { structure } = await getTopicPageContent({
               collectionId: p.collectionId,
-              variantId: p.variants[0]?.variantId || undefined,
+              variantId: rendered || undefined,
             });
             if (structure) p.content = await resolveTopicPageSwimlanes(structure, params.maxPerSwimlane ?? 3);
             return null;
           });
         }
 
-        const tpMeta = buildTopicPagesMeta(params, queryType, out.length);
+        const tpMeta = buildTopicPagesMeta(params, queryType, out.length, filters.educationalContext);
+        const rendered = renderThemePages(out, tpMeta, params.outputFormat);
         return {
-          ...renderThemePages(out, tpMeta, params.outputFormat),
+          content: [...rendered.content, ...unresolvedBlock],
           structuredContent: themePagesAsNodeList(out),
         };
       } catch (err) {

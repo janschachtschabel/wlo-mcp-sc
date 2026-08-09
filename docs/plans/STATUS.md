@@ -2923,3 +2923,1338 @@ aus dieser Funktion und schickt sie durch die echte Prüfung.
 **Belege:** `npx tsc … --noEmit` → Exit 0; volle Suite → 1342/1342. Der tragende
 Test läuft gegen einen echten Server durch den ganzen Ablauf und endet auf den
 zwei Zeilen, die zählen: kein 401, und dieselbe Werkzeugliste wie ohne Header.
+
+## Widerruf per WLO-Anmeldung — FERTIG (2026-08-06)
+
+`POST /auth/revoke-all` und ein zweites Formular auf `/auth-revoke.html`: WLO-Login
+eintippen, alle Zugangsblöcke dieses Kontos werden gesperrt.
+
+**Die Lücke, die das schließt, kam aus der Nutzung, nicht aus einem Review.** Der
+Widerruf verlangte bisher die Zugangs-ID, und die steht nur *im* Block — über
+OAuth geht der Block aber an den KI-Host und die Person sieht ihn nie. Genau die
+Nutzer, die am ehesten sperren wollen (Connector angelegt, später gelöscht),
+hatten damit keinen Weg dorthin; blieb nur, dass die Betreiberin die
+Registry-Datei bearbeitet. Den Connector im KI-Host zu löschen widerruft nichts:
+dieser Server führt keinen Client-Zustand, nur die Positivliste.
+
+**Die tragende Prüfung:** der Login wird oben verifiziert, BEVOR etwas entfernt
+wird. Unser öffentlicher Schlüssel ist veröffentlicht, damit Browser
+verschlüsseln können — also kann jeder einen Block bauen, der einen beliebigen
+Namen trägt. Ohne die Prüfung würde ein geratener Benutzername den KI-Host einer
+fremden Person trennen. Die Prüfung liegt jetzt EINMAL in
+`src/auth/access-verify.ts`, durch das Ausgabe, OAuth-Autorisierung und Widerruf
+alle drei gehen. Nachgewiesen, nicht behauptet: mit abgeschaltetem
+Autoritäts-Check fällt `a login WLO does not accept revokes nothing` um (8/9),
+mit ihm sind es 9/9.
+
+`tests/shared-rule-discipline.test.ts` bekam dafür zwei Wächter: es gibt genau
+ein Modul mit dem Autoritäts-Check, und beide block-verarbeitenden Aufrufer
+müssen `verifyBlockLogin` benutzen. Der erste ist beim Umzug sofort rot geworden
+— er zeigte auf `access-issue.ts` — und hat damit genau seine Aufgabe erfüllt.
+
+**Vergleich ist EXAKT, nicht case-insensitiv.** Ob edu-sharing `Jan` und `jan`
+als einen Login behandelt, ist ungemessen. Falten wäre eine Bequemlichkeit, wenn
+es dasselbe Konto ist, und ein Weg, fremde Zugänge zu löschen, wenn nicht. Die
+Seite nennt die Anzahl, also fällt eine abweichende Schreibweise auf.
+
+**Korrigiert:** `docs/AUTH.md` behauptete „ein Widerruf beendet beide Wege
+gleichzeitig". Für den Einfüge-Weg stimmt das, für OAuth nicht. Steht jetzt
+richtig da, samt der Korrektur selbst.
+
+**Nebenbei:** `publicKey()` stand wortgleich in `auth.js` und `authorize.js`. Eine
+dritte Kopie war der Punkt, an dem Unterschiede anfangen sich zu verstecken —
+jetzt `fetchPublicKey()` in `access-block.js`, dem Modul, das ohnehin alle drei
+Seiten importieren.
+
+**Belege:** `npx tsc -p tsconfig.typecheck.json --noEmit` → Exit 0; volle Suite
+→ **1355/1355**. Neue Dateien: `src/auth/access-verify.ts`,
+`src/auth/access-revoke.ts`, `tests/auth-revoke-all.test.ts` (9 Tests).
+
+## Datei-Upload statt Quell-URL — VERTRAG GEMESSEN, VERHALTEN NOCH NICHT (2026-08-06)
+
+Fortschritt gegen die drei Bedingungen von 2026-08-05 (siehe „Offener Wunsch"):
+Bedingung 3 („erst messen") ist **halb** erfüllt.
+
+**Gemessen am 2026-08-06 aus `openapi.json` von Staging selbst** — und es ändert
+die geplante Bauweise, bevor eine Zeile geschrieben wurde. Statt „Knoten anlegen,
+dann Inhalt hochladen" gibt es EINEN Aufruf:
+
+```
+POST /node/v1/nodes/{repository}/{node}/children/_content
+     ?type=ccm:io&renameIfExists=&versionComment=&obeyMds=
+     multipart:  properties = {"properties": {"cclom:title": ["…"], …}}
+                 file       = die Bytes
+```
+
+Der zweistufige Weg existiert daneben (`POST …/{node}/content`, dort ist
+`mimetype` ein Pflicht-Query-Parameter, Feld ebenfalls `file`), wird aber nicht
+gebraucht. Ebenfalls vorhanden: `POST …/{node}/textContent` (JSON-String,
+`mimetype` Pflicht) — der einfachere Weg für reines Markdown.
+
+**Noch NICHT gemessen, und ein Vertrag ist keine Messung** (Lehre 2026-08-02):
+
+- Q1 Nimmt `_content` ein `ccm:io` ganz ohne `ccm:wwwurl` an?
+- Q2 Woher kommt der MIME-Typ — Part-Content-Type, Dateiname, keins von beidem?
+- Q3 Was trägt der Knoten danach: herunterladbar? Was tritt an die Stelle von
+  `ccm:wwwurl` (an dem heute die Dublettenprüfung hängt)?
+- Q4 Weist `obeyMds=true` einen Datensatz mit fehlenden Pflichtfeldern ab?
+- Q5 Gilt dasselbe für PDF wie für Markdown?
+- Q6 Liest `/textContent` den Upload zurück — funktioniert also
+  `get_wlo_content_text` auf so einem Datensatz?
+
+**KORREKTUR, noch am selben Tag.** Die Formulierung „Blocker: die lokale `.env`"
+war irreführend und der Nutzer hat zu Recht widersprochen: die `.env` ist zur
+Laufzeit an dieser Funktion völlig unbeteiligt — der Zugang kommt aus dem
+Zugangsblock des Nutzers oder dem Dienstkonto, und die Rechte haben die Leute.
+Die `.env` war ausschließlich mein **Messinstrument**, um von hier aus einen
+Wegwerfknoten auf Staging anzulegen. Dass sie nicht funktioniert (401 gegen
+beide Repositories, gemessen 2026-08-06), blockiert eine Messung, nicht den
+Entwurf.
+
+**Und die entscheidende Messung existiert längst** — im Projekt-Skill
+`wlo-content-files`, validiert am **2026-05-08 gegen prod UND staging**:
+
+- Ein `ccm:io` **ohne `ccm:wwwurl`** anzulegen geht. Der validierte Child-IO-Pfad
+  legt genau so einen an (`cm:name`, `ccm:childobject_order`, keine URL). Q1 ist
+  damit beantwortet: die Sperre „Ohne Quell-URL kann kein Datensatz angelegt
+  werden" in `nodes-lifecycle.ts` ist UNSERE Regel, nicht die des Repositories.
+- Datei anhängen: `POST …/{id}/content?mimetype=…&versionComment=…`, multipart
+  `file`. Deckt sich mit der heute gezogenen `openapi.json`. Q2 beantwortet.
+- **Das Rücklesen ist vorhanden:** ein Knoten ohne Bytes hat `size: null` und
+  `downloadUrl: null`; nach dem Upload sind beide gesetzt. Bedingung 2 ist damit
+  erfüllbar, ohne etwas zu erfinden. Q3 beantwortet.
+- **Falle, die wir sonst gebaut hätten:** `POST /textContent` ist KEIN Speicher.
+  Es antwortet 200, legt den Rumpf wörtlich als Binärinhalt ab, und `GET`
+  liefert danach `{"text": null}`. Nur `/content` ist belastbar. Q6 beantwortet.
+- Jeder Upload erzeugt eine neue Version. `PUT`-Metadaten versionieren nicht,
+  `POST`-Metadaten schon — passt zum vorhandenen `commit`-Schalter.
+
+**Offen bleibt genau eins, und es ist eine Entwurfsfrage, keine Messung:** ein
+MCP-Werkzeugaufruf ist JSON, Bytes müssen also als Base64 durch die Parameter.
+`MAX_BODY_BYTES` steht auf 1 MB, Base64 bläht um ein Drittel — es passen gut
+700 KB Nutzdaten samt Metadaten im selben Aufruf. Für generierte Inhalte
+(Markdown, ein paar KB) ist das reichlich; ein 5-MB-PDF geht so nicht und würde
+auch das Kontextfenster des Modells sprengen. Ebenfalls offen: was an die Stelle
+der Dublettenprüfung tritt, die heute an `ccm:wwwurl` hängt.
+
+`_content` (Anlegen und Bytes in EINEM Aufruf, aus der `openapi.json`) bleibt
+ungemessen. Der zweistufige Weg ist der validierte — im Zweifel der gemessene
+Pfad, nicht der elegantere.
+
+**Bereit, falls doch gemessen werden soll:** `probe-upload.mjs` im Scratchpad.
+Sie weigert sich zu schreiben, wenn die Autorität `esguest` ist oder fehlt, und
+löscht alles, was sie anlegt.
+
+Bedingung 1 (der Bestätigungs-Fingerabdruck muss die Bytes umfassen) steht
+unverändert und bindet den Entwurf.
+
+## Wegweiser auf der Startseite — FERTIG (2026-08-06)
+
+Frage des Nutzers: „findet der user das leicht?" Gemessen statt geraten — und
+nein: `/` verlinkte genau zwei Dinge, `#` und `bookmarklet.md`. Alle Auth-Seiten
+verlinken *zurück* auf `/`, aber `/` verlinkte auf keine von ihnen. Die
+Sperrseite war am Tag ihrer Fertigstellung von der Startseite aus unerreichbar.
+
+Zweiter Befund derselben Durchsicht, größer als der erste: **die MCP-Adresse
+stand nirgends auf der Seite.** Die Karte „WLO-Dienste einrichten" sagte „trägst
+du den WLO-MCP-Server in deiner KI ein" — und nannte nicht, was man einträgt.
+
+Umgesetzt, ohne neue Seite (`/` IST die zentrale Seite; eine zweite Übersicht
+wäre eine zweite Stelle, die driftet):
+- Die MCP-Adresse mit Kopierknopf, gebaut aus `location.origin` — kein Literal,
+  das beim nächsten Hostwechsel falsch ist. Ein Test verbietet eine feste Adresse.
+- Ein Satz dazu, was ohne Anmeldung geht (suchen, lesen) und wofür ein Konto
+  nötig ist (anlegen, bearbeiten), mit Links zu beiden Auth-Seiten.
+- Ein `<nav>` im Fuß mit allen sechs Seiten, als echte Navigation mit Überschrift.
+- `llms.txt` nennt jetzt die Anmeldung. Vorher stand dort nur „Everything
+  reachable without a login is read-only" — ein KI-Client erfuhr nicht, dass es
+  `/auth` gibt oder dass 13 Kurationswerkzeuge hinter einer Anmeldung warten.
+
+`tests/launcher-wayfinding.test.ts` (3 Tests) pinnt die Ziele, die dynamische
+Adresse und dass **beide Sprachtabellen** jeden Schlüssel tragen — ein Wegweiser,
+den es nur auf Deutsch gibt, ist für die halbe Zielgruppe wieder eine Sackgasse.
+Gegenprobe gefahren: mit sabotierten Links/Schlüsseln fallen die Tests um.
+
+Zwei eigene Testfehler dabei gefunden und behoben: die EN-Tabelle schließt ohne
+Komma (nur `en` betroffen, weil sie die letzte ist), und eine 600-Zeichen-
+Nähe-Heuristik war Raterei — ersetzt durch die Eigenschaft, auf die es ankommt:
+keine feste Adresse im Dokument.
+
+**Belege:** Typecheck Exit 0 · volle Suite **1358/1358** · echter Server: alle
+sechs Ziele antworten 200, `/mcp` initialisiert · im Browser geprüft: DE und EN
+ohne leere Strings, 375 px ohne Querscrollen, kein Ziel unter 24 px.
+
+## Inhalt ohne URL — ENTWURF STEHT, Implementierung offen (2026-08-06)
+
+Entwurf: `docs/plans/2026-08-06-content-without-url-design.md`.
+
+Entscheidungen des Nutzers: **Markdown als Text** (damit Arbeitsblätter direkt
+gehen) **plus Base64 für Bilder**; Dublettenprüfung **über den Titel im eigenen
+Ablageort**. Kein allgemeiner Binär-Upload.
+
+Der Entwurf hält fest, was bereits gemessen ist (siehe Eintrag oben und den
+Skill `wlo-content-files`, validiert 2026-05-08 gegen prod und staging), was
+bewusst NICHT benutzt wird (`_content` ist ungemessen; `/textContent` ist
+gemessen wirkungslos), und die drei bindenden Regeln — Fingerabdruck über die
+Bytes, Rücklesen über `size`/`downloadUrl`, kein `/textContent`.
+
+Eine Nebenwirkung, die dazugehört und nicht nebenbei passieren darf:
+`MAX_BODY_BYTES` (1 MB) begrenzt den ganzen JSON-RPC-Rumpf, und der 413 kommt
+aus der Transportschicht, bevor das Werkzeug läuft — das Modell sieht heute
+`Request body exceeds N bytes` ohne Handlungsanweisung.
+
+## Review-Runde über beide Pakete — 6 Befunde behoben (2026-08-06)
+
+Ein MAJOR, drei MINOR, zwei NIT. Der Widerrufs-Teil war sauber; alle Befunde
+lagen im Wegweiser und in der Dokumentation.
+
+**[MAJOR] `copyText()` kopierte nicht, was es sollte — und meldete Erfolg.** Der
+Rückfallzweig (für Browser ohne Clipboard-API, die einen sicheren Kontext
+braucht) **ignorierte sein `text`-Argument** und markierte fest `#prompt`. Das
+war unsichtbar, solange nur die Anleitung kopiert wurde — `#prompt` hält genau
+sie — und wurde in dem Moment ein Defekt, als ich einen zweiten Aufrufer mit der
+MCP-Adresse dazustellte. Verschärfend: `#prompt` liegt in einem geschlossenen
+`<details>` und ist nicht fokussierbar, es wurde also gar nichts kopiert.
+`execCommand` meldet eine Verweigerung zudem per Rückgabewert `false` statt zu
+werfen, und der wurde ignoriert.
+
+Im Browser reproduziert, vor dem Fix:
+```
+intendedToCopy:     http://…/mcp
+actuallySelected:   (nichts – activeElement blieb BODY)
+messageShownToUser: "Adresse in die Zwischenablage kopiert."
+```
+Nach dem Fix, gleiches Szenario: `whatWasActuallyCopied` = die Adresse,
+verweigerte Kopie → ehrliche Fehlermeldung in DE und EN, keine Streuelemente.
+
+Die Lehre daran, und sie ist allgemeiner als der Fehler: **ich habe einen Helfer
+wiederverwendet, ohne seinen Vertrag zu prüfen.** Er hatte einen Parameter, den
+er nicht benutzte, und der einzige bestehende Aufrufer machte das unsichtbar.
+Ein zweiter Aufrufer deckt so etwas auf — oder erbt es stumm.
+
+**[MINOR] Falsche Wiederherstellungsanweisung.** Der geteilte `copy_failed`-Text
+schickte Leute „ins Vorschau-Feld", wo die Anleitung steht, nicht die Adresse.
+Eigener Schlüssel `mcp_copy_failed` in beiden Sprachen.
+
+**[MINOR] `href=""` am Beispiel-Such-Link.** Löst auf das aktuelle Dokument auf:
+ohne JavaScript hätte der einzige skriptabhängige Link der Liste die Seite neu
+geladen. Jetzt ein echter Pfad im Markup, den das Skript nur noch verfeinert.
+
+**[MINOR] Kein Test fasste den Kopierknopf an.** Genau die Lücke, durch die der
+MAJOR gekommen ist — ich hatte den Knopf im Browser gesehen, ohne den
+Rückfallzweig auszulösen. `tests/launcher-copy.test.ts` (4 Tests) extrahiert die
+ausgelieferte Funktion und führt sie gegen eine DOM-Attrappe aus, in der
+sichtbar wird, *was* die Kopie tatsächlich nimmt. Gegenprobe gefahren: ohne die
+Rückgabewert-Prüfung fällt der Verweigerungs-Test um.
+
+Außerdem erfasst der i18n-Test jetzt auch Schlüssel, die nur über `t("…")`
+benutzt werden — sonst bleibt genau die Hälfte ungeprüft, die ein Nutzer im
+Fehlerfall zu sehen bekommt.
+
+**[NIT] `llms.txt` behauptete Pfade ungeprüft.** Neuer Test: jeder Pfad, den die
+Datei nennt, muss von einer echten Route bedient werden — gegen die QUELLE
+geprüft, weil die REST-Handler ins Netz gingen und ein Test, der dafür das Netz
+mocken müsste, den Mock testet. Fand beim Schreiben sofort die variable
+Suchform, die kein Literal in der Routentabelle hat. Gegenprobe: ein erfundener
+Pfad in `llms.txt` lässt den Test umfallen.
+
+**[NIT] `/auth/revoke-all` gab ein `label` zurück, das niemand liest.** Entfernt:
+die Seite kennt den Namen, der Nutzer hat ihn selbst eingetippt.
+
+**Belege:** Typecheck Exit 0 · volle Suite **1364/1364** (+6) · im Browser das
+Ausgangsszenario nachgestellt, Fehler weg, beide Sprachen geprüft.
+
+## Datei-Upload statt Quell-URL — FERTIG (2026-08-06)
+
+Entwurf: `docs/plans/2026-08-06-content-without-url-design.md` (dort auch die drei
+Abweichungen, die beim Bauen entstanden). Beide Wege stehen jetzt nebeneinander:
+
+- `url` — das Material liegt woanders, der Datensatz zeigt darauf, das Repository
+  erschließt es. Unverändert.
+- `content` / `fileBase64` — der Datensatz TRÄGT das Material als Datei. Für
+  alles, was im Chat entsteht und keine eigene URL hat.
+
+Genau eine Quelle pro Aufruf. Zwei zugleich ist eine Ablehnung, nie eine stille
+Rangfolge — „url gewinnt" würde einen Link anlegen, während die Person ihr
+Arbeitsblatt in der Vorschau gesehen hat.
+
+**Was der Aufrufer nicht falsch machen kann, weil er es nicht sagen kann.** Der
+Bildtyp wird aus den Magic Bytes gelesen (PNG, JPEG, GIF, WebP), nie angegeben;
+Unerkanntes wird abgelehnt statt geraten. Der Dateiname wird aus dem Titel
+abgeleitet — es gibt keinen vom Aufrufer gelieferten Namen und damit gar keine
+Traversal-Fläche. **HTML und SVG fehlen bewusst:** eine HTML-Datei, die das
+Repository von seiner Domain ausliefert, ist gespeichertes XSS, und ein SVG ist
+ein Dokument, das Skript ausführt — Magic Bytes können dort Zeichnung und
+Nutzlast nicht trennen, weil dieselbe Datei beides ist.
+
+**Die Bytes stehen im Fingerabdruck.** Die Vorschau nennt Name, Typ, exakte Größe
+und ein SHA-256-Präfix, bei Text zusätzlich den lesbaren Anfang. Der Token ist
+daran gebunden, also wird ein Bestätigen mit ANDEREN Bytes abgelehnt. Belegt,
+nicht behauptet: mit entfernter Dateibeschreibung fallen zwei Tests um (7/9),
+mit ihr sind es 9/9.
+
+**Und der Upload wird zurückgelesen.** Ein `ccm:io` ohne Inhalt meldet `size` und
+`downloadUrl` als null; nach dem Upload sind beide gesetzt. Ein Upload, der nicht
+ankam, steht neben der neuen nodeId — „angelegt, trägt aber KEINEN Inhalt" —
+statt in einem allgemeinen Erfolg zu verschwinden. Ein fehlgeschlagener Upload
+lässt das Anlegen nicht scheitern: der Knoten existiert, seine ID muss den
+Aufrufer erreichen, und ein Fehler über einem existierenden Datensatz lädt zu
+einem Wiederholungsversuch ein, der einen zweiten anlegen würde.
+
+Dublettenprüfung mit dem Anker, den der jeweilige Weg hat: die URL BLOCKIERT (sie
+identifiziert das Material exakt), ein Titeltreffer im Ablageort WARNT nur in der
+Vorschau — zwei Arbeitsblätter dürfen denselben Namen tragen.
+
+`MAX_BODY_BYTES` steigt von 1 MB auf **4 MB**, ausdrücklich und nicht nebenbei:
+ein Bild kommt als Base64 im JSON-RPC-Rumpf (2 MB dekodiert, ~2,7 MB kodiert),
+das alte Limit hätte einen Aufruf abgelehnt, den das Werkzeug bedienen soll — in
+der Transportschicht, bevor das Werkzeug etwas Brauchbares sagen kann. Der 413
+nennt jetzt Ursache und Stellschraube.
+
+**Neue Module:** `services/write/content-source.ts` (rein: welche Quelle, welche
+Bytes, welcher Typ, welcher Name), `content-upload.ts` (Upload + Rücklesen),
+`duplicates.ts` (aus `nodes-lifecycle.ts` herausgezogen, das sonst über 300
+Zeilen gewachsen wäre).
+
+**Belege:** Typecheck Exit 0 · volle Suite **1402/1402** (+38), dreimal in Folge
+grün. Neue Tests: `write-content-source.test.ts` (19),
+`write-content-upload.test.ts` (5), `tools-curation-create-file.test.ts` (9,
+Ende-zu-Ende durch das Werkzeug), `write-nodes-duplicate.test.ts` (+5).
+
+**Eigener Fehler dabei, festgehalten weil er wiederkommt:** ein Python-Rewrite
+hat `.env.example` von LF auf CRLF umgestellt, und der Parser in
+`deploy-env-passthrough.test.ts` fand danach KEINEN einzigen aktiven Schlüssel —
+in JavaScript ist `\r` ein Zeilenendezeichen, das `.` nicht matcht, also scheitert
+`/^([A-Z_]+)=(.*)$/` an jeder Zeile. Die Zeilenende-Falle steht seit dem
+2026-08-05 in CLAUDE.md; diesmal in die andere Richtung. Skripte, die
+Projektdateien umschreiben, müssen die Zeilenenden erhalten.
+
+**Noch nicht gegen ein echtes Repository gelaufen.** Alle Tests hier fälschen den
+Upstream, und die Lehre vom 2026-08-02 gilt unverändert: das beweist, dass wir
+senden, was wir uns ausgedacht haben, nie dass das Repository es annimmt. Die
+Anfrageform stammt aus einer Messung (`wlo-content-files`, 2026-05-08 gegen prod
+und staging; `openapi.json` von Staging, 2026-08-06), aber der Live-Durchlauf
+steht aus — er braucht einen von Staging akzeptierten Login.
+
+## Review des Datei-Upload-Pfads — 5 Befunde behoben (2026-08-06)
+
+Zwei MAJOR, zwei MINOR, ein NIT. Beide MAJOR waren Stellen, an denen der Code
+gegen den gefälschten Upstream grün war und gegen die Wirklichkeit nicht.
+
+**[MAJOR] Eine `data:`-URL wurde als „kein erkanntes Bild" abgelehnt.** Das ist
+die Form, in der ein Modell Bilddaten fast immer liefert — jede Browser-API und
+jedes Bildwerkzeug erzeugt sie. Doppelt schlecht: die Funktion scheiterte an
+ihrer wahrscheinlichsten Eingabe, und die Meldung zeigte auf den DATEITYP,
+während das Problem die KODIERUNG war, also hätte das Modell ein anderes Bild
+versucht statt zweiundzwanzig Zeichen zu entfernen. Das Präfix wird jetzt
+entfernt, der darin **angegebene Typ aber verworfen** — sonst könnte ein Aufrufer
+genau die Nichtübereinstimmung wieder einführen, gegen die die Erkennung da ist.
+
+**[MAJOR] Beim Anlegen ohne URL fehlte `cm:name`.** Die einzige *gemessene*
+Anlage eines `ccm:io` ohne `ccm:wwwurl` (Child-IO-Pfad, 2026-05-08 gegen prod und
+staging) schickt ihn mit. Wir sendeten weder URL noch Namen — das Repository
+hatte nichts, woraus es den Knoten benennen konnte. Kein Test konnte das merken,
+weil ein gefälschter Upstream alles annimmt, was wir uns ausdenken. Exakt die
+Form des Defekts vom 2026-08-02. Jetzt wird der abgeleitete Dateiname als
+`cm:name` gesendet — nur auf dem Datei-Weg; auf dem URL-Weg leitet das Repository
+den Namen aus der Adresse ab, und ein Name dort würde einen Pfad ändern, um den
+es hier nicht geht.
+
+**[MINOR] Die Base64-Plausibilitätsprüfung war lockerer als das, was sie
+modelliert.** Toleranz 4 gegen maximal 2 Zeichen Padding: `not base64 !!!`
+re-kodiert genau vier Zeichen kürzer und rutschte durch, gefangen erst von den
+Magic Bytes — mit der falschen Meldung. Toleranz jetzt 2.
+
+**[MINOR] Testlücke.** Kein Test benutzte eine `data:`-URL; geprüft wurde
+sauberes Base64, nicht das, was ankommt. Genau die Lücke, durch die Befund 1 kam.
+
+**[NIT]** `describeUpload` mischte typografische und gerade Anführungszeichen.
+
+**Belege:** Typecheck Exit 0 · volle Suite **1409/1409** (+7). Gegenprobe für
+beide MAJOR: mit entfernter Data-URL-Behandlung und entferntem `cm:name` fallen
+drei Tests um (28/31), mit ihnen 31/31.
+
+**Offen und bewusst nicht gebaut:** `wlo_update_content` trägt keinen Datei-Pfad.
+Eine Datei an einem BESTEHENDEN Datensatz zu ersetzen ist ein eigener Vorgang mit
+eigener Bestätigungssemantik (die alte Fassung verschwindet in der
+Versionshistorie) — `uploadContent(nodeId, file)` ist bereits eigenständig, das
+Anschließen wäre klein, aber es ist eine Erweiterung der Mutationsfläche eines
+vorhandenen Werkzeugs und gehört entschieden, nicht nebenbei gemacht.
+
+## Datei ersetzen an bestehenden Datensätzen — FERTIG (2026-08-06)
+
+`wlo_update_content` nimmt jetzt dieselben Datei-Parameter wie das Anlege-Werkzeug.
+Ein Aufruf ändert Metadaten, nur die Datei, oder beides — eine Datei allein zählt
+als Änderung, was vorher nicht ging.
+
+**Ersetzen ist nicht Anlegen**, und die Vorschau sagt es: der vorhandene Inhalt
+wird ersetzt, die bisherige Fassung bleibt in der Versionshistorie. Dieser Satz
+steht in der Änderungsmenge neben Name, Typ, Größe und Prüfsumme der neuen Datei
+— der Bestätigungsschlüssel ist also an die neuen Bytes gebunden, genauso wie
+beim Anlegen. Belegt: entfernt man `describeUpload` aus der Ersetzen-Aktion,
+fallen drei Tests um (12/15), mit ihr sind es 15/15.
+
+Der Dateiname kommt aus dem **gespeicherten** Titel, wenn der Aufruf keinen
+ändert. Metadaten-Schreibvorgang und Upload sind zwei getrennte
+Repository-Operationen, jede kann für sich scheitern — beide werden berichtet,
+nie zu einem Urteil verschmolzen. Der Upload läuft NACH den Metadaten, damit ein
+Datensatz, dessen Inhalts-Ersetzung scheitert, wenigstens die Felder trägt, die
+ihn beschreiben sollen.
+
+Die Regeln, die entscheiden, ob Bytes hochgeladen werden dürfen — Typerkennung,
+Größen, Kodierung, abgeleiteter Name — sind über `resolveFileUpload` **geteilt**,
+nicht kopiert. Unterschiedlich ist nur die Frage drumherum: Anlegen braucht eine
+Quelle und `url` ist eine davon, an einem bestehenden Datensatz ist `url` ein
+gewöhnliches Metadatenfeld und gar keine Datei ein völlig gültiger Aufruf.
+
+**Nebenbei einen Flake wirklich aufgeklärt statt weggewünscht.**
+`tools-curation-create-file.test.ts` fiel etwa jeden fünften Lauf um, jedes Mal
+an einer anderen Stelle — und ich hatte das gestern als Kollateralschaden
+abgetan. Ursache war NICHT der Token-Speicher, sondern mein Test-Helfer:
+`/confirmToken[^\w]*(…)/`, und `[^\w]` matcht `-`. Ein base64url-Schlüssel darf
+mit `-` beginnen (rund 1 von 64 tut es), der gierige Teil fraß es, und der
+eingelöste Schlüssel war einer, den der Speicher nie ausgegeben hatte. Die sechs
+älteren Kurations-Testdateien nehmen `-` aus der Klasse aus — ich hatte die
+kürzere Form ohne diese Ausnahme hierher kopiert. Zwölf Läufe in Folge grün nach
+der Korrektur, und die Begründung steht jetzt dort, wo sie bisher fehlte.
+
+**Belege:** Typecheck Exit 0 · volle Suite **1419/1419** (+10), dreimal in Folge
+grün. Der Live-Durchlauf gegen ein echtes Repository steht weiterhin aus.
+
+---
+
+## Themenseiten-Varianten — FERTIG, live gegen beide Instanzen (2026-08-07)
+
+Auslöser: Rückmeldung des WLO-Teams, die Varianten seien „mittlerweile um
+Properties angereichert" und über `virtual:page_variant_global` bzw.
+`virtual:parent(_recursive)` filterbar. Gemessen statt geglaubt — Analyse,
+Zahlen und die repository-seitigen Blocker:
+[2026-08-07-topic-page-variants-analysis.md](2026-08-07-topic-page-variants-analysis.md).
+
+**Was von den Hinweisen trägt und was nicht.** `virtual:parent_recursive`
+existiert und kann einen Sammlungs-Teilbaum durchsuchen — daraus ist ein neuer
+Modus geworden. `virtual:page_variant_global: ['false']` filtert dagegen **gar
+nichts** (99 vs. 99 auf Staging, 121 vs. 121 auf Produktion — identisch mit „kein
+Kriterium"): das MDS-Statement existiert nur für den Wert `"true"`. Und die
+angereicherten Properties sind da, nur überwiegend leer — **98 von 109**
+Produktions-Varianten ohne Zielgruppe, **97 von 109** ohne Bildungsstufe.
+
+**Der Befund, der das Paket ausgelöst hat.** `targetGroup` bedeutete in unseren
+Modi zweierlei: Modus C reichte ihn an die Suche durch (ungesetzt = raus), Modi
+A/B filterten lokal (ungesetzt = bleibt). Auf Produktion war das der Unterschied
+zwischen 16 und 20 Seiten. Die Regel liegt jetzt an EINER Stelle
+(`variantMatchesFilters`), ungesetzt schließt nie aus, und `docs/TOOLS.md`
+behauptet nicht mehr, die Filter beschleunigten den Aufruf.
+
+**Die offene Frage des Teams — welche Variante ist die richtige — ist
+beantwortet.** Der page_config-Ordner trägt `ccm:page_config` mit `variants[]`
+und `default`; vorhanden auf 99/99 (prod) und 45/45 (staging), und wo `default`
+gesetzt ist, immer `variants[0]` (76/76). Die angezeigte Variante steht jetzt
+vorn und trägt `isDefault`. Bisher nahmen wir das erste Kind des Ordners — was in
+allen 13 gemessenen Mehrfach-Seiten dasselbe traf, aber durch eine Sortierung,
+die nichts garantiert.
+
+**Zwei Fehler fand erst der Live-Lauf, keiner davon war mit `fetchMock`
+auffindbar.** Eine Sammlung kann MEHRERE page_config-Ordner besitzen: die
+Gruppierung nach Ordner lieferte deshalb 19 statt 20 Seiten und listete
+„Zukunfts- und Berufsorientierung" dreimal, und jeder Ordner brachte seine eigene
+„angezeigte Variante" mit. Behoben durch Auflösen in Wellen bis genug
+verschiedene Besitzer beisammen sind (ohne zweite Suche — die Treffer liegen
+schon im Speicher) und dadurch, dass nur der vom Besitzer per
+`ccm:page_config_ref` benannte Ordner die angezeigte Variante tragen kann.
+
+Damit gilt die Lehre vom 2026-08-02 auch für einen LESENDEN Pfad: ein Test gegen
+`fetchMock` beweist, dass wir senden, was wir senden wollten. Über die Form der
+Daten im Repository sagt er nichts.
+
+**Belege:** Typecheck Exit 0 · volle Suite **1442/1442** (+18) · zwei Sabotage-
+Gegenproben (maxResults-Schranke, Varianten-Sortierung) jeweils rot · Live-Lauf
+gegen Produktion UND Staging.
+
+| gemessen live, `maxResults: 20` (prod) | vorher | nachher |
+|---|---|---|
+| Seiten ohne Filter | 19 | 20 |
+| Seiten mit `targetGroup: 'teacher'` | 16 | 20 |
+| doppelte Sammlungsnamen unter den ersten 5 | 3× dieselbe | keine |
+| Fachportal Physik: `collectionId` → `withinCollectionId` | 1 | 20 (durch `maxResults` begrenzt) |
+
+**Offen — BEIDES am 2026-08-09 behoben, siehe „Die zwei zurückgestellten
+Themenseiten-Befunde" am Ende dieser Datei.** Der Stand von damals:
+
+Auf Staging tragen 22 von 68 Varianten ein `cclom:title` der Form
+`PAGE_VARIANT_<uuid>`; für den Eintragstitel fängt `pickThemePageTitle` das ab,
+im `variantTitle` von `get_topic_page_content` nicht. Auf Produktion tritt das
+nicht auf (0 von 109). Die Prüffunktion liegt in `tools/shared.ts` und dürfte
+von den tieferen Schichten aus nicht importiert werden — sie zu verschieben wäre
+ein eigener Schnitt. (Genau dieser Schnitt ist jetzt gemacht:
+`src/topic-page-title.ts`. Die Vermutung „nur `get_topic_page_content`" war zu
+eng — betroffen waren zusätzlich `topic-page-api.ts` und, am schwersten, die
+Bestätigungs-Vorschau von `wlo_set_topic_page`.)
+
+`search_wlo_topic_pages` meldet unauflösbare Vokabular-Filter nicht: ein
+`educationalContext`, den `resolveVocab` nicht auflöst, wird als Rohtext gegen
+URIs verglichen, trifft nie, und lässt nur die kontextlosen Varianten übrig —
+ohne Hinweis. Andere Suchwerkzeuge nutzen dafür `formatUnresolvedHint`.
+(Behoben; zusätzlich meldete `_queryMeta` den verworfenen Filter weiter als
+angewandtes Kriterium.)
+
+## Review-Runde über das Themenseiten-Paket — 7 Befunde behoben (2026-08-07)
+
+Ein MAJOR, fünf MINOR, ein NIT — alle aus dem eigenen Paket, alle behoben.
+
+**Der MAJOR war eine Lücke, die genau dort saß, wo das Paket seinen Zweck hat.**
+Besitzt eine Sammlung mehrere page_config-Ordner, werden diese unabhängig
+aufgelöst — kommt der überholte Ordner zuerst aus der Suche, stand seine Variante
+im zusammengefassten Eintrag vorn. `includeContent` löst `variants[0]` auf, hätte
+also die **überholte** Fassung der Seite gerendert, und die Werkzeugbeschreibung
+verspricht ausdrücklich das Gegenteil. `enrichPage` sortierte korrekt innerhalb
+einer Gruppe; über Gruppen derselben Sammlung hinweg sortierte niemand.
+`mergeThemePages` stellt die angezeigte Variante jetzt voran. Reproduziert vor
+der Behebung, danach erneut geprüft.
+
+Der Rest: `targetGroup` trug in Modus A/B die deutsche Zeichenkette
+„nicht gesetzt" im **Maschinenfeld**, in Modus C/D `''` — jetzt überall `''`, die
+Beschriftung entsteht in der Präsentationsschicht. `_queryMeta.criteria` führte
+`ngsearchword` auch dann auf, wenn der Modus die Suchanfrage verworfen hatte —
+die Kriterien folgen jetzt dem tatsächlich gewählten Modus. Der Owner-Cache
+(`TopicPageOwnerCache`, `parentCache`) war durch die Gruppierung tot und ist
+entfernt; `resolveVariantCollection` schrumpft damit auf den Rückfallweg, für den
+es noch gebraucht wird. Die Suchgrenze von 300 Varianten meldet sich jetzt per
+`log.warn`, statt Vollständigkeit vorzutäuschen. Und der JSDoc zu `isDefault`
+nannte die Ordner-Bedingung nicht, die im Code steht.
+
+**Korrektur einer eigenen Falschaussage:** der Absatz oben behauptete,
+`educationalContext` wirke in Modus B weiterhin gar nicht. Das stimmt nicht — der
+Filter fließt seit diesem Paket durch (`collectThemePages` →
+`findTopicPagesByQuery(query, filters)` → `getCollectionThemePages(cId, filters)`
+→ `variantMatchesFilters`). Er greift auf Varianten-Ebene, nicht bei der Auswahl
+der Kandidaten-Sammlungen, und schränkt wegen der leeren Felder kaum ein — aber
+er ist verdrahtet. Ich hatte den Zustand von VOR der Änderung fortgeschrieben.
+
+**Ein achter Befund kam beim Nachmessen des MAJOR-Fixes dazu — wieder nur live
+sichtbar.** Die Sortier-Korrektur greift nur, wenn die angezeigte Variante
+überhaupt in der Liste steckt. Für „Zukunfts- und Berufsorientierung" steckt sie
+nicht drin: die Sammlung hält mehrere page_config-Ordner, der aktive liegt in der
+Gruppen-Reihenfolge hinter der Stelle, an der die Wellen abbrechen (20
+verschiedene Besitzer beisammen). Die Variante ist in den 109 Suchtreffern
+enthalten, sie wird nur nie ausgewählt. Ohne markierten Default nahm
+`includeContent` einfach `variants[0]` — also eine überholte Kopie.
+
+Behoben ist der **Schaden**: `includeContent` übergibt nur noch eine Variante,
+von der bekannt ist, dass die Seite sie rendert; sonst gar keine, und
+`getTopicPageContent` läuft die belastbare Kette Sammlung →
+`ccm:page_config_ref` → `ccm:page_config.default`. Live geprüft: für genau diese
+Seite wird jetzt `9b24debf` aufgelöst, die eingetragene Default-Variante.
+
+**Offen und bewusst nicht mitgemacht — eine Design-Frage, keine Mechanik:** die
+Variantenliste dieser Seite bleibt unvollständig (sie zeigt vier überholte
+Kopien, nicht die gerenderte). Zwei Wege stehen zur Wahl: entweder liefert
+`enrichPage` die Varianten des vom Besitzer benannten AKTIVEN Ordners aus der
+bereits geladenen Gruppenkarte — dann verschwinden die überholten Kopien aus der
+Auflistung — oder die Wellenschleife löst für jeden Besitzer zusätzlich dessen
+aktiven Ordner auf, was Vollständigkeit gegen Aufrufe tauscht. Die erste Variante
+widerspricht der bisher dokumentierten Zusage, überholte Ordner weiter zu
+listen; das ist eine Entscheidung, keine Korrektur. Betrifft live 1 von 20
+Seiten.
+
+**Belege:** Typecheck Exit 0 · volle Suite **1453/1453** (+11) · zwei
+Sabotage-Gegenproben (Merge-Reihenfolge, Kriterien-Ableitung) jeweils rot · drei
+Live-Läufe gegen Produktion: falsch sortierte Einträge **0**.
+
+---
+
+## Skill-Abruf: zwei Werkzeuge, Inhaltsart-Filter, Begleitdateien (2026-08-08) — FERTIG
+
+`find_wlo_skills` ist ersetzt durch **`search_skill`** (Katalog: nodeId, Titel,
+Beschreibung, Keywords — ohne Anleitungstext) und **`get_skill`** (die angehängte
+SKILL.md zu einer nodeId). `WLO_SKILL_TOOL_MODE=one-tool` tauscht beide gegen
+`get_skill_for_task`, das selbst wählt und lädt — die Variante existiert, um
+gegen den Standard gemessen zu werden. Lesende Tools 26 → 27.
+
+**Was einen Datensatz zum Skill macht, ist jetzt seine Inhaltsart**
+(`ccm:oeh_extendedType = …/contentTypes/ai_prompt`), nicht sein Ablageort.
+Gemessen auf beiden Instanzen: das Feld ist indiziert und facettierbar, das
+Kriterium schränkt ein (110 von 403 431 für `organization`), mehrere Werte werden
+ODER-verknüpft (110 + 42 = 152), und es UND-verknüpft mit `ngsearchword`. Es
+braucht die volle URI; der Kurz-Slug trifft nichts. **Kein `ai_prompt`-Datensatz
+existiert bisher** — der Filter ist bewiesen, seine Wirkung auf echte Skills
+nicht.
+
+Beide Werkzeuge sind damit **bedingungslos registriert**;
+`WLO_SKILLS_COLLECTION_ID` grenzt nur noch ein. Die Eingrenzung läuft als
+Unterbaum-Lauf, weil `ngsearch` `virtual:parent_recursive` mit 400 ablehnt (die
+`page_variant`-Abfrage akzeptiert es — `ngsearch` nicht).
+
+**Vier Messungen, die Entscheidungen erzwungen haben:**
+
+1. `ngsearch` liefert **überhaupt keine Sammlungen** (`FOLDERS` → 0, `ALL` → nur
+   `ccm:io`); der Sammlungs-Endpunkt kann **nur** Stichwort, jedes andere
+   Kriterium → 400. Ein Skill als Sammlung wäre unauffindbar. Deshalb `ccm:io`.
+2. Der Unterbaum-Lauf war sequenziell: **90,3 s** über ein Fachportal. Ebenenweise
+   im Pool: 8,1 s. Die dokumentierte Struktur (Wurzel + 12 Skillsets) kostet
+   **2,4 s in zwei Wellen**; eine genannte Sammlung ohne Untersammlungen **1
+   Aufruf / 0,8 s** gegen 60 Aufrufe / 12,9 s mit.
+3. Begleitdateien: Ordner-Auflistung kostet 0,2–0,4 s bei einem echten
+   Skill-Ordner, aber 1,7–20,6 s bei WLO-Sammelordnern (484–3744 Dateien), einer
+   von sechs verweigert anonym. Daher die Grenze von 25 Dateien.
+4. Eine **Referenz** liefert denselben Download wie ihr Original (200, identische
+   3466 Bytes) — der Textabruf braucht `ccm:original` nicht, die Ordnersuche
+   schon.
+
+**`ccm:original` ist Teil der Identität:** jeder Treffer trägt `originalId`,
+`search_skill` dedupliziert darüber, und bei Original + Referenz gewinnt das
+Original. `get_skill` löst zusätzlich die `:::`-Blöcke der SKILL.md
+(`wlo-material`, `ki-skill`) zu `references` samt nodeId auf — das Modell muss
+keine ID aus einer URL herausklauben, und welche ID wozu gehört, unterscheidet
+sich je Blocktyp.
+
+**Review-Runde: 9 Befunde, 8 behoben, 1 durch Messung widerlegt.** Die drei
+MAJOR: der Ein-Tool-Modus verwies auf ein dort nicht registriertes `get_skill`;
+das Datei-Manifest schickte auch Binärdateien durch den Rohdownload (DOCX als
+dekodiertes ZIP); und der Lauf konnte stumm abschneiden, wenn die Besuchsgrenze
+alle Kinder der letzten gelesenen Ebene verwarf. Widerlegt: der vermutete Defekt
+beim Textabruf über eine Referenz-ID (Messung 4 oben).
+
+**Belege:** Typecheck Exit 0 · Build Exit 0 · volle Suite **1497/1497** (+28) ·
+jeder neue Test vorher rot gesehen · Live-Gegenproben gegen Staging und
+Produktion wie oben.
+
+**Offen — bewusst nicht mitgemacht:**
+- Kein `ai_prompt`-Datensatz existiert; nichts ist gegen echte Skill-Inhalte
+  gelaufen. Das ist die Sorte Nachweis, die bei den Themenseiten vier Defekte
+  fand, die kein Mock sah.
+- `search_skill` bietet **keine** `discipline`/`educationalContext`-Filter. Die
+  Messung dafür liegt vor (`ai_prompt AND taxonid=Physik` funktioniert:
+  9878 → 9877 mit Inhaltsart), gebaut ist es nicht — es ist die Entscheidung
+  „taggen statt platzieren", nicht eine Korrektur.
+- Serienobjekte (`ccm:childio`) als Alternative zum Ordner: die vermutete
+  6-Dateien-Grenze ist **nicht gemessen** (bräuchte einen Schreibversuch auf
+  Staging).
+- Redaktions-Anleitung: `docs/SKILLS.md`.
+
+## Use-Case-Lücken: Lizenzfilter, Usage, Themenseiten-Variante (2026-08-09) — FERTIG
+
+Plan: `docs/plans/2026-08-09-usecase-gap-tools.md` (Design + Aufgaben in einer
+Datei). Drei Pakete, davon eines bewusst **nicht** gebaut.
+
+### P1 — Lizenzfilter (`search_wlo_content`, `search_wlo_all`, `search_wlo_within_collection`, `/api/search`)
+
+Ein `license`-Parameter, der ein Label („CC BY 4.0", „gemeinfrei") ebenso nimmt
+wie den Repository-Schlüssel (`CC_BY`). Aufgelöst in `buildFilterCriteria`, also
+für beide Suchwerkzeuge, den `searchAll`-Service und die REST-Schicht auf einmal.
+
+**Vier Messungen, die der Entwurf nicht hatte:**
+
+1. Der Schlüssel trifft eine **Familie**, keine Lizenz: `CC_BY` liefert für
+   „Optik" 343 Treffer inklusive CC BY-ND, CC BY-NC-SA und CC BY-NC-ND;
+   Anführungszeichen ändern nichts. Genau die eine Lizenz, nach der jemand
+   filtert, der bearbeiten will, ist upstream nicht isolierbar — und die Zugabe
+   ist **restriktiver** als das Gewünschte. Exaktheit deshalb lokal
+   (`filterByExactLicense`).
+2. Der lokale Pass **verhungert ohne Vorrat**: der erste Live-Lauf gab 0 Treffer
+   für CC BY 4.0, weil in der Zehnerseite aus jenen 343 kein exakter Datensatz
+   stand. `pageSizeForLicense` weitet das Kandidatenfenster auf 50 — nur bei
+   gesetztem Lizenzfilter, weil nur dort der Überschuss systematisch ist.
+3. Eine **Menge** von Lizenzen ist upstream nicht ausdrückbar: zwei Werte an
+   `ccm:commonlicense_key` → 400 `DAOValidationException`, das Kriterium zweimal
+   → UND (343 + 110 → 110), „A OR B" als Wert → 0. Das ODER, das an
+   `ccm:oeh_extendedType` gemessen war, überträgt sich **nicht** — die Annahme
+   hatte einen 400 ausgeliefert, den jeder Test grün gesehen hatte. Das
+   OER-Bündel (`CC_0`, `PDM`, `COPYRIGHT_FREE`, `CC_BY`, `CC_BY_SA`) schickte
+   deshalb zunächst gar kein Kriterium und filterte vollständig lokal
+   (**überholt** — siehe „Nachtrag OER-Anteil + zwei Defekte im Lizenz-Bündel"
+   weiter unten: genau das war der Defekt, das Bündel fächert heute über seine
+   fünf Schlüssel). Auf `CC_BY` zu
+   verengen hätte beide CC-Mitglieder behalten und jedes gemeinfreie Material
+   verloren — der Live-Lauf zeigte sofort ein „Urheberrechtsfrei"-Material.
+4. Ein **geleertes** Ergebnis muss den Grund nennen: „Optik" + CC BY-NC 4.0
+   meldet 172 Backend-Treffer und liefert keinen. `licenseFilterNotice` nennt
+   jetzt die Zahl der geprüften Kandidaten und warum die Gesamtzahl abweicht.
+
+**Bekannte Schwäche — noch am selben Tag BEHOBEN, nicht mehr offen:** Weil das
+Bündel nicht vorfilterte, hing seine Ausbeute daran, wie viel OER zufällig in den
+50 Kandidaten lag — zwei identische Läufe gaben 4 bzw. 1 Treffer. Die hier als
+„sauber, aber nicht einseitig entschieden" vermerkte Fächerung über die fünf
+Schlüssel ist gebaut (`src/services/license-search.ts`) und live gemessen; die
+Schwankung war zudem stark untertrieben (Mathematik: 0 von 50 exakten Treffern
+über 18 793 vorhandene). Belege im Nachtrag weiter unten.
+
+### P2 — `wlo_register_usage`: NICHT gebaut, das Repository lässt es nicht zu
+
+Aufgabe 1 des Pakets war als Gate geschrieben, und das Gate schloss. Gemessen als
+angemeldeter Dienstnutzer (`WLO-Upload`), Skripte `probe-usage.mjs` /
+`probe-usage2.mjs`:
+
+| Anfrage | Antwort |
+|---|---|
+| voller Body, `appId: local` | 403 `app signature required to use this endpoint.` |
+| Body nur `{ nodeId }` | 403, gleiche Meldung |
+| **leerer Body** `{}` | 403, gleiche Meldung |
+| `appId` ∈ {`-home-`, `local`, 3 registrierte} | 403, gleiche Meldung |
+| alle vier `X-Edu-App-*`-Header, Signatur erfunden | **500 `Signature could not be verified!`** |
+| dasselbe mit **registrierter** App-ID | **500**, identisch |
+
+Die identische Antwort auf einen **leeren Body** legt das Gate vor das Lesen des
+Bodys — es gibt keine Body-Form, die durchkommt. Und der 500 bei vorhandenen,
+falschen Headern zeigt: die Signatur wird wirklich geprüft, es braucht den
+**privaten Schlüssel einer am Repository registrierten Anwendung**. Kein
+Seitenweg: `prepareUsage` antwortet 200, liefert die Node-Metadaten und
+hinterlässt keine Usage. Die Leseseite (`GET /usage/v1/usages/node/{id}`)
+funktioniert ohne all das und ist überall leer (auch drei echte
+Redaktions-Datensätze: `usages=0`).
+
+Einen solchen Schlüssel zu bekommen ist keine Code-Änderung: eine
+edu-sharing-App-Signatur erlaubt ihrem Halter, **für beliebige Nutzer** zu
+handeln — genau deshalb ist der Endpunkt darauf gegated. Das kehrt die
+Auth-Entscheidung dieses Servers um („es gibt kein Token zum Weiterreichen;
+nichts Mächtigeres als das eigene Konto liegt bei uns"). Betreiber-Entscheidung.
+
+### P3 — `wlo_set_topic_page`: FERTIG, live gegen Staging
+
+Das 14. Kurationswerkzeug und das einzige, dessen Ergebnis **sofort öffentlich**
+ist: es setzt `default` im `ccm:page_config`-Dokument, das entscheidet, welche
+Variante eine Themenseite rendert. Es legt keine Varianten an, löscht und
+sortiert keine.
+
+**Gate-Messung (28 echte page-config-Ordner, Staging):** Das Dokument ist
+kleiner als der Leser vermuten lässt — `variants` 28/28, `default` **2/28**, kein
+weiterer Schlüssel. Varianten stehen als volle Store-Refs
+(`workspace://SpacesStore/…`), nicht als nackte UUIDs. Beide Schreibwege
+funktionieren (`PUT /metadata?obeyMds=false` und `POST /property`, je 200 mit
+wortgleichem Rücklesen).
+
+**Und der Befund, der das Design bestimmt: das Repository prüft nichts.**
+`POST …/property?property=ccm:page_config` speicherte die Zeichenkette
+`"not json at all"` und antwortete 200; die Eigenschaft wurde auch auf einem
+`ccm:io` angenommen, der nie ein page-config-Ordner ist. Ein kaputtes Dokument
+fällt nicht hier auf, sondern im Page-Builder, auf einer öffentlichen Seite.
+Daher liegt jede Zusage bei uns:
+
+- Das gespeicherte Dokument wird **bearbeitet, nie gebaut** (`setDefaultVariant`):
+  unbekannte Schlüssel und `variants[]` überleben unangetastet.
+- `default` wird als Store-Ref geschrieben (`toStoreRef`, die Umkehrung des
+  `stripStoreRef`, das jede Leseseite anwendet).
+- Eine Variante, die kein nutzbares Kind **dieses** Ordners ist, wird abgelehnt;
+  eine **nicht lesbare** Kinderliste wird als nicht lesbar abgelehnt, nicht als
+  „gibt es nicht".
+- Ein unlesbares Dokument wird nicht überschrieben.
+- Das Rücklesen vergleicht das **geparste** Dokument — ein Repository, das alles
+  speichert, beweist mit zurückgegebenen Bytes nichts.
+
+Der Bestätigungsschlüssel bindet an den **Satz**, der Seite und beide Varianten
+mit IDs nennt, nicht an den Property-Wert: ein Dokument aus Store-Refs kann
+niemand in einer Vorschau prüfen. Jede Änderung upstream, die das Ergebnis
+verschiebt, plant zu einem anderen Satz und entwertet den Schlüssel.
+
+**Live-Lauf** (`live-topic-page.mts`) auf einer Themenseite, die das Skript
+selbst anlegt und löscht — redaktionelle Seiten wurden nicht angefasst:
+Vorschau → Bestätigen → `default` auf B, `variants[]` unverändert; fremde
+Variante abgelehnt mit Auflistung der beiden echten, Dokument unverändert;
+Rückschalten auf A ersetzt statt anzuhängen; `get_topic_page_content` liest das
+Ergebnis über den normalen Weg.
+
+**Was erst der Live-Lauf fand:** Eine Variante mit `ccm:page_variant_config` über
+den `children`-Aufruf anzulegen verliert die Eigenschaft still — `obeyMds` steht
+per Vorgabe auf true. Der erste Lauf baute damit zwei Varianten, die das Werkzeug
+korrekt als unbrauchbar ablehnte. Fehler in der Probe, nicht im Produkt; die
+Ablehnung war richtig.
+
+**Belege:** volle Suite **1560/1560** (+25) · Typecheck Exit 0 · Build Exit 0 ·
+jeder neue Test vorher rot gesehen · Live gegen Staging wie oben. Drei bestehende
+Zähler-Tests (`server.test.ts`, `tools-curation-gating.test.ts`,
+`apps-tool-defaults.test.ts`) schlugen beim ersten Lauf an — sie fanden den
+fehlenden `toolInvocation`-Status.
+
+### Review-Runde über P3 — 3 Befunde, alle behoben (2026-08-09)
+
+Kein kritischer, kein Major. Die Leitfrage war „schreibt es je etwas Kaputtes auf
+eine öffentliche Seite?" — die Wege einzeln durchgegangen und keinen gefunden:
+Die Variantenliste kann nicht verlorengehen, `default` nicht auf Nichtexistentes
+zeigen (die Variante muss *sowohl* in `variants[]` stehen als auch nutzbares Kind
+sein), ungültiges JSON nicht entstehen. Das Rücklesen ist eine echte Anfrage —
+`wlo-node.ts`/`wlo-fetch.ts` haben keinen Cache, der es entwerten könnte. Ein
+Schlüssel von Seite X bestätigt Seite Y nicht: der Fingerabdruck deckt `nodeId`
+(den Ordner) und den Satz ab, der die Sammlung nennt.
+
+1. **MINOR — der No-Op fehlte.** Wer die bereits aktive Variante setzt, bekam
+   eine Vorschau „rendert künftig „B" statt „B"" und danach einen überflüssigen
+   Schreibvorgang auf genau das Dokument, das eine öffentliche Seite steuert. Die
+   anderen zwölf Werkzeuge haben das Problem nicht, weil `buildChangeSet`
+   unveränderte FELDER verwirft — hier gibt es kein Feld. Behoben mit zwei Tests,
+   die auch die Abgrenzung festhalten: Ist gar kein `default` gesetzt, rendert
+   die Seite `variants[0]` der Position wegen, und dieselbe Variante explizit
+   festzuschreiben ist eine echte Änderung — der einzige Aufruf, der das Rendern
+   einer Seite stabil macht. Live gegengeprüft.
+2. **MINOR — `VARIANT_PAGE = 50` kann still abschneiden.** Jenseits davon würde
+   eine Variante als „gehört nicht zur Themenseite" abgelehnt, also mit dem
+   falschen Grund. Nicht auf dieser Ebene zu erkennen:
+   `getChildCollectionsResult` verwirft die `pagination` der Antwort. Als
+   bekannte Grenze am Konstanten-Kommentar festgehalten statt vorgetäuscht
+   geschlossen; praktisch tragen 93 von 99 Produktionsseiten genau eine Variante.
+3. **NIT — Node-ID roh im Ablehnungstext.** In der „Verfügbar:"-Liste lief der
+   Titel durch `sanitizeText`, die ID nicht — und anders als der Vorschau-Satz
+   wird diese Zeichenkette nicht durch `flattenText` gereicht. Jetzt beide.
+
+Als Beobachtung festgehalten, nicht als Befund: Es gibt kein optimistisches
+Sperren. Zwischen dem planenden Lesen und dem Schreiben liegt ein Fenster, und
+die Property-Route bietet kein ETag — eine in diesem Moment hinzugefügte Variante
+ginge verloren. Steht jetzt im Modul-Kommentar.
+
+**Belege nach den Korrekturen:** volle Suite **1562/1562** (+2) · Typecheck
+Exit 0 · Build Exit 0 · Live-Lauf gegen Staging erneut, inklusive der neuen
+No-Op-Ablehnung.
+
+### Nachtrag OER-Anteil + zwei Defekte im Lizenz-Bündel (2026-08-09)
+
+Anlass war eine Frage des Betreibers: „nur 7–10 % der Inhalte sind OER — wenn
+sich das mit deinen Daten deckt, ist es ok." Es deckt sich nicht, und beim
+Nachmessen fielen zwei Defekte auf, die jeder Test grün gesehen hatte.
+
+**Das Instrument.** `ngsearch` nimmt einen `facets`-Parameter und zählt die
+exakten Schlüssel **serverseitig über die ganze Treffermenge**. Der erste Versuch
+schickte sie als blanke Strings und bekam keinen Facettenblock — das sah aus wie
+„die Instanz kann das nicht", war aber das falsche Format (die Signatur nimmt
+`string[]` und baut selbst `{property}`). Eine Stichprobe der ersten 100 Treffer
+ist kein Ersatz: Rangfolge und Lizenz haben nichts miteinander zu tun.
+
+**Der Anteil (Facetten, 2026-08-09):**
+
+Staging steht voran — dorthin zeigt `WLO_REPOSITORY_URL` per Vorgabe, und es ist
+der größere Bestand:
+
+| | Staging | Produktion |
+|---|---|---|
+| Datensätze gesamt | **403 431** | 318 696 |
+| davon mit Lizenzangabe | 297 462 | 230 496 |
+| OER (CC0, PDM, urheberrechtsfrei, CC BY, CC BY-SA) | **31,5 %** aller / 42,8 % der ausgezeichneten | **34,4 %** / 47,6 % |
+| nur CC/PD (ohne `COPYRIGHT_FREE`) | 28,4 % | 28,8 % |
+| ohne jede Lizenzangabe | **105 969 (26,3 %)** | 88 200 (27,7 %) |
+
+Je Anfrage schwankt es stark: Produktion von 8,4 % (Klimawandel) bis 64,9 %
+(Optik). 7–10 % trifft einzelne Themen, nicht den Bestand. Datensätze ohne
+Lizenzangabe zählen als nicht-OER — eine fehlende Angabe ist kein Beleg für eine
+freie Lizenz.
+
+**Defekt 1 — das Bündel antwortete „kein Treffer" über 18 793 Treffern.** Weil
+eine Lizenz-MENGE upstream nicht ausdrückbar ist, schickte die erste Fassung gar
+kein Kriterium und filterte die generische Ergebnisseite lokal. Gemessen:
+`Mathematik` hat auf Staging 18 793 Datensätze mit OER-Lizenz (41,9 % der
+ausgezeichneten) — das Werkzeug lieferte **null**. Die ersten fünfzig nach
+Relevanz trugen überhaupt keinen `ccm:commonlicense_key` (50/50 fehlend in der
+rohen Suche; über `enhancedSearch` 23× CC BY-NC-SA + 2× CUSTOM). Das ist kein
+schwacher Filter, das ist ein falscher. Die früher berichtete „schwankende
+Ausbeute" hat es deutlich untertrieben.
+
+Jeder Schlüssel für sich verengt upstream sehr wohl. Das Bündel **fächert jetzt
+über seine fünf Schlüssel** (`src/services/license-search.ts`) — fünf Anfragen
+statt einer, und nur für das Bündel.
+
+| Anfrage | geprüfte Kandidaten | mit exakter OER-Lizenz |
+|---|---|---|
+| Mathematik | 50 → **152** | 0 → **127** |
+| Optik | 40 → **140** | 2 → **107** |
+| Musik | 25 → **104** | 0 → **102** |
+| Klimawandel | 50 → **97** | 0 → **94** |
+
+**Defekt 2 — und der fiel erst im Live-Lauf auf.** Die fünf Ergebnismengen
+aneinanderzuhängen gibt die ganze Ergebnisgrenze dem erstgenannten Schlüssel:
+`Mathematik` + OER lieferte sechs Treffer, **alle CC 0** — dem seltensten der
+fünf (191 Datensätze) — während die 11 563 CC BY-SA nie auf die Seite kamen. Es
+gibt keine Rangfolge ÜBER die fünf Mengen hinweg, also ist Round-Robin die
+einzige faire Zusammenführung: jeder Schlüssel steuert seinen besten Treffer bei,
+bevor einer seinen zweiten beisteuert. Danach tragen dieselben sechs Treffer CC 0,
+Public Domain Mark, Urheberrechtsfrei, CC BY 4.0 und CC BY-SA 4.0.
+
+Beide Defekte waren für `fetchMock` unsichtbar — der erste, weil der Mock
+antwortet, was der Test beschlossen hat, der zweite, weil kein Test danach fragte,
+wie die ausgelieferte Seite ZUSAMMENGESETZT ist.
+
+**Belege:** volle Suite **1573/1573** (+11) · Typecheck Exit 0 · Build Exit 0 ·
+Live gegen Staging vor und nach jeder der beiden Korrekturen.
+
+### Review-Runde über den Lizenzfilter — 3 Befunde, alle behoben (2026-08-09)
+
+Selbstprüfung der Änderungen, die nach der P3-Review entstanden waren. Alle drei
+waren für `fetchMock` unsichtbar und wurden live gegen Staging belegt.
+
+**Befund 1 — die gemeldete Gesamtzahl zählte dieselben Datensätze mehrfach.**
+Die Fächerung addierte die fünf `pagination.total`. `ccm:commonlicense_key`
+trifft aber eine FAMILIE, und die Familie `CC_BY` **enthält** `CC_BY_SA`:
+
+| Anfrage | Fächerung meldete | wahr (exakte Facette) | Überzählung |
+|---|---|---|---|
+| Optik | 575 | 274 | +110 % |
+| Mathematik | **37 851** | **14 343** | +164 % |
+| Musik | 4 401 | 2 218 | +98 % |
+
+Beleg für die Verschachtelung: Mathematik Familie `CC_BY` = 27 351, exakt
+`CC_BY` = 3 848, exakt `CC_BY_SA` = 9 554 — die Familie fasst beide. Obendrein
+trägt sie die NC/ND-Datensätze, die gar kein OER sind. Eine EINZELNE Lizenz hatte
+denselben Defekt eine Nummer kleiner: Optik + CC BY meldete die 343 der Familie
+über einer Liste von 42.
+
+Die Zahl kommt jetzt aus einer Facetten-Aggregation, die EXAKTE Schlüssel
+serverseitig über die ganze Treffermenge zählt (`exactLicenseTotal`) — eine
+zusätzliche Anfrage, und nur wenn überhaupt nach Lizenz gefiltert wird. Die
+Eimer werden über `resolveVocab` zugeordnet, dieselbe Auflösung, die
+`filterByExactLicense` auf einen Datensatz anwendet. Das ist kein Detail: Staging
+führt `CC BY-SA` **mit Leerzeichen** als eigenen Schlüssel (Optik 6, Musik 1), und
+ein wörtlicher Vergleich zählte diese Datensätze als keines von beidem, während
+der Filter sie behält. Zähler und Liste gehorchen so einer Regel.
+
+Live nach der Korrektur, gegen eine unabhängig gerechnete Facette:
+
+| Anfrage | gemeldet | Gegenprobe | Differenz |
+|---|---|---|---|
+| Mathematik + OER | 14 343 | 14 343 | 0 |
+| Optik + OER | 280 | 274 + 6 (`CC BY-SA`) | 0 |
+| Musik + OER | 2 219 | 2 218 + 1 | 0 |
+| Optik + CC BY 4.0 | 42 | 42 | 0 |
+| Mathematik + CC BY-SA 4.0 | 9 554 | 9 554 | 0 |
+
+**Befund 2 — `search_wlo_within_collection` filterte das OER-Bündel überhaupt
+nicht.** Dieser Pfad prüft Filter LOKAL gegen die Kinder der Sammlung. Eine
+einzelne Lizenz kommt dort als Kriterium an und wird exakt verglichen; das Bündel
+liefert aber gar kein Kriterium (eine Lizenz-MENGE ist upstream nicht
+ausdrückbar), und eine eigene Exaktheitsprüfung fehlte. `license: "OER"` gab
+also alles zurück — CC BY-NC-ND eingeschlossen und Datensätze ganz ohne
+Lizenzangabe. Live nach der Korrektur: 44 → 42 (NC-ND, NC-SA fallen), 10 → 9
+(`COPYRIGHT_LICENSE` fällt).
+
+**Befund 3 — ein Totalausfall meldete „0 Treffer".** Scheiterten alle fünf
+Anfragen, war das Ergebnis leer und von „es gibt kein frei nachnutzbares Material
+zu diesem Thema" nicht zu unterscheiden. Eine fehlende Antwort wirft jetzt, wie
+in jedem anderen Suchpfad. Der Ausfall EINER Lizenz wird weiterhin getragen.
+
+Mit der Korrektur zu Befund 2 kam ein viertes Loch: die neue Lizenzprüfung kann
+das Sammlungs-Ergebnis für sich allein leeren, und der bestehende Hinweis hätte
+den Aufrufer dann eine Ebene tiefer geschickt, während das Material genau dort
+liegt — unter einer Lizenz, nach der er nicht gefragt hat. Der Pfad rendert jetzt
+denselben `licenseFilterNotice` wie die Suche (live: „5 von 7 geprüften Treffern
+… entfernt"). Bei einer EINZELNEN Lizenz feuert er dort nicht, und das ist
+richtig: das Kriterium ist auf diesem Pfad schon exakt, die zweite Prüfung
+verwirft nichts.
+
+Mit korrigiert: der sichtbare Hinweis behauptete, die Gesamtzahl nenne „alle
+Treffer der Suche". Die erste Neufassung sagte „serverseitig gezählt" — das war
+auf dem Sammlungs-Pfad wieder falsch, weil dort lokal über das geprüfte Fenster
+gezählt wird. Der Satz sagt jetzt nur, was auf beiden Pfaden gilt.
+
+**Belege:** volle Suite **1581/1581** (+7) · Typecheck Exit 0 · live gegen
+Staging vor und nach jeder der Korrekturen.
+
+
+## OAuth — T5.3 Review über den gesamten Diff (2026-08-09)
+
+Die letzte offene Aufgabe des OAuth-Plans, die keinen Client braucht. Geprüft:
+10 Module, ~1 230 Zeilen (`auth/oauth-authorize|codes|clients|metadata`,
+`auth/access-issue`, `rest/oauth-pages|consent|token|http`, `apps/tool-defaults`)
+plus die Einbindung in `http-app.ts` und die Einwilligungsseite, in drei
+Sitzungen à ≤ 400 Zeilen.
+
+**1 schwerer Befund, 2 Kleinigkeiten — alle behoben.**
+
+**[MAJOR] Ein Zugangsblock hatte keine Längengrenze, und der Code-Speicher hält
+ihn.** `decodeAccessToken` prüfte die Form, nicht die Größe. Gemessen: ein Block
+mit 1-MB-Füllfeld misst 1 333 836 Zeichen und **dekodiert** — `validatePayload`
+wirft das Zusatzfeld nur aus dem ERGEBNIS, die Zeichenkette behält der Aufrufer.
+`/oauth/authorize` legt sie in den Code-Speicher, der 1 000 Einträge begrenzt und
+deren Größe nicht; der Körper darf 4 MiB haben. Wer ein gültiges WLO-Konto hat,
+konnte damit bis zu 4 GB für 60 Sekunden binden. `MAX_BLOCK_CHARS = 4096` sitzt
+jetzt in `decodeAccessToken` — der einen Stelle, durch die Einfüge-Route,
+`Bearer`-Kopf und OAuth-Einwilligung alle gehen.
+
+Gegenprobe (rot-grün): Grenze entfernt → genau dieser Test fällt, die übrigen 13
+bleiben grün; Grenze zurück → 14/14. Maße: echter Block **573** Zeichen lokal,
+**605** gegen den öffentlichen Schlüssel der laufenden Instanz (RSA-2048).
+
+**[NIT] `/oauth/register` wurde per Ausschluss erreicht** — ein künftiger Eintrag
+in `ROUTES` ohne eigenen Zweig wäre stillschweigend zur Client-Registrierung
+geworden. Jetzt ein benannter Pfadvergleich, sonst `false`.
+
+**[NIT] Zwei Log-Stellen** nannten den WLO-Benutzernamen roh, vier andere durch
+`sanitizeText`. Kein Loch — der Logger kodiert mit `JSON.stringify` —, aber eine
+Regel, die an vier von sechs Stellen gilt, liest sich als optional.
+
+**Ausdrücklich geprüft und sauber:** PKCE-Pflicht in einer Fassung für GET und
+POST · keine Weiterleitung bei Ablehnung · zeichengenauer Rückleitungsvergleich
+mit dokumentierter Loopback-Lockerung (Userinfo auch beim Einlösen abgewiesen) ·
+Code vor jeder Prüfung entfernt · konstantzeitiger PKCE-Vergleich · `state`
+durchgereicht, „abwesend bleibt abwesend" · Herkunft nur aus
+`WLO_PUBLIC_BASE_URL`, aus `Host` nur unter `TRUST_PROXY` · kein Block, kein
+Code, kein Token in irgendeinem Log · Client-Name per `textContent` gesetzt,
+CSP `default-src 'none'` mit `form-action 'none'` · CORS-Ausnahme für
+`/oauth/authorize` samt belegter Begründung für die übrigen Pfade.
+
+**Zwei Beobachtungen, bewusst NICHT behoben** (nicht gemessen, also keine
+Befunde): die ganze OAuth-Fläche teilt den engen Eimer
+(`API_RATE_LIMIT_RPM` = 30/min je Adresse) mit `/api/*` und `/auth*`, wobei vier
+Anfragen je Anmeldung von der Client-Adresse kommen; und der auf der
+Einwilligungsseite gezeigte Client-Name ist bei offener Registrierung frei
+wählbar — die Seite nennt daneben die Ziel-Herkunft, was die übliche
+Gegenmaßnahme ist, und der Entwurf benennt das Restrisiko.
+
+**Belege:** volle Suite **1583/1583** (+2) · Typecheck Exit 0 · rot-grün für den
+schweren Befund einzeln nachgewiesen · Blockgröße gegen die laufende Instanz
+gemessen.
+
+
+## Die offengelassenen Beobachtungen abgearbeitet (2026-08-09)
+
+Beide Review-Runden hatten Punkte als „Beobachtung" oder „bekannte Grenze"
+stehen lassen. Auf Ansage der Betreiberin sind sie jetzt alle behoben — fünf
+Änderungen, jede mit einem vorab roten Test.
+
+1. **`search_wlo_all` filterte nach Lizenz, ohne es zu sagen.** Der dritte
+   Suchpfad mit `license`, und der letzte, der still verwarf. Die Hülle trägt
+   jetzt `content.licenseFilter {checked, kept}` (auch über REST), das Werkzeug
+   rendert denselben Hinweis wie die beiden anderen Pfade. Weder `count` (nach
+   der Ergebnisgrenze) noch `total` (Korpuszahl) konnte dafür einspringen.
+2. **Eine möglicherweise abgeschnittene Facette gilt nicht mehr als Gesamtzahl.**
+   `ngsearch` fragt höchstens `FACET_LIMIT` = 20 Eimer ab; eine volle Liste heißt
+   „vielleicht gekürzt", und eine Summe darüber untertreibt, während sie exakt
+   aussieht. Sie fällt jetzt zurück. Staging führt 16 Schlüssel, dort greift es
+   nicht — das ist eine Eigenschaft dieser Instanz, nicht des Formats, weshalb
+   die Grenze jetzt eine exportierte Konstante ist.
+3. **Blättern über das Bündel sagt, dass es keine Fortsetzung ist.** Derselbe
+   `skipCount` geht an alle fünf Schlüssel; Seite 2 ist „die zweite Seite jeder
+   Lizenz". Nicht behebbar (eine Rangfolge über fünf Ergebnismengen gibt das
+   Repository nicht her), also benannt — mit dem Verweis auf `excludeNodeIds`.
+4. **Die OAuth-Fläche gibt das Passwort-Budget nicht mehr für Maschinenverkehr
+   aus.** Vier Anfragen je Anmeldung (beide Discovery-Dokumente, Registrierung,
+   Token) kommen von der CLIENT-Adresse, und ein gehosteter Connector bedient
+   viele Nutzer aus wenigen Ausgangsadressen. Die laufen jetzt über dasselbe
+   Budget, das der MCP-Endpunkt demselben Client gibt; `/oauth/authorize` behält
+   den engen `/auth*`-Eimer, weil dort ein Passwort eingegeben wird.
+5. **Die Einwilligungsseite stellt die geprüfte Tatsache über die behauptete.**
+   Bei offener Registrierung ist `client_name` frei erfunden — die Seite führte
+   damit auf und listete das geprüfte Weiterleitungsziel als gleichwertige Zeile
+   darunter. Jetzt steht das Ziel zuerst und trägt die Hervorhebung, der Name ist
+   als Selbstauskunft ausgewiesen, und ein Satz sagt, welches von beiden zählt.
+
+Beim Umsetzen selbst gefunden und mit korrigiert: mein Skript hatte nur einen der
+beiden Rückgabezweige in `content-search.ts` umgeschrieben (die Zusicherung prüfte
+nur, dass sich *irgendetwas* geändert hatte) und in zwei `join('
+')` einen echten
+Zeilenumbruch erzeugt. Beides fiel im Testlauf auf, nicht in der Durchsicht.
+
+**Belege:** volle Suite **1591/1591** (+8) · Typecheck Exit 0 · Build Exit 0 ·
+gerenderte Einwilligungsseite gegengelesen (Ziel steht vor dem Namen).
+
+## Nachlese: was die Behebung selbst noch fand (2026-08-09)
+
+Nach den fünf Korrekturen eine Durchsicht der eigenen Änderungen und der
+Nutzer-Doku. Ergebnis: ein Fehler in meiner eigenen Korrektur, sechs veraltete
+Doku-Stellen, zwei veraltete Plan-Kästchen.
+
+**Code — ein Befund, behoben.** Der neue Blätter-Hinweis in `search_wlo_all` hing
+nicht an `want.has('content')`. Ein Aufruf mit `include: ['collections']` und
+gesetzter Lizenz hätte gemeldet, diese Seite sei „keine Fortsetzung" — über eine
+Inhaltssuche, die gar nicht lief. `license` berührt nur den Inhalts-Zweig, also
+schweigen jetzt beide Hinweise, wenn der nicht angefragt war.
+
+**Doku — sechs Stellen, alle aus der Lizenz-Arbeit von heute.**
+
+1. `/api/search` nimmt `license`, die dokumentierte Parameterliste nannte es
+   nicht (beide READMEs). Wer nur die Doku liest, konnte den Filter dort nicht
+   finden.
+2. `docs/TOOLS.md` führte den Lizenzfilter nur bei `search_wlo_content` — er
+   sitzt auch auf `search_wlo_all` (dem dokumentierten Standard-Einstieg) und
+   `search_wlo_within_collection`.
+3. „die fünf Filter" bei `search_wlo_all` sind sechs, seit `license` dazukam.
+4. Dasselbe bei `search_wlo_within_collection`.
+5. **Sachlich falsch, und älter als heute:** beide READMEs beschrieben
+   `search_wlo_within_collection` als Suche „auf einen Sammlungs-Teilbaum
+   begrenzt (via `virtual:primaryparent_nodeid`)" — genau das Kriterium, das das
+   Backend mit 400 beantwortet (live geprüft 2026-07-17, im Code dokumentiert).
+   Tatsächlich werden bis zu 100 direkte Kinder lokal geprüft. Die Doku
+   versprach einen Geltungsbereich, den es nicht gibt.
+6. Die Werkzeugtabellen beider READMEs trugen dieselbe Behauptung.
+
+Jede der drei Tatsachenaussagen, die ich dabei neu geschrieben habe, ist am
+Quelltext geprüft: `license` im REST-Filterlauf (`rest/handlers.ts`), `license`
+im Schema von `search_wlo_all`, `WITHIN_CHILDREN_MAX = 100` samt `truncated`.
+
+**Plan — zwei Kästchen standen offen, obwohl die Arbeit getan war.** „Dasselbe
+mit Claude" aus T1.6 ist am **2026-08-06 live gegen claude.ai gemessen** worden:
+MCP-Adresse eintragen genügt, der Client liest die Discovery-Dokumente
+unaufgefordert und startet OAuth. Der ganze dritte Ausgang der
+Zustimmungsseite ist aus dieser Messung entstanden — belegt in `STATUS.md` und
+`docs/AUTH.md`, nur nie in die Aufgabenliste und in den offenen Punkt 2 des
+Designs zurückgetragen. Beides jetzt geschlossen. Vom Claude-Punkt in T5.1
+bleibt genau eine Hälfte offen und sie ist jetzt benannt: eine Anmeldung mit
+echtem WLO-Konto **durch Claude**, mit Werkzeugliste, einem Schreibaufruf und
+dem Widerruf.
+
+**Belege:** volle Suite **1592/1592** (+1) · Typecheck Exit 0 · Build Exit 0.
+
+## Die Lizenz-Offenlegung fehlte auf beiden REST-Pfaden (2026-08-09)
+
+Die Regel „**jeder** Pfad, der `license` nimmt, legt seinen Exaktheits-Pass
+offen" steht seit heute früh in CLAUDE.md — und war am selben Tag auf zwei von
+fünf Pfaden verletzt. Gefunden, indem ich die Regel wörtlich genommen und die
+Pfade gezählt habe, statt sie für erledigt zu halten.
+
+Beide Fälle haben eine Ursache: **ein Feld im Umschlag ist keine Offenlegung,
+wenn der Renderer es fallen lässt.**
+
+**1. `GET /api/search?format=html` sagte nichts.** Die JSON-Ansicht legt über
+`content.licenseFilter` offen; die HTML-Ansicht rendert `content`,
+`collections`, `topicPages` und `warnings` — und keine der beiden Zahlen. Ein
+Filter, der jeden Kandidaten entfernt, erschien dort als schlichtes „Keine
+Treffer." Das ist genau der Fall, für den die Regel geschrieben wurde, und
+ausgerechnet auf dem sichtbarsten Pfad: `format=html` ist die Ansicht, die eine
+KI-Browsing-Pipeline überhaupt lesen kann (rohes JSON verwirft sie, live 2026-07-17).
+
+Die Seite trägt die Sätze jetzt über den vorhandenen `warnings`-Streifen —
+`licenseFilterNotice` und `licensePagingNotice`, dieselben, die die drei
+MCP-Werkzeuge ausgeben. Kein neuer Text, keine zweite Formulierung derselben
+Regel.
+
+Ein Detail, das beim Schreiben auffiel und mehr ist als Kosmetik: die Zahlen
+kommen aus dem **unprojizierten** Umschlag. `fields=…` läuft durch
+`projectEnvelope`, und eine Offenlegung, die verschwindet, sobald ein Client die
+Antwort kürzt, ist keine.
+
+**2. `GET /api/collection?q=…&license=…` gab nur sein `total` zurück** — und das
+ist bereits gefiltert, also von einer leeren Sammlung nicht zu unterscheiden.
+Jetzt derselbe Vertrag wie bei `/api/search`: `licenseFilter { checked, kept }`,
+gesetzt nur bei gesetztem Filter.
+
+**3. Derselbe falsche Mechanismus wie in den READMEs, diesmal im Code-Kommentar.**
+Über `handleCollection` stand „searches within the collection
+(primaryparent-scoped)" — `virtual:primaryparent_nodeid` beantwortet das Backend
+mit 400 (live 2026-07-17). Korrigiert auf das, was tatsächlich passiert.
+
+**Was der Test mich gelehrt hat, statt umgekehrt.** Mein erster Test für den
+Sammlungs-Pfad erwartete `checked: 2` bei `license=CC BY 4.0` und bekam `1`. Der
+Code hatte recht: eine **einzelne** Lizenz kommt als Kriterium an, und
+`nodeMatchesCriteria` matcht sie lokal bereits exakt — der Zusatzpass entfernt
+dort nichts. Er trägt beim **Bündel**, das kein Kriterium liefert; genau der
+Defekt von heute früh. Test korrigiert, Code unangetastet.
+
+**Nicht geändert und geprüft:** `search_wlo_within_collection` hat bewusst keinen
+Blätter-Hinweis. Es schneidet über *eine* lokal gefilterte Liste, seine
+Seitenaufteilung ist also eine echte Partition — anders als beim Fächer über fünf
+Schlüssel.
+
+**Doku:** beide READMEs beschrieben die Antwortform von `/api/search` und
+`/api/collection`, ohne `licenseFilter` je zu erwähnen — auch das ältere Feld
+nicht. Beide Zeilen ergänzt, in beiden Sprachen.
+
+**Belege:** volle Suite **1596/1596** (+4, beide neuen Paare vorab rot gesehen) ·
+Typecheck Exit 0 · Build Exit 0.
+
+**Ebenfalls korrigiert: zwei überholte Stellen im Protokoll.** Der P1-Abschnitt
+weiter oben trug noch den Stand *vor* der Fächerung — „das OER-Bündel schickt
+gar kein Kriterium und filtert vollständig lokal" und eine „bekannte Schwäche,
+offen", deren Behebung im Nachtrag darunter steht. Beides als überholt
+gekennzeichnet mit Verweis auf den Nachtrag; dasselbe in Punkt 3 von
+`2026-08-09-usecase-gap-tools.md`. Ein Protokoll darf einen alten Stand
+festhalten, aber nicht so, dass er sich wie der aktuelle liest.
+
+**Und ein Fehler in genau dieser Behebung, gefunden in der Selbstdurchsicht.**
+Auf der HTML-Seite rief ich `licensePagingNotice` ungefiltert auf — bei
+`include=collections&license=OER&skipCount=8` hätte sie gemeldet, diese Seite sei
+keine Fortsetzung, über eine Inhaltssuche, die nie lief. Das ist derselbe Fehler,
+den ich heute früh im Werkzeug behoben hatte, von mir auf dem REST-Pfad
+nachgebaut. Zweimal derselbe Fehler heißt: die Bedingung gehört nicht an jede
+Aufrufstelle.
+
+Deshalb trägt sie jetzt der Umschlag. `content.licenseFilter` entsteht nur, wenn
+eine Lizenz gesetzt war **und** der Inhalts-Zweig lief — vorher erschien es bei
+`include: ['collections']` als `{checked: 0, kept: 0}`, was sich liest wie ein
+Filter, der den Eimer geleert hat, statt wie eine Suche, die nicht stattfand.
+Seine Anwesenheit ist damit das einzige Tor, und Werkzeug wie HTML-Seite hängen
+beide daran; die `want.has('content')`-Prüfung im Werkzeug ist entfallen.
+
+**Der dritte Renderer, aus demselben Argument.** Wenn ein Feld im Umschlag keine
+Offenlegung ist, sobald der Renderer es fallen lässt, dann gilt das nicht nur für
+die HTML-Seite. Das Suchergebnis-Widget rendert denselben Umschlag und zeigte
+„Keine Treffer gefunden." — über Material, das es gibt, nur nicht unter dieser
+Lizenz. Der leere Zustand nennt den Grund jetzt samt Zahl der geprüften
+Kandidaten, in beiden Sprachen über die Zeichenketten-Tabelle des Widgets (`t()`
+kann nicht interpolieren, deshalb ist der Satz in zwei Schlüssel geteilt und die
+Zahl wird dazwischen komponiert).
+
+Bewusst nur der **geleerte** Fall: werden Treffer angezeigt, sieht die Person
+Material, und die genauen Zahlen stehen im Textblock des Werkzeugs. Der
+Erklärungssatz trägt volle Vordergrund-Kontrastfarbe statt des gedämpften Tons
+der Zeile darüber — er ist das Einzige auf diesem Bildschirm, das einen falschen
+Schluss verhindert.
+
+Damit sind alle drei Renderer desselben Umschlags gleich ehrlich: Werkzeug-Text,
+HTML-Seite, Widget.
+
+## Review vor dem Deploy: drei Befunde, zwei davon echt (2026-08-09)
+
+Eine strukturierte Durchsicht der heutigen Änderungen, bevor irgendetwas
+hochgeht. Ergebnis: 0 CRITICAL, 1 MAJOR, 2 MINOR — und einer der MINORs hielt der
+Nachprüfung nicht stand.
+
+**[MAJOR] `/api/collection` ignorierte ohne `q` jeden Filter.** Ein Aufruf ohne
+Suchbegriff ging an `listCollectionContents`, eine Funktion ohne Filterparameter.
+Gemessen vor der Behebung, drei Kinder und `license=OER`:
+
+```
+total: 3
+results: [ 'Offen', 'NC-ND', 'Ohne Lizenzangabe' ]
+licenseFilter: undefined
+```
+
+CC BY-NC-ND und ein Datensatz ohne jede Lizenzangabe als OER-Antwort, ohne
+Hinweis. Das MCP-Werkzeug daneben hatte diese Lücke nie — sein Schema sagt
+„Empty = all contents (filtered)", und `searchWithinCollection` behandelt eine
+leere Query als „alle Inhalte". Die Verzweigung fragt jetzt, ob es überhaupt
+etwas zu matchen gibt (`query || irgendein Filter`). Der Fall ohne beides bleibt
+beim schlichten Listen, denn das blättert upstream, während lokales Matchen eine
+begrenzte Seite Kinder liest.
+
+**Und die Folge daraus, die zur selben Änderung gehört:** durch die Korrektur
+laufen mehr Aufrufe über den 100er-Stichprobenpfad — die REST-Antwort sagte aber
+nirgends, dass sie eine Stichprobe ist. `truncated` und `collectionTotal` fahren
+jetzt mit, dieselbe Tatsache, die das Werkzeug als Satz ausgibt. Ein gefiltertes
+Ergebnis über einer 900-Elemente-Sammlung las sich sonst wie eine vollständige
+Antwort.
+
+**[MINOR] „All THREE paths" war seit heute früh falsch.** Der Doc-Kommentar an
+`licenseFilterNotice` ist die Stelle, an der jemand nachschlägt, wen eine
+Änderung mitziehen muss — und er unterschlug genau die zwei REST-Pfade, die
+morgens die Offenlegung fallen ließen. Jetzt fünf, benannt, mit dem Hinweis, dass
+die Zahl der Prüfpunkt ist.
+
+**[MINOR] zurückgewiesen — der Befund war überzogen.** Ich hatte gemeldet,
+`${lf.checked}` gehe im Widget ohne `escapeHtml` in den DOM. Stimmt, ist aber
+nicht ausnutzbar: die Bedingung darüber (`lf.checked > 0`) vergleicht numerisch,
+und `Number('<img …')` ist `NaN`. Gemessen über sieben Eingaben — jeder String
+mit Markup fällt durch, jeder der durchkommt ist eine Zahl. Also keine
+Verteidigung gegen einen unmöglichen Fall eingebaut. Stattdessen ein Test, der
+die stillschweigende Abhängigkeit festnagelt: wird die Bedingung je gelockert
+(etwa um wie die HTML-Seite auch gekürzte Ergebnisse zu erklären), fällt er,
+bevor die Eigenschaft leise verschwindet.
+
+**Sonst geprüft und in Ordnung** (damit „nichts gemeldet" nicht mit „nicht
+geprüft" verwechselt wird): der Label→Schlüssel-Rundlauf für alle fünf
+OER-Schlüssel inklusive der mit Leerzeichen geschriebenen `CC BY-SA`;
+`exactLicenseTotal` bekommt bei einer Einzellizenz korrekt die Kriterien mit
+Familienfilter; `/auth*` und `/oauth/authorize` teilen dieselbe Limiter-**Instanz**,
+nicht nur dieselbe Größe; `MAX_BLOCK_CHARS` greift transitiv auch auf dem
+OAuth-Pfad (`grantConsent` → `issueAccessBlock` → `verifyBlockLogin` →
+`decodeAccessToken`), kein Zweig stellt ohne Prüfung aus; `client_name` im Log
+ist bei der Registrierung bereits geflacht und gekappt. `npm audit --omit=dev`:
+0 Schwachstellen.
+
+## Die zwei zurückgestellten Themenseiten-Befunde abgearbeitet (2026-08-09)
+
+Beide standen als „Offen" im Protokoll, beide waren als Defekt beschrieben und
+als Aufwand zurückgestellt — keiner war eine Entwurfsfrage.
+
+**1. Der Platzhalter-Titel erreichte drei Ausgaben.** `cm:title` war als
+Rückfallwert ausgeschlossen, weil er auf 109 von 109 Produktions-Varianten
+`PAGE_VARIANT_<uuid>` trägt. Das Feld, dem wir vertrauten, trägt dieselbe
+Zeichenkette aber auf **22 von 68 Staging-Varianten**: eine Seite, die niemand
+umbenannt hat, behält sie auch in `cclom:title`. Ungefiltert lief das in
+`variantTitle` und von dort in die REST-Antwort, in `structuredContent` und in
+die Widget-Überschrift.
+
+Die genannte Blockade war „`isPlaceholderTitle` liegt in `tools/shared.ts` und
+darf von den tieferen Schichten nicht importiert werden". Genau dafür nennt
+`tests/shared-rule-discipline.test.ts` die Abhilfe wörtlich — „move the shared
+thing to a leaf module instead" —, und `mapPool` wie `buildFilterCriteria` sind
+denselben Weg schon gegangen. Die Regel liegt jetzt in `src/topic-page-title.ts`;
+`tools/shared.ts` re-exportiert sie, damit die Werkzeuge eine Importstelle
+behalten.
+
+Geprüft wird jetzt der **Wert**, nicht das Feld, an beiden Stellen, an denen er
+aus dem Repository kommt (`topic-page-structure.ts`, `topic-page-api.ts`) — leer
+statt Ersatz, weil jeder Aufrufer schon eine bessere Ausweichkette hat
+(Sammlungstitel, dann generisches Label).
+
+**Die dritte Stelle wog am schwersten und stand in keiner Notiz:** die
+Bestätigungs-Vorschau von `wlo_set_topic_page`. `titleOf` nahm `cclom:title`
+zuerst, also konnte der Satz, an den der Bestätigungs-Token bindet, die Variante
+als `PAGE_VARIANT_<uuid>` benennen — die Person sieht nichts Prüfbares. Jetzt
+überspringt `titleOf` Platzhalter, und `nameOf` gibt jedem Satz dieselbe
+Ausweichkette: echter Titel, sonst die id. Drei Sätze gingen vorher
+unterschiedliche Wege (einer hatte die Ausweiche, zwei nicht).
+
+**2. `search_wlo_topic_pages` reichte einen unauflösbaren Filter roh weiter.**
+Ein `educationalContext`, den `resolveVocab` nicht auflöst, wurde als Rohtext
+gegen URIs verglichen. Er traf nie — also überlebten nur die Varianten **ohne**
+Kontext, und nichts sagte es. Das ist die schlechtere Hälfte: still verengen ist
+nicht dasselbe wie ignorieren, und der vorhandene Hinweistext sagt „nicht erkannt
+und **ignoriert**".
+
+Der Wert wird jetzt verworfen und gemeldet, über `buildFilterCriteria` und
+`formatUnresolvedHint` — dieselbe Property, dieselbe „Meintest du?"-Quelle wie
+bei den fünf anderen Suchwerkzeugen. Kein Nachbau.
+
+**Und ein dritter Fund beim Beheben:** `_queryMeta.criteria` führte den
+verworfenen Filter weiter als angewandtes Kriterium. Der Kommentar direkt über
+`buildTopicPagesMeta` formuliert genau diese Regel und begründet sie mit einem
+nie abgeschickten `ngsearchword` — für `educationalContext` galt sie nicht. Die
+aufgelöste URI wird jetzt durchgereicht statt ein zweites Mal abgeleitet.
+
+**Was der Test mich lehrte, statt umgekehrt.** Mein erster roter Lauf hatte den
+falschen Grund: als unauflösbaren Wert hatte ich „Sekundarstufe 17" gewählt — der
+löst über den Fuzzy-Zweig auf `sekundarstufe_1` auf. Gemessen, Test auf
+„Quatschstufe" korrigiert, und danach die Behebung **vollständig** zurückgenommen,
+um beide Tests aus dem richtigen Grund rot zu sehen.
+
+**Belege:** volle Suite **1610/1610** (+11) · Typecheck Exit 0 · Build Exit 0.
+
+**Weiterhin offen und ohne mich nicht behebbar:** der Claude-Anmeldetest (braucht
+ein WLO-Konto vor einem Claude-Client); `wlo_register_usage` (App-Signatur, eine
+Betreiber-Entscheidung); die fünf Werkzeugbeschreibungen über 1024 Zeichen (nicht
+gemessen, ob ChatGPT das erzwingt — nicht auf Verdacht kürzen); und die
+Entwurfsfragen aus früheren Paketen (Datei-Upload per Base64, Variantenliste
+vollständig vs. Aufrufe, `ai_prompt`-Testdatensatz).
+
+## Zwei neue Dokumente für Team und Chatbot-Entwicklung (2026-08-09)
+
+**`docs/INTEGRATION.md`** — die Übergabe: alle 41 Werkzeuge gruppiert, jede von
+außen aufrufbare Adresse (MCP, 8 REST-Routen, 6 Nutzerseiten, 5 OAuth-Adressen,
+4 Zugangsblock-Endpunkte) und das Verhalten, an dem Integrationen scheitern.
+Dazu zwei Abschnitte, die die eigentliche Arbeit sind: „Was es bewusst nicht
+gibt" und eine Fehlersuche nach Symptom.
+
+**`docs/AUTH-CONCEPT.md`** — das Anmelde-Konzept: die drei geforderten
+Zugangsarten nebeneinander, die edu-sharing-Messung, aus der alles folgt, sieben
+Sicherheitsschichten, und ein Abgleich mit sechs Alternativen. Diese Lücke war
+echt: `AUTH.md` beschreibt den Mechanismus, das Entscheidungspapier von 2026-08-04
+ist Geschichte (seine offene Option A ist gebaut) — das *Warum* stand nirgends.
+
+Bewusst enthalten: was das Konzept **nicht** schützt, und die eine Alternative,
+die besser wäre als unsere (OIDC bei edu-sharing — eine organisatorische Anfrage,
+keine Code-Frage).
+
+### Nicht aufgezählt, sondern gemessen
+
+Die Werkzeugliste kommt aus einem gestarteten Server, jede Route aus dem echten
+Router. Das hat vier eigene Fehler gefunden, bevor sie jemand las: `/api/wikipedia`
+nimmt `q`, nicht `title` (400); `outputFormat` bieten **21** Werkzeuge, nicht 14
+(ich hatte *Dateien* gezählt); zwei Gruppenüberschriften trugen die falsche Zahl.
+Zum Schluss die Werkzeugnamen im Dokument gegen die Serverliste diffed:
+identisch, 41/41.
+
+### Was die Doku-Arbeit im Code fand
+
+**Fünf veraltete Zahlen.** `wlo_set_topic_page` kam als 14. Kurationswerkzeug
+dazu, ohne dass die Summen nachgezogen wurden: beide READMEs sagten „dreizehn",
+die deutsche zusätzlich „25 öffentliche Werkzeuge" (27), `docs/TOOLS.md` an vier
+Stellen „40 MCP-Tools" / „13 kuratierende". Das Werkzeug selbst war überall
+dokumentiert — nur die Arithmetik nicht.
+
+**Zwei Beschreibungen einer Architektur, die es nicht mehr gibt.** Beim Schreiben
+des Auth-Konzepts geprüft und durch einen gestarteten Server bestätigt:
+`createMcpServer` nimmt `{ issuer }`, keinen Write-Mode, und alle 14
+Kurationswerkzeuge stehen auch anonym in der Liste. `CLAUDE.md` und der
+Kopfkommentar von `services/write/credential-gate.ts` beschrieben beide noch den
+umgekehrten Entwurf — Registrierung nach Write-Mode, Schreibwerkzeuge nicht in
+`tools/list`. Das wurde am 2026-08-05 bewusst umgedreht; nur die Beschreibungen
+blieben zurück. Dass die Projekt-Verfassung selbst eine überholte Architektur
+beschreibt, ist der teuerste dieser Funde.
+
+**Ein falscher Kommentar zur Rumpf-Grenze.** `http-app.ts` nannte „default 1 MB";
+dort gibt es gar keinen Default — der Einstiegspunkt reicht `MAX_BODY_BYTES`
+durch, 4 MiB, was in jeder anderen Datei richtig steht.

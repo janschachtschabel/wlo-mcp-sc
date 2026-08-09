@@ -215,9 +215,9 @@ leichtesten kaputt macht.
 | # | Frage | Wie zu klären |
 |---|---|---|
 | 1 | ~~Findet ein Client OAuth ohne 401?~~ | **BEANTWORTET 2026-08-05: ja.** Gemessen an der produktiven Instanz — siehe unten. |
-| 2 | Akzeptiert Claude denselben Weg? Die Referenz sagt ja, aber dort antwortet `/mcp` immer 401. | Nach Paket 1 live probieren |
-| 3 | Welche Scopes erwartet ChatGPT? Die Felder „Basis-Scopes"/„Standard-Scopes" sind Pflichtfelder-artig. | Aus dem Experiment |
-| 4 | `expires_in` ohne Ablauf — verweigern Clients einen Token ohne Ablaufzeit? | Aus dem Experiment |
+| 2 | ~~Akzeptiert Claude denselben Weg?~~ | **BEANTWORTET 2026-08-06: ja.** Live gegen claude.ai: die MCP-Adresse allein genügt, der Client liest die Discovery-Dokumente unaufgefordert und startet OAuth (`STATUS.md`, `docs/AUTH.md`). Der anonyme dritte Ausgang der Zustimmungsseite ist aus dieser Messung entstanden. Nicht gemessen: eine Anmeldung mit echtem WLO-Konto **durch Claude** — das ist der Rest von T5.1. |
+| 3 | ~~Welche Scopes erwartet ChatGPT?~~ | **BEANTWORTET 2026-08-05 (nur ChatGPT): keine eigenen.** Der Ablauf lief mit dem einen angebotenen Scope `wlo` durch — `scopes_supported` im Metadatendokument, `scope: "wlo"` in der Token-Antwort, kein Feld von Hand gefüllt. |
+| 4 | ~~`expires_in` ohne Ablauf — verweigern Clients einen Token ohne Ablaufzeit?~~ | **BEANTWORTET 2026-08-05 (nur ChatGPT): nein.** Die Token-Antwort trägt kein `expires_in`; der Connector wurde ohne Fehler angelegt, die Anmeldung lief durch, die Werkzeuge standen zur Verfügung (Live-Lauf, `STATUS.md`). |
 
 **Punkt 1 ist ein Entscheidungspunkt, kein Detail.** Fällt er negativ aus,
 stehen nur zwei Wege offen: OAuth erzwingen (anonymes Lesen fällt) oder eine

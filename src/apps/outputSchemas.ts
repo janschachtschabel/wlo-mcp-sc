@@ -114,7 +114,17 @@ const topicPageResultSchema = formattedNodeSchema.extend({
 /** Mirrors `SearchAllEnvelope` (services/search.ts) — search_wlo_all. */
 export const searchAllEnvelopeSchema = z.object({
   query: z.string(),
-  content: z.object({ total: z.number(), count: z.number(), results: z.array(formattedNodeSchema) }),
+  content: z.object({
+    total: z.number(),
+    count: z.number(),
+    results: z.array(formattedNodeSchema),
+    /**
+     * Only when a licence was requested AND the content leg ran (`include`) —
+     * see `LicenseFilterCounts`. Its presence is the gate every renderer uses to
+     * decide whether to explain an empty or shortened result.
+     */
+    licenseFilter: z.object({ checked: z.number(), kept: z.number() }).optional(),
+  }),
   collections: z.object({ total: z.number(), count: z.number(), results: z.array(formattedNodeSchema) }),
   topicPages: z.object({ total: z.number(), count: z.number(), results: z.array(topicPageResultSchema) }),
   wikipedia: wikiSummarySchema.optional(),
@@ -164,6 +174,14 @@ export const searchKnowledgeSchema = z.object({
   results: z.array(z.object({ id: z.string(), title: z.string(), url: z.string() })),
 });
 
+/**
+ * `search` under `WLO_SEARCH_OUTPUT_MODE=rich` — the convention's `results`
+ * plus the whole `search_wlo_all` envelope, so the results widget renders from
+ * the identical shape it already knows. `results` stays exactly as above: the
+ * enrichment may only ADD keys beside it, never reshape it.
+ */
+export const searchKnowledgeRichSchema = searchKnowledgeSchema.merge(searchAllEnvelopeSchema);
+
 /** `fetch` → one full document (ChatGPT knowledge convention). */
 export const fetchDocumentSchema = z.object({
   id: z.string(),
@@ -179,3 +197,12 @@ export const fetchDocumentSchema = z.object({
     nodeType: z.string(),
   }).optional(),
 });
+
+/**
+ * `fetch` under `WLO_SEARCH_OUTPUT_MODE=rich` — the convention's document plus
+ * the node in the `nodeListSchema` shape that `get_node_details` renders with,
+ * so the second step of the search→fetch flow shows the same interface as the
+ * first. Measured 2026-08-09: the lean document drops 11 fields the detail tool
+ * carries, `previewUrl` (the preview image) and `downloadUrl` among them.
+ */
+export const fetchDocumentRichSchema = fetchDocumentSchema.merge(nodeListSchema);

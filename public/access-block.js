@@ -42,6 +42,23 @@ function pemToDer(pem) {
 }
 
 /**
+ * Fetch the key `encodeAccessBlock` encrypts against.
+ *
+ * Lives here rather than in each page because all three pages that ask for a
+ * password need it, and the third copy is where a difference starts to hide.
+ *
+ * @returns {Promise<string>} the server's public key, SPKI PEM
+ * @throws {Error} with German text the page shows verbatim
+ */
+export async function fetchPublicKey() {
+  const res = await fetch('/auth/public-key', { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error('Der Server bietet gerade keine Zugänge an. Bitte später erneut versuchen.');
+  const data = await res.json();
+  if (!data || typeof data.publicKey !== 'string') throw new Error('Der Server hat keinen Schlüssel geliefert.');
+  return data.publicKey;
+}
+
+/**
  * Encrypt one login into a block.
  *
  * @param {string} user   WLO user name

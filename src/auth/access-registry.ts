@@ -33,6 +33,19 @@ export interface AccessRegistry {
   has(jti: string): boolean;
   add(entry: RegistryEntry): Promise<void>;
   remove(jti: string): Promise<boolean>;
+  /**
+   * Drop every entry of one account and report how many went.
+   *
+   * The only revocation path available to someone who connected over OAuth:
+   * there the block goes to the client and the person never sees it, so an id
+   * they cannot read is an id they cannot revoke. The caller must have PROVEN
+   * the login first — see `access-revoke.ts`.
+   *
+   * Matching is exact. Whether edu-sharing treats `Jan` and `jan` as one login
+   * is unmeasured, and case-folding would be a convenience if they are the same
+   * account and a way to wipe a stranger's accesses if they are not.
+   */
+  removeByLabel(label: string): Promise<number>;
 }
 
 /** Bumped only if the on-disk shape changes; an unknown value fails closed. */
@@ -41,10 +54,12 @@ const FORMAT_VERSION = 1;
 /**
  * How many blocks one WLO account may have listed at a time.
  *
- * A bound is needed because nothing else ever removes an entry: revoking one
- * takes the ACCESS ID, and the only place that id exists is inside the block —
- * so a block someone fetched and lost stays valid for ever, and a working login
+ * A bound is needed because nothing removes an entry on its own: a working login
  * could otherwise add an entry per request to a file rewritten in full each time.
+ * Two revocation paths exist, and both need a person to act — `remove` takes the
+ * ACCESS ID, which only exists inside the block, and `removeByLabel` needs the
+ * account's password. A block someone fetched and forgot is listed until one of
+ * the two is used.
  *
  * Note what that says and what it does not. `remove` is keyed on `jti` alone,
  * and `/auth/revoke` accepts ANY block carrying it — the public key is published
@@ -230,6 +245,23 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
         return () => { entries.set(jti, previous); removed = false; };
       });
       return removed;
+    },
+    async removeByLabel(label) {
+      let count = 0;
+      await commit(() => {
+        const mine = [...entries.values()].filter((e) => e.label === label);
+        if (!mine.length) return null;
+        for (const e of mine) entries.delete(e.jti);
+        count = mine.length;
+        // Undo restores every entry AND the reported count, so a write that
+        // fails leaves the caller with "nothing was revoked" rather than a
+        // number for a change that never reached the file.
+        return () => {
+          for (const e of mine) entries.set(e.jti, e);
+          count = 0;
+        };
+      });
+      return count;
     },
   };
 }

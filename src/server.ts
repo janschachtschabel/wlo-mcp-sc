@@ -24,12 +24,13 @@ import { registerUrlTextTool } from './tools/url-text.js';
 import { registerKnowledgeTools } from './tools/knowledge.js';
 import { registerNodeRelationTools } from './tools/node-relations.js';
 import { registerCollectionStatsTool } from './tools/collection-stats.js';
-import { registerSkillsTool } from './tools/skills.js';
-import { WLO_SKILLS_COLLECTION_ID } from './wlo-api.js';
+import { registerSkillTools } from './tools/skills.js';
+import { WLO_SKILLS_COLLECTION_ID, WLO_SKILL_TOOL_MODE, WLO_SEARCH_OUTPUT_MODE } from './wlo-api.js';
 import { registerAuthTools } from './tools/auth.js';
 import { registerCurationContentTools } from './tools/curation-content.js';
 import { registerCurationCollectionTools } from './tools/curation-collections.js';
 import { registerCurationCompendiumTool } from './tools/curation-compendium.js';
+import { registerCurationTopicPageTool } from './tools/curation-topic-page.js';
 import { registerCurationDeleteTools } from './tools/curation-delete.js';
 import { registerCurationSuggestionTools } from './tools/curation-suggestions.js';
 import { registerCurationDecisionTool } from './tools/curation-decide.js';
@@ -98,13 +99,24 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // material by nodeId, one for an arbitrary URL. UNSAFE — registered by
   // default, removable with WLO_DISABLE_UNSAFE_TOOLS.
   registerUrlTextTool(server);          // get_url_text
-  registerKnowledgeTools(server);       // search, fetch (ChatGPT knowledge convention)
+  // search, fetch (ChatGPT knowledge convention). Under
+  // WLO_SEARCH_OUTPUT_MODE=rich, `search` also carries the search_wlo_all
+  // buckets and renders the same widget — see resolveSearchOutputMode for why
+  // that is off by default.
+  registerKnowledgeTools(server, {
+    mode: WLO_SEARCH_OUTPUT_MODE,
+    widgetUri: widgets['search-results'],
+  });
   registerPublisherTool(server);        // lookup_wlo_publishers
   registerNodeRelationTools(server, widgets['search-results']); // get_related_content (W1), get_node_breadcrumb
   registerCollectionStatsTool(server);  // get_collection_stats
-  // Only when a skills collection is configured: unconfigured, every call failed
-  // with an operator-facing message a model cannot act on.
-  if (WLO_SKILLS_COLLECTION_ID) registerSkillsTool(server, WLO_SKILLS_COLLECTION_ID); // find_wlo_skills
+  // Registered unconditionally: the skill search no longer NEEDS a configured
+  // collection — without one it filters the whole repository by the `ai_prompt`
+  // content type. `WLO_SKILLS_COLLECTION_ID` narrows it to a subtree when set.
+  registerSkillTools(server, {                 // search_skill + get_skill, or get_skill_for_task
+    collectionId: WLO_SKILLS_COLLECTION_ID,
+    mode: WLO_SKILL_TOOL_MODE,
+  });
   registerAuthTools(server);            // wlo_auth_status
 
   // Curation tools are registered ALWAYS, including for a caller with no
@@ -123,6 +135,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerCurationContentTools(server, challenge);    // wlo_update_content, wlo_create_content, wlo_submit_content
   registerCurationCollectionTools(server, challenge); // create/rename collection, add/remove material
   registerCurationCompendiumTool(server, challenge);  // wlo_update_compendium
+  registerCurationTopicPageTool(server, challenge);   // wlo_set_topic_page — the one whose result is immediately public
   registerCurationSuggestionTools(server, challenge); // wlo_suggest_metadata, wlo_list_suggestions — proposals only
   registerCurationDecisionTool(server, challenge);    // wlo_decide_suggestion — the one that applies a proposal
   // Deleting comes last, so the destructive pair sits at the end of the list

@@ -21,12 +21,25 @@
     <!-- Both values are filled in by the script from data this server checked.
          Never from the query string: the point of the screen is to say what was
          recognised, not to repeat back what the caller wrote. -->
+    <!-- The destination comes FIRST and the name second, and that order is the
+         security argument of this card: registration is open (RFC 7591), so the
+         name is whatever the caller typed — "WirLernenOnline offiziell" is
+         available to anyone. The destination is the part this server checked
+         against the registration, and it is the only value on screen that can
+         contradict the name. -->
     <dl class="who" aria-labelledby="who-heading">
-      <dt>Programm</dt>
+      <dt>Dein Zugang wird hierhin gesendet</dt>
+      <!-- The id sits on the <strong>, not the <dd>: the script fills it with
+           textContent, which would otherwise replace the emphasis with plain
+           text the moment the real value arrives. -->
+      <dd class="mono"><strong id="redirect-origin">wird geprüft …</strong></dd>
+      <dt>Selbst angegebener Name des Programms</dt>
       <dd id="client-name" dir="auto">wird geprüft …</dd>
-      <dt>Weiterleitung nach der Anmeldung</dt>
-      <dd id="redirect-origin" class="mono">wird geprüft …</dd>
     </dl>
+    <p class="hint">
+      Den Namen wählt das Programm selbst — <strong>maßgeblich ist die Adresse oben</strong>.
+      Erlaube den Zugriff nur, wenn du sie erkennst.
+    </p>
     <p class="hint">
       Das Programm kann danach in deinem Namen suchen und — soweit dein Konto es
       erlaubt — Inhalte bearbeiten. Du kannst den Zugang jederzeit auf

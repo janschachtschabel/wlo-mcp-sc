@@ -96,8 +96,9 @@ test('the CORS policy does not invite a browser to relay credentials here', asyn
 /**
  * The same reasoning one endpoint further, where dropping a header is not enough.
  *
- * `/auth/issue` is the only endpoint here that CHECKS a WLO password, and the
- * guard against using it to guess one counts distinct logins per client ADDRESS.
+ * `/auth/issue` and `/auth/revoke-all` are the endpoints here that CHECK a WLO
+ * password, and the guard against using them to guess one counts distinct logins
+ * per client ADDRESS.
  * A wildcard `Access-Control-Allow-Origin` hands an attacker every visitor's
  * address: a page spends each visitor's quota on a different guess and — because
  * `*` also makes the RESPONSE readable — learns which guess worked. The credential
@@ -110,7 +111,7 @@ test('the CORS policy does not invite a browser to relay credentials here', asyn
 test('the access-block surface is not offered to cross-origin pages', async () => {
   const { server, base } = await startServer();
   try {
-    for (const path of ['/auth/issue', '/auth/revoke', '/auth/public-key']) {
+    for (const path of ['/auth/issue', '/auth/revoke', '/auth/revoke-all', '/auth/public-key']) {
       const pre = await fetch(`${base}${path}`, { method: 'OPTIONS' });
       assert.equal(pre.headers.get('access-control-allow-origin'), null, `${path} preflight`);
       const r = await fetch(`${base}${path}`, { method: 'POST' });

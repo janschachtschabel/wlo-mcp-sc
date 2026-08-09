@@ -30,6 +30,14 @@ export interface NodeList {
   total: number;
   count: number;
   results: WidgetNode[];
+  /**
+   * Present only on the `content` bucket, and only when a licence was filtered
+   * AND that search actually ran. `total` counts records with exactly the
+   * licence; `count` is post-cap — neither can say that a pass removed
+   * candidates, which is what turns an empty grid from "nothing exists" into
+   * "nothing under this licence".
+   */
+  licenseFilter?: { checked: number; kept: number };
 }
 
 export interface WikiSummary {

@@ -151,12 +151,80 @@ export const WLO_ROOT_COLLECTION_ID: string = (() => {
 })();
 
 /**
- * Optional nodeId of the WLO collection that holds the launcher "skills"
- * (uploaded Markdown instruction files, delivered via each node's anonymous
- * `downloadUrl`). When set, `GET /api/collection` with no `nodeId` defaults to
- * it. Empty (unset) → callers must pass an explicit `nodeId`.
+ * Optional nodeId of the WLO collection that holds ALL skillsets (each a
+ * sub-collection, each holding the skill records whose attached file is the
+ * SKILL.md). When set, the skill search walks that subtree; unset, it searches
+ * the whole repository for records of the `ai_prompt` content type. It also
+ * makes `GET /api/collection` without a `nodeId` default to this collection.
+ *
+ * The subtree walk is not an optimisation but the only mechanism available:
+ * `virtual:parent_recursive` is refused by `ngsearch` with 400
+ * `DAOValidationException` (measured 2026-08-08 on both instances), so a
+ * collection-scoped query cannot be expressed at all.
  */
 export const WLO_SKILLS_COLLECTION_ID: string = (process.env['WLO_SKILLS_COLLECTION_ID'] ?? '').trim();
+
+/**
+ * Which skill tool surface is registered:
+ *
+ *   `two-tool` (default) — `search_skill` returns a catalogue, `get_skill`
+ *       loads the one the model picked. The model sees what it is choosing
+ *       between, and a wrong pick costs one extra call.
+ *   `one-tool` — `get_skill_for_task` ranks and loads the top match itself.
+ *       Fewer round-trips, but the choice is invisible to the caller.
+ *
+ * An unrecognised value keeps the default and warns: silently registering a
+ * different tool surface than the operator asked for would show up as a missing
+ * tool with nothing to explain it. Override via ``WLO_SKILL_TOOL_MODE``.
+ */
+export function resolveSkillToolMode(raw: string | undefined): 'two-tool' | 'one-tool' {
+  const s = (raw ?? '').trim().toLowerCase();
+  if (s === 'one-tool' || s === 'two-tool') return s;
+  if (s) {
+    log.warn('WLO_SKILL_TOOL_MODE is not a known value — using the default', {
+      value: s, accepted: ['two-tool', 'one-tool'], fallback: 'two-tool',
+    });
+  }
+  return 'two-tool';
+}
+
+export const WLO_SKILL_TOOL_MODE: 'two-tool' | 'one-tool' =
+  resolveSkillToolMode(process.env['WLO_SKILL_TOOL_MODE']);
+
+/**
+ * How much `search` (the ChatGPT knowledge-convention tool) puts in its answer:
+ *
+ *   `lean` (default) — the convention's minimum: `{results:[{id,title,url}]}`,
+ *       no widget. What the convention documents, and the only shape that has
+ *       been seen to work in Deep Research.
+ *   `rich` — the same payload PLUS the `search_wlo_all` buckets
+ *       (content/collections/topicPages with full metadata) and the results
+ *       widget, so a host that picks `search` over `search_wlo_all` no longer
+ *       falls back to three fields and no interface.
+ *
+ * The default is `lean` on purpose. `search` takes a single `query` string by
+ * convention (developers.openai.com/api/docs/mcp), so the buckets are the only
+ * part of `search_wlo_all` that can be copied at all — and whether a connector
+ * accepts sibling keys next to `results` is NOT measured. A third-party report
+ * describes connectors dropping "any or all items" that do not match the
+ * expected shape, which would make `search` return nothing in Deep Research
+ * without any error to see. Turning `rich` on is therefore a deliberate act,
+ * reversible by an env change rather than a deploy. Override via
+ * ``WLO_SEARCH_OUTPUT_MODE``.
+ */
+export function resolveSearchOutputMode(raw: string | undefined): 'lean' | 'rich' {
+  const s = (raw ?? '').trim().toLowerCase();
+  if (s === 'lean' || s === 'rich') return s;
+  if (s) {
+    log.warn('WLO_SEARCH_OUTPUT_MODE is not a known value — using the default', {
+      value: s, accepted: ['lean', 'rich'], fallback: 'lean',
+    });
+  }
+  return 'lean';
+}
+
+export const WLO_SEARCH_OUTPUT_MODE: 'lean' | 'rich' =
+  resolveSearchOutputMode(process.env['WLO_SEARCH_OUTPUT_MODE']);
 
 /**
  * nodeId of the shared inbox new records land in when the server writes under

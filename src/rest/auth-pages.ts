@@ -4,20 +4,23 @@
  *   GET  /auth/public-key  → the key the page encrypts with
  *   POST /auth/issue       → verify a block's login, then list its id
  *   POST /auth/revoke      → strike an id from the list
+ *   POST /auth/revoke-all  → verify a login, then strike every id of that account
  *
- * `/auth/issue` is the one endpoint on this server that checks a password, which
- * makes it a guessing oracle with our address as the origin. It therefore passes
- * BOTH limiters: requests per address, and distinct logins per address.
+ * `/auth/issue` and `/auth/revoke-all` are the endpoints on this server that
+ * check a password, which makes each a guessing oracle with our address as the
+ * origin. They therefore pass BOTH limiters: requests per address, and distinct
+ * logins per address.
  *
- * Issuance itself lives in `auth/access-issue.ts` — decode, limit, verify the
- * login at the AUTHORITY (not the status code), list the id. It was moved there
- * when `/oauth/authorize` needed the identical step; this module keeps the HTTP
- * shape around it, including the `Retry-After` the 429 carries.
+ * The work itself lives in `auth/` — `access-verify.ts` decodes, limits and
+ * verifies the login at the AUTHORITY (not the status code), `access-issue.ts`
+ * and `access-revoke.ts` each add their one step. This module keeps the HTTP
+ * shape around them, including the `Retry-After` the 429 carries.
  *
  * Returns `false` for a path it does not own so the caller falls through.
  */
 
 import { issueAccessBlock } from '../auth/access-issue.js';
+import { revokeAllForBlock } from '../auth/access-revoke.js';
 import { decodeAccessToken } from '../auth/access-token.js';
 import { currentAccessSupport } from '../auth/credential.js';
 import { log } from '../logger.js';
@@ -56,6 +59,7 @@ const ROUTES: Record<string, 'GET' | 'POST'> = {
   '/auth/public-key': 'GET',
   '/auth/issue': 'POST',
   '/auth/revoke': 'POST',
+  '/auth/revoke-all': 'POST',
 };
 
 function send(res: AuthRes, status: number, body: unknown): true {
@@ -181,18 +185,29 @@ async function route(
     return send(res, 200, { revoked });
   }
 
-  const outcome = await issueAccessBlock(
-    token,
-    { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
-    Date.now(),
-  );
-  if (!outcome.ok) {
-    if (outcome.status === 429) {
-      res.writeHead(429, { ...JSON_HEADERS, 'Retry-After': '600' });
-      res.end(JSON.stringify({ error: outcome.error }));
-      return true;
-    }
-    return send(res, 400, { error: outcome.error });
+  // Both remaining paths check a password, so both share the failure shape —
+  // including the ten-minute `Retry-After`, which belongs to the distinct-login
+  // limiter's window and not to the per-request one above.
+  const verifyDeps = { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support };
+  const now = Date.now();
+
+  if (parsed.pathname === '/auth/revoke-all') {
+    const outcome = await revokeAllForBlock(token, verifyDeps, now);
+    if (!outcome.ok) return sendFailure(res, outcome);
+    return send(res, 200, { revoked: outcome.revoked });
   }
+
+  const outcome = await issueAccessBlock(token, verifyDeps, now);
+  if (!outcome.ok) return sendFailure(res, outcome);
   return send(res, 200, { ok: true, label: outcome.label });
+}
+
+/** The 400/429 answer both password-checking endpoints give. */
+function sendFailure(res: AuthRes, outcome: { status: 400 | 429; error: string }): true {
+  if (outcome.status === 429) {
+    res.writeHead(429, { ...JSON_HEADERS, 'Retry-After': '600' });
+    res.end(JSON.stringify({ error: outcome.error }));
+    return true;
+  }
+  return send(res, 400, { error: outcome.error });
 }

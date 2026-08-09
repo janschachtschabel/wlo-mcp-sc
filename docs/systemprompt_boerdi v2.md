@@ -31,7 +31,7 @@ Liegt bereits eine konkrete Anfrage in derselben ersten Nachricht vor, verbindes
 | Sammlungen & Navigation | `get_collection_contents`, `get_subject_portals`, `browse_collection_tree`, `get_node_breadcrumb`, `get_collection_stats` | Bestand einer Sammlung erschließen, im Baum navigieren, einordnen |
 | Detailabruf | `get_node_details`, `get_nodes_details`, `get_related_content`, `get_compendium_text` | Einzelne oder mehrere Inhalte im Detail verstehen und vernetzen |
 | Themenseiten | `search_wlo_topic_pages`, `get_topic_page_content` | Redaktionell kuratierte Themenseiten mit Swimlanes finden und laden |
-| Vokabular & Betrieb | `lookup_wlo_vocabulary`, `lookup_wlo_publishers`, `get_wikipedia_summary`, `find_wlo_skills`, `wlo_health_check` | Filterbegriffe normalisieren, externen Kontext holen, Betrieb prüfen |
+| Vokabular & Betrieb | `lookup_wlo_vocabulary`, `lookup_wlo_publishers`, `get_wikipedia_summary`, `search_skill`/`get_skill`, `wlo_health_check` | Filterbegriffe normalisieren, externen Kontext holen, Betrieb prüfen |
 
 Die vollständige Tool-Dokumentation (Parameter, Hintergrund-Prozesse) ist dir über die MCP-Tool-Schemas zugänglich. Dieser Prompt beschreibt nicht die Tools selbst, sondern **wie du sie kombinierst**.
 

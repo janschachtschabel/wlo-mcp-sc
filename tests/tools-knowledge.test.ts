@@ -30,6 +30,32 @@ test('search returns {results:[{id,title,url}]} and duplicates the JSON in conte
   } finally { await client.close(); mock.restore(); }
 });
 
+test('search cites a topic page by its topic-page URL, not the render URL', async () => {
+  // Live check 2026-08-09 (staging): the topic page "Wellenoptik" came back from
+  // `search` as .../components/render/<id>. formatNode fills `url` from
+  // node.content.url for a collection node, so `url || topicPageUrl` never
+  // reached the second branch. The mock reproduces that populated content.url —
+  // without it the bug is invisible, because an empty `url` falls through.
+  const topicPage = {
+    ...makeNode('tp1', 'Wellenoptik', { 'ccm:page_config_ref': ['pc1'] }),
+    type: 'ccm:map',
+    content: { url: 'https://repo.example/edu-sharing/components/render/tp1' },
+  };
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) return { json: { nodes: [topicPage] } };
+    if (url.includes('/collections')) return { json: { nodes: [] } };
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'search', arguments: { query: 'Wellenoptik' } });
+    const sc = result.structuredContent as { results: Array<{ id: string; url: string }> };
+    const hit = sc.results.find(r => r.id === 'tp1');
+    assert.ok(hit, 'the topic page is among the results');
+    assert.match(hit!.url, /\/components\/topic-pages\?collectionId=tp1$/, 'cites the topic page itself');
+  } finally { await client.close(); mock.restore(); }
+});
+
 test('fetch returns {id,title,text,url,metadata} and duplicates the JSON in content[0].text', async () => {
   const mock = installFetchMock((url) => {
     if (url.includes('/textContent')) return { json: { content: 'Voller Dokumenttext.' } };
@@ -47,6 +73,26 @@ test('fetch returns {id,title,text,url,metadata} and duplicates the JSON in cont
     assert.ok(sc.metadata, 'metadata present');
     const text = (result.content as Array<{ text: string }>)[0].text;
     assert.deepEqual(JSON.parse(text), sc);
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('fetch cites a topic page by its topic-page URL, not the render URL', async () => {
+  // Same fallback chain as `search`, same defect — see the note there.
+  const topicPage = {
+    ...makeNode('tp1', 'Wellenoptik', { 'ccm:page_config_ref': ['pc1'] }),
+    type: 'ccm:map',
+    content: { url: 'https://repo.example/edu-sharing/components/render/tp1' },
+  };
+  const mock = installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { content: 'Wellenoptik beschreibt …' } };
+    if (url.includes('/metadata')) return { json: { node: topicPage } };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'fetch', arguments: { id: 'tp1' } });
+    const sc = result.structuredContent as { url: string };
+    assert.match(sc.url, /\/components\/topic-pages\?collectionId=tp1$/, 'cites the topic page itself');
   } finally { await client.close(); mock.restore(); }
 });
 

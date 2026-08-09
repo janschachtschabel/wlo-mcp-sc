@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import {
+  MAX_BLOCK_CHARS,
   decodeAccessToken,
   encodeAccessToken,
   loadAuthKeys,
@@ -160,4 +161,31 @@ test('issuing always uses the current key, never the previous one', () => {
   // alone — otherwise closing the window would strand blocks issued today.
   const token = encodeAccessToken(payload, during.publicKeyPem);
   assert.deepEqual(decodeAccessToken(token, onlyCurrent), payload);
+});
+
+test('a block far larger than any real one is refused before it is decrypted', () => {
+  // Measured 2026-08-09: a real block is 573 characters, and one carrying a 1 MB
+  // junk field inside its payload is 1 333 836 — and it DECODES. `validatePayload`
+  // drops the junk from the returned object, but the caller keeps the string:
+  // `/oauth/authorize` stores it in the authorization-code store, which bounds
+  // the NUMBER of records (1 000) and not their size. With MAX_BODY_BYTES at
+  // 4 MiB that is up to 4 GB held for the code's lifetime, reachable by anyone
+  // holding one valid WLO account. The bound belongs here because this is the
+  // one place every path decodes a block.
+  const keys = keysOf(KEY_A);
+  const padded = encodeAccessToken(
+    { ...payload, junk: 'x'.repeat(1_000_000) } as AccessPayload & { junk: string },
+    keys.publicKeyPem,
+  );
+  assert.ok(padded.length > MAX_BLOCK_CHARS, 'the padded block is over the bound');
+  assert.equal(decodeAccessToken(padded, keys), null, 'an oversized block never decodes');
+});
+
+test('the bound leaves a real block room to grow', () => {
+  // 573 characters today with an RSA-2048 key; an RSA-4096 one adds ~340. The
+  // bound must not be the thing that breaks a key rotation.
+  const keys = keysOf(KEY_A);
+  const real = encodeAccessToken(payload, keys.publicKeyPem);
+  assert.ok(real.length < MAX_BLOCK_CHARS / 4, `a real block is ${real.length} characters`);
+  assert.ok(decodeAccessToken(real, keys), 'and it still decodes');
 });

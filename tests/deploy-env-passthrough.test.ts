@@ -7,9 +7,10 @@
  * into the container. Measured 2026-08-03 with `docker compose --env-file … config`:
  * `WLO_SKILLS_COLLECTION_ID`, `WLO_ALLOW_SERVICE_WRITES` and
  * `WLO_TEXT_EXTRACTION_URL` were all set in the env file and NONE of them
- * reached the service environment. Those three gate `find_wlo_skills`, all 13
- * curation tools, and text extraction respectively — an operator sets them,
- * restarts, and the capability is still missing with nothing logged to say why.
+ * reached the service environment. Those three scope the skill search, gate all
+ * 13 curation tools, and enable text extraction respectively — an operator sets
+ * them, restarts, and the capability is still missing with nothing logged to say
+ * why.
  *
  * A setting is only real if the deployment carries it, so this test pins the
  * two files to each other: everything `.env.example` documents is either

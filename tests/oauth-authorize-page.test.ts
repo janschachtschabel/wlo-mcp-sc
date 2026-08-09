@@ -150,3 +150,19 @@ test('the page posts every field the endpoint requires', async () => {
   assert.equal(checked.ok, true,
     `the page does not post everything the endpoint checks: ${checked.ok ? '' : checked.error}`);
 });
+
+test('the verified destination outranks the self-chosen name', () => {
+  // Registration is open by design (RFC 7591, and the MCP specification expects
+  // it), so `client_name` is whatever the caller typed — a phishing client can
+  // call itself "WirLernenOnline offiziell". The destination is the part this
+  // server checked against the registration, and it is the only thing on the
+  // screen that can contradict the name. Listing them as two equal rows with the
+  // invented one first puts the reassuring lie where the eye lands.
+  const nameAt = html.indexOf('id="client-name"');
+  const originAt = html.indexOf('id="redirect-origin"');
+  assert.ok(nameAt > 0 && originAt > 0, 'both values are on the page');
+  assert.ok(originAt < nameAt, 'the destination is presented before the name');
+  // And the name is labelled as the caller's own claim, not as a fact.
+  assert.match(html, /selbst angegeben/i,
+    'the page says the name is self-declared, so it is not read as verified');
+});

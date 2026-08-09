@@ -14,26 +14,90 @@ import { formatNode } from '../formatter.js';
 import { searchAll } from '../services/search.js';
 import { registerWloTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
-import { searchKnowledgeSchema, fetchDocumentSchema } from '../apps/outputSchemas.js';
+import {
+  searchKnowledgeSchema, searchKnowledgeRichSchema,
+  fetchDocumentSchema, fetchDocumentRichSchema,
+} from '../apps/outputSchemas.js';
 import { nodeLookupMiss, toolError } from './shared.js';
 
 /** Cap the fetched document text so a single result cannot flood the context. */
 const FETCH_TEXT_CAP = 10000;
 
-export function registerKnowledgeTools(server: McpServer): void {
+/**
+ * How many content hits `search` asks for. Higher than `search_wlo_all`'s
+ * default of 8 on purpose: this tool cannot narrow anything (one `query`
+ * parameter, no filters, no paging), so the only way it reaches a usable hit is
+ * a slightly wider first page.
+ */
+const SEARCH_MAX_CONTENT = 10;
+const SEARCH_MAX_COLLECTIONS = 5;
+
+/**
+ * Drop the inline compendium text from a rich `search` answer.
+ *
+ * On `search_wlo_all` the compendium is opt-in (`includeCompendium`, default
+ * off), but the search projection carries it inline anyway, so it arrives
+ * unasked. `search` has a single `query` parameter and can never opt in — and
+ * the convention makes us send the payload TWICE (`content[0].text` and
+ * `structuredContent`), which doubles it. Measured on staging 2026-08-09 for
+ * "Klimawandel": 61 742 of 93 583 characters, 66 % of the answer. No widget
+ * reads the field. Whoever wants the text has `get_compendium_text`.
+ */
+function stripCompendium<T extends { compendiumText?: string }>(nodes: T[]): T[] {
+  return nodes.map(({ compendiumText: _dropped, ...rest }) => rest as T);
+}
+
+/**
+ * The two `search` descriptions. Both close on the SAME delimiting sentence,
+ * because the boundary against `search_wlo_all` is not how much comes back — in
+ * rich mode that is identical — but that this tool takes a single `query` by
+ * convention and therefore cannot narrow anything.
+ */
+const SEARCH_DELIMITATION = `NIMM search_wlo_all, SOBALD DIE ANFRAGE ETWAS EINGRENZT — ein Fach ("Biologie"), eine Stufe ("Klasse 7", "Sekundarstufe I"), einen Materialtyp ("nur Videos"), einen Anbieter, oder wenn weitere Treffer nachgeladen werden sollen. Dieses Werkzeug nimmt konventionsbedingt NUR einen Suchbegriff und hat für all das keinen Parameter; es würde die Einschränkung stillschweigend ignorieren.`;
+
+/** What `search` is when it returns three fields per hit. */
+const SEARCH_DESCRIPTION_LEAN = `Belegstellen-Suche in WirLernenOnline (WLO) nach Unterrichtsmaterial — Video, Arbeitsblatt, Übung. Minimaler Einstieg nach der ChatGPT-Knowledge-Konvention: liefert je Treffer NUR {id, title, url}, danach fetch mit einer id für den Volltext. Gedacht für Zitate und Quellenangaben, meist modell-intern.
+Liefert weder Vorschaubild, Lizenz, Fach und Stufe noch Sammlungen oder Themenseiten und kann die WLO-Oberfläche nicht anzeigen. ${SEARCH_DELIMITATION}`;
+
+/** Same tool with the buckets and the widget — only the "delivers less" half drops. */
+const SEARCH_DESCRIPTION_RICH = `Belegstellen-Suche in WirLernenOnline (WLO) nach Unterrichtsmaterial — Video, Arbeitsblatt, Übung. Nach der ChatGPT-Knowledge-Konvention: je Treffer {id, title, url} für Zitate, danach fetch mit einer id für den Volltext. Liefert zusätzlich dieselben Töpfe wie search_wlo_all (content/collections/topicPages mit Vorschaubild, Lizenz, Fach, Stufe) und zeigt die WLO-Oberfläche an.
+${SEARCH_DELIMITATION}`;
+
+/** `fetch`, lean: the convention document, nothing rendered. */
+const FETCH_DESCRIPTION_LEAN = `Fetch one WLO node by its id and return the full document ({id, title, text, url, metadata}) for retrieval-augmented answers (the ChatGPT knowledge convention). Obtain ids from search first.
+Carries fewer fields than get_node_details — no preview image, no download link, no keywords — and renders no interface. For compact metadata of MANY nodes use get_nodes_details.`;
+
+/** `fetch`, rich: same document plus the node the results widget renders. */
+const FETCH_DESCRIPTION_RICH = `Fetch one WLO node by its id and return the full document ({id, title, text, url, metadata}) for retrieval-augmented answers (the ChatGPT knowledge convention). Obtain ids from search first. Also returns the complete record (preview image, download link, licence, subject, level) and renders the WLO detail view.
+For compact metadata of MANY nodes use get_nodes_details.`;
+
+export interface KnowledgeToolOptions {
+  /** `lean` = the convention's minimum (default), `rich` = plus buckets + widget. */
+  mode?: 'lean' | 'rich';
+  /** `ui://…` results widget; attached in rich mode only (lean has nothing to render). */
+  widgetUri?: string;
+}
+
+export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOptions = {}): void {
+  const rich = opts.mode === 'rich';
   registerWloTool(server, {
     name: 'search',
     title: 'Search WLO',
-    description: `Belegstellen-Suche in WirLernenOnline (WLO) nach Unterrichtsmaterial — Video, Arbeitsblatt, Übung. Minimaler Einstieg nach der ChatGPT-Knowledge-Konvention: liefert je Treffer NUR {id, title, url}, danach fetch mit einer id für den Volltext. Gedacht für Zitate und Quellenangaben, meist modell-intern.
-FÜR EINE NUTZERANFRAGE NACH MATERIAL NIMM search_wlo_all: dieses Werkzeug liefert weder Vorschaubild, Lizenz, Fach und Stufe noch Sammlungen oder Themenseiten und kann die WLO-Oberfläche nicht anzeigen.`,
+    description: rich ? SEARCH_DESCRIPTION_RICH : SEARCH_DESCRIPTION_LEAN,
     inputSchema: {
       query: z.string().min(1).max(200).describe('Search query, e.g. "Photosynthese Sekundarstufe I".'),
     },
-    outputSchema: searchKnowledgeSchema,
+    outputSchema: rich ? searchKnowledgeRichSchema : searchKnowledgeSchema,
     annotations: { readOnlyHint: true },
+    // Lean mode declares no widget: there is nothing in {id,title,url} to render.
+    widgetUri: rich ? opts.widgetUri : undefined,
     handler: async (params: { query: string }) => {
       try {
-        const envelope = await searchAll({ query: params.query, maxContent: 10, maxCollections: 5 });
+        const envelope = await searchAll({
+          query: params.query,
+          maxContent: SEARCH_MAX_CONTENT,
+          maxCollections: SEARCH_MAX_COLLECTIONS,
+        });
         const all = [
           ...envelope.content.results,
           ...envelope.collections.results,
@@ -41,8 +105,23 @@ FÜR EINE NUTZERANFRAGE NACH MATERIAL NIMM search_wlo_all: dieses Werkzeug liefe
         ];
         // The ChatGPT knowledge convention requires an absolute, openable `url`;
         // fall back to the in-repo render URL when the node has no external link.
-        const results = all.map(n => ({ id: n.nodeId, title: n.title, url: n.url || n.topicPageUrl || buildRenderUrl(n.nodeId) }));
-        const payload = { results };
+        // A topic page's own URL wins: formatNode fills `url` from content.url
+        // for a collection node, so trying `url` first cited every topic page by
+        // its /components/render/ link instead (measured on staging 2026-08-09).
+        // Only topic pages carry topicPageUrl, so content nodes are unaffected.
+        const results = all.map(n => ({ id: n.nodeId, title: n.title, url: n.topicPageUrl || n.url || buildRenderUrl(n.nodeId) }));
+        // `results` FIRST and untouched in both modes — rich only adds siblings.
+        // A connector that rejects the extra keys is the risk this mode carries;
+        // one that ignores them reads exactly what lean mode would have sent.
+        const payload = rich
+          ? {
+              results,
+              ...envelope,
+              content:     { ...envelope.content,     results: stripCompendium(envelope.content.results) },
+              collections: { ...envelope.collections, results: stripCompendium(envelope.collections.results) },
+              topicPages:  { ...envelope.topicPages,  results: stripCompendium(envelope.topicPages.results) },
+            }
+          : { results };
         return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent: payload };
       } catch (err) {
         return toolError('Fehler bei der Wissenssuche', err);
@@ -53,12 +132,14 @@ FÜR EINE NUTZERANFRAGE NACH MATERIAL NIMM search_wlo_all: dieses Werkzeug liefe
   registerWloTool(server, {
     name: 'fetch',
     title: 'Fetch WLO document',
-    description: `Fetch one WLO node by its id and return the full document ({id, title, text, url, metadata}) for retrieval-augmented answers (the ChatGPT knowledge convention). Obtain ids from search first. For compact metadata of MANY nodes use get_nodes_details instead.`,
+    description: rich ? FETCH_DESCRIPTION_RICH : FETCH_DESCRIPTION_LEAN,
     inputSchema: {
       id: z.string().min(1).describe('The WLO node id (from a search result).'),
     },
-    outputSchema: fetchDocumentSchema,
+    outputSchema: rich ? fetchDocumentRichSchema : fetchDocumentSchema,
     annotations: { readOnlyHint: true },
+    // Same reasoning as `search`: the lean document has no renderable node in it.
+    widgetUri: rich ? opts.widgetUri : undefined,
     handler: async (params: { id: string }) => {
       try {
         // Same distinction as get_node_details: a citation tool that reports a
@@ -79,7 +160,7 @@ FÜR EINE NUTZERANFRAGE NACH MATERIAL NIMM search_wlo_all: dieses Werkzeug liefe
           id: f.nodeId,
           title: f.title,
           text,
-          url: f.url || f.topicPageUrl || buildRenderUrl(f.nodeId),
+          url: f.topicPageUrl || f.url || buildRenderUrl(f.nodeId),   // see `search`
           metadata: {
             disciplines: f.disciplines,
             educationalContexts: f.educationalContexts,
@@ -89,7 +170,12 @@ FÜR EINE NUTZERANFRAGE NACH MATERIAL NIMM search_wlo_all: dieses Werkzeug liefe
             nodeType: f.nodeType,
           },
         };
-        return { content: [{ type: 'text' as const, text: JSON.stringify(doc) }], structuredContent: doc };
+        // The convention document FIRST and untouched; rich adds the same node
+        // in the shape the results widget renders, so the detail answer is no
+        // longer poorer than get_node_details on the very fields a reader needs
+        // (preview image, download link, description).
+        const payload = rich ? { ...doc, total: 1, count: 1, results: [f] } : doc;
+        return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent: payload };
       } catch (err) {
         return toolError('Fehler beim Dokumentabruf', err);
       }

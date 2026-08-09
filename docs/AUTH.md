@@ -119,12 +119,16 @@ that claim against the source rather than trusting this paragraph.
 
 Writes are serialised and **undone on failure**, so the list never grants what it
 could not record. Ten blocks per WLO account; the oldest is evicted beyond that,
-because nothing else ever removes an entry.
+because nothing removes an entry on its own — both revocation paths below need a
+person to act.
 
 ### What revocation actually proves
 
-`POST /auth/revoke` takes a block, decrypts it, and removes its `jti`. Note
-carefully what that does and does not establish:
+There are two paths, and they prove different things. That is not redundancy:
+each one is the *only* path available on one of the two routes into the server.
+
+**`POST /auth/revoke` — by block.** Takes a block, decrypts it, removes its
+`jti`. Note carefully what that does and does not establish:
 
 > Revocation requires **knowledge of the access id**, not possession of the
 > original block. The public key is published so browsers can encrypt, so anyone
@@ -134,6 +138,29 @@ That is the intended trade — whoever notices a compromise must be able to act
 immediately — but it makes the id the secret. **It must never be logged and never
 appear in a response.** `tests/auth-endpoints.test.ts` pins both halves: a forged
 block with a listed id revokes, and the issuance answer does not carry the id.
+
+**`POST /auth/revoke-all` — by account.** Verifies a WLO login and removes every
+entry carrying that user name. This exists because the path above is unreachable
+for OAuth users: there the block goes to the AI host and **the person never sees
+it**, so an id they cannot read is an id they cannot revoke. Until 2026-08-06 an
+OAuth-issued access could only be ended by the operator editing the registry file
+— a gap found in use, not in review.
+
+Here the password is the proof, and the check that establishes it may never be
+skipped. The same published key that lets anyone forge a block carrying an *id*
+lets anyone forge one carrying a *name*; without the upstream check, a guessed
+username would disconnect a stranger's AI host. So the login is verified at the
+reported **authority** — not at the status code, which is `200` either way — in
+`auth/access-verify.ts`, the single module all three password-checking endpoints
+go through. `tests/shared-rule-discipline.test.ts` pins that there is one such
+module and that both callers use it; `tests/auth-revoke-all.test.ts` pins that a
+rejected login removes nothing.
+
+Matching is by **exact** user name. Whether edu-sharing treats `Jan` and `jan` as
+one login is unmeasured, and folding case would be a convenience if they are the
+same account and a way to wipe a stranger's accesses if they are not. The page
+reports the number removed, so a name spelt differently is visible rather than
+silent.
 
 ---
 
@@ -150,7 +177,8 @@ upstream and lists the id, and the page shows the block. Two copy buttons: with
 and without the `Bearer ` prefix, because a client that wants only the token
 silently fails when the word travels with it (that cost a live afternoon).
 
-Revoke at `/auth-revoke.html` (or `GET /auth/revoke`, the same page).
+Revoke at `/auth-revoke.html` (or `GET /auth/revoke`, the same page) — by pasting
+the block back, or by logging in to end every access of the account at once.
 
 ### 5b. OAuth 2.1 — every other client
 
@@ -204,10 +232,16 @@ service account means that account's rights.
 Three further decisions are load-bearing:
 
 **The access token IS the block.** No second credential is minted, so nothing
-rests on disk and no session store exists to lose on a restart — and one
-revocation ends both routes at once. There is no `refresh_token` and no
-`expires_in`: access ends when the block is revoked or the WLO password changes.
-Do not wrap it in another token.
+rests on disk and no session store exists to lose on a restart — and one entry in
+the allow-list covers both routes, so revoking it ends both. There is no
+`refresh_token` and no `expires_in`: access ends when the block is revoked or the
+WLO password changes. Do not wrap it in another token.
+
+What that does *not* mean, and the correction is the point: the block itself
+never reaches the OAuth user, so **`/auth/revoke` is unreachable for them**.
+Ending an OAuth access is what `/auth/revoke-all` is for (§4). An earlier version
+of this document claimed a single revocation covered both ways in without saying
+which revocation — true for the paste route, false for OAuth.
 
 **A request with no `Authorization` still answers 200, anonymously.** The `401`
 fires only for a Bearer that was *presented and cannot be used* — forged, or
@@ -268,9 +302,9 @@ the build if a curation tool is ever registered past it.
 
 ## 7. Abuse limits
 
-`/auth/issue` and `POST /oauth/authorize` are the only endpoints on this server
-that check a password, which makes them a guessing oracle with our address as the
-origin. Both pass two limiters:
+`/auth/issue`, `/auth/revoke-all` and `POST /oauth/authorize` are the endpoints
+on this server that check a password, which makes each a guessing oracle with our
+address as the origin. All three pass two limiters:
 
 - **requests per address** (`RATE_LIMIT_RPM`), the ordinary public-surface bound;
 - **distinct logins per address** (`AUTH_CREDENTIAL_LIMIT`) — the guessing guard.
@@ -372,7 +406,10 @@ one.
 Each of these was paid for once. Changing any of them is a decision, not a
 refactor.
 
-1. **A 200 from edu-sharing is not proof of a login.** Read the authority.
+1. **A 200 from edu-sharing is not proof of a login.** Read the authority — in
+   `auth/access-verify.ts`, which every password-checking endpoint goes through.
+   On the revocation path this is what stands between a guessed username and a
+   stranger's accesses.
 2. **The access id lives inside the AEAD**, or revocation can be dodged by
    swapping it.
 3. **The registry is an allow-list where every failure closes the door**, holds
@@ -383,7 +420,9 @@ refactor.
 5. **The authorization request is checked before a password field is shown, and a
    refusal gets a page, never a redirect.** The check lives once.
 6. **The access token IS the block.** No wrapper, no refresh token, no expiry —
-   it is the only reason one revocation ends both routes.
+   it is the only reason one allow-list entry covers both routes. The block still
+   never reaches the OAuth user, so revoking *that* access needs the account
+   path, not the block path.
 7. **The code is consumed before it is judged**, and every failure answers the
    same text.
 8. **A request with no `Authorization` keeps answering 200 anonymously.** This is

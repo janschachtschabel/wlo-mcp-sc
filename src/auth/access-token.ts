@@ -167,10 +167,34 @@ function open(privateKey: KeyObject, wrapped: Buffer, iv: Buffer, body: Buffer):
 }
 
 /**
+ * The longest block this server will even try to open.
+ *
+ * Measured 2026-08-09: a real block is 573 characters — an RSA-2048-wrapped key,
+ * a 12-byte IV and a five-field payload. The bound is needed because callers
+ * RETAIN the string: `/oauth/authorize` puts it in the authorization-code store,
+ * which bounds the number of records (1 000) and not their size. And a payload
+ * takes arbitrary padding — a 1 MB junk field yields a 1 333 836-character block
+ * that decodes perfectly well, because `validatePayload` drops unknown fields
+ * from the RESULT while the caller keeps the string it was handed. With
+ * `MAX_BODY_BYTES` at 4 MiB, a thousand of those is 4 GB held for a minute,
+ * reachable by anyone holding one valid WLO account.
+ *
+ * Checked here rather than at each caller because this is the one place a block
+ * string becomes a payload — the paste route, the `Bearer` header and the OAuth
+ * consent all pass through it. Seven times the real length also leaves room for
+ * an RSA-4096 rotation, which adds roughly 340 characters.
+ */
+export const MAX_BLOCK_CHARS = 4096;
+
+/**
  * Open a block, or null if it is not one of ours. During a key rotation the
  * previous key is tried after the current one.
  */
 export function decodeAccessToken(raw: string, keys: AuthKeys): AccessPayload | null {
+  // Before any work: an oversized block is not one of ours whatever it decrypts
+  // to, and refusing it costs one comparison instead of an RSA operation over
+  // megabytes.
+  if (raw.length > MAX_BLOCK_CHARS) return null;
   const parts = raw.split('.');
   if (parts.length !== 4) return null;
   const [prefix, wrappedPart, ivPart, bodyPart] = parts;

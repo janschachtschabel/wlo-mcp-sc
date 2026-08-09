@@ -352,15 +352,19 @@ wird der bestehende Test rot. Das ist beabsichtigt: er ist genau dafür da.
 
 Nicht von mir ausführbar: braucht den Deploy und einen echten Client.
 
-- [ ] Nutzer lädt hoch, baut, startet neu
-- [ ] `curl -s https://…/.well-known/oauth-protected-resource` → das Dokument
-- [ ] ChatGPT-Connector auf die MCP-URL zeigen, **ohne** Endpunkte von Hand
-- [ ] Beobachtung festhalten:
+- [x] Nutzer lädt hoch, baut, startet neu — 2026-08-05
+- [x] `curl -s https://…/.well-known/oauth-protected-resource` → das Dokument
+- [x] ChatGPT-Connector auf die MCP-URL zeigen, **ohne** Endpunkte von Hand
+- [x] Beobachtung festhalten (Ergebnis POSITIV, siehe `STATUS.md`):
   - verschwindet `does not implement OAuth`?
   - welche Pfade fragt der Client ab (Caddy-Zugriffslog)?
   - verlangt er einen 401?
-- [ ] Dasselbe mit Claude
-- [ ] Ergebnis in `STATUS.md` **und** in den offenen Punkt 1 des Designs
+- [x] Dasselbe mit Claude — 2026-08-06 live gegen claude.ai: MCP-Adresse
+      eintragen genügt, der Client liest die Discovery-Dokumente von selbst und
+      startet OAuth. Belegt in `STATUS.md` („Anonym verbinden ohne eigenes
+      Konto") und `docs/AUTH.md`; der dritte Knopf der Zustimmungsseite ist aus
+      genau dieser Messung entstanden.
+- [x] Ergebnis in `STATUS.md` **und** in den offenen Punkt 1 des Designs
 
 **Entscheidung danach:** gefunden → P2. Nicht gefunden → Design-Änderung
 (zweite URL mit 401, oder OAuth erzwingen), **nicht** P2.
@@ -833,9 +837,15 @@ zusätzlich `/better-coding-verify`.**
       gegen **Staging**
 - [x] Prüfen: Werkzeugliste enthält die Kurationswerkzeuge; ein Lesewerkzeug
       liefert; Widerruf auf `/auth-revoke.html` beendet den Zugang
-- [ ] Dasselbe mit Claude
-- [ ] Die offenen Punkte 2–4 des Designs mit dem **gemessenen** Ergebnis
-      beantworten — besonders, ob ein Client ohne `expires_in` zufrieden ist
+- [ ] Dasselbe mit Claude — **halb belegt.** Entdeckung, OAuth-Start und der
+      anonyme Ausgang sind am 2026-08-06 live gegen claude.ai gemessen
+      (`STATUS.md`, `docs/AUTH.md`). Offen ist allein die Anmeldung mit einem
+      echten WLO-Konto durch Claude: Werkzeugliste mit Kurationswerkzeugen,
+      ein Schreibaufruf, und der Widerruf beendet den Zugang.
+- [x] Die offenen Punkte 2–4 des Designs mit dem **gemessenen** Ergebnis
+      beantworten — 3 und 4 aus dem ChatGPT-Live-Lauf beantwortet (kein Scope
+      von Hand, kein `expires_in` verlangt); 2 bleibt offen, weil nur mit
+      ChatGPT gemessen wurde
 
 ### T5.2 — Doku
 - [x] README/README.de: Abschnitt „Anmelden per OAuth" mit den drei Schritten,
@@ -848,9 +858,13 @@ zusätzlich `/better-coding-verify`.**
 - [x] `docs/plans/STATUS.md`
 
 ### T5.3 — Abschluss
-- [ ] `/better-coding-review` über den gesamten Diff
-- [ ] `/better-coding-verify` mit echtem Testausgang
-- [ ] Bericht an den Nutzer; **kein Commit**
+- [x] `/better-coding-review` über den gesamten Diff — 2026-08-09, drei Sitzungen
+      à ≤ 400 Zeilen über ~1 230 Zeilen. 1 schwerer Befund (Zugangsblock ohne
+      Längengrenze, im Code-Speicher gehalten — bis zu 4 GB bindbar), 2
+      Kleinigkeiten; alle behoben. Einzelheiten in `STATUS.md`.
+- [x] `/better-coding-verify` mit echtem Testausgang — 1583/1583, Typecheck
+      Exit 0, rot-grün für den schweren Befund einzeln nachgewiesen
+- [x] Bericht an den Nutzer; **kein Commit**
 
 ---
 

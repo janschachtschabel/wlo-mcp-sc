@@ -15,7 +15,7 @@ import {
   type SearchAllOptions,
 } from '../services/search.js';
 import { getCompendiumTexts } from '../services/compendium.js';
-import { buildFilterCriteria } from '../filter-criteria.js';
+import { buildFilterCriteria, licenseFilterNotice, licensePagingNotice } from '../filter-criteria.js';
 import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import type { TargetGroup } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
@@ -95,7 +95,7 @@ export async function handleSearch(params: URLSearchParams): Promise<RestResult>
   // Vocab filters are length-bounded here; the service resolves label→URI and
   // reports whatever it can't map (unknown values are not an error).
   const filters: Record<string, string | undefined> = {};
-  for (const name of ['educationalContext', 'discipline', 'learningResourceType', 'userRole', 'publisher']) {
+  for (const name of ['educationalContext', 'discipline', 'learningResourceType', 'userRole', 'publisher', 'license']) {
     const v = validateFilter(params.get(name));
     if (!v.ok) return badRequest(`${name}: ${v.error}`);
     filters[name] = v.value;
@@ -108,6 +108,7 @@ export async function handleSearch(params: URLSearchParams): Promise<RestResult>
     learningResourceType: filters['learningResourceType'],
     userRole: filters['userRole'],
     publisher: filters['publisher'],
+    license: filters['license'],
     maxContent: clampInt(params.get('maxContent'), 1, 25, 8),
     maxCollections: clampInt(params.get('maxCollections'), 1, 25, 5),
     skipCount: clampInt(params.get('skipCount'), 0, 10_000, 0),
@@ -132,7 +133,27 @@ export async function handleSearch(params: URLSearchParams): Promise<RestResult>
   const response: Record<string, unknown> = { ...projected };
   if (unresolved.length) response.unresolvedFilters = unresolved;
   if (facets && Object.keys(facets).length) response.facets = facets;
-  if (wantHtml) return { status: 200, raw: renderSearchPage(response as SearchPageData), contentType: HTML_TYPE };
+  if (wantHtml) {
+    // The JSON view discloses the exactness pass as `content.licenseFilter`;
+    // the page has to say it in words, because a licence that removed every
+    // candidate is otherwise indistinguishable from "there is nothing here".
+    // Counts come from the UNPROJECTED envelope: `fields` may drop
+    // `licenseFilter`, and a disclosure that disappears when the response is
+    // trimmed is no disclosure.
+    // `licenseFilter` exists exactly when a licence was set AND the content leg
+    // ran, so it gates BOTH sentences — the paging caveat is about the content
+    // search, and `include: collections` must not produce one.
+    const lf = envelope.content.licenseFilter;
+    const notices = lf
+      ? [
+          licenseFilterNotice(lf.checked, lf.kept, opts.license),
+          licensePagingNotice(opts.license, opts.skipCount ?? 0),
+        ].filter(Boolean)
+      : [];
+    const page = { ...(response as SearchPageData) };
+    if (notices.length) page.warnings = [...(page.warnings ?? []), ...notices];
+    return { status: 200, raw: renderSearchPage(page), contentType: HTML_TYPE };
+  }
   return { status: 200, json: response };
 }
 
@@ -228,10 +249,12 @@ function toCollectionItem(n: FormattedNode) {
 
 /**
  * List or search a WLO collection's contents — the launcher's skills source.
- * `nodeId` defaults to `WLO_SKILLS_COLLECTION_ID`. With `q` it searches within
- * the collection (primaryparent-scoped); without `q` it lists the direct file
- * children (reliable for reference collections). Each result carries the
- * anonymous `downloadUrl` for fetching the raw Markdown.
+ * `nodeId` defaults to `WLO_SKILLS_COLLECTION_ID`. With `q` it matches the
+ * query and any filters LOCALLY against the collection's direct file children
+ * — not a scoped ngsearch: the backend rejects `virtual:primaryparent_nodeid`
+ * as a criterion with 400 (live-probed 2026-07-17). Without `q` it lists those
+ * same children. Each result carries the anonymous `downloadUrl` for fetching
+ * the raw Markdown.
  */
 export async function handleCollection(params: URLSearchParams): Promise<RestResult> {
   const nodeIdRaw = params.get('nodeId')?.trim() || WLO_SKILLS_COLLECTION_ID;
@@ -249,9 +272,9 @@ export async function handleCollection(params: URLSearchParams): Promise<RestRes
   if (qTrim.length > 200) return badRequest('q must be at most 200 characters');
   const query = qTrim || undefined;
 
-  // Vocab filters (search case only); length-bounded, unknown values tolerated.
+  // Vocab filters; length-bounded, unknown values tolerated.
   const filters: Record<string, string | undefined> = {};
-  for (const name of ['educationalContext', 'discipline', 'learningResourceType', 'userRole', 'publisher']) {
+  for (const name of ['educationalContext', 'discipline', 'learningResourceType', 'userRole', 'publisher', 'license']) {
     const v = validateFilter(params.get(name));
     if (!v.ok) return badRequest(`${name}: ${v.error}`);
     filters[name] = v.value;
@@ -259,10 +282,27 @@ export async function handleCollection(params: URLSearchParams): Promise<RestRes
 
   let results: FormattedNode[];
   let total: number;
-  if (query) {
+  // Set only when a licence was filtered: `total` is already post-filter, so
+  // without these two numbers an emptied result looks like an empty collection.
+  let licenseFilter: { checked: number; kept: number } | undefined;
+  // Local matching reads ONE bounded page of children, so its answer can be a
+  // sample of a larger collection. `total` counts what matched inside that
+  // window and cannot say so on its own; the MCP tool carries the same fact as
+  // a sentence.
+  let sample: { truncated: boolean; collectionTotal: number } | undefined;
+  // A filter without `q` used to fall through to the plain listing, which takes
+  // no filters at all — `license=OER` then answered with CC BY-NC-ND records and
+  // no sign that anything had been ignored. Matching needs no query
+  // (`searchWithinCollection` treats an empty one as "all contents"), so the
+  // branch is about whether there is anything to match at all. The plain listing
+  // keeps the query-less, filter-less case because it pages upstream, while
+  // local matching samples at most 100 children in a single call.
+  if (query || Object.values(filters).some(Boolean)) {
     const r = await searchWithinCollection({ nodeId, query, ...filters, maxResults: max });
     results = r.results;
     total = r.pagination.total;
+    if (filters['license']) licenseFilter = { checked: r.licenseChecked, kept: r.pagination.total };
+    sample = { truncated: r.truncated, collectionTotal: r.collectionTotal };
   } else {
     const r = await listCollectionContents(nodeId, max);
     results = r.results;
@@ -276,6 +316,8 @@ export async function handleCollection(params: URLSearchParams): Promise<RestRes
       collectionId: nodeId,
       query: query ?? null,
       total,
+      ...(sample ?? {}),
+      ...(licenseFilter ? { licenseFilter } : {}),
       results: fields.value ? projectItems(items, fields.value) : items,
     },
   };

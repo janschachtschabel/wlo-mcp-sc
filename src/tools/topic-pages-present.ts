@@ -18,6 +18,13 @@ export interface ThemePageVariant {
   targetGroup: string;
   targetGroupLabel: string;
   topicPageUrl: string;
+  /**
+   * The variant the Themenseite actually renders (`ccm:page_config.default`).
+   * Sibling variants are mostly editorial copies rather than target-group
+   * fassungen — measured 2026-08-07 — so "which one is live" is not derivable
+   * from the target group and has to be said out loud.
+   */
+  isDefault: boolean;
 }
 
 export interface PresentedThemePage {
@@ -58,12 +65,19 @@ export function mergeThemePages(
       targetGroup: r.targetGroup || '',
       targetGroupLabel: tgLabel,
       topicPageUrl: r.topicPageUrl,
+      isDefault: r.isDefault === true,
     };
 
     const key = opts.merge ? collectionId : r.variantId;
     if (seen.has(key)) {
       const ex = seen.get(key)!;
-      if (!ex.variants.some(v => v.variantId === variant.variantId)) ex.variants.push(variant);
+      if (!ex.variants.some(v => v.variantId === variant.variantId)) {
+        // The rendered variant leads, whenever it arrives. A collection can own
+        // several page-config folders and they are resolved independently, so
+        // the superseded one can come back first — and `variants[0]` is what
+        // `includeContent` resolves, i.e. what the page would be rendered from.
+        if (variant.isDefault) ex.variants.unshift(variant); else ex.variants.push(variant);
+      }
       for (const e of eduLabels) if (!ex.educationalContexts.includes(e)) ex.educationalContexts.push(e);
       if (!ex.topicPageUrl && variant.topicPageUrl) ex.topicPageUrl = variant.topicPageUrl;
     } else {
@@ -172,7 +186,10 @@ export function renderThemePages(
     } else {
       parts.push(`Varianten (${r.variants.length}):`);
       for (const v of r.variants) {
-        parts.push(`  - ${v.targetGroupLabel} (Variante-ID: ${v.variantId})`);
+        // Which one the page shows is not guessable from the target group —
+        // most siblings are editorial copies — so it is stated.
+        const mark = v.isDefault ? ' — angezeigte Variante' : '';
+        parts.push(`  - ${v.targetGroupLabel} (Variante-ID: ${v.variantId})${mark}`);
       }
     }
     // Every part is one logical line — the collection name that becomes the

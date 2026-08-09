@@ -179,10 +179,9 @@ test('a failed write neither grants access nor disables later writes', async (t)
 });
 
 /**
- * Nothing ever removes an entry except the person who revokes it, so without a
- * cap the file only grows: one working login can add an entry per request, each
- * add rewrites the whole file — and in the ordinary case, blocks people fetched
- * and then lost stay valid for ever, because revoking one requires holding it.
+ * Nothing removes an entry except a person who revokes it, so without a cap the
+ * file only grows: one working login can add an entry per request, and each add
+ * rewrites the whole file.
  *
  * The cap is per LABEL and never global: a global one would let a single account
  * push everyone else's access out. Oldest-first by INSERTION order rather than by
@@ -206,6 +205,64 @@ test('a label keeps only its most recent blocks', async (t) => {
   const reopened = await opened(path);
   assert.equal(reopened.has('id-1'), false, 'the file agrees, not just the memory');
   assert.equal(reopened.has('other'), true);
+});
+
+// ── removing every block of one account ────────────────────────────────────
+
+/**
+ * The gap this closes: over OAuth the person never SEES their block — it goes to
+ * the client — so `remove(jti)` is unreachable for them, and an access issued
+ * that way could only be ended by the operator editing this file. Revoking by
+ * account is the only path that works without one.
+ *
+ * Matching is EXACT, never case-folded, and that is a deliberate refusal to
+ * guess: whether edu-sharing treats `Jan` and `jan` as one login has not been
+ * measured. Folding would be a nicety if they are the same account and a way to
+ * wipe a stranger's accesses if they are not. Exact matching can only ever leave
+ * one of your own entries behind, which the page reports as a count.
+ */
+test('revoking by account removes exactly that account and reports how many', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+
+  await registry.add({ jti: 'laptop', label: 'lehrerin', iat: 1_754_300_000 });
+  await registry.add({ jti: 'handy', label: 'lehrerin', iat: 1_754_300_001 });
+  await registry.add({ jti: 'fremd', label: 'jemand-anders', iat: 1_754_300_002 });
+  await registry.add({ jti: 'gross', label: 'Lehrerin', iat: 1_754_300_003 });
+
+  assert.equal(await registry.removeByLabel('lehrerin'), 2, 'both of this account went');
+  assert.equal(registry.has('laptop'), false);
+  assert.equal(registry.has('handy'), false);
+  assert.equal(registry.has('fremd'), true, 'another account is untouched');
+  assert.equal(registry.has('gross'), true, 'and so is a different spelling');
+
+  const reopened = await opened(path);
+  assert.equal(reopened.has('laptop'), false, 'the file agrees, not just the memory');
+  assert.equal(reopened.has('fremd'), true);
+});
+
+test('revoking an account with nothing listed removes nothing and says so', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+  await registry.add(entry('an-id'));
+
+  assert.equal(await registry.removeByLabel('niemand'), 0);
+  assert.equal(registry.has('an-id'), true);
+});
+
+/**
+ * The same fail-closed rule `add` and `remove` follow: a removal that could not
+ * be written must not be reported as done. Reporting it would tell someone whose
+ * account is compromised that the door is shut while the next restart reopens it.
+ */
+test('an account revocation that cannot be written is not reported as done', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+  await registry.add({ jti: 'laptop', label: 'lehrerin', iat: 1_754_300_000 });
+
+  mkdirSync(`${path}.tmp`);
+  await assert.rejects(registry.removeByLabel('lehrerin'), 'the failure reaches the caller');
+  assert.equal(registry.has('laptop'), true, 'and the entry is still listed');
 });
 
 test('nothing resembling a credential is ever written to disk', async (t) => {

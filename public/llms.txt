@@ -42,4 +42,28 @@ quote), url (human page), license (empty = licence unclear, not CC).
 The same server speaks the Model Context Protocol at POST /mcp
 (Streamable HTTP/SSE). Call tools/list for the current set (search_wlo_all is
 the one to start with) — prefer MCP over REST when your client supports
-connectors. Everything reachable without a login is read-only.
+connectors.
+
+**No credential is needed to read.** A request with no Authorization header
+answers normally and lists every tool. Searching, reading records, topic pages,
+Wikipedia and compendium texts all work that way.
+
+**Creating or editing WLO content needs a WLO account.** Those tools are listed
+for everyone — a tool nobody can see is a tool nobody asks to unlock — but they
+refuse the call without a login and answer with an OAuth challenge, so a client
+that supports it can start the sign-in itself. Two ways in:
+
+- OAuth 2.1: discovery at /.well-known/oauth-authorization-server. Nothing to
+  register by hand; the flow ends on a WLO sign-in page.
+- A pasted key: a person fetches one at /auth and enters it as
+  `Authorization: Bearer …`. Revoke at /auth-revoke.html — by key, or by WLO
+  sign-in when the key went to the client and was never seen.
+
+Where an operator configured a service account, an anonymous request carries
+that account's rights; otherwise it is public content only.
+
+## Pages for people
+
+/                    Start page: ready-made prompts, the MCP address, all links
+/auth                Fetch an access key
+/auth-revoke.html    Revoke one key, or every key of a WLO account

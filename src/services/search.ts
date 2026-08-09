@@ -13,13 +13,15 @@ import { enhancedSearch, rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, resolveFacetCounts } from '../formatter.js';
 import type { LabeledCriterion, UnresolvedFilter } from '../filter-criteria.js';
-import { buildFilterCriteria } from '../filter-criteria.js';
+import { buildFilterCriteria, filterByExactLicense, pageSizeForLicense } from '../filter-criteria.js';
 import { mapPool } from '../concurrency.js';
 import type { WikiSummary } from '../wikipedia-api.js';
 import { fetchWikipediaSummary } from '../wikipedia-api.js';
 import { nodeMatchesCriteria, nodeMatchesText } from '../node-match.js';
 import { log } from '../logger.js';
 import { capText } from '../text-cap.js';
+import { dedupeByUrl } from '../result-dedupe.js';
+import { searchWithLicense } from './license-search.js';
 import { getCompendiumTexts } from './compendium.js';
 import type { SwimlanePayload } from './topic-page.js';
 import { resolveTopicPageSwimlanes } from './topic-page.js';
@@ -34,6 +36,7 @@ export interface SearchWithinCollectionOptions {
   userRole?: string;
   publisher?: string;
   learningResourceType?: string;
+  license?: string;
   maxResults?: number;
   skipCount?: number;
 }
@@ -49,6 +52,12 @@ export interface SearchWithinCollectionResult {
   collectionTotal: number;
   /** True when the collection holds more items than the sampled window. */
   truncated: boolean;
+  /**
+   * How many candidates the licence pass examined — equal to `pagination.total`
+   * when no licence was filtered. The caller needs both numbers to say WHY a
+   * licence-filtered result came back empty.
+   */
+  licenseChecked: number;
 }
 
 /**
@@ -78,20 +87,27 @@ export async function searchWithinCollection(
   // node metadata the listing carries, and pagination runs over the filtered
   // set. The window is bounded to one upstream call; `truncated` says so.
   const children = await getCollectionContents(opts.nodeId, 'files', WITHIN_CHILDREN_MAX, 0);
-  const filtered = children.nodes.filter(
+  const matched = children.nodes.filter(
     n => (!query || nodeMatchesText(n, query)) && nodeMatchesCriteria(n, filters),
   );
+  // The licence needs its own pass here. A single licence arrives as a criterion
+  // and `nodeMatchesCriteria` matches it exactly, but the OER BUNDLE contributes
+  // no criterion at all — a licence set is not expressible upstream, so
+  // `buildFilterCriteria` only labels it — and this path used to have nothing
+  // else to filter on, which made `license: "OER"` return everything.
+  const filtered = filterByExactLicense(formatNodes(matched), opts.license);
   const page = filtered.slice(skipCount, skipCount + maxResults);
 
   return {
     nodeId: opts.nodeId,
     query,
-    results: formatNodes(page),
+    results: page,
     pagination: { total: filtered.length, from: skipCount, count: page.length },
     labeled,
     unresolved,
     collectionTotal: children.pagination.total,
     truncated: children.pagination.total > children.nodes.length,
+    licenseChecked: matched.length,
   };
 }
 
@@ -132,6 +148,7 @@ export interface SearchAllOptions {
   userRole?: string;
   publisher?: string;
   learningResourceType?: string;
+  license?: string;
   maxContent?: number;
   maxCollections?: number;
   include?: ('content' | 'collections' | 'topicPages')[];
@@ -145,9 +162,26 @@ export interface SearchAllOptions {
   maxPerSwimlane?: number;
 }
 
+/**
+ * How many content candidates the licence pass examined and how many it kept.
+ *
+ * Present only when a licence was requested AND the content leg actually ran —
+ * so its mere presence means "a licence pass happened here", which is what lets
+ * every renderer gate on it instead of re-deriving the condition from `include`.
+ *
+ * Both numbers are needed and neither is `count` or `total`: `count` is what
+ * survived the RESULT CAP as well, and `total` is the corpus figure from the
+ * facet aggregation. A caller reporting a licence drop from either would be
+ * describing paging.
+ */
+export interface LicenseFilterCounts {
+  checked: number;
+  kept: number;
+}
+
 export interface SearchAllEnvelope {
   query: string;
-  content:     { total: number; count: number; results: FormattedNode[] };
+  content:     { total: number; count: number; results: FormattedNode[]; licenseFilter?: LicenseFilterCounts };
   collections: { total: number; count: number; results: FormattedNode[] };
   topicPages:  { total: number; count: number; results: TopicPageResult[] };
   wikipedia?:  WikiSummary;
@@ -218,7 +252,13 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // Wikipedia lookup all run in one parallel block — wall time ≈ the slowest.
   const [contentResp, collNodes, portalNodes, wiki] = await Promise.all([
     want.has('content')
-      ? enhancedSearch(query, 'FILES', filters, maxContent + excluded.size, skipCount)
+      ? searchWithLicense({
+          license: opts.license,
+          criteria: [{ property: 'ngsearchword', values: [query || '*'] }, ...filters],
+          size: pageSizeForLicense(maxContent + excluded.size, opts.license),
+          skipCount,
+          run: (extra, size, skip) => enhancedSearch(query, 'FILES', [...filters, ...extra], size, skip),
+        })
       : Promise.resolve(EMPTY),
     needColl
       // Degrade like the wiki leg below: a thrown collections search (timeout,
@@ -243,7 +283,14 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   ]);
 
   const ok = (id: string) => !!id && !excluded.has(id);
-  const contentFmt = formatNodes(contentResp.nodes).filter(n => ok(n.nodeId)).slice(0, maxContent);
+  // Dedupe BEFORE the cap — see result-dedupe.ts. Collections and topic pages
+  // are left alone: their `url` is a per-node render link, so it never collides.
+  // Kept apart so the caller can say WHY a licence-filtered bucket came back
+  // short: `count` is post-cap and `total` is the corpus, so neither can tell a
+  // licence drop from ordinary paging.
+  const contentCandidates = dedupeByUrl(formatNodes(contentResp.nodes).filter(n => ok(n.nodeId)));
+  const contentLicensed = filterByExactLicense(contentCandidates, opts.license);
+  const contentFmt = contentLicensed.slice(0, maxContent);
   // Merge portals into the collection pool (portal copies first: on an id
   // collision they are the ones carrying the config ref → topicPageUrl), then
   // rerank by relevance; topic pages inherit the ranking.
@@ -270,7 +317,18 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
 
   const envelope: SearchAllEnvelope = {
     query,
-    content:     { total: contentResp.pagination.total, count: contentFmt.length, results: contentFmt },
+    content: {
+      total: contentResp.pagination.total,
+      count: contentFmt.length,
+      results: contentFmt,
+      // Only when the content leg actually ran: with `include: ['collections']`
+      // nothing was checked, and `{checked: 0, kept: 0}` reads like a filter that
+      // emptied the bucket. Its presence is what callers gate their licence
+      // disclosure on, so it has to mean "a licence pass happened here".
+      ...(opts.license && want.has('content')
+        ? { licenseFilter: { checked: contentCandidates.length, kept: contentLicensed.length } }
+        : {}),
+    },
     collections: { total: collectionsFmt.length, count: collectionsFmt.length, results: collectionsFmt },
     topicPages:  { total: topicPagesFmt.length, count: topicPagesFmt.length, results: topicPagesFmt },
   };

@@ -24,7 +24,14 @@ const PORT = resolvePositiveInt(process.env['PORT'], 3000, 'PORT');
 // this caps a memory-exhaustion DoS vector on the self-hosted HTTP path.
 // Bytes, not a human size: `1MB` is refused with a warning rather than read as
 // `1` — which would answer every request with 413 (see resolvePositiveInt).
-const MAX_BODY_BYTES = resolvePositiveInt(process.env['MAX_BODY_BYTES'], 1_048_576, 'MAX_BODY_BYTES');
+// Raised from 1 MB to 4 MB on 2026-08-06, deliberately and not as a side
+// effect: `wlo_create_content` now accepts an image as base64 inside the
+// JSON-RPC body (capped at 2 MB decoded, ~2.7 MB encoded), so the old limit
+// refused a call the tool is meant to serve — and refused it in the transport,
+// before the tool could say anything useful. This widens a memory-exhaustion
+// vector by the same factor; it is bounded, per request, and the operator can
+// set it back where uploads are not wanted.
+const MAX_BODY_BYTES = resolvePositiveInt(process.env['MAX_BODY_BYTES'], 4_194_304, 'MAX_BODY_BYTES');
 
 // Per-IP request cap (fixed 60s window) for the MCP endpoint. One MCP call can
 // fan out to ~40 upstream edu-sharing requests, so this proxy is an amplifier —

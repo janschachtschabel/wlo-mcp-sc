@@ -59,7 +59,8 @@ function deps(over: Partial<Parameters<typeof handleOAuthEndpoint>[2]> = {}) {
   return {
     ip: '198.51.100.7',
     maxBodyBytes: 1_000_000,
-    rateLimiter: createRateLimiter(100),
+    authorizeRateLimiter: createRateLimiter(100),
+    connectorRateLimiter: createRateLimiter(100),
     authAbuseLimiter: createDistinctValueLimiter(3, 600_000),
     codeStore: createCodeStore(),
     issuer: ISSUER as string | null,
@@ -171,13 +172,13 @@ test('an unparseable request target owns no route', async (t) => {
 test('the discovery paths are rate-limited like the rest of the public surface', async (t) => {
   await support(t);
   // One request per window: the first passes, the second is over the line.
-  const rateLimiter = createRateLimiter(1);
+  const connectorRateLimiter = createRateLimiter(1);
   const first = res();
-  await handleOAuthEndpoint(req('GET', ALL[0]!), first, deps({ rateLimiter }));
+  await handleOAuthEndpoint(req('GET', ALL[0]!), first, deps({ connectorRateLimiter }));
   assert.equal(first.out.status, 200, 'the first request is served');
 
   const second = res();
-  await handleOAuthEndpoint(req('GET', ALL[0]!), second, deps({ rateLimiter }));
+  await handleOAuthEndpoint(req('GET', ALL[0]!), second, deps({ connectorRateLimiter }));
   assert.equal(second.out.status, 429);
   assert.equal(second.out.headers['Retry-After'], '60');
 });
@@ -292,9 +293,9 @@ test('registration is POST-only and rate-limited', async (t) => {
   assert.equal(get.out.status, 405);
   assert.equal(get.out.headers['Allow'], 'POST');
 
-  const rateLimiter = createRateLimiter(1);
-  assert.equal((await register({ redirect_uris: ['https://a.example/cb'] }, { rateLimiter })).status, 201);
-  assert.equal((await register({ redirect_uris: ['https://a.example/cb'] }, { rateLimiter })).status, 429);
+  const connectorRateLimiter = createRateLimiter(1);
+  assert.equal((await register({ redirect_uris: ['https://a.example/cb'] }, { connectorRateLimiter })).status, 201);
+  assert.equal((await register({ redirect_uris: ['https://a.example/cb'] }, { connectorRateLimiter })).status, 429);
 });
 
 // ── authorization (P3/T3.3) ────────────────────────────────────────────────
@@ -793,4 +794,32 @@ test('ohne „anonymous" bleibt ein fehlender Zugangsblock ein Fehler', async (t
   const r = await postConsent(consentBody({ token: undefined }), createCodeStore());
   assert.equal(r.status, 400);
   assert.match(String(r.json?.['error']), /Zugangsblock/);
+});
+
+test('the password surface and the connector surface have separate budgets', async (t) => {
+  await support(t);
+  // Four of the requests one login costs come from the CLIENT's address — both
+  // discovery documents, the registration and the token exchange — while only
+  // the consent steps come from the person's own browser. A hosted connector
+  // shares few egress addresses across all of its users, so spending the tight
+  // password budget on its machine traffic is how a connector collects a 429
+  // during discovery and concludes this server has no OAuth at all. The two are
+  // counted separately: tight where a password is typed, the connector's own
+  // budget everywhere else.
+  const authorizeRateLimiter = createRateLimiter(1);
+  const connectorRateLimiter = createRateLimiter(1);
+  const both = () => deps({ authorizeRateLimiter, connectorRateLimiter });
+
+  await handleOAuthEndpoint(req('GET', ALL[0]!), res(), both());
+  const spent = res();
+  await handleOAuthEndpoint(req('GET', ALL[0]!), spent, both());
+  assert.equal(spent.out.status, 429, 'the connector budget is a real bound, not a removed one');
+
+  const authorize = res();
+  await handleOAuthEndpoint(req('GET', '/oauth/authorize'), authorize, both());
+  assert.notEqual(authorize.out.status, 429, 'the consent surface has its own budget');
+
+  const spentToo = res();
+  await handleOAuthEndpoint(req('GET', '/oauth/authorize'), spentToo, both());
+  assert.equal(spentToo.out.status, 429, 'and that budget is a real bound too');
 });

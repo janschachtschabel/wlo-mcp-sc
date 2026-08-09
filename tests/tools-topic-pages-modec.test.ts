@@ -103,7 +103,11 @@ test('search_wlo_topic_pages Mode C: the owner reads ask for only the fields use
     const cfgCall = mock.calls.find(c => /cfg-\d+\/metadata/.test(c.url));
     const ownerCall = mock.calls.find(c => /coll-\d+\/metadata/.test(c.url));
     assert.ok(cfgCall && ownerCall, 'expected both metadata reads');
-    assert.deepEqual(new URL(cfgCall.url).searchParams.getAll('propertyFilter'), ['virtual:primaryparent_nodeid']);
+    // Both facts the folder is read for at once: who owns it, and which variant
+    // the page renders (`ccm:page_config`). Two reads of one node would be an
+    // avoidable round-trip per Themenseite.
+    assert.deepEqual(new URL(cfgCall.url).searchParams.getAll('propertyFilter'),
+      ['virtual:primaryparent_nodeid', 'ccm:page_config']);
     assert.deepEqual(new URL(ownerCall.url).searchParams.getAll('propertyFilter'),
       ['ccm:page_config_ref', 'cclom:title', 'cm:name']);
   } finally {

@@ -21,7 +21,7 @@ import { flattenText } from '../../text-sanitize.js';
 import { cutAtWordBoundary } from '../../text-cap.js';
 import { WRITABLE_FIELDS, type FieldRoute } from './fields.js';
 
-export type ChangeKind = 'content' | 'collection' | 'compendium';
+export type ChangeKind = 'content' | 'collection' | 'compendium' | 'topic-page';
 
 export interface FieldChange {
   property: string;

@@ -9,45 +9,14 @@
  * label→URI filter builder (`../filter-criteria.ts`).
  */
 
-import type { ThemePageInfo } from '../topic-page-api.js';
 import { oneLine } from '../formatter.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
+// The title rule moved to a leaf module (topic-page-api/-structure and the write
+// service need it and must not import from tools/). Re-exported so the tools
+// keep one import site.
+export { isPlaceholderTitle, pickThemePageTitle } from '../topic-page-title.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
-
-// ── Topic-page display-title resolution ─────────────────────────────────────
-
-const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * True for technical, non-human-readable identifiers that must never be
- * shown as a Themenseite title — namely the auto-generated `cm:name` of a
- * page-variant node ("PAGE_VARIANT_<uuid>") and bare node UUIDs.
- */
-export function isPlaceholderTitle(s: string | undefined | null): boolean {
-  const t = (s ?? '').trim();
-  if (!t) return true;
-  if (/^page[_-]?variant/i.test(t)) return true;
-  if (_UUID_RE.test(t)) return true;
-  return false;
-}
-
-/**
- * Pick the best human-readable title for a Themenseite, in priority order:
- *   1. owning collection name (`cclom:title`/`cm:name` of the collection),
- *   2. the variant node's own `cm:title` ("Seiten-Variante 1"),
- *   3. the variant's `cm:name` — only if it is NOT a PAGE_VARIANT/UUID
- *      placeholder.
- * Falls back to a generic "Themenseite" so a raw UUID is never displayed.
- */
-export function pickThemePageTitle(r: ThemePageInfo): string {
-  const candidates = [r.collectionName, r.variantTitle, r.variantName];
-  for (const c of candidates) {
-    const t = (c ?? '').trim();
-    if (t && !isPlaceholderTitle(t)) return t;
-  }
-  return 'Themenseite';
-}
 
 // ── Query metadata for downstream consumers (backend → frontend) ────────────
 

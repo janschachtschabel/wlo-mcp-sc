@@ -185,6 +185,16 @@
     footer a, .card a { color: var(--accent-strong); }
     ul.tight { margin: 0.4rem 0 0; padding-left: 1.2rem; }
     ul.tight li { margin: 0.2rem 0; }
+
+    /* Wayfinding in the footer. A real <nav> with a real heading, so a screen
+       reader can jump to it — the heading is small, not hidden: someone looking
+       for "where else can I go" benefits from seeing it too.
+       Laid out as a wrapping row of links rather than a card grid; six links do
+       not need six boxes. Each link keeps a 44px-tall hit area (SC 2.5.8) via
+       padding, which the bare footer list did not have. */
+    .nav-h { font-size: 0.875rem; font-weight: 700; color: var(--text); margin: 1.5rem 0 0.25rem; }
+    ul.navlist { list-style: none; display: flex; flex-wrap: wrap; gap: 0 1.1rem; margin: 0; padding: 0; }
+    ul.navlist a { display: inline-flex; align-items: center; min-height: 2.75rem; }
     code.inline { background: var(--surface-2); border-radius: 5px; padding: 0.05rem 0.3rem; font-size: 0.85em; }
   </style>
 </head>
@@ -346,6 +356,22 @@
         <li data-i18n="install_a"><strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen“ – fertig.</li>
         <li data-i18n="install_b"><strong>Nativ (MCP):</strong> trägst du den WLO-MCP-Server in deiner KI (z. B. Claude Desktop) ein, hast du alle WLO-Tools direkt, inkl. <code class="inline">find_wlo_skills</code>.</li>
       </ul>
+
+      <p class="hint" id="mcp-url-label" data-i18n="mcp_url_label">Diese Adresse trägst du in deiner KI ein:</p>
+      <code class="url" id="mcp-url"></code>
+      <div class="actions">
+        <button type="button" class="btn" id="copy-mcp" data-i18n="mcp_copy">Adresse kopieren</button>
+      </div>
+      <p class="status" id="mcp-status" role="status" aria-live="polite"></p>
+
+      <p class="note" data-i18n="mcp_anon">
+        Ohne Anmeldung kannst du <strong>suchen und lesen</strong> – mehr braucht es für den Anfang nicht.
+        Nur zum <strong>Anlegen und Bearbeiten</strong> von WLO-Inhalten ist ein WLO-Konto nötig.
+      </p>
+      <ul class="tight">
+        <li data-i18n="mcp_auth_get"><a href="/auth">Zugang holen</a> – wenn deine KI ein Feld für einen Schlüssel hat.</li>
+        <li data-i18n="mcp_auth_revoke"><a href="/auth-revoke.html">Zugang sperren</a> – per Block oder per WLO-Anmeldung, wenn du den Block nie gesehen hast.</li>
+      </ul>
     </section>
 
     <footer>
@@ -353,6 +379,21 @@
         Öffentliche, nur lesende Schnittstelle von WirLernenOnline. Schnellzugriff per
         <a href="bookmarklet.md">Bookmarklet</a>.
       </p>
+      <nav aria-labelledby="nav-h">
+        <h2 id="nav-h" class="nav-h" data-i18n="nav_h">Alle Seiten dieses Servers</h2>
+        <ul class="navlist">
+          <li><a href="/" data-i18n="nav_home">Startseite (diese Seite)</a></li>
+          <li><a href="/auth" data-i18n="nav_auth">Zugang holen</a></li>
+          <li><a href="/auth-revoke.html" data-i18n="nav_revoke">Zugang sperren</a></li>
+          <!-- A real path, not an empty href: the script replaces it with an
+               absolute one, but `href=""` resolves to the current document, so
+               a scripting failure would turn the one link in this list that
+               needs JS into a page reload. -->
+          <li><a href="/api/search/Bruchrechnung" id="nav-search" data-i18n="nav_search">Beispiel-Suche im Browser</a></li>
+          <li><a href="/llms.txt" data-i18n="nav_llms">Selbstbeschreibung für KI-Programme</a></li>
+          <li><a href="bookmarklet.md" data-i18n="nav_bookmarklet">Bookmarklet</a></li>
+        </ul>
+      </nav>
     </footer>
   </div>
 
@@ -386,6 +427,19 @@
         install_lead: "Zwei Wege, wie deine KI WLO nutzt – Boerdi hilft bei beiden:",
         install_a: "<strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen“ – fertig.",
         install_b: '<strong>Nativ (MCP):</strong> trägst du den WLO-MCP-Server in deiner KI (z. B. Claude Desktop) ein, hast du alle WLO-Tools direkt, inkl. <code class="inline">find_wlo_skills</code>.',
+        mcp_url_label: "Diese Adresse trägst du in deiner KI ein:",
+        mcp_copy: "Adresse kopieren",
+        mcp_anon: "Ohne Anmeldung kannst du <strong>suchen und lesen</strong> – mehr braucht es für den Anfang nicht. Nur zum <strong>Anlegen und Bearbeiten</strong> von WLO-Inhalten ist ein WLO-Konto nötig.",
+        mcp_auth_get: '<a href="/auth">Zugang holen</a> – wenn deine KI ein Feld für einen Schlüssel hat.',
+        mcp_auth_revoke: '<a href="/auth-revoke.html">Zugang sperren</a> – per Block oder per WLO-Anmeldung, wenn du den Block nie gesehen hast.',
+        mcp_copied: "Adresse in die Zwischenablage kopiert.",
+        // Own key rather than the shared `copy_failed`, which sends people to
+        // the preview field — that holds the instructions, not this address.
+        mcp_copy_failed: "Kopieren nicht möglich – bitte die Adresse oben markieren und von Hand kopieren.",
+        nav_h: "Alle Seiten dieses Servers",
+        nav_home: "Startseite (diese Seite)", nav_auth: "Zugang holen", nav_revoke: "Zugang sperren",
+        nav_search: "Beispiel-Suche im Browser", nav_llms: "Selbstbeschreibung für KI-Programme",
+        nav_bookmarklet: "Bookmarklet",
         footer_html: 'Öffentliche, nur lesende Schnittstelle von WirLernenOnline. Schnellzugriff per <a href="bookmarklet.md">Bookmarklet</a>.',
         need_query: "Für „RAW-Ergebnis laden“ bitte einen Suchbegriff eingeben.",
         copied: "Anleitung in die Zwischenablage kopiert.",
@@ -432,6 +486,17 @@
         install_lead: "Two ways your AI can use WLO – Boerdi helps with both:",
         install_a: "<strong>No install:</strong> this page. Pick your AI above and click “Open” – done.",
         install_b: '<strong>Native (MCP):</strong> register the WLO MCP server in your AI (e.g. Claude Desktop) to get all WLO tools directly, incl. <code class="inline">find_wlo_skills</code>.',
+        mcp_url_label: "Enter this address in your AI app:",
+        mcp_copy: "Copy address",
+        mcp_anon: "Without signing in you can <strong>search and read</strong> — that is all you need to start. A WLO account is only required to <strong>create and edit</strong> WLO content.",
+        mcp_auth_get: '<a href="/auth">Get access</a> — if your AI app has a field for a key.',
+        mcp_auth_revoke: '<a href="/auth-revoke.html">Revoke access</a> — by block, or by WLO sign-in if you never saw the block.',
+        mcp_copied: "Address copied to the clipboard.",
+        mcp_copy_failed: "Could not copy – please select the address above and copy it by hand.",
+        nav_h: "All pages on this server",
+        nav_home: "Start page (this page)", nav_auth: "Get access", nav_revoke: "Revoke access",
+        nav_search: "Example search in the browser", nav_llms: "Self-description for AI apps",
+        nav_bookmarklet: "Bookmarklet",
         footer_html: 'Public, read-only interface of WirLernenOnline. Quick access via <a href="bookmarklet.md">bookmarklet</a>.',
         need_query: "For “Load raw result”, please enter a search term.",
         copied: "Instructions copied to clipboard.",
@@ -472,6 +537,10 @@
 
     function base() { return location.origin; }
     function skillsUrl() { return base() + "/api/collection"; }
+    /* The value someone types into their AI app's connector field. Built from
+       the origin like every other URL here, so it is right on each deployment
+       instead of being a literal that goes stale on the next host change. */
+    function mcpUrl() { return base() + "/mcp"; }
 
     function exampleSearchUrl() {
       var q = $("q").value.trim();
@@ -501,6 +570,10 @@
     function refresh() {
       $("prompt").value = instructionText();
       $("skills-url").textContent = skillsUrl();
+      $("mcp-url").textContent = mcpUrl();
+      // The wayfinder's one dynamic link: a search someone can actually click
+      // and see JSON from, rather than a path they have to assemble.
+      $("nav-search").href = base() + "/api/search/Bruchrechnung";
 
       var ex = exampleSearchUrl();
       $("example-label").hidden = !ex;
@@ -534,13 +607,42 @@
       s.appendChild(document.createTextNode(msg));
     }
 
+    /**
+     * Put `text` on the clipboard. Resolves only if it actually got there.
+     *
+     * The fallback exists because the Clipboard API needs a secure context.
+     * It used to select `#prompt` regardless of what it was asked to copy,
+     * which was invisible while the instructions were the only thing copied
+     * and wrong the moment a second caller passed the MCP address — worse,
+     * `#prompt` sits inside a collapsed <details> and cannot be focused, so
+     * nothing was copied at all while the page said it had been. Hence the
+     * throwaway field, and hence checking the return value: `execCommand`
+     * reports a refusal by returning false rather than throwing.
+     */
     function copyText(text) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         return navigator.clipboard.writeText(text);
       }
       return new Promise(function (resolve, reject) {
-        try { $("prompt").focus(); $("prompt").select(); document.execCommand("copy"); resolve(); }
-        catch (e) { reject(e); }
+        var scratch = document.createElement("textarea");
+        scratch.value = text;
+        scratch.setAttribute("readonly", "");
+        scratch.setAttribute("aria-hidden", "true");
+        scratch.tabIndex = -1;
+        // Off-screen rather than hidden: display:none and visibility:hidden
+        // are not selectable, and a visible field would flash on screen.
+        scratch.style.position = "fixed";
+        scratch.style.top = "-1000px";
+        document.body.appendChild(scratch);
+        try {
+          scratch.select();
+          if (document.execCommand("copy")) resolve();
+          else reject(new Error("clipboard write refused"));
+        } catch (e) {
+          reject(e);
+        } finally {
+          document.body.removeChild(scratch);
+        }
       });
     }
 
@@ -626,6 +728,14 @@
     document.getElementById("launcher").addEventListener("change", refresh);
     document.getElementById("apps").addEventListener("change", refresh);
     $("copy").addEventListener("click", copyInstructions);
+    $("copy-mcp").addEventListener("click", function () {
+      copyText(mcpUrl()).then(
+        function () { setStatus("mcp-status", t("mcp_copied"), "ok"); },
+        // Same honesty as the instruction copy: clipboard access can be denied,
+        // and the address stays selectable on screen either way.
+        function () { setStatus("mcp-status", t("mcp_copy_failed"), "error"); }
+      );
+    });
     $("open").addEventListener("click", openTarget);
     $("test").addEventListener("click", loadRaw);
     $("lang-de").addEventListener("click", function () { applyLang("de"); });

@@ -178,6 +178,26 @@ The current rebuild/extension is designed in:
   failure answers the same `invalid_grant` text, because which check failed is
   what a holder of a stolen code would like to learn.
 
+  Two rules from working the T5.3 leftovers: the OAuth surface spends TWO
+  budgets — `/oauth/authorize` the tight `/auth*` one (a password is typed
+  there), everything else the connector's own, because both discovery documents,
+  the registration and the token exchange come from the CLIENT's address and a
+  hosted connector serves many users from few of them; and the consent screen
+  ranks the CHECKED value above the CLAIMED one — registration is open, so
+  `client_name` is whatever the caller typed, and the verified redirect target
+  leads with the emphasis while the name is labelled as self-declared.
+
+  The T5.3 review (2026-08-09) adds one rule and it binds any change to the
+  block format: **a block is LENGTH-bounded at `decodeAccessToken`**
+  (`MAX_BLOCK_CHARS`, the one place every path decodes one). Shape was checked
+  and size was not, and the payload takes arbitrary padding — a 1 MB junk field
+  yields a 1 333 836-character block that decodes fine, because `validatePayload`
+  drops unknown fields from the RESULT while the caller keeps the string.
+  `/oauth/authorize` RETAINS that string in the code store, which bounds the
+  number of records and not their size. A real block is 573 characters (605
+  against the deployed RSA-2048 key), so do not lower the bound below an
+  RSA-4096 rotation's needs — and do not remove it.
+
   Measured lesson from P3, the second time this shape has appeared: page and
   endpoint were each green against the author's own idea of the request body and
   **disagreed** (`response_type` was missing, so every consent failed). Only
@@ -195,6 +215,127 @@ The current rebuild/extension is designed in:
   than copied, because the authority check is the rule "200 is not proof of a
   login" hangs on; and the issuer origin comes from `WLO_PUBLIC_BASE_URL`, from
   the `Host` header only under `TRUST_PROXY`.
+
+- **Skill-Abruf (`search_skill` / `get_skill`) — COMPLETE (2026-08-08),
+  Redaktions-Anleitung: `docs/SKILLS.md`, Verlauf in `STATUS.md`:**
+
+  A skill is a `ccm:io` whose **content type** marks it
+  (`ccm:oeh_extendedType = …/contentTypes/ai_prompt`, full URI — the slug matches
+  nothing) and whose attached file is the `SKILL.md`. Both tools are registered
+  unconditionally; `WLO_SKILLS_COLLECTION_ID` only NARROWS the search, and
+  `WLO_SKILL_TOOL_MODE=one-tool` swaps both for `get_skill_for_task`.
+
+  Four measurements bind any change here (2026-08-08, re-measure before
+  contradicting): (1) `ngsearch` returns **no collections at all**
+  (`contentType=FOLDERS` → 0) and the collections endpoint takes **only**
+  `ngsearchword` — so a skill must stay a `ccm:io`, and a collection scope must be
+  WALKED (`virtual:parent_recursive` → 400 on ngsearch, unlike the page_variant
+  query). (2) That walk is level-parallel and bounded on three axes; sequential it
+  took 90.3 s over a subject portal. Any collection left unread — cap, depth or a
+  failed listing — must be logged, and a root that is wholly unreadable THROWS
+  rather than reporting an empty catalogue. (3) `ccm:original` is the identity: it
+  is in the projection, results dedupe on it, and the original wins over a
+  reference. (4) The instruction TEXT reads fine through a reference id; only the
+  companion-folder lookup has to resolve `ccm:original` first.
+
+  Two rules the tool layer holds: the server-derived sections (file manifest,
+  `:::` references) are rendered BEFORE the untrusted document, because after it
+  they are indistinguishable from sections the document forged; and a companion
+  is pointed at the tool that fits its MIME type — `get_skill` returns the file
+  VERBATIM, so anything that is not `text/*` goes to `get_wlo_content_text`.
+
+- **Use-Case-Lücken (Lizenzfilter, Usage, Themenseiten-Variante) — COMPLETE
+  (2026-08-09):** `docs/plans/2026-08-09-usecase-gap-tools.md` (design + tasks in
+  one file). Three packages, of which one is deliberately NOT built.
+
+  **P1 licence filter** — see `filter-criteria.ts` under Architecture above. One
+  rule sits outside it and binds any change: the OER BUNDLE fans out over its
+  five keys and merges round-robin (`services/license-search.ts`). Sending no
+  criterion and filtering the generic page locally — the first version — answered
+  "kein Treffer" over the 18 793 OER records staging holds for `Mathematik`,
+  because relevance ranking and licence are unrelated and the top fifty carried
+  no `ccm:commonlicense_key` at all. Concatenating the five instead of
+  interleaving them handed the whole cap to the first key (six hits, all CC 0,
+  while 11 563 CC BY-SA never appeared). Both were invisible to every test.
+  Measure with FACETS before contradicting any of this: `ngsearch` takes
+  `facets: string[]` and counts exact keys server-side over the whole result set.
+
+  Three further rules from working the review's leftovers (2026-08-09): the
+  facet total is DISCARDED when the bucket list is full (`FACET_LIMIT`, one
+  exported constant) — a possibly-truncated sum understates the corpus while
+  looking exact, and staging's 16 keys are a property of that instance;
+  EVERY path that accepts `license` must disclose its exactness pass, which is
+  why `searchAll` carries `content.licenseFilter {checked, kept}` (neither
+  `count`, post-cap, nor `total`, the corpus, can stand in for it); and paging
+  the BUNDLE is not a partition — the same `skipCount` goes to all five keys, so
+  the tools say so and point at `excludeNodeIds`.
+
+  "EVERY path" is literal and was found violated on two of the five the day it
+  was written (2026-08-09), both in `rest/`: **an envelope field is not a
+  disclosure if the renderer drops it.** `/api/search?format=html` accepts
+  `license`, ran the pass, and rendered nothing — an emptied result read as a
+  bare "Keine Treffer." over material that is demonstrably there — and
+  `/api/collection?q=…` returned only its post-filter `total`, which is
+  indistinguishable from an empty collection. The page now carries the sentences
+  through `warnings`, and the counts come from the UNPROJECTED envelope, because
+  `fields` may drop `licenseFilter` and a disclosure that disappears when the
+  response is trimmed is no disclosure. Counting the paths is the check: three
+  MCP tools plus `/api/search` (JSON and HTML) plus `/api/collection`.
+  `search_wlo_within_collection` deliberately has no paging notice — it slices
+  ONE locally filtered list, so its paging is a real partition.
+  `content.licenseFilter` exists exactly when a licence was given AND the content
+  leg ran (`include`), and that is deliberate: it is the SINGLE gate both
+  `search_wlo_all` and the HTML page hang their sentences on. Emitting it as
+  `{checked: 0, kept: 0}` for a collections-only call read like a filter that
+  emptied the bucket, and re-deriving the condition from `include` per call site
+  is a second copy of one rule — which is how the paging notice came to fire over
+  a content search that never happened, twice.
+
+  A review of that fan-out (2026-08-09) found three more, and they bind too. (a)
+  The reported total is the FACET count of exact keys (`exactLicenseTotal`),
+  never a sum of the keys' `pagination.total`: the families NEST — `CC_BY`
+  contains `CC_BY_SA` (Mathematik 27 351 vs 3 848 + 9 554) and also the NC/ND
+  records — so summing overstated by 98–164 % (`Mathematik` 37 851 for 14 343),
+  and a single licence reported its family (343 over a list of 42). Facet buckets
+  are matched through `resolveVocab`, the SAME resolution `filterByExactLicense`
+  applies to a node, because the index holds `CC BY-SA` with spaces as its own
+  key — count and list must not disagree about what counts. (b) Every path that
+  accepts `license` needs its own exactness pass: the bundle contributes NO
+  criterion, so `search_wlo_within_collection`, which matches locally, filtered
+  nothing at all and answered `license: "OER"` with CC BY-NC-ND. (c) Losing one
+  key is tolerated, losing ALL five throws — an empty merge is indistinguishable
+  from "there is no freely reusable material on this topic".
+
+  **P2 `wlo_register_usage` — not built, and the reason binds any retry.** The
+  write endpoint is gated on an **application signature**, not a user: `POST
+  /usage/v1/usages/repository/-home-` answers 403 `app signature required` for an
+  authenticated service user, for every `appId` tried and for an EMPTY body (so
+  the gate precedes the body), and 500 `Signature could not be verified!` when
+  the four `X-Edu-App-*` headers are present but bogus — including with a
+  registered app id. `prepareUsage` answers 200 and records nothing. The READ
+  side works and is empty everywhere. Getting a key is not a code change: an
+  edu-sharing app signature lets its holder act for arbitrary users, which
+  reverses this server's auth design. Operator decision, not a task.
+
+  **P3 `wlo_set_topic_page`** — the 14th curation tool and the only one whose
+  result is immediately public: it sets `default` in `ccm:page_config`, which
+  decides which variant a Themenseite renders. Measured 2026-08-09 and the reason
+  every check is local: the repository validates NOTHING — `POST …/property`
+  stored the literal `"not json at all"` and answered 200, and accepted the
+  property on a `ccm:io`. Rules that bind any change: the stored document is
+  EDITED, never composed (`setDefaultVariant` in `topic-page-config.ts`, which
+  keeps unknown keys and the variant list — 28/28 real documents carry
+  `variants[]`, only 2/28 a `default`); the value is written as a store ref
+  (`toStoreRef`, the inverse of the `stripStoreRef` every read applies); a
+  variant that is not a usable child of THIS page's config folder is refused, and
+  an unreadable child listing is refused as unreadable rather than as "no such
+  variant"; the read-back compares the PARSED document, because a repository
+  that stores whatever it is handed proves nothing by echoing our bytes; and a
+  no-op (the variant already renders) is refused rather than written again —
+  `buildChangeSet` gives the other tools that for free by dropping unchanged
+  FIELDS, and this change has none. The
+  confirm token binds to the sentence naming page and both variants with ids —
+  a document of store refs is not something a person can check in a preview.
 
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context
@@ -259,15 +400,28 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 
 ## Architecture
 
-- `src/server.ts` — transport-agnostic `createMcpServer(writeMode)` factory; the
-  only place tools are wired up. The write mode decides whether the curation
-  tools are registered at all, so each entry point resolves the request's
-  credential BEFORE building the server. Two thin entry points connect a
+- `src/server.ts` — transport-agnostic `createMcpServer({ issuer })` factory; the
+  only place tools are wired up. It takes NO write mode and no credential: every
+  tool, curation included, is registered unconditionally, and the write gate runs
+  at CALL time in `registerCurationTool`. (An earlier version did decide
+  registration by write mode; that is what 2026-08-05 reversed, and the
+  measurement is in the write-support block above — a tool nobody sees is a login
+  nobody starts.) Two thin entry points connect a
   transport to it: `stdio.ts` (local/Docker) and `http.ts` (self-hosted
   Streamable HTTP + rate limit + body cap — the production path).
-- `src/tools/*` — the 26 read tools (25 unconditional, of which `get_url_text`
+- `src/tools/*` — the 27 read tools (all unconditional, of which `get_url_text`
   is declared `unsafe` and removable via `WLO_DISABLE_UNSAFE_TOOLS`;
-  `find_wlo_skills` needs `WLO_SKILLS_COLLECTION_ID`) plus the 13 curation tools (`curation-*.ts`,
+  `search` gains the `search_wlo_all` buckets + widget and `fetch` the full
+  record + detail widget under `WLO_SEARCH_OUTPUT_MODE=rich`, off by default —
+  the switch covers BOTH because `search`→`fetch` is one flow and enriching only
+  the first step leaves the second rendering nothing. The convention gives each
+  a SINGLE parameter, so output and display are the only part of
+  `search_wlo_all`/`get_node_details` that can be copied at all, and whether a
+  connector tolerates keys beside the required ones is unmeasured; the
+  convention shape therefore stays first and untouched in both modes, pinned by
+  `tests/tools-knowledge-rich.test.ts`;
+  `search_skill`+`get_skill` become a single `get_skill_for_task` under
+  `WLO_SKILL_TOOL_MODE=one-tool`) plus the 14 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm/report they share, `curation-fields.ts` the 13-field
@@ -293,7 +447,37 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   **`wlo-fetch.ts` — `wloFetch` plus the credential boundary**: the only place
   the operator's password is attached, and only ever to the repository host.
   `src/topic-page-api.ts` — topic-page discovery;
-  `src/topic-page-structure.ts` — one page's variant → swimlanes.
+  `src/topic-page-structure.ts` — one page's variant → swimlanes;
+  `src/topic-page-title.ts` — what may be SHOWN as a page's title. The rule is
+  about the VALUE, not the property it came from: `cm:name` is
+  `PAGE_VARIANT_<uuid>` by construction, `cm:title` holds it on 109/109
+  production variants, and `cclom:title` — the field the code trusted — on
+  **22/68 staging** ones, because a page nobody renamed keeps it everywhere. So
+  every read from the repository passes through `displayTitleOrEmpty`, and every
+  sentence a PERSON has to check names a variant through one rule (`nameOf` in
+  `services/write/topic-page.ts`: real title, else the id) — the confirm token
+  binds to that sentence, and a technical id is not something anyone can check.
+  It is a leaf module and not `tools/shared.ts`, where it started, because
+  `topic-page-api.ts`, `topic-page-structure.ts` and `services/write/topic-page.ts`
+  all need it and none may import from `tools/`;
+  `src/topic-page-config.ts` — the `ccm:page_config` document (which variant a
+  page renders, and in which order) — the page builder's schema, which changes
+  independently of edu-sharing's endpoints.
+  Three rules here rest on measurements in
+  `docs/plans/2026-08-07-topic-page-variants-analysis.md` — re-measure before
+  contradicting any of them. (1) `targetGroup`/`educationalContext` are filtered
+  LOCALLY and an unset value is never excluded (`variantMatchesFilters`, the one
+  place the rule lives): ~90 % of production variants carry neither, so an
+  upstream filter hides pages instead of narrowing them, and
+  `virtual:page_variant_global: ['false']` is a no-op, not an alternative flag.
+  (2) Which variant a page RENDERS comes from `ccm:page_config` on the
+  page-config folder (`default`, else the first still-existing entry of
+  `variants[]`) — not from the child order, which agreed only by accident, and
+  not from the target group, because siblings are mostly editorial copies.
+  (3) A collection may own SEVERAL page-config folders: group by folder (the only
+  key a search hit carries), but count distinct OWNERS, and only the folder named
+  by the owner's `ccm:page_config_ref` can hold the rendering variant. Both (3)
+  defects were invisible to `fetchMock` and appeared on the first live run.
 - `src/wikipedia-api.ts` + **`src/wikipedia-relevance.ts`** — the encyclopedia
   client and the rule that decides which fuzzy search candidate a query is about.
   A direct/redirect hit is trusted (`match: 'exact'`); only search candidates are
@@ -304,7 +488,29 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 - `src/formatter.ts` — node → Markdown/JSON rendering. `src/reranker.ts` —
   quality-based reranking for `enhancedSearch` (query variants live in
   `src/query-expand.ts`). `src/node-match.ts` — local text/criteria matching for
-  /children fallbacks. `src/vocabs.ts` — local vocabulary label↔URI tables (no
+  /children fallbacks. `src/filter-criteria.ts` additionally owns the LICENCE
+  rules, and both rest on a measurement (2026-08-09, re-measure before
+  contradicting): `ccm:commonlicense_key` matches a licence FAMILY, not a licence
+  — `CC_BY` returns 343 hits for "Optik" including CC BY-ND and CC BY-NC-ND, and
+  quoting changes nothing, so plain CC BY is the one licence that cannot be
+  isolated upstream and the surplus is MORE restrictive than requested.
+  `filterByExactLicense` therefore enforces exactness locally, and
+  `pageSizeForLicense` widens the candidate window to 50 only when a licence is
+  filtered — without it the pass starved and answered "0 Treffer" for a filter
+  with 343 hits behind it. `enhancedSearch` ignores its size argument for the
+  upstream request (always `POOL_SIZE` per query variant, then trims the ranked
+  merge), so the widening is invisible in `maxItems`.
+  `src/result-dedupe.ts` — the ONE rule for collapsing
+  content hits that share an external URL, used by both independent search paths
+  (`searchAll` and `search_wlo_content`) and enforced by
+  `tests/shared-rule-discipline.test.ts`. It deduplicates on `ccm:wwwurl`, NOT on
+  `ccm:original`: measured 2026-08-09, the eight `Wellenoptik` copies were eight
+  separate records each owning itself, so the `ccm:original` rule collapses
+  nothing there. The FIRST hit wins, not the newest — the newest was an untouched
+  `1.0` copy while the only edited record (`1.2`) was the oldest, and neither
+  date nor version is in the search projection. Dedupe runs before the result
+  cap; the page is NOT widened to compensate, so a copy-heavy query returns fewer
+  results while `total` still reports the real backend count. `src/vocabs.ts` — local vocabulary label↔URI tables (no
   API call). `src/text-sanitize.ts` — makes foreign text safe to embed where it
   carries elevated authority (injected user messages, confirm previews): drops
   invisible Unicode and flattens control characters (`flattenText`), plus a

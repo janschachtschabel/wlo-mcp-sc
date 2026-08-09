@@ -249,3 +249,49 @@ test('the markdown heading names the COLLECTION, not the page variant', async ()
     assert.equal(head, '# Mathematik', `heading was ${JSON.stringify(head)}`);
   } finally { await client.close(); mock.restore(); }
 });
+
+/**
+ * `cm:title` was excluded as a fallback because it holds the technical
+ * `PAGE_VARIANT_<uuid>` string on 109 of 109 production variants — but the field
+ * we DO trust, `cclom:title`, carries the same string on 22 of 68 staging
+ * variants (measured 2026-08-07). It reached `variantTitle` unguarded, so the
+ * REST response, the structured payload and the widget heading could all show a
+ * raw technical id where a name belongs. `isPlaceholderTitle` already knew the
+ * shape; it just lived in a layer these modules must not import from.
+ */
+test('get_topic_page_content: a PAGE_VARIANT placeholder never becomes the title', async () => {
+  const placeholder = 'PAGE_VARIANT_2f1c8a90-1d4e-4b77-9c31-8ab2e0d7f456';
+  const mock = installFetchMock((url) => {
+    if (url.includes('/collections')) {
+      return { json: { nodes: [makeNode('coll-1', 'Themenseite Optik', { 'cclom:title': ['Themenseite Optik'] })] } };
+    }
+    if (url.includes('/metadata') && url.includes('coll-1')) {
+      return { json: { node: makeNode('coll-1', 'Themenseite Optik', {
+        'cclom:title': ['Themenseite Optik'],
+        'ccm:page_config_ref': ['workspace://SpacesStore/cfg-1'],
+      }) } };
+    }
+    if (url.includes('cfg-1/children') || url.includes('var-1/metadata')) {
+      const node = makeNode('var-1', 'Variante', {
+        'ccm:page_variant_config': [rawConfig],
+        'cclom:title': [placeholder],
+      });
+      return { json: url.includes('/metadata') ? { node } : { nodes: [node] } };
+    }
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_topic_page_content',
+      arguments: { query: 'Optik', outputFormat: 'json' },
+    });
+    const parsed = JSON.parse((result.content as Array<{ text: string }>)[0]?.text ?? '{}');
+    assert.notEqual(parsed.variantTitle, placeholder, 'a technical id is not a title');
+    assert.equal(parsed.variantTitle, '', 'empty, so the collection title takes over downstream');
+    assert.equal(parsed.collectionTitle, 'Themenseite Optik');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

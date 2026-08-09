@@ -279,6 +279,14 @@ export function resolveVocab(input: string, vocab: VocabKey): string | null {
 
   const lower = trimmed.toLowerCase();
   const entries = VOCAB_MAP[vocab];
+  // 0) Already the repository's own value. For most vocabularies the id IS a
+  //    URI and the branch above caught it; licences are the exception, where
+  //    edu-sharing stores bare keys (`CC_BY`). Without this, "label or the raw
+  //    repository value" — what every filter description promises — would hold
+  //    for every vocabulary except that one.
+  for (const entry of entries) {
+    if (entry.id.toLowerCase() === lower) return entry.id;
+  }
   // 1) Exact label/alias match wins — precise and order-independent.
   for (const entry of entries) {
     if (entry.labels.some(l => l.toLowerCase() === lower)) return entry.id;

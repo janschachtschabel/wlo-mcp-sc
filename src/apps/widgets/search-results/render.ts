@@ -118,7 +118,17 @@ export function renderSearchResults(
   const content = payload?.content?.results ?? [];
 
   if (topicPages.length + collections.length + content.length === 0) {
-    return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, 'noResults'))}</p></div>`;
+    // A licence pass that removed everything is a different statement from "no
+    // such material exists", and the grid cannot tell them apart on its own.
+    // Only the emptied case is explained here: when results ARE shown, the user
+    // sees material and the tool's text block carries the exact counts.
+    const lf = payload?.content?.licenseFilter;
+    const reason = lf && lf.kept === 0 && lf.checked > 0
+      ? `<p class="wlo-empty__reason">${escapeHtml(t(locale, 'noResultsLicense'))} ` +
+        `${lf.checked} ${escapeHtml(t(locale, 'licenseCandidatesChecked'))}. ` +
+        `${escapeHtml(t(locale, 'licenseFamilyHint'))}</p>`
+      : '';
+    return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, 'noResults'))}</p>${reason}</div>`;
   }
 
   const query = escapeHtml(payload?.query ?? '');

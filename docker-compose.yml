@@ -121,8 +121,16 @@ services:
       # `${VAR:-all}` would also override an explicitly EMPTY value — and then
       # the documented way to switch the tools on would silently not work.
       WLO_DISABLE_UNSAFE_TOOLS: "${WLO_DISABLE_UNSAFE_TOOLS-all}"
-      # Registers `find_wlo_skills` and gives GET /api/skills its default collection.
+      # Narrows the skill search to one collection subtree (unset → the whole
+      # repository, filtered by the `ai_prompt` content type) and gives
+      # GET /api/collection its default collection.
       WLO_SKILLS_COLLECTION_ID: "${WLO_SKILLS_COLLECTION_ID:-}"
+      # two-tool (default: search_skill + get_skill) | one-tool (get_skill_for_task).
+      WLO_SKILL_TOOL_MODE: "${WLO_SKILL_TOOL_MODE:-}"
+      # lean (default: the ChatGPT convention's {id,title,url}) | rich (adds the
+      # search_wlo_all buckets + widget to `search`). See .env.example for the
+      # unmeasured risk that comes with rich.
+      WLO_SEARCH_OUTPUT_MODE: "${WLO_SEARCH_OUTPUT_MODE:-}"
       # Text extraction (optional external service). Unset → full text comes from
       # the repository's own /textContent only; the server logs that at startup.
       WLO_TEXT_EXTRACTION_URL: "${WLO_TEXT_EXTRACTION_URL:-}"

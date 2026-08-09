@@ -13,10 +13,15 @@
  *     "wlo-mcp" for a change some unknown caller asked for. Read access under a
  *     shared account is ordinary; write access is a decision.
  *
- * Used twice per tool, on purpose: once at registration, so a write tool does
- * not appear in `tools/list` at all when the mode is `none`, and once at call
- * time, because a host may serve a cached tool list from an earlier, more
- * privileged session.
+ * Checked at CALL time, and only there. Curation tools are registered
+ * unconditionally and appear in `tools/list` for every caller, anonymous ones
+ * included — reversed on 2026-08-05 after the earlier design turned out to be
+ * self-defeating: a model that never sees a write tool never calls one, so
+ * nothing ever asks the host to sign the user in and a connector stays anonymous
+ * forever. `registerCurationTool` (tools/curation-shared.ts) runs this gate
+ * before the handler and answers with the `WWW-Authenticate` challenge that
+ * starts the login; each handler additionally calls `requireWrite()`, which is
+ * the guarantee that survives a tool registered past that seam.
  */
 
 import { currentCredential, type WloCredential } from '../../auth/credential.js';

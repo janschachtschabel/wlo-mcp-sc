@@ -19,7 +19,7 @@ import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, renderToJson, renderToText } from '../formatter.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
-import { buildFilterCriteria, formatUnresolvedHint } from '../filter-criteria.js';
+import { buildFilterCriteria, formatUnresolvedHint, licenseFilterNotice } from '../filter-criteria.js';
 import { queryMetaContent, toolError } from './shared.js';
 import { searchWithinCollection } from '../services/search.js';
 import {
@@ -262,6 +262,7 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
       userRole: z.string().optional().describe('Zielgruppe: "Lehrer/in", "Lerner/in", … or URI'),
       learningResourceType: z.string().optional().describe('Ressourcentyp: "Arbeitsblatt", "Video", … or URI'),
       publisher: z.string().optional().describe('Anbieter, z.B. "Klexikon", "Serlo"'),
+      license: z.string().optional().describe('Lizenz: "CC BY 4.0", "gemeinfrei", … oder "OER" für alle frei nachnutzbaren (CC0/PDM/CC BY/CC BY-SA)'),
       maxResults: z.number().int().min(1).max(50).optional().default(10).describe('Maximum results (1–50, default 10)'),
       skipCount: z.number().int().min(0).optional().default(0).describe('Backend offset for "more results" paging (default 0)'),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
@@ -278,6 +279,7 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
           userRole: params.userRole,
           publisher: params.publisher,
           learningResourceType: params.learningResourceType,
+          license: params.license,
           maxResults: params.maxResults,
           skipCount: params.skipCount,
         });
@@ -289,6 +291,11 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
         const sampleHint = res.truncated
           ? `\n_Hinweis: Durchsucht wurden die ersten 100 von ${res.collectionTotal} Inhalten dieser Sammlung._`
           : '';
+
+        // The licence pass can empty this result on its own, and then the sub-
+        // collection hint below would send the caller one level down while the
+        // material sits right here under a licence they did not ask for.
+        const licenceNotice = licenseFilterNotice(res.licenseChecked, res.pagination.total, params.license);
 
         // A bare "0 Treffer" is indistinguishable from "this collection does
         // not exist" and from "there is nothing on the topic" (audit
@@ -331,7 +338,7 @@ NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzt
         // rule search_wlo_content follows for the unresolved-filter hint).
         const hint = formatUnresolvedHint(res.unresolved);
         const content = [{ type: 'text' as const, text }];
-        for (const extra of [sampleHint, emptyHint, hint]) {
+        for (const extra of [sampleHint, licenceNotice, emptyHint, hint]) {
           if (extra.trim()) content.push({ type: 'text' as const, text: extra.trim() });
         }
         content.push(meta);

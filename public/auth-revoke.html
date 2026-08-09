@@ -37,12 +37,43 @@
     <p class="status" id="status" role="status" aria-live="polite"></p>
   </div>
 
-  <div class="warn">
-    <h2>Block nicht mehr zur Hand?</h2>
+  <div class="card">
+    <h2 id="account-heading">Block nicht zur Hand? Alle Zugänge sperren</h2>
     <p>
-      Dann hilft der <strong>Wechsel deines WLO-Passworts</strong>: er macht sofort
-      <em>alle</em> deine Zugangsblöcke ungültig, weil jeder von ihnen das alte Passwort
-      enthält. Das ist der sicherste Weg, wenn ein Gerät abhandengekommen ist.
+      Wenn du dich über <strong>„Mit WLO verbinden"</strong> angemeldet hast, hast du den
+      Block nie gesehen — er ging direkt an dein KI-Programm. Melde dich hier an, dann
+      werden <em>alle</em> Zugänge deines Kontos gesperrt.
+    </p>
+    <form id="account-form" novalidate aria-labelledby="account-heading">
+      <div class="field">
+        <label for="user">WLO-Benutzername</label>
+        <input type="text" id="user" name="user" autocomplete="username"
+               spellcheck="false" required />
+      </div>
+      <div class="field">
+        <label for="secret">WLO-Passwort</label>
+        <input type="password" id="secret" name="secret" autocomplete="current-password"
+               required aria-describedby="secret-hint" />
+        <p class="hint" id="secret-hint">
+          Wird im Browser verschlüsselt und nur zur Prüfung an WLO weitergereicht —
+          genau wie beim Holen eines Zugangs.
+        </p>
+      </div>
+      <div class="actions">
+        <button type="submit" id="account-submit">Alle meine Zugänge sperren</button>
+      </div>
+    </form>
+
+    <p class="status" id="account-status" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="warn">
+    <h2>Passwort gewechselt?</h2>
+    <p>
+      Ein <strong>Wechsel deines WLO-Passworts</strong> macht ebenfalls sofort
+      <em>alle</em> deine Zugangsblöcke unbrauchbar, weil jeder von ihnen das alte
+      Passwort enthält. Die Einträge bleiben dabei aber gelistet — wer ganz aufräumen
+      will, sperrt sie <strong>vor</strong> dem Wechsel oben.
     </p>
   </div>
 

@@ -24,11 +24,13 @@ the repository anonymously and offers 25–26 read-only tools plus a public
 read-only REST layer.
 
 **Writing exists, and requires an identity.** With a login the server also offers
-13 curation tools that change data in the repository: editing metadata, creating
-records, submitting them for editorial review, managing collections, deciding
-metadata proposals, and deleting records. These tools are **not registered at all
-for a caller without a write-capable identity** and additionally refuse at call
-time. Every mutation is confirmed in two steps — a preview first, then a
+14 curation tools that change data in the repository: editing metadata, creating
+records, submitting them for editorial review, managing collections, choosing
+which variant a topic page renders, deciding metadata proposals, and deleting
+records. They are listed for every caller — a tool a model never sees is a login
+that never starts — and **refuse at call time** without a write-capable identity,
+carrying the challenge that asks the host to offer that login. Every mutation is
+confirmed in two steps — a preview first, then a
 single-use token bound to exactly that change — and is read back from the
 repository afterwards, so a report never states more than was verified.
 

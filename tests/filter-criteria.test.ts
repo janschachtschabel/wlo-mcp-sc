@@ -27,6 +27,28 @@ test('buildFilterCriteria: resolves labels to URIs with display labels', () => {
   assert.equal(disc?.values[0], 'http://w3id.org/openeduhub/vocabs/discipline/380');
 });
 
+test('buildFilterCriteria: resolves a licence to the repository key', () => {
+  // Unlike the other vocabularies this one does NOT resolve to a URI: measured
+  // 2026-08-09 on staging, `ccm:commonlicense_key` filters on the bare key
+  // ("Optik" 756 hits -> 343 with CC_BY), while `virtual:license` and
+  // `ccm:license` are refused with 400 DAOValidationException.
+  const { criteria, labeled } = buildFilterCriteria({ license: 'CC BY 4.0' });
+  assert.deepEqual(criteria, [{ property: 'ccm:commonlicense_key', values: ['CC_BY'] }]);
+  assert.equal(labeled[0]?.label, 'CC BY 4.0');
+});
+
+test('buildFilterCriteria: a licence may also be given as the raw key', () => {
+  const { criteria } = buildFilterCriteria({ license: 'CC_BY_SA' });
+  assert.deepEqual(criteria, [{ property: 'ccm:commonlicense_key', values: ['CC_BY_SA'] }]);
+});
+
+test('buildFilterCriteria: an unknown licence is reported, never silently dropped', () => {
+  const { criteria, unresolved } = buildFilterCriteria({ license: 'CC XY 9.9' });
+  assert.equal(criteria.length, 0, 'nothing is sent upstream');
+  assert.equal(unresolved[0]?.field, 'license');
+  assert.equal(unresolved[0]?.value, 'CC XY 9.9');
+});
+
 test('buildFilterCriteria: unresolvable/missing filters are skipped', () => {
   const { criteria, labeled } = buildFilterCriteria({ discipline: 'GibtEsNicht12345' });
   assert.equal(criteria.length, 0);

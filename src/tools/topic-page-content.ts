@@ -75,7 +75,7 @@ Gib EINES an:
           // variant lets getTopicPageContent skip the page-config walk and read
           // the two nodes in parallel instead.
           // No match falls through to the empty-payload path below.
-          const found = await findTopicPagesByQuery(params.query, tg);
+          const found = await findTopicPagesByQuery(params.query, { targetGroup: tg });
           if (found.length) {
             collectionId = found[0].collectionId ?? undefined;
             variantId = found[0].variantId || undefined;

@@ -68,6 +68,77 @@ test('GET /api/search?format=html without a term renders the guidance as HTML', 
 });
 
 /**
+ * `?format=html` accepts `license` like every other search path, and the
+ * exactness pass runs on it — but the page rendered none of it. The JSON view
+ * discloses through `content.licenseFilter`; the HTML view dropped that field,
+ * so a filter that removed every candidate showed up as a bare "Keine Treffer."
+ * over material that is demonstrably there (staging holds 18 793 OER records
+ * for `Mathematik` alone). This is the most visible of the paths, and it was the
+ * only one saying nothing.
+ */
+test('the HTML view says when a licence filter emptied the result', async () => {
+  // The mock node carries no `ccm:commonlicense_key`, so the exactness pass
+  // drops it — exactly the case a bare "Keine Treffer." would misreport.
+  const mock = searchMock();
+  try {
+    const r = await routeRestRequest('GET', '/api/search/optik?license=CC%20BY%204.0&format=html');
+    const html = String(r!.raw ?? '');
+    assert.match(html, /genau der Lizenz/, 'names the licence check as the reason');
+    assert.match(html, /CC BY 4\.0/, 'and which licence was asked for');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('the HTML view discloses the licence pass when hits survive it', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/ngsearch')) {
+      return {
+        json: {
+          nodes: [
+            makeNode('c-1', 'Genau CC BY', { 'ccm:commonlicense_key': ['CC_BY'] }),
+            makeNode('c-2', 'Eine NC-Verwandte', { 'ccm:commonlicense_key': ['CC_BY_NC'] }),
+          ],
+          pagination: { total: 5, from: 0, count: 2 },
+        },
+      };
+    }
+    if (url.includes('/collections')) return { json: { nodes: [] } };
+    return { json: {} };
+  });
+  try {
+    const r = await routeRestRequest('GET', '/api/search/optik?license=CC%20BY%204.0&format=html');
+    const html = String(r!.raw ?? '');
+    assert.match(html, /Genau CC BY/, 'the exact match is listed');
+    assert.doesNotMatch(html, /Eine NC-Verwandte/, 'the family relative is not');
+    assert.match(html, /entfernt|genau der Lizenz/, 'and the page says a pass removed something');
+  } finally {
+    mock.restore();
+  }
+});
+
+/**
+ * Same trap the tool fell into: the paging caveat belongs to the CONTENT search,
+ * so it must not fire when `include` left that search out. `content.licenseFilter`
+ * is the honest gate — it exists exactly when a licence was set AND the content
+ * leg ran.
+ */
+test('the HTML view stays quiet about paging when no content search ran', async () => {
+  const mock = searchMock();
+  try {
+    const r = await routeRestRequest(
+      'GET',
+      '/api/search/optik?license=OER&include=collections&skipCount=8&format=html',
+    );
+    const html = String(r!.raw ?? '');
+    assert.doesNotMatch(html, /Fortsetzung/, 'no paging caveat about a search that did not happen');
+    assert.doesNotMatch(html, /genau der Lizenz/, 'and no licence notice either');
+  } finally {
+    mock.restore();
+  }
+});
+
+/**
  * The page hardcodes a LIGHT palette (near-black text, a blue link, a pale
  * warning strip) but declared no background, so a browser in dark mode painted
  * its own dark canvas underneath — measured live 2026-08-03 at

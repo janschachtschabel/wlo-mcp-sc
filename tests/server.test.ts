@@ -32,13 +32,16 @@ const EXPECTED_TOOLS = [
   'get_node_collections',
   'get_collection_stats',
   'wlo_auth_status',
-  // `find_wlo_skills` is deliberately NOT here: it is registered only when
-  // WLO_SKILLS_COLLECTION_ID is configured, and the suite runs without it.
-  // Unconfigured it failed on every call, so listing it advertised a capability
-  // that could not work.
+  // The two-step skill surface, registered unconditionally: the search filters
+  // the repository by the `ai_prompt` content type, so it works without a
+  // configured collection (WLO_SKILLS_COLLECTION_ID only narrows it to a
+  // subtree). `WLO_SKILL_TOOL_MODE=one-tool` swaps both for `get_skill_for_task`
+  // — see tests/tools-skills.test.ts.
+  'search_skill',
+  'get_skill',
 ];
 
-test('createMcpServer registers exactly the 25 read tools and the 13 curation tools', async () => {
+test('createMcpServer registers exactly the 27 read tools and the 14 curation tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS, ...CURATION_TOOLS].sort());

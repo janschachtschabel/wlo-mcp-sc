@@ -12,7 +12,9 @@
 import type { WloNode } from './wlo-api.js';
 import { getChildCollections, getNodeMetadata, stripStoreRef } from './wlo-api.js';
 import { nodeTitle } from './node-match.js';
-import { TOPIC_PAGE_PROPS, type TargetGroup } from './topic-page-api.js';
+import { TOPIC_PAGE_PROPS, isUsableVariant, type TargetGroup } from './topic-page-api.js';
+import { orderVariants, readPageConfigOrder } from './topic-page-config.js';
+import { displayTitleOrEmpty } from './topic-page-title.js';
 
 /** One item inside a swimlane: a widget plus the optional embedded node it shows. */
 export interface SwimlaneItem {
@@ -151,11 +153,16 @@ export async function getTopicPageContent(
     // but those are WIDGET_* nodes WITHOUT config → always 0 swimlanes. Now pick
     // the real (non-template) variant directly among the children. This also saves
     // the per-child getCollectionContents fan-out (fewer edu-sharing calls).
-    const configChildren = await getChildCollections(stripStoreRef(ref), 50, 0, TOPIC_PAGE_PROPS);
-    const variants = configChildren.filter(
-      n => hasVariantConfig(n)
-        && n.properties?.['ccm:page_variant_is_template']?.[0] !== 'true',
-    );
+    const configId = stripStoreRef(ref);
+    const configChildren = await getChildCollections(configId, 50, 0, TOPIC_PAGE_PROPS);
+    const found = configChildren.filter(isUsableVariant);
+    // Which one the page actually renders is recorded on the config folder
+    // (`ccm:page_config.default`), not derivable from the children order — that
+    // the two agreed in all 13 measured multi-variant pages is an accident of
+    // ordering, not a rule. Only asked when there is a choice to make.
+    const variants = found.length > 1
+      ? orderVariants(found, await readPageConfigOrder(configId))
+      : found;
     variantNode = (
       opts.targetGroup
         ? variants.find(
@@ -185,7 +192,11 @@ function buildTopicPageStructure(
   const structure: TopicPageStructure = {
     collectionId: opts.collectionId,
     variantId: variantNode.ref?.id ?? opts.variantId ?? '',
-    variantTitle: vProps['cclom:title']?.[0] || vProps['cm:title']?.[0] || '',
+    // `cm:title` is NOT a fallback: it holds the technical `PAGE_VARIANT_<uuid>`
+    // string on 109 of 109 production variants (measured 2026-08-07). And
+    // `cclom:title` is not automatically safe either — 22 of 68 staging variants
+    // carry that same string there — so the VALUE is checked, not its source.
+    variantTitle: displayTitleOrEmpty(vProps['cclom:title']?.[0]),
     ...(header.collectionTitle ? { collectionTitle: header.collectionTitle } : {}),
     ...(header.description ? { description: header.description } : {}),
     swimlanes,

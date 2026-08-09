@@ -10,7 +10,7 @@
 
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
 import { WLO_TOPIC_POOL, buildTopicPageUrl, getNodesMetadata, ngsearch, searchCollectionsByKeyword, stripStoreRef } from '../wlo-api.js';
-import type { ThemePageInfo, TargetGroup } from '../topic-page-api.js';
+import type { ThemePageInfo, VariantFilters } from '../topic-page-api.js';
 import { getCollectionThemePages, searchTopicPageCollections } from '../topic-page-api.js';
 import type { TopicPageStructure } from '../topic-page-structure.js';
 import type { FormattedNode } from '../formatter.js';
@@ -31,7 +31,7 @@ import { mapPool } from '../concurrency.js';
  */
 export async function findTopicPagesByQuery(
   query: string,
-  targetGroup?: TargetGroup,
+  filters: VariantFilters = {},
   maxCandidates = 12,
 ): Promise<ThemePageInfo[]> {
   const q = query.trim();
@@ -67,7 +67,7 @@ export async function findTopicPagesByQuery(
   // wave) — the dominant cost of both callers. Share WLO_TOPIC_POOL with the
   // Mode-C fan-out instead of adding a second knob: it is the same kind of
   // work, bounded by the same upstream.
-  const pages = await mapPool(candidateIds, WLO_TOPIC_POOL, (cId) => getCollectionThemePages(cId, targetGroup));
+  const pages = await mapPool(candidateIds, WLO_TOPIC_POOL, (cId) => getCollectionThemePages(cId, filters));
   const results: ThemePageInfo[] = [];
   for (const p of pages) if (p) results.push(...p);
   return results;

@@ -7,12 +7,13 @@ AI agents **search and retrieve open educational resources (OER)** from
 [WirLernenOnline (WLO)](https://wirlernenonline.de) via the public
 edu-sharing REST API.
 
-It exposes **26 read tools** (25 unconditional; `find_wlo_skills` appears only with a configured skills collection, and `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
+It exposes **27 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 25 sit **thirteen curation tools** (creating, editing,
-submitting, collections, compendium texts, metadata proposals, deleting). They
+On top of those 27 sit **fourteen curation tools** (creating, editing,
+submitting, collections, compendium texts, metadata proposals, which variant a
+topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
 starting — and **refuse without one**, answering with the challenge that asks the
 host to sign the user in. Every change is previewed and confirmed before it
@@ -61,7 +62,7 @@ stateless proxy in front of edu-sharing.
 
 ## Features
 
-- **26 MCP read tools** (25 unconditional — `find_wlo_skills` is registered only when `WLO_SKILLS_COLLECTION_ID` is set, because unconfigured it could not work) — content search, collection search, combined search, topic
+- **27 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill`+`get_skill` for a single `get_skill_for_task`) — content search, collection search, combined search, topic
   pages and their swimlane content, subject portals, tree browsing, node
   details (single & bulk), vocabulary lookup, publisher lookup, health check,
   Wikipedia (lead extract or the FULL article via `fullText`), full compendium text, scoped in-collection search, related
@@ -159,7 +160,7 @@ else has sensible defaults.
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | all | Per-request timeout (ms) for every upstream edu-sharing call. Prevents a hung backend socket from blocking a tool call. Sized from measurement (staging, 2026-08-02): creating a record takes 4.2–8.0 s, every other call under 2.5 s. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | all | Optional service account. Unset (default) → the server reads **anonymously**, public content only, exactly as before. Both set → every call authenticates as that one account via HTTP Basic, so **all** users of this MCP see the same elevated content. Use a purpose-made, read-only account: whatever it can see, every user can see, and edu-sharing's audit trail shows the service account rather than the person. Half a credential is treated as none. **Wrong credentials do not downgrade to public content** — the repository answers `401` (measured against production 2026-07-31, on the identity and the search endpoints alike), so every query fails and the server returns nothing at all. Unset both variables to run anonymously instead. Check with the `wlo_auth_status` tool: `mode: "service"` together with `authenticated: false` means the credentials are being rejected. HTTP Basic is used because it is the only scheme besides the session cookie that edu-sharing's own OpenAPI declares. **Scope:** the service account applies to the MCP endpoint only. The public REST layer (`GET /api/*`) and the launcher stay anonymous by design — they are reachable from the internet without any login, so letting them inherit the account would make everything it can see world-readable. A credential over a non-`https` repository URL is sent in the clear (Basic is base64, not encryption); the server warns about this at startup. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
-| `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page). Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
+| `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page), either by pasting the block back or by logging in to end every access of the account at once. The second way is the only one open to OAuth users, who never see their block. Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(unset)_ | http | The previous key during a rotation. Blocks are always issued with the current key but opened with either, so a rotation does not invalidate every user's configuration at once; remove it once the overlap window is over. An unusable value here switches the feature **off** rather than silently dropping the window — otherwise exactly what the window exists for would break, and you would hear about it from users instead of from the boot log. |
 | `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Where the allow-list of issued access ids lives. It holds ids, user names and issue times — **never a credential**. It is a POSITIVE list: lose it and every issued block stops working (inconvenient) rather than every revoked block starting to work again (unsafe). In Docker this is the one writable volume; `read_only: true` still covers everything else. **Back it up.** |
 | `WLO_PUBLIC_BASE_URL` | _(unset)_ | http | The public origin clients type in, e.g. `https://wlo-mcp.example.org` — scheme and host, no path. It is what the OAuth discovery documents (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`) name as their own endpoints. Unset means those paths answer 404 unless `TRUST_PROXY=1`, in which case the origin is derived from the request's `Host` header — which the CALLER supplies. Set it: a forged header would otherwise point somebody's client at a login page we do not own. Independent of the access-block feature only in appearance — both are off without `WLO_AUTH_PRIVATE_KEY`, since an OAuth login issues exactly the same access block. |
@@ -173,7 +174,7 @@ else has sensible defaults.
 | `MCP_SSE` | `false` | HTTP mode | When truthy (`1`/`true`/`yes`), serve `POST /mcp` as a real Server-Sent-Events stream (required by ChatGPT developer mode). Default is single-JSON responses (maximal client compatibility). Behind a reverse proxy, buffering **must** be disabled for the `/mcp` location — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). The Docker image defaults this to `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | all | MIME type for the inlined Apps-SDK widget resources. Default is the MCP-Apps standard (portable). Set to `text/html+skybridge` if a legacy ChatGPT runtime does not render the widgets with the standard value. |
 | `WLO_WIDGET_DOMAIN` | unset | all | App identity domain for the ChatGPT plugin submission (required + unique per app there; widgets render under `<domain>.web-sandbox.oaiusercontent.com`). When set, it is emitted on `_meta.ui.domain` **and** its `openai/widgetDomain` alias; **when unset, on neither** — a host validates the domain against its own sandbox format and rejects the whole widget (aborting the bound tool call) for a foreign value: Claude expects `{hash}.claudemcpcontent.com` and normalises the vendor alias onto the standard key, so dropping only one is not enough. Leave unset for Claude and every non-ChatGPT host. The widget CSP allowlist stays the edu-sharing origin regardless. |
-| `MAX_BODY_BYTES` | `1048576` (1 MB) | HTTP mode | Max request-body size **in bytes**; larger POSTs get `413`. Caps a memory-exhaustion vector. Plain digits only — `1MB` is refused with a warning and the default is kept, rather than read as `1` byte (which would answer every request with `413`). |
+| `MAX_BODY_BYTES` | `4194304` (4 MB) | HTTP mode | Max request-body size **in bytes**; larger POSTs get `413`. Caps a memory-exhaustion vector. Plain digits only — `1MB` is refused with a warning and the default is kept, rather than read as `1` byte (which would answer every request with `413`). |
 | `RATE_LIMIT_RPM` | `120` | HTTP mode | Requests/minute **per client IP** on the MCP endpoint; over the limit returns `429`. `/health` is exempt. Set `0` to disable (e.g. behind a WAF/platform limiter). |
 | `API_RATE_LIMIT_RPM` | `30` | HTTP mode | Requests/minute **per client IP** on the public REST endpoints (`GET /api/*`); over the limit returns `429`. Tighter than `RATE_LIMIT_RPM` because it is an anonymous public surface. Set `0` to disable. |
 | `TRUST_PROXY` | `false` | HTTP mode | When truthy (`1`/`true`/`yes`), take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop instead of the socket address — required for correct per-client rate limiting **behind a reverse proxy**. Off by default because `X-Forwarded-For` is spoofable on a directly-exposed server. |
@@ -260,8 +261,8 @@ permissive [`/robots.txt`](public/robots.txt).
 | Endpoint | Query params | Returns |
 |---|---|---|
 | `GET /api/search/<term>` | Path form of `/api/search` — the term rides in the **path**, filters stay optional query params. Preferred for AI tools: some AI fetch layers strip the query string from model-built URLs (live-diagnosed), and the path form survives that — a stripped request only loses the filters, not the search. An explicit `q` query param wins over the path term. | Same envelope as `GET /api/search`. |
-| `GET /api/search` | `q` (required), `educationalContext`, `discipline`, `learningResourceType`, `userRole`, `publisher`, `maxContent`, `maxCollections`, `skipCount`, `include` (`content,collections,topicPages`), `includeCompendium`, `includeTextContent`, `includeWikipedia`, `includeTopicPageContent`, `maxPerSwimlane`, `includeFacets`, `fields` | The combined `search_wlo_all` envelope (`content` / `collections` / `topicPages` buckets, optional `wikipedia`). Adds `unresolvedFilters` (mistyped vocab filters + "did you mean" suggestions) when any filter doesn't resolve, and — with `includeFacets=1` — `facets` (`{label, count, uri}` per bucket; the `discipline` facet resolves university subjects, see below). Optional `fields=title,url,…` trims each result item to those keys (`nodeId` always kept) — a token saving for LLM clients reading the raw JSON. |
-| `GET /api/collection` | `nodeId` (defaults to `WLO_SKILLS_COLLECTION_ID`), `q` (optional, search within), `max`, `fields`, vocab filters | A collection's contents: `{ collectionId, query, total, results: [{ nodeId, title, description, learningResourceTypes, publisher, url, downloadUrl }] }`. Without `q` it lists the direct file children (reliable for reference collections); with `q` it searches within. Optional `fields=…` trims each result item (`nodeId` always kept). The launcher's **skills** source — each result's `downloadUrl` serves the raw Markdown. |
+| `GET /api/search` | `q` (required), `educationalContext`, `discipline`, `learningResourceType`, `userRole`, `publisher`, `license`, `maxContent`, `maxCollections`, `skipCount`, `include` (`content,collections,topicPages`), `includeCompendium`, `includeTextContent`, `includeWikipedia`, `includeTopicPageContent`, `maxPerSwimlane`, `includeFacets`, `fields` | The combined `search_wlo_all` envelope (`content` / `collections` / `topicPages` buckets, optional `wikipedia`). With `license`, `content.licenseFilter: { checked, kept }` reports the exactness pass (the repository can only filter licence FAMILIES, so the exact selection happens here); `?format=html` states the same in words. Adds `unresolvedFilters` (mistyped vocab filters + "did you mean" suggestions) when any filter doesn't resolve, and — with `includeFacets=1` — `facets` (`{label, count, uri}` per bucket; the `discipline` facet resolves university subjects, see below). Optional `fields=title,url,…` trims each result item to those keys (`nodeId` always kept) — a token saving for LLM clients reading the raw JSON. |
+| `GET /api/collection` | `nodeId` (defaults to `WLO_SKILLS_COLLECTION_ID`), `q` (optional, search within), `max`, `fields`, vocab filters | A collection's contents: `{ collectionId, query, total, results: [{ nodeId, title, description, learningResourceTypes, publisher, url, downloadUrl }] }`. With `q` or any vocab filter it matches locally against the collection's direct children (up to 100 in one call) — not a scoped search: the backend rejects `virtual:primaryparent_nodeid` with 400 — and adds `truncated` + `collectionTotal` so a sampled answer never reads as exhaustive. With neither it lists those children plain, paged upstream. With `license` the response adds `licenseFilter: { checked, kept }` — `total` is already post-filter, so without it an emptied result is indistinguishable from an empty collection. Optional `fields=…` trims each result item (`nodeId` always kept). The launcher's **skills** source — each result's `downloadUrl` serves the raw Markdown. |
 | `GET /api/compendium` | `ids` (comma-separated) or `nodeId`, ≤ 25 | `{ entries: [{ nodeId, title, compendiumText }] }` — the FULL editorial compendium text. |
 | `GET /api/topic-page` | `collectionId` or `variantId` (≥ 1 required), `targetGroup` (`teacher`/`learner`/`general`), `maxPerSwimlane` | The render-ready swimlane payload (`variantTitle`, `topicPageUrl`, `swimlanes[]`). |
 | `GET /api/wikipedia` | `q` (required), `lang` (default `de`), `sections` (1–3) | A Wikipedia lead summary `{ title, extract, thumbnail?, url, lang, match }`, or `404` when no article matches. `match` is `exact` (the title as asked, or a Wikipedia redirect from it) or `fuzzy` (no article of that name; resolved by search and checked for relevance). A candidate that is not on topic yields `404`, not a plausible wrong article — see [Wikipedia resolution](#wikipedia-resolution). |
@@ -297,7 +298,7 @@ result** button. The message can be **copied** into any chat or opened via a dee
 link in **Claude** (`claude.ai/new?q=`), **ChatGPT** (`chatgpt.com/?q=`), or
 **Microsoft Copilot** (`copilot.microsoft.com/?q=`); for **Gemini** (no native URL
 prefill) the app opens and the message is placed on the clipboard to paste.
-Natively-registered MCP clients get the same skills via the `find_wlo_skills` tool.
+Natively-registered MCP clients get skills via `search_skill` + `get_skill`.
 A [bookmarklet](public/bookmarklet.md) opens the launcher pre-filled with the text
 selected on any page (`/launcher.html?q=<selection>`).
 
@@ -306,7 +307,7 @@ selected on any page (`/launcher.html?q=<selection>`).
 | # | Tool | Purpose | Output |
 |---|---|---|---|
 | 1 | `search_wlo_collections` | Search collections/topic pages (keyword + tree fallback) | markdown / json |
-| 2 | `search_wlo_content` | Full-text search for individual content items | markdown / json |
+| 2 | `search_wlo_content` | Full-text search for individual content items; filters for subject, level, type, publisher and **licence** (exact — the repository key matches a whole CC family) | markdown / json |
 | 3 | `get_collection_contents` | Items / sub-collections of a collection (paginated, optional recursive) | markdown / json |
 | 4 | `get_node_details` | Full metadata for one node + optional full text + parents + raw URIs | markdown / json |
 | 5 | `search_wlo_all` | **Combined**: content + collections + topic pages in one parallel call, separate buckets | markdown / json |
@@ -319,19 +320,23 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 12 | `get_topic_page_content` | The swimlane **content structure** of a topic page, render-ready | markdown / json |
 | 13 | `get_wikipedia_summary` | Wikipedia for a term: lead extract, or the FULL article text with `fullText` | markdown / json |
 | 14 | `get_compendium_text` | FULL editorial compendium text of one/more collections (bulk, ≤25) | markdown / json |
-| 15 | `search_wlo_within_collection` | Filtered full-text search scoped to one collection subtree | markdown / json |
-| 16 | `search` | ChatGPT knowledge convention: lightweight hits `{id,title,url}` across WLO | json (+ text) |
-| 17 | `fetch` | ChatGPT knowledge convention: one node's full document `{id,title,text,url,metadata}` | json (+ text) |
+| 15 | `search_wlo_within_collection` | Filtered search over one collection's contents listing (incl. licence) | markdown / json |
+| 16 | `search` | ChatGPT knowledge convention: lightweight hits `{id,title,url}` across WLO. `WLO_SEARCH_OUTPUT_MODE=rich` adds the `search_wlo_all` buckets and widget beside `results` | json (+ text) |
+| 17 | `fetch` | ChatGPT knowledge convention: one node's full document `{id,title,text,url,metadata}`. `WLO_SEARCH_OUTPUT_MODE=rich` adds the complete record (preview image, download link) and the detail widget | json (+ text) |
 | 18 | `lookup_wlo_publishers` | List publishers/sources with per-publisher content counts (facet) | markdown / json |
 | 19 | `get_related_content` | "More like this": content sharing a seed node's subject/level (+ optional siblings) | markdown / json |
 | 20 | `get_node_breadcrumb` | A collection's ancestor path (root → node) in the content tree | markdown / json |
 | `get_node_collections` | Which collections a material is filed in — the reverse of every other lookup. Answers "where does this sit?" and "where do I find more like it?". Resolves a reference id to its original first, so an id from a collection listing works like one from a search. |
 | 21 | `get_collection_stats` | A collection's composition: file/sub-collection counts + type/subject/level breakdown | markdown / json |
-| 22 | `find_wlo_skills` | Find WLO "skills" (reusable instruction Markdown curated in a WLO collection) matching a task and return their instructions to apply | markdown / json |
-| 23 | `get_wlo_content_text` | A material's OWN full text (worksheet, article), not its metadata — repository first, linked page as fallback | markdown / json |
-| 24 | `get_node_collections` | Which collections a given material sits in (reverse lookup via `/usage/v1`) | markdown / json |
-| 25 | `wlo_auth_status` | Which identity this session is using, and what it may do | markdown / json |
-| 26 | `get_url_text` | **UNSAFE** — the text behind an ARBITRARY web URL, via the extraction service. Not for WLO material (use 23). Switchable off with `WLO_DISABLE_UNSAFE_TOOLS`; **not recommended in production** — see [Tools declared unsafe](#tools-declared-unsafe) | markdown / json |
+| 22 | `search_skill` | Find WLO "skills" (curated AI prompts, content type `ai_prompt`) matching a task — nodeId, title, description, keywords, no body | markdown / json |
+| 23 | `get_skill` | The instruction Markdown (SKILL.md) attached to one skill, by nodeId | markdown / json |
+| 24 | `get_wlo_content_text` | A material's OWN full text (worksheet, article), not its metadata — repository first, linked page as fallback | markdown / json |
+| 25 | `get_node_collections` | Which collections a given material sits in (reverse lookup via `/usage/v1`) | markdown / json |
+| 26 | `wlo_auth_status` | Which identity this session is using, and what it may do | markdown / json |
+| 27 | `get_url_text` | **UNSAFE** — the text behind an ARBITRARY web URL, via the extraction service. Not for WLO material (use 24). Switchable off with `WLO_DISABLE_UNSAFE_TOOLS`; **not recommended in production** — see [Tools declared unsafe](#tools-declared-unsafe) | markdown / json |
+
+With `WLO_SKILL_TOOL_MODE=one-tool`, 22 and 23 are replaced by a single
+`get_skill_for_task`, which ranks and loads the best match itself.
 
 The display/search tools also return `structuredContent` (validated against a
 per-tool `outputSchema`) and carry `annotations` (`readOnlyHint`; `openWorldHint`
@@ -376,7 +381,7 @@ collections, and raw `ccm:*`/`cclom:*` URIs. For collections with a curated
 carry the full text (`-all-` query); collection search/list/browse also carry it
 (part of `DISPLAY_PROPS`) — capped at 500 chars in `markdown`, full in `json`.
 
-**5. `search_wlo_all`** — `query` (required), the five filters, `maxContent?`
+**5. `search_wlo_all`** — `query` (required), the six filters (incl. `license`), `maxContent?`
 (1–50, default 8), `maxCollections?` (1–20, default 5), `include?`
 (`['content','collections','topicPages']`), `excludeNodeIds?` (≤200),
 `skipCount?` (content paging), `includeFacets?` (default false — facet counts in
@@ -400,12 +405,17 @@ a short fuzzy pick-list of `{label, uri}` — the chosen `uri` is usable directl
 a `discipline` filter. Model-free (Levenshtein), never auto-resolved.
 
 **7. `search_wlo_topic_pages`** — `query?`, `targetGroup?` (`teacher` | `learner`
-| `general`), `educationalContext?`, `collectionId?`, `mergeVariants?` (default
-true), `sort?` (`relevance` | `alpha`), `maxResults?` (1–20, default 5),
-`includeContent?` (default false; JSON mode — attach each page's resolved
-swimlane `content`, ≤5 parallel) + `maxPerSwimlane?` (1–10, default 3),
-`outputFormat?`. Three modes: by `collectionId` (direct), by `query` (search →
-check for topic page), or filters-only (list all).
+| `general`), `educationalContext?`, `collectionId?`, `withinCollectionId?`,
+`mergeVariants?` (default true), `sort?` (`relevance` | `alpha`), `maxResults?`
+(1–20, default 5), `includeContent?` (default false; JSON mode — attach each
+page's resolved swimlane `content`, ≤5 parallel) + `maxPerSwimlane?` (1–10,
+default 3), `outputFormat?`. Four modes: by `collectionId` (does THIS collection
+have one), by `withinCollectionId` (every topic page in the subtree — for the
+Physik portal 20+ instead of 1), by `query` (search → check for topic page), or
+filters-only (list all). Both profiling filters keep variants that declare no
+value: ~90 % of WLO topic pages carry neither, so a strict filter would hide the
+catalogue rather than narrow it. Where a page has several variants, the one it
+actually renders comes first and is flagged `isDefault`.
 
 **8. `get_subject_portals`** — `educationalContext?`, `includeContentCounts?`,
 `outputFormat?`. The first-level collections directly under the WLO root
@@ -461,9 +471,12 @@ result shows only the 500-char preview. `compendiumText` is `null` for nodes
 without the property.
 
 **15. `search_wlo_within_collection`** — `nodeId` (required, the collection),
-`query?`, the five vocab filters, `maxResults?` (1–50, default 10), `skipCount?`,
-`outputFormat?`. A full-text search scoped to one collection subtree (via
-`virtual:primaryparent_nodeid`) — "which videos on X are in this collection?".
+`query?`, the six vocab filters (incl. `license`), `maxResults?` (1–50,
+default 10), `skipCount?`, `outputFormat?`. Query and filters are matched
+LOCALLY against the collection's own contents listing — up to 100 direct
+children, and the output says so when there are more. Not a subtree search and
+not `virtual:primaryparent_nodeid`: the backend answers 400 for that criterion
+(live-probed 2026-07-17), which is why the listing is the scope.
 Use `search_wlo_content` for an unscoped search, `get_collection_contents` to
 list a collection unfiltered.
 
@@ -500,16 +513,33 @@ by learning-resource type, subject, and level. The breakdown is tallied over the
 collection's actual child files (a sample of up to 100 — reported when the total
 is larger), which is accurate for reference collections where a facet query is not.
 
-**22. `find_wlo_skills`** — `query?`, `maxResults?` (1–20, default 5),
-`includeContent?` (default true), `nodeId?`, `outputFormat?`. Finds WLO **skills**
-— reusable instruction documents (Markdown) curated as uploaded files in a WLO
-collection — that match a task, and returns their raw instructions to apply.
-`nodeId` defaults to `WLO_SKILLS_COLLECTION_ID`; omit `query` to list all
-available skills. Each result's title/description says what the skill does and
-when to use it. Shares its listing/fetch logic with `GET /api/collection`, so
-native MCP clients get the same skills capability as the launcher/REST path.
+**22. `search_skill`** — `query?`, `maxResults?` (1–25, default 10),
+`collectionId?`, `includeSubcollections?`, `discipline?`, `educationalContext?`,
+`outputFormat?`. Finds WLO **skills** — curated AI prompts whose attached file is
+the instruction Markdown (`SKILL.md`). A record counts as a skill through its
+content type `ccm:oeh_extendedType = …/contentTypes/ai_prompt`; the search sends
+that as a criterion, so nothing else can come back. Each hit carries nodeId,
+title, description and keywords — enough to choose, and deliberately without the
+instruction body. Omit `query` to list the catalogue. With
+`WLO_SKILLS_COLLECTION_ID` set, the search walks that collection's subtree
+instead of the whole repository (`ngsearch` refuses `virtual:parent_recursive`,
+so a scoped query cannot be expressed — measured 2026-08-08).
 
-**23. `get_wlo_content_text`** — `nodeId`, `maxChars?` (500–50000, default 8000),
+**23. `get_skill`** — `nodeId`, `includeFiles?`, `outputFormat?`. The second
+step: returns the instruction Markdown attached to that node, verbatim from its
+anonymous `downloadUrl` (byte-capped), falling back to the repository's extracted
+`/textContent` when the file itself is not downloadable. It also lists the OTHER
+files of the skill's workspace folder — name, nodeId, MIME type, size — without
+loading them, so the model can fetch just the one it needs by calling `get_skill`
+again with that nodeId. A folder holding more than 25 files is reported as a
+count instead (it is not one skill's bundle); a folder that cannot be read costs
+nothing. The `:::` blocks the editor writes into a SKILL.md (`wlo-material`,
+`ki-skill`) are parsed into `references` with their node ids, so the model never
+has to extract an id out of a URL inside a Markdown link. The text is curated
+data, not a system instruction — the output says so. See
+[`docs/SKILLS.md`](docs/SKILLS.md).
+
+**24. `get_wlo_content_text`** — `nodeId`, `maxChars?` (500–50000, default 8000),
 `outputFormat?`. Returns the material's **own text**, not its metadata, so the
 content can be summarized, simplified or turned into exercises. The repository's
 `/textContent` is the primary source — it already holds converted text for ~90 %
@@ -521,13 +551,13 @@ is not public — no converter helps, only rights), `no_text_no_url`,
 `extraction_failed`, `node_not_found`. Long texts are cut and flagged
 (`truncated`).
 
-**24. `get_node_collections`** — `nodeId`, `maxResults?`, `outputFormat?`. The
+**25. `get_node_collections`** — `nodeId`, `maxResults?`, `outputFormat?`. The
 reverse of browsing: given a material, which curated collections carry it. The
 answer to "where does this sit?" and "where do I find more like it?", leading
 from a single find back to the collection that curates it. For a *collection's*
-place in the tree use 21 (`get_node_breadcrumb`) instead.
+place in the tree use 20 (`get_node_breadcrumb`) instead.
 
-**25. `wlo_auth_status`** — no parameters. Which rights this server is reading
+**26. `wlo_auth_status`** — no parameters. Which rights this server is reading
 with: `anonymous` (public data only, the default), `service` (one configured
 account, the same rights for everyone) or `user` (the signed-in person's own
 rights). `authenticated` is a **separate** statement: `service`/`user` with
@@ -535,7 +565,7 @@ rights). `authenticated` is a **separate** statement: `service`/`user` with
 *every* query fails — not "only public content", but nothing at all. That is a
 configuration fault worth naming instead of reporting an empty world.
 
-**26. `get_url_text`** *(UNSAFE — see [Tools declared unsafe](#tools-declared-unsafe))*
+**27. `get_url_text`** *(UNSAFE — see [Tools declared unsafe](#tools-declared-unsafe))*
 — `url`, `method?` (`browser` default / `simple`), `maxChars?` (500–50000,
 default 8000), `outputFormat?`. The text behind an **arbitrary** web URL, for an
 address named in the conversation rather than a WLO record. For WLO material use
@@ -669,14 +699,15 @@ three versions behind.
 
 | Tool | What it does |
 |---|---|
-| `wlo_update_content` | Change the metadata of an existing record: title, description, keywords (added, not replaced), source URL, language, author, publisher, licence, content type, subject, educational level, target group. |
-| `wlo_create_content` | Create a new record for a material reachable by URL. Checks first whether a record for that URL already exists and names it instead of creating a second. The record is a draft — it does NOT enter the editorial queue. |
+| `wlo_update_content` | Change an existing record: its metadata, and/or **the content itself** — `content`/`fileBase64` REPLACES the stored file (a revised worksheet, a new image); the previous version stays in the version history. Metadata: title, description, keywords (added, not replaced), source URL, language, author, publisher, licence, content type, subject, educational level, target group. |
+| `wlo_create_content` | Create a new record, in one of **two ways**. `url` — the material lives elsewhere and is linked; an existing record for that URL is named instead of creating a second. `content` / `fileBase64` — the record **carries** the material as a file (Markdown written in the conversation, a generated PNG/JPEG/GIF/WebP, as raw base64 or a `data:` URL), for content that has no URL of its own. Exactly one source. The upload is described in the confirmation preview (name, type, size, digest) and read back afterwards. The record is a draft — it does NOT enter the editorial queue. |
 | `wlo_submit_content` | Hand an existing record to the editorial review queue. A separate act, never automatic, so a draft cannot reach a reviewer because someone was still writing. |
 | `wlo_create_collection` | Create a collection (a curated topic page), top-level or as a sub-collection. |
 | `wlo_rename_collection` | Change a collection's title and description. |
 | `wlo_add_to_collection` | Put existing material into a collection. Nothing is moved or copied — a collection holds references. |
 | `wlo_remove_from_collection` | Take material out of one collection. The material itself survives and stays in every other collection. |
 | `wlo_update_compendium` | Write, replace, or remove a collection's editorial compendium text (Markdown). |
+| `wlo_set_topic_page` | Choose **which variant** a topic page renders publicly. Creates, deletes and reorders nothing — it sets the active one. The only curation tool whose result is immediately public, so every check is local: the stored `ccm:page_config` document is edited rather than composed (unknown keys and the variant list survive), a variant that does not belong to this page is refused, an unparseable document is left alone, and the result is read back and re-parsed. The repository validates none of this — measured 2026-08-09, it stores the literal string `"not json at all"` and answers 200. |
 | `wlo_suggest_metadata` | Propose values with a rationale instead of writing them. The record stays untouched. |
 | `wlo_list_suggestions` | Show the stored proposals with rationale, status, and the id needed to decide. |
 | `wlo_decide_suggestion` | Accept (apply, read back, then mark accepted) or decline a proposal. |
@@ -822,8 +853,23 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
 - [`docs/AUTH.md`](docs/AUTH.md) — how signing in works and why: the access
   block, the allow-list, the OAuth flow, the abuse limits, and the nine rules a
   future change must not undo.
+- [`docs/AUTH-CONCEPT.md`](docs/AUTH-CONCEPT.md) — **the authentication concept
+  explained**: the three access modes the brief required (anonymous, a fixed
+  account, an individual WLO login), the edu-sharing measurement everything
+  follows from, what is done for security, and a comparison against the
+  alternatives (relaying a token, a password vault, a session store, an app
+  signature, OAuth only) — including what the design does **not** protect.
+  German.
+- [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
+  chatbot developer**: all 41 tools grouped, every externally callable URL (MCP,
+  REST, pages, OAuth), and the behaviour an integration has to know — licence
+  filtering, the disclosure fields, the two-step write, the limits, and what
+  deliberately does not exist. German.
 - [`docs/TOOLS.md`](docs/TOOLS.md) — every tool and widget with the chat phrasing
   that triggers it.
+- [`docs/SKILLS.md`](docs/SKILLS.md) — how to curate the skills collection: the
+  content type that makes a record a skill, the two-level structure, the bounds
+  the walk enforces, and the measured chain to a skill's companion files.
 
 ## Security & operations
 
@@ -893,7 +939,7 @@ wlo-mcp-server/
 │   │   ├── node-details.ts   #   get_node_details, get_nodes_details
 │   │   ├── node-relations.ts #   get_related_content, get_node_breadcrumb
 │   │   ├── collection-stats.ts #  get_collection_stats
-│   │   ├── skills.ts         #   find_wlo_skills
+│   │   ├── skills.ts         #   search_skill, get_skill (or get_skill_for_task)
 │   │   ├── vocabulary.ts     #   lookup_wlo_vocabulary, lookup_wlo_publishers
 │   │   ├── topic-pages.ts    #   search_wlo_topic_pages
 │   │   ├── topic-page-content.ts # get_topic_page_content

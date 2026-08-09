@@ -34,9 +34,25 @@ export function buildRenderUrl(nodeId: string): string {
   return `${WLO_REPOSITORY_URL}/components/render/${encodeURIComponent(nodeId)}`;
 }
 
+/** The prefix edu-sharing puts in front of a node id inside a property value. */
+const STORE_REF_PREFIX = 'workspace://SpacesStore/';
+
 /** Strip the `workspace://SpacesStore/` store-ref prefix from a node reference. */
 export function stripStoreRef(s: string | undefined): string {
-  return (s ?? '').replace('workspace://SpacesStore/', '');
+  return (s ?? '').replace(STORE_REF_PREFIX, '');
+}
+
+/**
+ * The inverse: the form a node id takes INSIDE a property value.
+ *
+ * Reading strips the prefix everywhere, so every id this project passes around is
+ * bare — but a value written back has to carry it again (measured 2026-08-09:
+ * 28/28 `ccm:page_config` documents on staging store variants as full store
+ * refs). Idempotent, so a caller that already holds a ref is safe.
+ */
+export function toStoreRef(id: string | undefined): string {
+  const bare = stripStoreRef(id);
+  return bare ? `${STORE_REF_PREFIX}${bare}` : '';
 }
 
 /**

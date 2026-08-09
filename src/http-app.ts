@@ -231,11 +231,20 @@ export function createHttpRequestHandler(
 
       // Read body, but bound it: an MCP JSON-RPC request is tiny, so cap the
       // buffered size to avoid a memory-exhaustion DoS from an oversized POST.
-      // Overridable via MAX_BODY_BYTES; default 1 MB.
+      // The bound is handed in — the entry point resolves `MAX_BODY_BYTES`
+      // (4 MiB by default, see `http.ts`); there is no fallback here.
       const { tooLarge, text: bodyText } = await readBodyWithLimit(req, maxBodyBytes);
       if (tooLarge) {
+        // Names the likely cause and the way out. This fires in the TRANSPORT,
+        // before any tool runs, so nothing else can explain it — and since
+        // `wlo_create_content` takes a base64 image, the caller hitting this is
+        // usually a model that has just been handed a file too big for the
+        // limit. A bare "exceeds N bytes" left it with nothing to do next.
         res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: `Request body exceeds ${maxBodyBytes} bytes` }));
+        res.end(JSON.stringify({
+          error: `Request body exceeds ${maxBodyBytes} bytes. If this was a file upload, the file is too `
+            + 'large for this server — use a smaller one, or ask the operator to raise MAX_BODY_BYTES.',
+        }));
         return;
       }
 
@@ -366,7 +375,11 @@ export function createHttpRequestHandler(
     if (await handleOAuthEndpoint(req, res, {
       ip: clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy),
       maxBodyBytes,
-      rateLimiter: apiRateLimiter,
+      // The consent surface shares the tight `/auth*` bucket — a password is
+      // typed there. The connector's own steps get the same budget the MCP
+      // endpoint gives that same client; see `OAuthEndpointDeps`.
+      authorizeRateLimiter: apiRateLimiter,
+      connectorRateLimiter: rateLimiter,
       authAbuseLimiter,
       codeStore,
       issuer: resolveIssuer({

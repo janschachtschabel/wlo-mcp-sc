@@ -22,8 +22,9 @@ test('WLO_DISABLE_UNSAFE_TOOLS=all removes get_url_text and nothing else', async
     const names = (await client.listTools()).tools.map(t => t.name);
 
     assert.equal(names.includes('get_url_text'), false, 'the unsafe tool is gone');
-    // The 24 that were unconditional before it existed must all still be there.
+    // The 26 that are unconditional must all still be there.
     for (const kept of [
+      'search_skill', 'get_skill',
       'search_wlo_collections', 'search_wlo_content', 'get_collection_contents', 'get_node_details',
       'search_wlo_all', 'lookup_wlo_vocabulary', 'search_wlo_topic_pages', 'get_subject_portals',
       'browse_collection_tree', 'wlo_health_check', 'get_nodes_details', 'get_topic_page_content',
@@ -34,8 +35,8 @@ test('WLO_DISABLE_UNSAFE_TOOLS=all removes get_url_text and nothing else', async
     ]) {
       assert.equal(names.includes(kept), true, `${kept} must survive the switch`);
     }
-    // 24 read tools + the 13 curation tools, which the switch does not touch.
-    assert.equal(names.length, 24 + CURATION_TOOLS.length, 'exactly one tool was removed');
+    // 26 read tools + the 13 curation tools, which the switch does not touch.
+    assert.equal(names.length, 26 + CURATION_TOOLS.length, 'exactly one tool was removed');
   } finally { await client.close(); }
 });
 

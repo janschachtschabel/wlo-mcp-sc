@@ -9,6 +9,938 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — `docs/AUTH-CONCEPT.md`, the authentication concept and its alternatives (2026-08-09)
+
+`AUTH.md` documents how the mechanism works; nothing explained **why** it looks
+like that, and the pre-OAuth decision paper had become history. This closes that:
+a TL;DR that carries the whole argument, the three access modes the brief
+required side by side, what is done for security, and a comparison against every
+alternative — relaying a token, a password vault, a session store, edu-sharing's
+app signature, OAuth without the paste route, and forcing anonymous callers
+through a 401. Each says why it was not chosen and what our design took from it.
+The constraint everything follows from — edu-sharing has no token to relay, so
+every scheme carries the password — sits in the TL;DR rather than in a chapter
+of its own.
+
+Two sections deliberately included: what the concept does **not** protect (a
+block is a bearer credential, it does not expire, we see the password once), and
+the one alternative that would be **better** than ours — WLO enabling OIDC, which
+is an organisational ask, not a code change.
+
+### Fixed — two descriptions of an architecture that no longer exists (2026-08-09)
+
+Found while writing the concept document, and confirmed by starting a server:
+`createMcpServer` takes `{ issuer }`, not a write mode, and all 14 curation tools
+are listed for every caller including anonymous ones. Both `CLAUDE.md` and the
+header comment of `services/write/credential-gate.ts` still described the
+reversed design — registration gated by write mode, write tools absent from
+`tools/list`. That was deliberately reversed on 2026-08-05 (a tool nobody sees is
+a login nobody starts); only the descriptions were left behind.
+
+### Added — `docs/INTEGRATION.md`, the handover for team & chatbot developers (2026-08-09)
+
+One document answering the three questions an integrator actually has: which
+tools exist (all 41, grouped), which URLs can be called from outside (MCP, REST,
+user-facing pages, OAuth, access block), and which behaviour an integration has
+to know — licence family vs. exact matching, the disclosure fields
+(`licenseFilter`, `unresolvedFilters`, `truncated`/`collectionTotal`), the
+two-step write, the limits, who may do what, and a section on what deliberately
+does **not** exist, so nobody plans on it. Plus a troubleshooting table keyed by
+symptom.
+
+The tool list and every route in it were produced by starting a server and
+routing real requests, not by enumerating from memory.
+
+### Fixed — five stale tool counts across the docs (2026-08-09)
+
+`wlo_set_topic_page` was added as the 14th curation tool and the counts were
+never carried over: both READMEs said "thirteen"/"dreizehn", the German one also
+said "25 öffentliche Werkzeuge" (27), and `docs/TOOLS.md` said "40 MCP-Tools" and
+"13 kuratierende" in four places. The tool itself was documented everywhere — only
+the arithmetic was stale. Measured against a running server: 41 = 27 + 14.
+
+Also corrected: a comment in `http-app.ts` claimed the request-body cap defaults
+to 1 MB. There is no default there at all — the entry point hands in
+`MAX_BODY_BYTES`, 4 MiB, which is what every other document already said.
+
+### Fixed — two deferred Themenseiten defects (2026-08-09)
+
+Both were recorded as open, described as defects, and postponed as effort. Neither
+turned out to be a design question.
+
+- **A `PAGE_VARIANT_<uuid>` placeholder could be displayed as a page title.**
+  `cm:title` was excluded as a fallback because it holds that technical string on
+  109 of 109 production variants — but `cclom:title`, the field we trusted, holds
+  it on **22 of 68 staging variants**: a page nobody renamed keeps it there too.
+  It reached `variantTitle`, and from there the REST response, `structuredContent`
+  and the widget heading. The rule now checks the VALUE rather than the field, at
+  both places the value is read from the repository.
+
+  It also reached the confirmation preview of `wlo_set_topic_page`, which is worse
+  than a display glitch: the confirm token binds to the sentence naming page and
+  variant, so a person could be asked to approve a change to a technical id they
+  cannot check. All three sentences in that path now share one naming rule
+  (`nameOf`) — real title, else the id. Two of them previously had no fallback.
+
+  `isPlaceholderTitle` moved from `tools/shared.ts` to the leaf module
+  `src/topic-page-title.ts`, which is the remedy `tests/shared-rule-discipline.test.ts`
+  names for exactly this — a lower layer must not import from `tools/`. Same move
+  `mapPool` and `buildFilterCriteria` made before it.
+
+- **`search_wlo_topic_pages` passed an unresolvable vocabulary filter on as raw
+  text.** Compared against URIs it never matched, so only variants declaring NO
+  educational context survived — a typo silently hid nine pages in ten, with no
+  notice. It is now dropped and reported through the same `buildFilterCriteria` /
+  `formatUnresolvedHint` pair the five other search tools use. `_queryMeta` no
+  longer lists it as an applied criterion either; the comment above that builder
+  already stated the rule for `ngsearchword`.
+
+### Fixed — `/api/collection` ignored every filter unless `q` was given (2026-08-09)
+
+Found by the pre-deploy review and measured before fixing: `?nodeId=…&license=OER`
+over three children returned **all three** — a CC BY-NC-ND record and one with no
+licence at all — with no `licenseFilter` to show that anything had been dropped.
+A query-less call went to the plain listing, which takes no filters.
+
+Matching never needed a query (`searchWithinCollection` treats an empty one as
+"all contents", which is why the MCP tool was always correct here), so the branch
+now asks whether there is anything to match at all. The filter-less, query-less
+case keeps the plain listing: it pages upstream, while local matching reads one
+bounded page of children.
+
+That bound is now disclosed too. The matched path adds `truncated` +
+`collectionTotal`, the same fact the MCP tool states in words — without it a
+filtered answer over a 900-item collection read as exhaustive, and this fix
+widened how many calls take that path.
+
+### Fixed — the licence disclosure was missing on both REST paths (2026-08-09)
+
+"Every path that accepts `license` discloses its exactness pass" was written down
+the same day it was broken on two of the five paths. Both are in `rest/`, and
+both share one cause: **an envelope field is not a disclosure if the renderer
+drops it.**
+
+- **`GET /api/search?format=html` said nothing about the licence filter.** The
+  JSON view discloses through `content.licenseFilter`; the HTML view — the most
+  visible of all the paths, and the one an AI browsing pipeline actually reads —
+  rendered neither number. A filter that removed every candidate showed up as a
+  bare "Keine Treffer.", over material that is demonstrably there (staging holds
+  18 793 OER records for `Mathematik` alone). The page now carries the same
+  sentences the MCP tools emit, through the existing `warnings` strip. The counts
+  are read from the UNPROJECTED envelope: `fields=…` may drop `licenseFilter`,
+  and a disclosure that vanishes when a client trims the response is none.
+- **`GET /api/collection?q=…&license=…` returned only its post-filter `total`.**
+  Indistinguishable from an empty collection. It now carries the same
+  `licenseFilter { checked, kept }` contract as `/api/search`.
+- **A doc comment repeated the `virtual:primaryparent_nodeid` claim** that the
+  backend answers with 400 (live-probed 2026-07-17) — the same wrong mechanism
+  already corrected in both READMEs. `handleCollection` matches locally against
+  the collection's direct children.
+- The two REST response shapes and the licence disclosure are documented in both
+  READMEs; neither had mentioned `licenseFilter` at all.
+- **The search-results widget explains an empty grid the licence filter caused.**
+  The third renderer of the same envelope, and it had the same gap: "Keine
+  Treffer gefunden." over material that exists. The empty state now names the
+  licence and how many candidates were checked, localized DE/EN through the
+  widget's own string table (no German sentence leaking into the English UI).
+  Only the emptied case — when results are shown the user sees material, and the
+  tool's text block carries the exact counts.
+- **`content.licenseFilter` is emitted only when the content leg actually ran.**
+  With `include: ['collections']` the field used to appear as
+  `{checked: 0, kept: 0}` — which reads like a filter that emptied the bucket
+  rather than a search that never happened. Its presence now means "a licence
+  pass happened here", which is what makes it usable as the single gate for the
+  disclosure sentences. `search_wlo_all` and the HTML page both gate on it;
+  re-deriving the condition from `include` at each call site was a second copy
+  of one rule.
+
+### Fixed — five things the reviews had named but left standing (2026-08-09)
+
+Everything the two review rounds listed as an observation or a known limitation,
+worked through rather than carried forward.
+
+- **`search_wlo_all` filtered by licence and never said so.** The third search
+  path with a `license` parameter, and the last one that dropped candidates
+  silently: the pass runs inside `searchAll`, and the envelope carried no number
+  the tool could have reported it with. `content.licenseFilter {checked, kept}`
+  now travels with the envelope (REST included) and the tool renders the same
+  notice the other two paths give. Neither `count` nor `total` could stand in —
+  one is post-cap, the other is the corpus figure.
+- **A facet answer that may be truncated is no longer trusted as a total.**
+  `ngsearch` asks for at most `FACET_LIMIT` (20) buckets; a full list means the
+  aggregation MIGHT have been cut, and a sum over it understates the corpus while
+  looking exact. It falls back instead. Staging holds 16 distinct licence keys,
+  so this does not fire there — that is a property of one instance, not of the
+  format, which is why the limit is now one exported constant.
+- **Paging over the OER bundle says that it is not a continuation.** The bundle
+  hands the same `skipCount` to each of its five keys, so page two is "the second
+  page of every licence" — material repeats and material is skipped. There is no
+  fix at this layer (one ordering across five result sets is not something the
+  repository can produce), so the notice names the condition and points at
+  `excludeNodeIds`.
+- **The OAuth surface no longer spends the password budget on machine traffic.**
+  Four of the requests one login costs — both discovery documents, the
+  registration, the token exchange — come from the CLIENT's address, and a hosted
+  connector serves many users from few egress addresses. Those now use the same
+  budget the MCP endpoint gives that same client, while `/oauth/authorize` keeps
+  the tight `/auth*` bucket, because that is where a password is typed.
+- **The consent screen ranks the checked fact above the claimed one.** Open
+  registration means `client_name` is whatever the caller typed, so the page led
+  with an invented value and listed the verified redirect target below it as an
+  equal row. The destination now comes first and carries the emphasis; the name
+  is labelled as self-declared, with one line saying which of the two decides.
+
+### Fixed — an access block had no length bound, and the code store retains one (2026-08-09)
+
+Found reviewing the OAuth surface (T5.3). `decodeAccessToken` checked the shape
+of a `wlo2.…` block but not its size, and the payload takes arbitrary padding:
+measured, a block carrying a 1 MB junk field is 1 333 836 characters and **decodes
+successfully** — `validatePayload` drops the unknown field from the returned
+object while the caller keeps the string it was handed.
+
+That matters because `/oauth/authorize` RETAINS the string: the authorization-code
+store bounds the number of records (1 000) and not their size, and the block
+arrives in a request body capped at `MAX_BODY_BYTES` (4 MiB). A holder of one
+valid WLO account could therefore have up to 4 GB held for the code's 60-second
+lifetime. Availability only — nothing is disclosed — but the answer is an
+OOM-killed process.
+
+`MAX_BLOCK_CHARS = 4096` now bounds it in `decodeAccessToken`, the one place every
+path decodes a block (the paste route, the `Bearer` header, the OAuth consent), so
+the oversized input is refused before an RSA operation runs over megabytes. A real
+block measures 573 characters locally and 605 against the deployed instance's
+RSA-2048 key; the bound leaves room for an RSA-4096 rotation.
+
+Two smaller things from the same review: `/oauth/register` is now reached by an
+explicit path comparison rather than by elimination (a path added to `ROUTES`
+without its own branch would have become client registration silently), and the
+two OAuth log sites that named a WLO user pass it through `sanitizeText` like the
+four others — the logger's JSON encoding already closed line forging, so this is
+the length cap and the rule reading the same way everywhere.
+
+### Fixed — the licence filter reported a count that did not exist (2026-08-09)
+
+A review of the OER fan-out shipped the same day found three defects, all
+live-verified on staging before and after the fix.
+
+- **The reported total counted the same records twice.** The bundle summed the
+  five keys' `pagination.total`, but `ccm:commonlicense_key` matches a licence
+  FAMILY and the CC_BY family *contains* CC_BY_SA — measured on `Mathematik`,
+  family 27 351 against exact 3 848 + 9 554. The sum also carried the NC/ND
+  records, which are not OER at all. Overstatement: **+98 % to +164 %**
+  (`Mathematik` reported 37 851 where 14 343 is true). A single licence had the
+  same defect one size smaller: `Optik` + CC BY reported the family's 343 over a
+  list of 42. The total now comes from a facet aggregation that counts EXACT keys
+  server-side (`exactLicenseTotal`) — one extra request, and only when a licence
+  is filtered. Facet buckets are matched through `resolveVocab`, the same
+  resolution the node filter applies, so the count and the list it describes
+  cannot disagree: staging holds `CC BY-SA` spelled with spaces as its own key,
+  and those records are kept by the filter and counted by the total (Optik +6,
+  Musik +1). A failed aggregation falls back to the previous number rather than
+  failing the search.
+- **`search_wlo_within_collection` did not apply the OER bundle at all.** That
+  path matches filters locally, and a licence SET contributes no criterion to
+  match — so `license: "OER"` returned everything, including CC BY-NC-ND and
+  records with no licence declared. It now runs the same exactness pass as the
+  other two search paths (live: 44 → 42 and 10 → 9 on real collections), and
+  renders the same "why is this empty" notice, because a licence pass that can
+  empty a result must say so — otherwise the existing hint sends the caller into
+  the sub-collections while the material is right there under another licence.
+- **A total upstream failure was reported as "no hits".** If all five fan-out
+  requests failed, the merged result was empty and indistinguishable from "there
+  is no freely reusable material on this topic". It now throws, like every other
+  search path.
+
+The caller-visible notice was corrected with it: the total no longer "names all
+hits of the search" — it names the records with exactly the requested licence.
+
+### Added — `wlo_set_topic_page`: choose which variant a Themenseite renders (2026-08-09)
+
+The 14th curation tool, and the first whose result is immediately public: it sets
+`default` in the page builder's `ccm:page_config` document, which decides what a
+visitor of the topic page sees. It creates, deletes and reorders nothing.
+
+**The repository validates none of this, so every guarantee is local.** Measured
+on staging: `POST …/property?property=ccm:page_config` answered 200 for the
+literal string `"not json at all"` and stored it verbatim, and accepted the
+property on a `ccm:io` that is never a page-config folder. A malformed document
+does not fail at the API — it fails in the page builder, on a public page. So:
+
+- The stored document is **edited, never composed** (`setDefaultVariant`).
+  Unknown keys and the variant list survive untouched; 28/28 real documents carry
+  a `variants[]` that a fabricated document would drop.
+- `default` is written as a **store ref** (`workspace://SpacesStore/…`), matching
+  28/28 existing documents. Only 2/28 carry a `default` at all, so setting one
+  normally adds a key.
+- A variant that is not a usable child of *this* page's config folder is refused,
+  and an unreadable child listing is refused as unreadable rather than as "no
+  such variant".
+- An unparseable stored document is left alone — overwriting it would silently
+  drop an editor's variant list.
+- The read-back compares the **parsed** document, not the string: the repository
+  stores whatever it is handed, so matching bytes would only prove it echoed us.
+- Asking for the variant that already renders is refused rather than written
+  again. The other tools get this from `buildChangeSet`, which drops unchanged
+  fields; this change has none. Only an explicitly recorded `default` counts —
+  with none the page renders `variants[0]` by position, so writing that same
+  variant down is a real change and is allowed.
+
+The confirmation token binds to the sentence naming page and both variants with
+their ids, not to the property value — a document of store refs is not something
+a person can check in a preview, and any upstream change that alters the outcome
+re-plans to a different sentence and invalidates the token.
+
+Live-verified against staging on a topic page the probe built and deleted itself:
+preview → confirm → `default` set, switch back, a foreign variant refused with
+the document unchanged, and `get_topic_page_content` reading the result back.
+
+### Not built — `wlo_register_usage`: the repository gates it on an app signature (2026-08-09)
+
+`POST /usage/v1/usages/repository/{repositoryId}` answers **403
+`app signature required to use this endpoint`** for an authenticated service user
+— for every `appId` tried and for an empty body, so the gate sits before the body
+is read. With the four `X-Edu-App-*` headers present but bogus it answers **500
+`Signature could not be verified!`**, including with a registered app id: the
+signature is genuinely verified and needs the private key of an application
+registered at the repository. `prepareUsage` answers 200 but records no usage.
+The read side (`GET /usage/v1/usages/node/{id}`) works and currently returns
+nothing anywhere.
+
+Obtaining such a key is not a code change: an edu-sharing app signature lets its
+holder act on behalf of arbitrary users, which reverses this server's auth design
+("there is no token to relay; nothing more powerful than the user's own
+credential rests on our disk"). Left as an operator decision.
+
+### Fixed — the OER bundle answered "no hits" over tens of thousands of OER records (2026-08-09)
+
+`license: "OER"` cannot be expressed as one upstream criterion, so the first
+version sent none and filtered the generic result page locally. Measured with
+server-side facet counts the same day, that was not a weak filter but a wrong
+one: staging's `Mathematik` holds **18 793** records carrying an OER licence —
+41.9 % of everything with a licence at all — and the tool replied **"kein Treffer
+mit genau der Lizenz OER"**. The first fifty hits by relevance carried no
+`ccm:commonlicense_key` whatsoever (50/50 absent in the plain search; 23× CC
+BY-NC-SA and 2× CUSTOM through `enhancedSearch`). Relevance ranking and licence
+are unrelated, so the top of one is no sample of the other.
+
+Each key on its own *does* narrow upstream, so the bundle now fans out over its
+five keys and merges (`src/services/license-search.ts`). Five requests instead of
+one, and only for the bundle — a single licence and no licence stay at one call
+each. Measured after the change, same queries:
+
+| Query | Candidates checked | With an exact OER licence |
+|---|---|---|
+| Mathematik | 50 → **152** | 0 → **127** |
+| Optik | 40 → **140** | 2 → **107** |
+| Musik | 25 → **104** | 0 → **102** |
+| Klimawandel | 50 → **97** | 0 → **94** |
+
+The merge is **round-robin, not concatenation**, and that too came from a live
+run: appending the five result sets handed the whole result cap to the key listed
+first, so `Mathematik` + OER returned six hits that were all CC 0 — the rarest of
+the five at 191 records — while the 11 563 CC BY-SA ones never reached the page.
+There is no ranking across the five sets, so each key contributes its best hit
+before any key contributes its second. After the change the same six hits carry
+CC 0, Public Domain Mark, Urheberrechtsfrei, CC BY 4.0 and CC BY-SA 4.0.
+
+### Added — licence filter on `search_wlo_content`, `search_wlo_all` and `/api/search` (2026-08-09)
+
+A `license` parameter, taking a label ("CC BY 4.0", "gemeinfrei") or the
+repository key ("CC_BY"). Resolved in `buildFilterCriteria`, so both search
+tools, the `searchAll` service and the REST layer gain it at once, including the
+existing "did you mean" reporting for a value that does not resolve.
+
+**The repository filters by licence FAMILY, so exactness is enforced locally.**
+Measured on staging: `ccm:commonlicense_key=CC_BY` returns 343 hits for "Optik"
+including CC BY-ND, CC BY-NC-SA and CC BY-NC-ND; quoting changes nothing. The
+same holds one level down (`CC_BY_NC` 172 covers its NC-SA and NC-ND variants),
+while `CC_BY_SA` (110) and `CC_BY_ND` (19) are leaves. Plain **CC BY is the one
+licence that cannot be isolated upstream** — the one people filter for when they
+intend to remix, and the surplus is *more* restrictive than requested. Passing
+the criterion through alone would answer "may I remix this" with No-Derivatives
+material, so `filterByExactLicense` keeps only exact matches.
+
+That pass starves without headroom: the first live run returned **zero** results
+for CC BY 4.0, because the page of ten from those 343 held no exact record.
+`pageSizeForLicense` therefore widens the candidate window to 50 — only when a
+licence is filtered, because only there is the over-match systematic. After the
+change, `Optik` + CC BY 4.0 returns CC BY 4.0 and nothing else.
+
+**`license: "OER"` is the one bundle beside the individual licences**, covering
+`CC_0`, `PDM`, `COPYRIGHT_FREE`, `CC_BY`, `CC_BY_SA`. NC and ND are deliberately
+out: ND forbids revision and NC restricts reuse, so including them would answer
+"may I adapt this?" with material nobody may adapt — the same failure the family
+over-match caused.
+
+The bundle sends **no** upstream criterion, and that too was measured rather than
+assumed: the OR that works on `ccm:oeh_extendedType` does not transfer. Two
+values at `ccm:commonlicense_key` answer **400 DAOValidationException**, the
+criterion repeated twice **AND**-s (343 + 110 → 110), and an "A OR B" string
+matches 0. Narrowing on `CC_BY` instead would keep both CC members but silently
+lose every public-domain record — and the live run proves that matters: `Optik` +
+OER returned CC BY 4.0, CC BY-SA 4.0 **and** an `Urheberrechtsfrei` item.
+
+**An emptied licence result now says why.** Live, `Optik` + CC BY-NC 4.0 reports
+172 backend hits and returns none, because the checked candidates held only its
+NC-SA and NC-ND relatives. A bare "0 Treffer" reads as "there is nothing", which
+is false, so `licenseFilterNotice` names how many candidates were checked and why
+the total still differs.
+
+`search_wlo_within_collection` takes the filter as well — the package contract was
+widened for it. Its filters are matched locally against the stored property
+(`nodeMatchesCriteria` → exact `includes`), so the family over-match does not
+apply there at all.
+
+One limit stated plainly: the candidate window is 50, so a family-heavy query can
+still come back short — and now says so.
+
+`resolveVocab` now also matches a vocabulary's own id, not only its labels —
+without it, "label or the raw repository value" (what every filter description
+promises) held for every vocabulary except licences, whose ids are bare keys
+rather than URIs.
+
+### Added — `WLO_SEARCH_OUTPUT_MODE=rich`: `search` **and** `fetch` stop being lean dead ends (2026-08-09)
+
+`search` may now carry the same buckets, the same per-hit metadata and the same
+results widget as `search_wlo_all`; `fetch` carries the full record and renders
+the same detail view as `get_node_details`. Off by default (`lean` = today's
+behaviour). Both tools, because `search` → `fetch` is one flow: enriching only
+the first step leaves the second rendering nothing, which is the fallback this
+was meant to remove.
+
+What `fetch` was missing, measured against `get_node_details` on the same node:
+`compendiumText`, `contentUrl`, `description`, `downloadUrl`, `fileSize`,
+`keywords`, `mimeType`, `previewIsIcon`, **`previewUrl`**, `topicPageUrl`,
+`userRoles` — eleven fields, the preview image and the download link among them.
+Rich adds the node in the `nodeListSchema` shape the widget already renders.
+
+Descriptions now delimit in **both** directions, on the property that actually
+separates the tools: `search_wlo_all` is the only search tool with filters, and
+`search` takes a bare query by convention, so a request naming a subject, level,
+media type or publisher belongs to `search_wlo_all` — it "would silently ignore
+the narrowing" otherwise. Making room for that sentence meant shortening
+`search_wlo_all`'s mechanics tail: at 1219 characters `tests/tool-descriptions.test.ts`
+failed the 1024-character truncation guard, and the new guidance sat at the end
+where truncation would have eaten it first.
+
+**Why the two tools cannot simply be merged, which was the original question:**
+the convention gives `search` a *single* `query` string
+([OpenAI](https://developers.openai.com/api/docs/mcp)). `search_wlo_all` has 18
+input parameters and `get_node_details` 5, so folding either into its
+convention counterpart would delete 17 resp. 4 capabilities — filters, paging,
+facets, and every opt-in enrichment. Measured contrast: `Bruchrechnung` with
+`learningResourceType: Video` + `educationalContext: Sekundarstufe I` returns 195
+Sek-I videos; the same query with no parameters returns 1331 hits headed by a
+university prep course. Output and display, however, do NOT depend on the input
+schema — which is exactly what this mode copies.
+
+`results` stays first and each item keeps exactly `{id, title, url}`; rich only
+adds sibling keys. `tests/tools-knowledge-rich.test.ts` re-asserts that shape in
+every mode, because the risk here is invisible from our side: OpenAI's docs
+neither permit nor forbid extra keys, and a third-party report describes
+connectors discarding "any or all items" that do not match — which would make
+`search` return nothing in Deep Research, silently. Hence an env switch:
+reverting is a variable, not a deploy.
+
+Live check with the built server against staging, whole `search` → `fetch` flow:
+
+```
+[lean] widget: search=none    fetch=none
+[lean] fetch keys: id, title, text, url, metadata
+[lean] preview=no  download=no  description=no
+[rich] widget: search=WIDGET  fetch=WIDGET
+[rich] fetch keys: id, title, text, url, metadata, total, count, results
+[rich] preview=YES download=YES description=YES
+```
+
+`search` in rich mode: top-level keys `results, query, content, collections,
+topicPages`; result items exactly `id, title, url`.
+
+**Payload: the cost is accepted deliberately, but not the part nobody asked
+for.** The convention sends the same JSON twice (`content[0].text` **and**
+`structuredContent`), so rich doubles a much larger answer. Keeping the full
+metadata in the *text* copy is a decision, not an oversight: the model itself
+needs licence, subject and level, and `search_wlo_all`'s trick of sending
+compact markdown instead would hide exactly those from it. Do not "optimise"
+this into a lean text without revisiting that.
+
+What was removed is `compendiumText`: on `search_wlo_all` the compendium is
+opt-in (`includeCompendium`, default off), the search projection carries it
+inline anyway, and `search` — one `query` parameter — can never opt in. No
+widget reads it, and `get_compendium_text` exists for whoever wants it. Measured
+per query (characters of `content[0].text`, doubled on the wire):
+
+| query | lean | rich, before | rich, after |
+|---|---|---|---|
+| `Photosynthese Sekundarstufe I` | 868 | 7 564 | 7 564 |
+| `Zellatmung` | 2 324 | 26 994 | 26 994 |
+| `Klimawandel` | 2 750 | 58 548 | **25 987** |
+
+For `Klimawandel` the inline compendium was 61 742 of 93 583 characters — 66 %.
+`Zellatmung` is unchanged because its bulk is genuine `description` text
+(10 844 characters of YouTube boilerplate across 11 hits); that is content the
+model reads, so it stays.
+
+Noted while measuring, not a defect here: `search` can return an id that `fetch`
+cannot resolve. `1f71f84a-…` was in the search index while
+`/node/…/metadata` answered `404 DAOMissingException` — the index and the node
+store disagree on staging. `fetch` reports it as "nicht gefunden", which is
+correct; expect it in a ChatGPT run without concluding the tool is broken.
+
+### Changed — one hit per external URL, in both search paths (2026-08-09)
+
+New `src/result-dedupe.ts` (`dedupeByUrl`) collapses content hits that point at
+the same `ccm:wwwurl`, applied in `searchAll` (feeding `search_wlo_all`, `search`
+and REST) and in `search_wlo_content` — two independent paths, one rule,
+enforced by `tests/shared-rule-discipline.test.ts`.
+
+Measured on staging: the query `Wellenoptik` returned **eight separate `ccm:io`
+records** all carrying `ccm:wwwurl = https://de.wikipedia.org/wiki/Optik`. None
+was a collection reference — `originalId` was null and `ccm:original` pointed at
+each node itself — so the existing `ccm:original` rule collapses nothing here.
+Their `cm:name` carried edu-sharing's collision suffixes (`… - 2` … `- 6`):
+repeated imports of one web page.
+
+**The first hit wins, not the newest**, and the difference was measured: the
+newest by `cm:created` was an untouched `1.0` copy, while the only record with
+editorial work (`cm:versionLabel 1.2`) was the *oldest*. Ordering by date would
+have discarded the edited one — and neither `cm:created` nor `cm:versionLabel`
+is in the search projection, so it would widen every request. The incoming order
+is the ranking, so the first hit is the copy the search already judged best.
+
+Dedupe runs **before** the result cap, so no duplicate can occupy a slot. The
+upstream page is still requested at the caller's size, so a page dominated by
+copies now returns fewer results — `total` continues to report the real backend
+count. Widening the page to compensate would double the bytes of every search
+for a repository data problem, and is deliberately not done.
+
+Live check after the change (staging, `maxContent: 15`): `Optik` 15/15 distinct,
+`Wellenoptik` 8 kept from a 15-node page (seven copies collapsed), `Photosynthese`
+15/15, `Bruchrechnung` 14/14.
+
+### Fixed — `search`/`fetch` cited every topic page by the wrong URL (2026-08-09)
+
+Both knowledge tools built their `url` as `url || topicPageUrl || renderUrl`. For
+a topic page `url` is never empty — `formatNode` falls back to `node.content.url`
+for a collection node — so the `topicPageUrl` branch was unreachable, and a topic
+page was cited as `…/components/render/<id>` instead of
+`…/components/topic-pages?collectionId=<id>`. The order is now
+`topicPageUrl || url || renderUrl`; only topic pages carry `topicPageUrl`, so
+content nodes are unaffected.
+
+Found by a live call against staging, not by the schema — and the regression
+tests only reproduce it because they populate `content.url` on the mocked node.
+Without that the empty `url` falls through and the bug is invisible.
+
+### Added — a golden-prompt section for the `search` / `search_wlo_all` overlap (2026-08-09)
+
+`docs/apps-sdk-golden-prompts.md` gains section **E** (S1–S8) plus a
+`search` leakage rate, to settle whether ChatGPT picks the poorer of two tools
+that run the same retrieval. The document now also records the measured payload
+delta: same query → same nodes, but `search` drops preview, licence, publisher,
+subject, level, resource type and description, flattens the
+`{content, collections, topicPages}` pots without a `nodeType` marker, and
+declares no `widgetUri` — so its answers render without the WLO interface.
+Which tool the model actually picks remains **unmeasured**; the section is the
+harness for measuring it. The mechanics half — does the expected tool deliver at
+all — was run against staging on 2026-08-09: 8 of 8 deliver, with two caveats
+recorded for whoever reads the ChatGPT run (eight identical Wikipedia entries
+under eight node ids for `Wellenoptik`, and weak English recall on S8).
+
+### Changed — skills are found by content type, in two steps (2026-08-08)
+
+`find_wlo_skills` is replaced by **`search_skill`** (catalogue: nodeId, title,
+description, keywords — no instruction body) and **`get_skill`** (the Markdown
+attached to one nodeId). Splitting the two keeps the choice with the model and
+stops one call from pulling every skill document into the context window.
+
+A record now counts as a skill through its **content type**, not through where it
+sits: `ccm:oeh_extendedType = http://w3id.org/openeduhub/vocabs/contentTypes/ai_prompt`.
+Measured 2026-08-08 on staging and production — the field is indexed and
+facetable, the criterion narrows (110 of 403 431 for `organization`), several
+values are OR-ed (110 + 42 = 152), and it AND-s with `ngsearchword`. It takes the
+FULL vocabulary URI; the bare slug matches nothing. No `ai_prompt` record exists
+in either repository yet, so the filter is proven to work and has not yet been
+seen selecting a real skill.
+
+Both tools are therefore registered **unconditionally**: without a configured
+collection the search filters the whole repository, so the capability no longer
+depends on an env variable. `WLO_SKILLS_COLLECTION_ID` now *narrows* the search
+to one collection subtree — walked, not queried, because `ngsearch` refuses
+`virtual:parent_recursive` with 400 `DAOValidationException` on both instances
+(the `page_variant` query accepts it; `ngsearch` does not).
+
+New `WLO_SKILL_TOOL_MODE`: `two-tool` (default) or `one-tool`, which swaps both
+for `get_skill_for_task` — same ranking, but taken away from the model and
+answered in one call. It exists to be measured against the default.
+
+Ranking now counts **keywords** alongside title and description (title 3,
+keywords 2, description 1) and uses the shared German-aware matcher
+(`queryTerms`/`termMatches`) instead of a local tokenizer, so a skill that names
+its trigger only in `cclom:general_keyword` is findable.
+
+The subtree walk reads one level at a time through a pool of 10. It was
+sequential first, and a live run over a subject portal (30 collections, two reads
+each, 717 records) took **90.3 s** — longer than any client waits for one tool
+call. Parallelised, the same walk takes **8.1–8.4 s**.
+
+Measured against the documented structure instead (root → skillsets → skill
+records, see the new [`docs/SKILLS.md`](docs/SKILLS.md)), the walk is two waves:
+**2.0 s for 6 skillsets, 2.4 s for 12**. The 8 s figure is what a *misconfigured*
+root costs — the id pointing at something that is not a skills collection.
+
+A second bound, **depth two below the root**, was added for the other shape of
+that misconfiguration: a deep tree. It does **not** improve the portal case
+above — that one is wide, not deep, so the 30-collection visit cap is what stops
+it, and the time is unchanged. Both bounds are pinned by tests (without the visit
+cap the walk does not terminate at all), and when either bites, the server logs
+that the listing is incomplete instead of presenting a truncated crawl as the
+catalogue.
+
+`search_skill` and `get_skill_for_task` take a **`collectionId`** — for any
+collection, not just the configured root — so "welche Skills hängen an
+Physik/Optik?" is answerable. `includeSubcollections` decides how far it reads,
+and the default follows the source: a collection the caller NAMES is read on its
+own (measured on Physik: **1 request, 0.8 s**), the configured root is read with
+its skillsets (2 waves). Walking a subject collection's subtree costs 60 requests
+and 12.9 s — a crawl a model should have to ask for, not stumble into.
+
+Skills stay `ccm:io` records rather than becoming collections, and that is now
+measured rather than assumed: **`ngsearch` never returns collections at all**
+(`contentType=FOLDERS` → 0 hits; `ALL` → the same 403 431 `ccm:io` and no
+`ccm:map`), and no real collection carries `ccm:oeh_extendedType`. A skill built
+as a collection would be unfindable by search. As a record it is also
+referenceable, so one skill can sit in the catalogue AND in a subject collection
+without being copied.
+
+**`get_skill` reads the `:::` blocks of the SKILL.md** and returns them as
+`references` — kind (`wlo-material` / `ki-skill`), title, url, nodeId — beside
+the Markdown, which is handed over untouched. The editor already writes these
+blocks; parsing them here rather than leaving it to the model removes an
+extraction task whose failure mode is a plausible id for the wrong record: a
+material's title link points at its external source, so its id comes from the
+preview image, while a skill's id is in its title link. A block with no
+repository URL keeps an empty `nodeId` instead of being dropped, and an unclosed
+block is ignored — the download is byte-capped, and half a block is not a
+reference. New module `services/skill-references.ts`, no upstream calls.
+
+**First run against real skills (2026-08-08).** 28 test records in a staging
+collection; the whole chain works anonymously: catalogue 25 hits in 0.6 s, a
+scoped query 0.4–0.5 s with the right skill on top each time ("Elternbrief
+schreiben" → `elternkommunikation`, "Klassenarbeit korrigieren" →
+`korrektur-auswerten`, "Vertretungsstunde" → `vertretung-planen`), `get_skill`
+0.8 s for 11.7 kB of Markdown.
+
+It also cost a wrong belief: **`propertyFilter=-all-` does not return
+`ccm:oeh_extendedType`.** A raw probe using `-all-` reported the field missing on
+all 28 records while the explicit projection reported `ai_prompt` on all 28 — the
+code was right and the probe was lying. The claim "no collection carries the
+field", which rested on the same flawed probe, was re-measured with an explicit
+projection and holds.
+
+**Linking a skill to a subject by metadata** — `search_skill` and
+`get_skill_for_task` gained `discipline` and `educationalContext`. `ccm:taxonid`
+composes with the content type (measured: Physik 9878 alone, 9877 with
+`learning_material`), so "welche Skills gehören zu Physik" is answerable without
+placing a reference in that collection, where a skill would sit among the
+teaching material. Repository-wide the labels go out as criteria; scoped to a
+collection the resolved URIs are matched locally, because `/children` takes none.
+An unresolved label is REPORTED rather than dropped — a dropped filter silently
+widens the result set (`⚠ Filter "Phsyik" … Meintest du: Physik?`), and the JSON
+output carries `unresolved`.
+
+**Review round, eight findings fixed (2026-08-08).** The three that mattered:
+
+- The one-tool mode printed "load it with `get_skill`" for every referenced
+  skill — a tool that mode does not register. Rendering is now mode-aware, and
+  `get_skill_for_task` carries the companion-file manifest too, because that mode
+  registers no tool taking a nodeId and a companion was otherwise both invisible
+  and unreachable.
+- The manifest pointed at `get_skill` for EVERY companion. That tool hands the
+  file back verbatim and decodes it as UTF-8, so a DOCX arrived as up to 64 KB of
+  decoded ZIP. Each entry now names the tool that fits its MIME type;
+  anything that is not `text/*` goes to `get_wlo_content_text`.
+- The subtree walk could truncate in silence: when the visit cap refused every
+  child of the LAST level read, no next level remained and the "listing may be
+  incomplete" warning never fired. Refused and unreadable collections are now
+  counted, and a collection that cannot be read AT ALL throws instead of
+  returning an empty catalogue — the same rule `getCollectionContents` follows.
+
+Also: the server-derived sections (manifest, references) moved BEFORE the
+document, since after it they are written in the same Markdown the document may
+contain and would be indistinguishable from sections it forged; `get_skill` now
+discloses a reference like the catalogue does.
+
+One finding did not survive its measurement: the text read was suspected to fail
+on a reference id. It does not — staging returned the same 3466 bytes and a 200
+from both the reference and its original, so `readSkillText` deliberately does
+not resolve `ccm:original` (only the folder lookup has to).
+
+**`ccm:original` is now part of the skill identity.** Every result carries
+`originalId` beside `nodeId`, and `search_skill` de-duplicates on it: a skill
+that sits in the catalogue AND in a subject collection is returned once, as the
+ORIGINAL — the only id that may be written to, and the only one whose companion
+files resolve without a second lookup. A hit that is a reference says so in the
+listing. Without this the same skill appeared twice under two ids, which reads as
+two skills.
+
+**`get_skill` now returns a manifest of the skill's other files** — name,
+nodeId, MIME type, size, and nothing else. The model reads the instructions, sees
+what exists, and fetches only what it needs with `get_skill` on that nodeId;
+nothing beyond the `SKILL.md` is downloaded unasked. The manifest is built at
+call time from the workspace folder, so there is no catalogue to maintain.
+
+The resolution rules (`services/skill-files.ts`, all measured 2026-08-08): from a search
+hit, `virtual:primaryparent_nodeid` → `/children` reaches the other files in its
+workspace folder anonymously; from a collection entry the chain is
+`ccm:original` → `/metadata` → `virtual:primaryparent_nodeid` → `/children`,
+because a reference's own primary parent is the collection. Both verified on
+staging, every step 200 without credentials. A folder holding more than 25 files is
+reported as a COUNT rather than listed — it is somebody's inbox, not a bundle:
+real WLO folders measured at 484–3744 records and 1.7–20.6 s to list, and one of
+six refused anonymous access. A skill's own folder (1–2 files) lists in
+0.2–0.4 s. A folder that cannot be read costs nothing; the instructions come back
+regardless.
+
+Two further measurements, neither acted on yet. Collections **are** directly
+searchable (`/queries/-home-/mds_oeh/collections`, `contentType=COLLECTIONS`, 46
+hits for "Physik") but **only by keyword** — `ccm:oeh_extendedType` and
+`ccm:taxonid` are both refused there with 400. And on `ngsearch` the content type
+AND-s with `ccm:taxonid` correctly (9878 Physik records, 9877 of them
+learning_material), so a skill could be linked to a subject by TAGGING it rather
+than by placing a reference in that collection. `search_skill` does not expose
+those filters.
+
+`services/skills.ts` passed 300 lines and was split: `skill-catalogue.ts` now
+holds what makes a record a skill and how a skills collection is enumerated (the
+constants, the bounded walk), `skills.ts` the skill contract (search, ranking,
+`get_skill`). Behaviour-preserving; the importers were repointed rather than
+re-exported.
+
+Read tools: 26 → 27.
+
+### Fixed — the listing leads with the variant the page renders (2026-08-07)
+
+A collection can own several page-config folders, and they are resolved
+independently. When the superseded one came back first, its variant led the
+merged entry — and `search_wlo_topic_pages(includeContent: true)` resolves the
+first variant, so it rendered a superseded copy of the page. The rendered variant
+is now moved to the front whenever it arrives.
+
+Where the listing resolved none of the active folder's variants at all, no
+variant is marked as rendered — and `includeContent` then hands over no variant
+id instead of guessing, so `get_topic_page_content` walks the authoritative chain
+(collection → `ccm:page_config_ref` → `ccm:page_config.default`). Measured live:
+that page now resolves its real variant instead of a stale copy.
+
+Also in this round: `targetGroup` no longer carries the German placeholder
+"nicht gesetzt" in the machine field (empty string in every mode; the wording
+stays in `targetGroupLabel`); `_queryMeta.criteria` reports only what the
+dispatched mode actually used, instead of claiming a full-text search for a query
+the mode discarded; the page-variant search says so when it hits its 300-item
+cap; and the owner-resolution memo, dead since the listing groups by folder, is
+gone.
+
+### Fixed — one filter, one meaning, across all Themenseiten modes (2026-08-07)
+
+`targetGroup` used to mean two different things. The listing mode handed it to
+the repository search, which can only match a value that is present; the
+collection modes filtered locally and kept variants that declare none. Measured
+against production: **98 of 109 topic-page variants carry no target group and 97
+carry no educational context**, so the upstream filter was not narrowing the
+result — it was hiding nine pages out of ten. A request for 20 Themenseiten with
+`targetGroup: 'teacher'` returned 16 pages; it now returns 20.
+
+Both filters are applied in one place and a variant that declares no value is
+never excluded. They no longer make the call faster, and `docs/TOOLS.md` no
+longer claims they do.
+
+### Added — every Themenseite below a collection (2026-08-07)
+
+`search_wlo_topic_pages` takes `withinCollectionId`: all topic pages in a
+collection **subtree**, not just the one that collection owns. For the Physik
+portal that is 20+ pages instead of 1. Backed by `virtual:parent_recursive`,
+which takes exactly one collection id per query — candidate sets cannot be
+batched into a single search.
+
+### Added — which variant the page actually shows (2026-08-07)
+
+A Themenseite can hold several variants, and they are mostly editorial copies
+rather than target-group fassungen — so which one renders was not derivable from
+anything we returned. It is recorded on the page-config folder, in a property
+the server never read: `ccm:page_config` carries the variant order and a
+`default`. Present on 99/99 production and 45/45 staging pages.
+
+The rendering variant now comes first and is marked `isDefault`, in the JSON and
+in the Markdown listing. The previous behaviour took the first child of the
+folder, which landed on the same node in all 13 measured multi-variant pages — by
+an ordering the repository never promised. The extra read only happens when a
+page has more than one variant (6 % of pages), and on the listing path it costs
+nothing at all: the folder was already being read for its parent.
+
+`cm:title` is no longer a fallback for a variant's label. It holds the technical
+`PAGE_VARIANT_<uuid>` string on 109 of 109 production variants, so falling back
+to it replaced "no label" with a UUID that merely looks like one.
+
+### Changed — the Themenseiten listing resolves only what it returns (2026-08-07)
+
+The listing fetched page variants but returns Themenseiten, and several variants
+can belong to one page — so it used to guess the ratio: a pool of `maxResults*2`
+plus a one-shot top-up of up to 50, i.e. two searches and up to fifty owner
+resolutions charged to a caller who asked for five results.
+
+`virtual:primaryparent_nodeid` comes back on every hit and one page-config folder
+is one Themenseite, so variants are grouped into pages **before** any owner is
+resolved. One search, and one owner walk per page actually returned.
+
+Two defects surfaced only when this ran against a real repository, and neither
+could have been caught by a mocked upstream:
+
+- A collection may hold several page-config folders, so grouping by folder
+  under-delivered against a merge that keys on the collection (20 requested, 19
+  returned) and listed the same collection three times. Resolution now proceeds
+  in waves until enough distinct pages are in hand — from the search result
+  already in memory, so no second search.
+- Each folder has its own `default`, which claimed several rendering variants
+  for one page. Only the folder named by the collection's own
+  `ccm:page_config_ref` can hold the rendering variant; the others stay listed
+  but unmarked.
+
+Measured, evidence and repository-side blockers:
+`docs/plans/2026-08-07-topic-page-variants-analysis.md`.
+
+### Added — replace the file on an existing record (2026-08-06)
+
+`wlo_update_content` takes the same `content` / `fileBase64` / `contentFormat`
+parameters as the create tool. A call may change only metadata, only the file, or
+both — a file alone counts as a change, which it did not before.
+
+Replacing is not creating, and the preview says so: **the current content is
+replaced and the previous version stays in the version history**. That sentence
+sits in the change set beside the file's name, type, size and digest, so the
+confirmation token is bound to the new bytes exactly as on the create side —
+confirming with different content is refused.
+
+The file name is derived from the record's **stored** title when the call is not
+changing one, so replacing content without touching the title still produces a
+sensibly named file.
+
+The metadata write and the upload are two separate repository operations and
+either can fail alone, so both are reported rather than merged into one verdict.
+The upload runs after the metadata, so a record whose content replacement fails
+still carries the fields meant to describe it. The read-back is the same:
+`size`/`downloadUrl` decide, and an upload the record does not show afterwards is
+reported as such.
+
+The rules that decide whether bytes may be uploaded — type detection from the
+magic bytes, the size caps, the encoding check, the derived name — are shared
+with the create path through `resolveFileUpload`, not copied. What differs
+between the two tools is only the question around them: creating needs a source
+and `url` is one of them, while on an existing record `url` is an ordinary
+metadata field and no file at all is a perfectly good call.
+
+### Fixed — a flaky curation test, root-caused (2026-08-06)
+
+`tools-curation-create-file.test.ts` failed about once in five runs, on a
+different test each time. Not the token store: the helper that pulls the
+confirmation key out of a preview was written as `/confirmToken[^\w]*(…)/`, and
+`[^\w]` matches `-`. A base64url key may begin with `-` — roughly one in 64 does
+— and the greedy run swallowed it, so the key handed to the store was one it had
+never issued. The six older curation test files already exclude `-` from that
+class; the shorter form was copied here without it. Twelve consecutive runs green
+after the fix, and the reason is now written down where it was missing.
+
+### Added — create a record that carries its own file (2026-08-06)
+
+`wlo_create_content` takes a second kind of source beside `url`. The two paths
+stand side by side and neither replaces the other:
+
+- **`url`** — the material lives elsewhere and the record points at it. The
+  repository crawls it. Unchanged.
+- **`content` / `fileBase64`** — the record **carries** the material: Markdown
+  written in the conversation, or a generated image. For everything that has no
+  URL of its own.
+
+Exactly one source per call. Two given is a refusal, never a silent priority —
+"url wins" would file a link while the person watched their worksheet in the
+preview.
+
+**What the caller cannot get wrong, because it cannot say it.** The image type is
+read from the bytes (PNG, JPEG, GIF, WebP), never declared, so nothing can be
+stored under a type that would get it served as something else; anything
+unrecognised is refused rather than guessed. The file name is derived from the
+title, so there is no caller-supplied name and no traversal surface at all.
+
+**HTML and SVG are deliberately absent.** A record whose bytes the repository
+serves as `text/html` from its own origin is stored XSS, and an SVG is a document
+that executes script — magic bytes cannot separate a drawing from a payload
+there, because the same file is both.
+
+**The bytes are in the confirmation fingerprint.** The preview names the file's
+name, type, exact size and a SHA-256 prefix, plus the readable beginning of a
+text. The token is bound to that, so confirming with different bytes is refused —
+otherwise an approval for one worksheet could upload another. That property is
+pinned by a test, and verified by removing the description and watching the test
+fail.
+
+**And the upload is read back.** edu-sharing answers `200` for writes it discards;
+a `ccm:io` without content reports `size` and `downloadUrl` as null, and both are
+set once bytes arrive. An upload that did not land is stated next to the new
+record's id — "the record was created and carries NO content" — instead of being
+folded into a general success. A failed upload does not fail the create either:
+the node exists, its id has to reach the caller, and reporting failure over an
+existing record invites a retry that would produce a second one.
+
+Filing the same thing twice is still checked, with the anchor each path has: the
+URL blocks (it identifies the material exactly), while a same-title record in the
+storage location only *warns* in the preview — two worksheets may legitimately
+share a name, and refusing the second would be worse than a duplicate somebody
+can merge.
+
+The request shape is measured, not inferred: `wlo-content-files` (validated
+2026-05-08 against production and staging) and staging's own `openapi.json`, read
+2026-08-06. The single-call variant `POST …/children/_content` exists in the spec
+and has never been run, so the two-call path is used — a measured path beats a
+tidier unmeasured one.
+
+`MAX_BODY_BYTES` rises from 1 MB to **4 MB**, because an image arrives as base64
+inside the JSON-RPC body (2 MB decoded, ~2.7 MB encoded) and the old limit
+refused a call the tool is meant to serve — in the transport, before the tool
+could say anything useful. The `413` now names the likely cause and the variable.
+This widens a memory-exhaustion vector by the same factor; it is bounded per
+request and an operator who does not want uploads can set it back.
+
+### Added — end every access of your WLO account (2026-08-06)
+
+`POST /auth/revoke-all`, and a second form on `/auth-revoke.html`: type your WLO
+login, and every access block listed for that account stops working.
+
+This closes a gap found in use rather than in review. Revocation until now took
+the access **id**, and the only place that id exists is inside the block — but on
+the OAuth route the block travels to the AI host and **the person never sees it**.
+So the users most likely to want a revocation, having connected a client and
+later removed it, had no way to reach one; the operator editing the registry file
+was the only remaining path. Deleting the connector in the AI host does not
+revoke anything: the server keeps no client state, only the allow-list.
+
+The check the endpoint stands on is that the login is **verified upstream before
+anything is removed**. Our public key is published so browsers can encrypt, which
+means anyone can build a block naming any user — the same property that makes the
+id a secret on the other path. Without the upstream check, a guessed username
+would disconnect a stranger's AI host. That check now lives once, in
+`auth/access-verify.ts`, which issuance, OAuth authorization and revocation all
+go through; `tests/shared-rule-discipline.test.ts` pins that there is one such
+module and that both block-consuming callers use it. Checking a password also
+makes this a guessing oracle, so it passes the same two limiters as `/auth/issue`.
+
+Matching is by **exact** user name. Whether edu-sharing treats `Jan` and `jan` as
+one login is unmeasured; folding case would be a convenience if they are the same
+account and a way to wipe a stranger's accesses if they are not. The page reports
+how many went, so a differently spelt name is visible rather than silent.
+
+`docs/AUTH.md` claimed that one revocation ended both routes at once. That was
+true for the paste route and false for OAuth, and it is corrected there.
+
 ### Added — connect without a WLO account of your own (2026-08-06)
 
 The consent page has a third button next to "Anmelden" and "Ablehnen":

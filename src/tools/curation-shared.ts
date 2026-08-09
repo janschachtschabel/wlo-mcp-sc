@@ -37,11 +37,11 @@ export type WriteAuthChallenge = string;
 /**
  * Register a curation tool.
  *
- * Two things every one of them needs, in ONE place rather than thirteen:
+ * Two things every one of them needs, in ONE place rather than once per tool:
  *
- *   1. the `oauth2` security declaration — thirteen literals were thirteen
- *      chances to write a scheme type the client does not know, and one such
- *      type refuses the WHOLE tool list (measured 2026-08-05);
+ *   1. the `oauth2` security declaration — a literal per tool is a chance per
+ *      tool to write a scheme type the client does not know, and one such type
+ *      refuses the WHOLE tool list (measured 2026-08-05);
  *   2. the call-time gate. The tools are listed even without an identity —
  *      that is what lets a client discover a login exists at all — so the
  *      refusal has to hold on its own, and it carries

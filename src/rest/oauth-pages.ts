@@ -125,7 +125,12 @@ async function route(req: OAuthReq, res: OAuthRes, deps: OAuthEndpointDeps): Pro
     return send(res, 405, { error: `Method not allowed. Use ${allow}.` }, { Allow: allow });
   }
 
-  if (deps.rateLimiter.check(deps.ip, Date.now())) {
+  // Which budget this path spends: the consent surface takes a password, the
+  // rest is the connector's own traffic (see `OAuthEndpointDeps`).
+  const limiter = parsed.pathname === AUTHORIZE_PATH
+    ? deps.authorizeRateLimiter
+    : deps.connectorRateLimiter;
+  if (limiter.check(deps.ip, Date.now())) {
     return send(res, 429, { error: 'Zu viele Anfragen. Bitte in einer Minute erneut versuchen.' },
       { 'Retry-After': '60' });
   }
@@ -141,7 +146,11 @@ async function route(req: OAuthReq, res: OAuthRes, deps: OAuthEndpointDeps): Pro
 
   if (parsed.pathname === TOKEN_PATH) return exchangeCode(req, res, deps);
 
-  return registerClient(req, res, deps, support.keys);
+  // Named, not reached by elimination: a path added to ROUTES without its own
+  // branch would otherwise become client registration, silently.
+  if (parsed.pathname === REGISTER_PATH) return registerClient(req, res, deps, support.keys);
+
+  return false;
 }
 
 /** RFC 7591 error shape. Two codes, and the caller never learns more. */

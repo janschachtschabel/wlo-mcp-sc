@@ -16,8 +16,23 @@ export interface OAuthEndpointDeps {
   ip: string;
   /** Cap on a buffered request body (MAX_BODY_BYTES). */
   maxBodyBytes: number;
-  /** Requests per address — the public-surface limiter. */
-  rateLimiter: RateLimiter;
+  /**
+   * Requests per address for `/oauth/authorize` — the tight public-surface
+   * bucket, shared with `/auth*`, because this is where a password is typed.
+   */
+  authorizeRateLimiter: RateLimiter;
+  /**
+   * Requests per address for the machine-to-machine steps: both discovery
+   * documents, registration and the token exchange.
+   *
+   * A separate budget because these come from the CLIENT's address, not the
+   * person's. A hosted connector serves many users from few egress addresses, so
+   * counting its four-requests-per-login against the tight bucket makes a 429
+   * during discovery a matter of how many OTHER people are connecting — and a
+   * client that gets one concludes this server has no OAuth. Nothing is
+   * unbounded: this is the same budget the MCP endpoint gives the same client.
+   */
+  connectorRateLimiter: RateLimiter;
   /** Distinct logins per address — the guessing guard, shared with `/auth/issue`. */
   authAbuseLimiter: DistinctValueLimiter;
   /** Where an issued authorization code waits for `/oauth/token`. */

@@ -15,6 +15,7 @@ export const CURATION_TOOLS = [
   'wlo_create_collection', 'wlo_rename_collection',
   'wlo_add_to_collection', 'wlo_remove_from_collection',
   'wlo_update_compendium',
+  'wlo_set_topic_page',
   // Reading proposals is gated too: they are curation workflow, not public data.
   'wlo_suggest_metadata', 'wlo_list_suggestions', 'wlo_decide_suggestion',
   'wlo_delete_content', 'wlo_delete_collection',

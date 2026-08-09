@@ -18,6 +18,11 @@ const STRINGS = {
     sectionContent: 'Inhalte',
     moreOnTopicPage: 'Mehr auf der Themenseite',
     noResults: 'Keine Treffer gefunden.',
+    // Split from the count so the number can be composed in without an
+    // interpolating `t()`; both halves are one sentence in the rendering.
+    noResultsLicense: 'Kein Treffer mit genau der gewählten Lizenz.',
+    licenseCandidatesChecked: 'geprüfte Kandidaten',
+    licenseFamilyHint: 'Das Repository filtert Lizenzen nur als Familie — die genaue Auswahl passiert danach.',
     resultsFor: 'Ergebnisse für',
     subjectPortals: 'Fachportale',
     back: 'Zurück',
@@ -74,6 +79,9 @@ const STRINGS = {
     sectionContent: 'Content',
     moreOnTopicPage: 'More on the topic page',
     noResults: 'No results found.',
+    noResultsLicense: 'Nothing carries exactly the licence you asked for.',
+    licenseCandidatesChecked: 'candidates checked',
+    licenseFamilyHint: 'The repository can only filter licence families — the exact selection happens afterwards.',
     resultsFor: 'Results for',
     subjectPortals: 'Subject portals',
     back: 'Back',

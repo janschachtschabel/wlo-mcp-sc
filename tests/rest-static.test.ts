@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { resolveStaticRoute, handleStaticRequest } from '../src/rest/static.js';
 
@@ -105,6 +106,45 @@ test('resolveStaticRoute maps GET /llms.txt and the file documents the search en
   const body = String(res.rec.body ?? '');
   assert.match(body, /\/api\/search\/</, 'documents the stripping-proof path form');
   assert.match(body, /\/api\/search\?q=/, 'documents the query alias');
+});
+
+/**
+ * Every path this file names must exist. `llms.txt` is what an AI fetcher reads
+ * INSTEAD of asking, so a path that quietly went away does not produce a broken
+ * link someone notices — it produces a client that confidently calls a 404 and
+ * concludes the server has nothing.
+ *
+ * Checked against the SOURCE rather than by calling the routes: the REST
+ * handlers reach upstream, and a test that had to mock the network to confirm a
+ * route exists would be testing the mock. A renamed or deleted route fails here.
+ */
+test('every path llms.txt advertises is one the server really serves', () => {
+  const text = readFileSync(new URL('../public/llms.txt', import.meta.url), 'utf8');
+  const src = (p: string) => readFileSync(new URL(`../src/${p}`, import.meta.url), 'utf8');
+  const routes = src('rest/routes.ts');
+  const oauth = src('rest/oauth-pages.ts') + src('auth/oauth-metadata.ts');
+  const app = src('http-app.ts');
+
+  // Trailing punctuation and the `<term>` placeholders are documentation, not
+  // part of the path.
+  const paths = [...new Set(
+    [...text.matchAll(/(?<![\w.])\/[\w./-]*[\w/]/g)]
+      .map((m) => m[0].replace(/\/<[^>]*>.*$/, '').replace(/\/$/, ''))
+      .filter((p) => p.length > 1),
+  )];
+  assert.ok(paths.length >= 8, `expected llms.txt to name several paths, found ${paths.length}`);
+
+  const unserved = paths.filter((path) => {
+    if (resolveStaticRoute('GET', path)) return false;
+    // `/api/search/<term>` is a VARIABLE route, so no literal for it exists in
+    // the table — it is matched by prefix. The example paths in llms.txt take
+    // that form, and demanding a literal would fail on a route that works.
+    if (path.startsWith('/api/search/')) return !routes.includes("SEARCH_PREFIX = '/api/search/'");
+    if (path.startsWith('/api/')) return !routes.includes(`'${path}'`);
+    if (path.startsWith('/.well-known/')) return !oauth.includes(path);
+    return !app.includes(`'${path}'`);
+  });
+  assert.deepEqual(unserved, [], 'llms.txt names a path no route serves');
 });
 
 // ── robots.txt (AI fetch tools check it before touching /api/*) ──────────────

@@ -70,6 +70,23 @@ test('the truncation marker is written in exactly one module', () => {
 });
 
 /**
+ * A hand-rolled "seen this URL already" filter. The rule which copy of a
+ * repeated material survives lives in one module, because the two search paths
+ * are independent (`search_wlo_content` calls enhancedSearch/ngsearch directly,
+ * `searchAll` feeds `search_wlo_all`, `search` and REST) and a second copy would
+ * only be noticed when the two disagreed about what a user sees.
+ */
+const INLINE_URL_DEDUPE = /\bseen\w*\.(has|add)\(\s*\w+\.url\b/;
+
+test('collapsing repeated URLs happens only in result-dedupe.ts', () => {
+  assert.deepEqual(
+    offenders(INLINE_URL_DEDUPE, ['result-dedupe.ts']),
+    [],
+    'use dedupeByUrl from result-dedupe.ts — it also carries WHY the first hit wins rather than the newest',
+  );
+});
+
+/**
  * `res.json()` outside the one module that guards it. `res.ok` says the server
  * answered, not that the body is JSON: a proxy maintenance page and a captive
  * portal both arrive as 200 with something `res.json()` throws on.
@@ -146,18 +163,38 @@ test('services and the REST layer do not import from the tool layer', () => {
 const AUTHORITY_CHECK = /\bcheckIdentity\(/;
 
 test('the authority check has one caller per purpose, not a copy per endpoint', () => {
-  // `/auth/issue` and `/oauth/authorize` perform the identical step — verify the
-  // login inside an access block, then list its id. The second one was written
-  // by MOVING the first into `auth/access-issue.ts` rather than copying it,
-  // because a copy is exactly where the authority reading gets replaced by
-  // `res.ok` and the endpoint starts handing out accesses for logins that do not
-  // work. `tools/auth.ts` is the other legitimate caller: it reports the current
+  // Three endpoints now perform the identical step — `/auth/issue`,
+  // `/oauth/authorize` and `/auth/revoke-all` all have to prove the login inside
+  // an access block before they act on it. Each was written by MOVING the check
+  // rather than copying it, ending in `auth/access-verify.ts`, because a copy is
+  // exactly where the authority reading gets replaced by `res.ok`.
+  //
+  // What that costs differs per endpoint, and the revocation side is the worse
+  // one: our public key is published so browsers can encrypt, so anyone can
+  // build a block naming any user, and a removal that trusted the name in it
+  // would end a stranger's accesses on a guessed username.
+  //
+  // `tools/auth.ts` is the other legitimate caller: it reports the current
   // identity to the user and gates nothing.
   assert.deepEqual(
-    offenders(AUTHORITY_CHECK, ['auth/identity.ts', 'auth/access-issue.ts', 'tools/auth.ts']),
+    offenders(AUTHORITY_CHECK, ['auth/identity.ts', 'auth/access-verify.ts', 'tools/auth.ts']),
     [],
-    'call issueAccessBlock from auth/access-issue.ts — it is where the authority rule lives',
+    'go through verifyBlockLogin in auth/access-verify.ts — it is where the authority rule lives',
   );
+});
+
+/**
+ * The other half of the same rule, and the one a file listing cannot show: both
+ * modules that act on a block must actually GO through the shared check. An
+ * `access-revoke.ts` that decoded a block itself would pass the test above —
+ * it calls no `checkIdentity` — while removing accesses for an unproven name.
+ */
+test('acting on an access block always goes through the shared verification', () => {
+  const offending = ['auth/access-issue.ts', 'auth/access-revoke.ts'].filter(
+    name => !/\bverifyBlockLogin\(/.test(readFileSync(join(srcDir, name), 'utf8')),
+  );
+  assert.deepEqual(offending, [],
+    'call verifyBlockLogin — decoding a block without proving its login is the whole hazard');
 });
 
 /** A direct registration call — the thing a curation tool must NOT do. */

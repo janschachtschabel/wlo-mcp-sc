@@ -12,8 +12,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { findByUrl } from '../src/services/write/nodes-lifecycle.js';
-import { installFetchMock } from './fetchMock.js';
+import { findByUrl, findByTitle } from '../src/services/write/duplicates.js';
+import { installFetchMock, makeNode } from './fetchMock.js';
 
 /** One ngsearch response carrying the given `ccm:wwwurl` values. */
 function serveHits(urls: string[]) {
@@ -103,6 +103,83 @@ test('a trailing-slash difference is NOT silently treated as the same URL', asyn
   const mock = serveHits(['https://example.org/material/']);
   try {
     assert.equal(await findByUrl('https://example.org/material'), null);
+  } finally {
+    mock.restore();
+  }
+});
+
+// ── the second anchor: title, for a record that carries its own file ────────
+
+/**
+ * A file-carrying record has no `ccm:wwwurl`, so the URL anchor does not exist.
+ * The title within the place the record would be filed is what is left — and it
+ * is deliberately weaker: a hit WARNS rather than blocking, because two
+ * worksheets may legitimately share a name and refusing to file the second one
+ * would be worse than a duplicate somebody can merge.
+ *
+ * Scoped to the storage location on purpose. A repository-wide title search
+ * would flag every record called "Bruchrechnung" and the warning would become
+ * noise nobody reads.
+ */
+test('a same-title record in the storage location is found', async () => {
+  const mock = installFetchMock(() => ({
+    status: 200,
+    json: {
+      nodes: [
+        makeNode('other', 'Etwas anderes'),
+        makeNode('twin', 'Brüche kürzen'),
+      ],
+    },
+  }));
+  try {
+    const hit = await findByTitle('Brüche kürzen', '-userhome-');
+    assert.equal(hit?.nodeId, 'twin');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('the title comparison ignores case and surrounding space', async () => {
+  const mock = installFetchMock(() => ({
+    status: 200, json: { nodes: [makeNode('twin', 'Brüche Kürzen')] },
+  }));
+  try {
+    assert.ok(await findByTitle('  brüche kürzen ', '-userhome-'));
+  } finally {
+    mock.restore();
+  }
+});
+
+test('a different title in the same place is not a duplicate', async () => {
+  const mock = installFetchMock(() => ({
+    status: 200, json: { nodes: [makeNode('other', 'Etwas anderes')] },
+  }));
+  try {
+    assert.equal(await findByTitle('Brüche kürzen', '-userhome-'), null);
+  } finally {
+    mock.restore();
+  }
+});
+
+/**
+ * The check is a courtesy, not a gate. If the listing fails, creating the record
+ * must still be possible — an unreachable duplicate check that blocked the
+ * create would turn a warning into an outage.
+ */
+test('a listing that fails degrades to "no duplicate known", not to an error', async () => {
+  const mock = installFetchMock(() => ({ status: 500, json: {} }));
+  try {
+    assert.equal(await findByTitle('Brüche kürzen', '-userhome-'), null);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('an empty title is not looked up at all', async () => {
+  const mock = installFetchMock(() => ({ status: 200, json: { nodes: [] } }));
+  try {
+    assert.equal(await findByTitle('   ', '-userhome-'), null);
+    assert.equal(mock.calls.length, 0, 'no request for a title there is nothing to compare');
   } finally {
     mock.restore();
   }

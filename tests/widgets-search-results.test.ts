@@ -163,6 +163,64 @@ test('renderSearchResults shows a localized empty state when nothing matched', (
   assert.match(renderSearchResults(empty as any, 'en'), /No results found/);
 });
 
+/**
+ * The widget is the second renderer of the same envelope, and the rule the HTML
+ * page was fixed under holds here too: a field in the envelope is no disclosure
+ * if the renderer drops it. "Keine Treffer gefunden." over material that exists
+ * — the licence pass removed it — is the misleading claim, so the empty state
+ * names the reason when `content.licenseFilter` explains it.
+ */
+test('the empty state names the licence filter when that is what emptied it', () => {
+  const emptied = {
+    query: 'Optik',
+    content: { total: 172, count: 0, results: [], licenseFilter: { checked: 12, kept: 0 } },
+    collections: { total: 0, count: 0, results: [] },
+    topicPages: { total: 0, count: 0, results: [] },
+  };
+  const de = renderSearchResults(emptied as any, 'de');
+  assert.match(de, /Lizenz/, 'DE names the licence as the reason');
+  assert.match(de, /12/, 'and how many candidates were checked');
+  const en = renderSearchResults(emptied as any, 'en');
+  assert.match(en, /licence/i, 'EN is localized, not the German sentence');
+  assert.match(en, /12/);
+});
+
+/**
+ * The count is the one interpolated value in this file that does NOT go through
+ * `escapeHtml`, and it is safe only because the guard above it (`checked > 0`)
+ * coerces numerically: `Number('<img …')` is NaN and NaN > 0 is false, so no
+ * value carrying markup ever reaches the template. That is a real guarantee but
+ * an implicit one — it lives in a condition written for a different purpose.
+ *
+ * This test pins it. Relax the guard (say, to also explain a shortened result
+ * the way the HTML page does) and the escaping question comes back; this fails
+ * first instead of the property disappearing quietly.
+ */
+test('a non-numeric candidate count cannot inject markup', () => {
+  const hostile = {
+    query: 'Optik',
+    content: {
+      total: 1, count: 0, results: [],
+      licenseFilter: { checked: '<img src=x onerror=alert(1)>', kept: 0 },
+    },
+    collections: { total: 0, count: 0, results: [] },
+    topicPages: { total: 0, count: 0, results: [] },
+  };
+  const html = renderSearchResults(hostile as any, 'de');
+  assert.doesNotMatch(html, /<img/, 'no element from the payload reaches the DOM');
+  assert.doesNotMatch(html, /onerror/);
+});
+
+test('the plain empty state stays plain when no licence was filtered', () => {
+  const empty = {
+    query: 'zzz',
+    content: { total: 0, count: 0, results: [] },
+    collections: { total: 0, count: 0, results: [] },
+    topicPages: { total: 0, count: 0, results: [] },
+  };
+  assert.doesNotMatch(renderSearchResults(empty as any, 'de'), /Lizenz/);
+});
+
 test('renderSearchResults escapes the query and handles a missing payload', () => {
   assert.match(renderSearchResults(payload({ query: '<b>x</b>' }), 'de'), /&lt;b&gt;x&lt;\/b&gt;/);
   assert.match(renderSearchResults(undefined, 'de'), /Keine Treffer gefunden/);

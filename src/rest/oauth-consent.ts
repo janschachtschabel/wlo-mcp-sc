@@ -25,6 +25,7 @@ import { ANONYMOUS_ACCESS_TOKEN, type AccessSupport } from '../auth/credential.j
 import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-authorize.js';
 import { log } from '../logger.js';
 import { isJsonContentType } from '../read-body.js';
+import { sanitizeText } from '../text-sanitize.js';
 import { send, readJsonBody, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
 import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
 
@@ -192,7 +193,13 @@ export async function grantConsent(
     label: outcome.label,
   }, Date.now());
 
-  log.info('authorization code issued', { client: checked.request.client.name, label: outcome.label });
+  // `sanitizeText` on the label like every other site that logs it: the logger's
+  // JSON encoding already closes line forging, so this is about the length cap
+  // and about the rule reading the same way everywhere it applies.
+  log.info('authorization code issued', {
+    client: checked.request.client.name,
+    label: sanitizeText(outcome.label),
+  });
   return send(res, 200, { redirect: authorizationRedirect(checked.request, code) },
     { 'Cache-Control': 'no-store' });
 }

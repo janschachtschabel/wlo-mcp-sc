@@ -366,6 +366,135 @@ test('GET /api/collection with q searches within the collection', async () => {
   }
 });
 
+/**
+ * `/api/collection?q=…` takes `license` like the other search paths and runs the
+ * same exactness pass — but the response carried only the post-filter `total`,
+ * so a filter that removed every child was indistinguishable from an empty
+ * collection. Same disclosure contract as `/api/search`: `licenseFilter
+ * {checked, kept}`.
+ */
+test('GET /api/collection with a licence discloses the exactness pass', async () => {
+  // The BUNDLE is where this pass does the work: a single licence arrives as a
+  // criterion and `nodeMatchesCriteria` already matches it exactly, but a SET is
+  // not expressible upstream, so `buildFilterCriteria` only labels it and the
+  // exactness pass is the only thing standing between `license=OER` and every
+  // child of the collection.
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [
+        makeNode('sk-2', 'Video offen lizenziert', { 'ccm:commonlicense_key': ['CC_BY'] }),
+        makeNode('sk-4', 'Video NC-Verwandte', { 'ccm:commonlicense_key': ['CC_BY_NC'] }),
+      ], pagination: { total: 2, from: 0, count: 2 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    const r = await routeRestRequest('GET', '/api/collection?nodeId=coll-1&q=video&license=OER');
+    const body = r!.json as {
+      total: number;
+      results: { nodeId: string }[];
+      licenseFilter?: { checked: number; kept: number };
+    };
+    assert.equal(body.results.length, 1, 'only the exact licence survives');
+    assert.equal(body.results[0].nodeId, 'sk-2');
+    assert.deepEqual(body.licenseFilter, { checked: 2, kept: 1 }, 'and the response says a pass ran');
+  } finally {
+    mock.restore();
+  }
+});
+
+/**
+ * Filters used to apply only alongside `q`, because a query-less call went to
+ * the plain listing. Measured before the fix: `license=OER` over three children
+ * returned all three — CC BY-NC-ND and an undeclared record included — with no
+ * `licenseFilter` to show for it. The MCP tool never had this gap; its schema
+ * says "Empty = all contents (filtered)" and it always matches locally.
+ */
+test('GET /api/collection applies filters without q too', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [
+        makeNode('a', 'Offen', { 'ccm:commonlicense_key': ['CC_BY'] }),
+        makeNode('b', 'NC-ND', { 'ccm:commonlicense_key': ['CC_BY_NC_ND'] }),
+        makeNode('c', 'Ohne Lizenzangabe'),
+      ], pagination: { total: 3, from: 0, count: 3 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    const r = await routeRestRequest('GET', '/api/collection?nodeId=coll-1&license=OER');
+    const body = r!.json as {
+      total: number;
+      results: { nodeId: string }[];
+      licenseFilter?: { checked: number; kept: number };
+    };
+    assert.deepEqual(body.results.map(x => x.nodeId), ['a'], 'only the OER record survives');
+    assert.equal(body.total, 1);
+    assert.deepEqual(body.licenseFilter, { checked: 3, kept: 1 });
+  } finally {
+    mock.restore();
+  }
+});
+
+/**
+ * Local matching reads at most 100 children in one call, so on a larger
+ * collection the answer is a SAMPLE. The MCP tool says so ("Durchsucht wurden
+ * die ersten 100 von N"); the REST response has to carry the same fact, or a
+ * filtered result over a 900-item collection reads as exhaustive.
+ */
+test('GET /api/collection discloses when the matched window was a sample', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [makeNode('a', 'Video A')], pagination: { total: 150, from: 0, count: 1 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    const r = await routeRestRequest('GET', '/api/collection?nodeId=coll-1&q=video');
+    const body = r!.json as { truncated?: boolean; collectionTotal?: number };
+    assert.equal(body.truncated, true);
+    assert.equal(body.collectionTotal, 150, 'how many the collection actually holds');
+  } finally {
+    mock.restore();
+  }
+});
+
+/**
+ * The plain listing must stay the plain listing: it pages upstream, while local
+ * matching samples at most 100 children in one call. `maxItems` in the request
+ * is what tells the two apart.
+ */
+test('GET /api/collection with neither q nor filters still lists upstream-paged', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [makeNode('a', 'Irgendwas')], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    await routeRestRequest('GET', '/api/collection?nodeId=coll-1&max=20');
+    const children = mock.calls.find(c => c.url.includes('/children'));
+    assert.match(children?.url ?? '', /maxItems=20/, 'the caller\'s page size, not the 100-child sampling window');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('GET /api/collection without a licence carries no licenseFilter field', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [makeNode('sk-2', 'Video Skill')], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    const r = await routeRestRequest('GET', '/api/collection?nodeId=coll-1&q=video');
+    assert.equal((r!.json as { licenseFilter?: unknown }).licenseFilter, undefined);
+  } finally {
+    mock.restore();
+  }
+});
+
 test('GET /api/collection without nodeId (and no WLO_SKILLS_COLLECTION_ID) → 400', async () => {
   const r = await routeRestRequest('GET', '/api/collection');
   assert.equal(r?.status, 400);

@@ -15,7 +15,7 @@
  * German user text on purpose: the page is shown verbatim to WLO editors.
  */
 
-import { encodeAccessBlock } from './access-block.js';
+import { encodeAccessBlock, fetchPublicKey } from './access-block.js';
 
 const form = document.getElementById('authorize-form');
 const userInput = document.getElementById('user');
@@ -36,14 +36,6 @@ let approvedRedirect = null;
 function say(text, kind) {
   status.textContent = text;
   status.className = kind ? `status ${kind}` : 'status';
-}
-
-async function publicKey() {
-  const res = await fetch('/auth/public-key', { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error('Der Server bietet gerade keine Zugänge an. Bitte später erneut versuchen.');
-  const data = await res.json();
-  if (!data || typeof data.publicKey !== 'string') throw new Error('Der Server hat keinen Schlüssel geliefert.');
-  return data.publicKey;
 }
 
 /**
@@ -138,7 +130,7 @@ form.addEventListener('submit', async (event) => {
   say('Verschlüsseln und anmelden …', 'busy');
 
   try {
-    const block = await encodeAccessBlock(user, secret, await publicKey());
+    const block = await encodeAccessBlock(user, secret, await fetchPublicKey());
     const target = await grant(authorizeBody({ token: block }));
 
     // The password is done with; it should not sit in the field while the

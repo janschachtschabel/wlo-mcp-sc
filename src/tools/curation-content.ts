@@ -20,7 +20,11 @@ import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata } from '../services/write/nodes.js';
-import { createContentNode, submitForReview } from '../services/write/nodes-lifecycle.js';
+import { createContentNode, resolveCreateParent, submitForReview } from '../services/write/nodes-lifecycle.js';
+import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
+import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
+import { findByTitle } from '../services/write/duplicates.js';
+import { WLO_INBOX_ID } from '../wlo-config.js';
 import { verifyWrite } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
@@ -45,6 +49,16 @@ import { CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.j
 const updateSchema = {
   nodeId: z.string().describe('nodeId of the record to change.'),
   ...FIELD_SCHEMA,
+  // The same file surface as the create tool. Optional here and independent of
+  // the metadata fields: a call may change only metadata, only the file, or both.
+  content: z.string().optional()
+    .describe('Neuer Inhalt als Text (z. B. überarbeitetes Markdown). ERSETZT den vorhandenen Inhalt des ' +
+      'Datensatzes; die bisherige Fassung bleibt in der Versionshistorie.'),
+  contentFormat: z.enum(['markdown', 'text']).optional()
+    .describe('Format von content. Vorgabe: markdown. HTML wird nicht hochgeladen.'),
+  fileBase64: z.string().optional()
+    .describe('Neues Bild als Base64 oder data:-URL. ERSETZT den vorhandenen Inhalt. Erkannt werden PNG, ' +
+      'JPEG, GIF und WebP — der Typ wird aus den Daten gelesen.'),
   confirmToken: CONFIRM_TOKEN,
   commit: z.boolean().optional().default(false)
     .describe('true legt eine neue Version an (für den Abschluss einer Bearbeitung); false bearbeitet den Entwurf.'),
@@ -57,8 +71,22 @@ const updateSchema = {
 
 const createSchema = {
   ...FIELD_SCHEMA,
-  url: z.string().describe('Quell-URL des Materials (ccm:wwwurl); nur http/https. Pflichtangabe.'),
   title: z.string().describe('Titel des neuen Datensatzes. Pflichtangabe.'),
+  // Exactly one source. Optional in the schema and checked in the handler,
+  // because "exactly one of three" is a relationship between fields, and a
+  // model reads one clear sentence better than three optional flags.
+  url: z.string().optional()
+    .describe('WEG 1 — das Material liegt woanders: Quell-URL (ccm:wwwurl), nur http/https. Der Inhalt ' +
+      'bleibt extern und wird vom Repository erschlossen.'),
+  content: z.string().optional()
+    .describe('WEG 2 — der Datensatz trägt den Inhalt selbst: der Text, z. B. ein im Chat erstelltes ' +
+      'Arbeitsblatt in Markdown. Für Inhalte ohne eigene URL.'),
+  contentFormat: z.enum(['markdown', 'text']).optional()
+    .describe('Format von content. Vorgabe: markdown. HTML wird nicht hochgeladen.'),
+  fileBase64: z.string().optional()
+    .describe('WEG 2 für Bilder: die Bilddatei als Base64, wahlweise als data:-URL ' +
+      '(data:image/png;base64,…) oder als reiner Base64-Text. Erkannt werden PNG, JPEG, GIF und WebP — ' +
+      'der Typ wird aus den Daten gelesen, ein angegebener Typ wird ignoriert.'),
   confirmToken: CONFIRM_TOKEN,
 };
 
@@ -70,19 +98,50 @@ const submitSchema = {
   confirmToken: CONFIRM_TOKEN,
 };
 
+/**
+ * What became of the file, as one sentence for both tools.
+ *
+ * Worded about the FILE, not about the surrounding act, because the same
+ * sentence has to be true beside "Angelegt: <id>" and after a metadata change —
+ * "Der Datensatz wurde angelegt" would be a lie on the update path.
+ *
+ * Every outcome except `stored` is stated plainly, including the one edu-sharing
+ * makes easy to miss: a `200` for an upload the record does not show. Someone
+ * told "created" who finds an empty record learns the hard way; someone told the
+ * record has no content yet can fix it.
+ */
+function uploadNote(upload: UploadOutcome | undefined): string {
+  if (!upload) return '';
+  switch (upload.status) {
+    case 'stored':
+      return ` — Datei hochgeladen (${upload.size} Bytes).`;
+    case 'dropped':
+      return ' — ACHTUNG: Der Datensatz trägt danach KEINEN Inhalt. Das Hochladen wurde mit Erfolg '
+        + 'beantwortet, der Datensatz zeigt aber keine Datei. Bitte die Rechte prüfen und den Inhalt '
+        + 'erneut hochladen.';
+    case 'unverified':
+      return ` — Das Hochladen wurde abgeschickt, ließ sich danach aber nicht überprüfen. Ob der Datensatz `
+        + `den Inhalt trägt, ist offen. (${upload.detail})`;
+    default:
+      return ` — ACHTUNG: Das Hochladen der Datei ist fehlgeschlagen: ${upload.detail}`;
+  }
+}
+
 export function registerCurationContentTools(server: McpServer, challenge: WriteAuthChallenge): void {
   registerCurationTool(server, challenge, {
     name: 'wlo_update_content',
     title: 'WLO Inhalt bearbeiten',
     description:
-      'Ändere die Metadaten eines vorhandenen WLO-Datensatzes (Titel, Beschreibung, Schlagwörter, Lizenz, ' +
-      'Fach, Bildungsstufe, Inhaltstyp …). ZWEISTUFIG: Ohne confirmToken wird nur eine Vorschau der Änderung ' +
-      'zurückgegeben und NICHTS geschrieben; erst ein zweiter Aufruf mit dem Schlüssel aus der Vorschau ' +
-      'schreibt. Danach wird der Datensatz erneut gelesen und je Feld berichtet, was tatsächlich ankam. ' +
-      'Erfordert eine Anmeldung. NICHT für neue Inhalte und nicht zum Löschen.',
+      'Ändere einen vorhandenen WLO-Datensatz: Metadaten (Titel, Beschreibung, Schlagwörter, Lizenz, Fach, ' +
+      'Bildungsstufe, Inhaltstyp …) und/oder den INHALT selbst — mit content bzw. fileBase64 wird die ' +
+      'hinterlegte Datei ERSETZT (z. B. ein überarbeitetes Arbeitsblatt); die bisherige Fassung bleibt in ' +
+      'der Versionshistorie. Beides geht einzeln oder zusammen. ZWEISTUFIG: Ohne confirmToken wird nur eine ' +
+      'Vorschau zurückgegeben und NICHTS geschrieben; erst ein zweiter Aufruf mit dem Schlüssel aus der ' +
+      'Vorschau schreibt. Danach wird der Datensatz erneut gelesen und je Feld berichtet, was tatsächlich ' +
+      'ankam. Erfordert eine Anmeldung. NICHT für neue Inhalte (dafür wlo_create_content) und nicht zum Löschen.',
     inputSchema: updateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    // Not `noauth`: this tool refuses a caller without an identity.
+    // Not `noauth`: this tool refuses a caller without an identity.
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -90,7 +149,11 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const nodeId = String(params['nodeId'] ?? '');
         const collected = collectDesired(params, CONTENT_FIELDS);
         if (!collected.ok) return rejectionReply(collected.reasons);
-        if (Object.keys(collected.desired).length === 0) {
+        const carriesFile = typeof params['content'] === 'string' || typeof params['fileBase64'] === 'string';
+        // A file alone IS a change. Without this the tool would refuse "just
+        // replace the content", which is the main reason the file path exists
+        // on an existing record at all.
+        if (Object.keys(collected.desired).length === 0 && !carriesFile) {
           return {
             content: [{ type: 'text' as const, text: 'Es wurde kein zu änderndes Feld angegeben.' }],
             isError: true,
@@ -113,20 +176,39 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const commit = params['commit'] === true;
         const versionComment = typeof params['versionComment'] === 'string' ? params['versionComment'] : undefined;
 
-        // A commit writes the same values but also adds a permanent entry to the
-        // record's version history, with a comment. Both belong in the change
-        // set: unbound, a token minted for a quiet draft edit would authorise a
-        // published version nobody previewed.
+        // The file name is derived from a title, and on an update the caller may
+        // not be changing one — so the record's STORED title is what names it.
+        const resolved = resolveFileUpload(
+          collected.desired['cclom:title']?.[0] ?? recordTitle(node.properties) ?? nodeId,
+          {
+            content: typeof params['content'] === 'string' ? params['content'] : undefined,
+            contentFormat: typeof params['contentFormat'] === 'string' ? params['contentFormat'] : undefined,
+            fileBase64: typeof params['fileBase64'] === 'string' ? params['fileBase64'] : undefined,
+          },
+        );
+        if (!resolved.ok) return errorText(resolved.reason);
+        const file = resolved.file;
+
+        // Both extras belong in the change set, and for the same reason: the
+        // token is bound to it, so anything the call will additionally DO must
+        // be visible in the preview. A commit adds a permanent version entry; a
+        // file replaces what the record currently carries.
+        const extras = [
+          file
+            ? `Ersetzt den Inhalt des Datensatzes — die bisherige Fassung bleibt in der `
+              + `Versionshistorie. ${describeUpload(file)}`
+            : '',
+          commit
+            // Flattened at the composition site like every other foreign part of
+            // an action, so the sentence it becomes is safe on its own terms
+            // rather than relying on the renderer.
+            ? `Legt beim Übernehmen eine neue Version an${
+              versionComment ? ` mit dem Kommentar „${flattenText(versionComment)}“` : ''}.`
+            : '',
+        ].filter(Boolean);
+
         const cs = buildChangeSet(nodeId, 'content', node.properties ?? {}, collected.desired, {
-          ...(commit
-            ? {
-                // Flattened at the composition site like every other foreign
-                // part of an action, so the sentence it becomes is safe on its
-                // own terms rather than relying on the renderer.
-                action: `Legt beim Übernehmen eine neue Version an${
-                  versionComment ? ` mit dem Kommentar „${flattenText(versionComment)}“` : ''}.`,
-              }
-            : {}),
+          ...(extras.length ? { action: extras.join(' ') } : {}),
         });
 
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
@@ -142,11 +224,20 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
           versionComment,
         });
 
+        // After the metadata, so a record whose content replacement fails still
+        // carries the fields that were meant to describe it. The two are
+        // separate repository operations and either can fail alone, so both are
+        // reported rather than merged into one verdict.
+        const upload = file ? await uploadContent(nodeId, file) : undefined;
+        const note = uploadNote(upload).replace(/^ — /, '');
+
         try {
           const verified = await verifyWrite(nodeId, cs);
-          return reportOutcome(cs, statuses, verified);
+          const report = reportOutcome(cs, statuses, verified);
+          return note ? prependText(report, note) : report;
         } catch (err) {
-          return unverifiedReply(err);
+          const report = unverifiedReply(err);
+          return note ? prependText(report, note) : report;
         }
       } catch (err) {
         return timeoutOrError('Der Datensatz konnte nicht bearbeitet werden', err,
@@ -159,39 +250,76 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
     name: 'wlo_create_content',
     title: 'WLO Inhalt anlegen',
     description:
-      'Lege einen NEUEN WLO-Datensatz für ein Material an, das über eine URL erreichbar ist. Vorher wird ' +
-      'geprüft, ob es zu dieser URL bereits einen Datensatz gibt — dann wird nichts angelegt und der ' +
-      'vorhandene genannt. ZWEISTUFIG: ohne confirmToken nur Vorschau, nichts wird angelegt. Der Datensatz ' +
+      'Lege einen NEUEN WLO-Datensatz an. ZWEI WEGE: (1) url — das Material liegt woanders und wird ' +
+      'verlinkt; vorher wird geprüft, ob es zu dieser URL schon einen Datensatz gibt, und dann nichts ' +
+      'angelegt. (2) content oder fileBase64 — der Datensatz trägt den Inhalt selbst, als Datei. Das ist ' +
+      'der Weg für im Chat erstellte Materialien (Arbeitsblatt als Markdown, erzeugtes Bild), die keine ' +
+      'eigene URL haben. Genau eine Quelle angeben. ZWEISTUFIG: ohne confirmToken nur Vorschau, nichts ' +
+      'wird angelegt; die Vorschau nennt bei einer Datei Name, Typ, Größe und Prüfsumme. Der Datensatz ' +
       'entsteht als Entwurf und geht NICHT automatisch in die redaktionelle Prüfung — dafür gibt es ' +
       'wlo_submit_content. Erfordert eine Anmeldung.',
     inputSchema: createSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
 
         const collected = collectDesired(params, CONTENT_FIELDS);
         if (!collected.ok) return rejectionReply(collected.reasons);
-        const url = collected.desired['ccm:wwwurl']?.[0];
         const title = collected.desired['cclom:title']?.[0];
-        if (!url || !title) {
-          return errorText('Zum Anlegen werden mindestens eine Quell-URL und ein Titel benötigt.');
-        }
+        if (!title) return errorText('Zum Anlegen wird mindestens ein Titel benötigt.');
+
+        const resolved = resolveContentSource({
+          title,
+          url: collected.desired['ccm:wwwurl']?.[0],
+          content: typeof params['content'] === 'string' ? params['content'] : undefined,
+          contentFormat: typeof params['contentFormat'] === 'string' ? params['contentFormat'] : undefined,
+          fileBase64: typeof params['fileBase64'] === 'string' ? params['fileBase64'] : undefined,
+        });
+        if (!resolved.ok) return errorText(resolved.reason);
+        const source = resolved.source;
+        const file = source.kind === 'file' ? source.file : undefined;
 
         // A record that does not exist yet has no id, so the change set is
-        // anchored on the URL — which is exactly what identifies the intended
-        // record, and what the confirmation token binds to.
-        const cs = buildChangeSet(url, 'content', {}, collected.desired, {
-          action: 'Legt einen neuen Datensatz an:',
+        // anchored on what identifies the intended record — the URL when there
+        // is one, otherwise the title.
+        //
+        // The upload description goes in the ACTION, which means it is in the
+        // preview AND in the token's fingerprint. That is the rule the whole
+        // two-step exists for: bytes are payload, and an approval for "create a
+        // record" must not additionally authorise a file nobody saw.
+        const cs = buildChangeSet(source.kind === 'url' ? source.url : title, 'content', {}, collected.desired, {
+          action: file
+            ? `Legt einen neuen Datensatz an. ${describeUpload(file)}`
+            : 'Legt einen neuen Datensatz an:',
         });
 
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
-        if (!token) return previewReply(cs, 'Zum Anlegen bitte bestätigen.', collected.notes);
+        if (!token) {
+          // Only for the file path: a URL duplicate BLOCKS at execution and
+          // needs no warning, while a same-title record is weaker evidence and
+          // is the person's call — so it belongs in the preview, as a note
+          // beside the change set rather than inside the fingerprint.
+          const notes = [...collected.notes];
+          if (file) {
+            const twin = await findByTitle(title, resolveCreateParent(writeMode(), WLO_INBOX_ID));
+            if (twin) {
+              notes.push(
+                `An diesem Ablageort gibt es bereits „${sanitizeText(twin.title)}" (${twin.nodeId}). ` +
+                  'Möglicherweise eine Dublette — beim Bestätigen wird trotzdem ein zweiter Datensatz angelegt.',
+              );
+            }
+          }
+          return previewReply(cs, 'Zum Anlegen bitte bestätigen.', notes);
+        }
 
         const refusal = confirmOrExplain(token, cs);
         if (refusal) return refusal;
 
-        const result = await createContentNode(collected.desired, { mode: writeMode() });
+        const result = await createContentNode(collected.desired, {
+          mode: writeMode(),
+          ...(file ? { file } : {}),
+        });
         if (result.status === 'duplicate') {
           return errorText(
             `Es gibt bereits einen Datensatz für diese URL: „${sanitizeText(result.existing.title)}“ ` +
@@ -205,12 +333,15 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // The metadata step ran against the new node, so the read-back has to
         // compare against THAT id, not the URL the change set was anchored on.
         const stored = buildChangeSet(result.nodeId, 'content', {}, collected.desired);
+        // The upload has its own read-back, so it gets its own line — and an
+        // upload that did not land is stated as such next to the id, never
+        // folded into a general success.
+        const head = `Angelegt: ${result.nodeId}${uploadNote(result.upload)}`;
         try {
           const verified = await verifyWrite(result.nodeId, stored);
-          const report = reportOutcome(stored, result.statuses, verified);
-          return prependText(report, `Angelegt: ${result.nodeId}`);
+          return prependText(reportOutcome(stored, result.statuses, verified), head);
         } catch (err) {
-          return prependText(unverifiedReply(err), `Angelegt: ${result.nodeId}`);
+          return prependText(unverifiedReply(err), head);
         }
       } catch (err) {
         // Nothing upstream happens before the token is redeemed, so any abort
@@ -236,7 +367,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
       'versehentlich in der Redaktions-Warteschlange landet. ZWEISTUFIG: ohne confirmToken nur Vorschau. ' +
       'Erfordert eine Anmeldung.',
     inputSchema: submitSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

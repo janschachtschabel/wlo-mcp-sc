@@ -1,11 +1,11 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **39 MCP-Tools**
-(26 lesende, 13 kuratierende), 4 interaktive Widgets und die öffentlichen
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **41 MCP-Tools**
+(27 lesende, 14 kuratierende), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
-**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 13
+**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 14
 Kurations-Tools stehen immer in `tools/list`, deklarieren `oauth2` und
 **verweigern beim Aufruf**, solange keine schreibberechtigte Anmeldung vorliegt;
 die Antwort trägt dann die Aufforderung, mit der der Client die Anmeldung
@@ -17,9 +17,15 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 38 Tools — `find_wlo_skills` fehlt ohne `WLO_SKILLS_COLLECTION_ID` |
-| **Mit Skills-Sammlung** | 39 Tools |
+| **Standard** | 41 Tools (`search_skill` + `get_skill`) |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 40 Tools — beide ersetzt durch `get_skill_for_task` |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
+
+`WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
+durchsucht `search_skill` das ganze Repository nach der Inhaltsart `ai_prompt`,
+mit ihr den Unterbaum dieser Sammlung. Unabhängig davon liefert der Parameter
+`collectionId` die Skills einer *beliebigen* Sammlung — siehe
+[SKILLS.md](SKILLS.md).
 
 Wer schreiben *darf*, entscheidet die Anmeldung: ein eigenes WLO-Login immer, das
 gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
@@ -27,23 +33,56 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 ---
 
-## 1. Lesende MCP-Tools (26) — mit Chat-Trigger
+## 1. Lesende MCP-Tools (27) — mit Chat-Trigger
 
 ### Suchen & Finden
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `search_wlo_all` | Kombi-Suche: Materialien + Sammlungen + Themenseiten in einem Aufruf (der Standard-Einstieg) | *„Ich suche Bildungsinhalte für eine Mathestunde zur Bruchrechnung“* |
-| `search_wlo_content` | Nur einzelne Materialien (Videos, Arbeitsblätter …) | *„Zeig mir ein Video zur Eiszeit für die 6. Klasse“* |
+| `search_wlo_all` | Kombi-Suche: Materialien + Sammlungen + Themenseiten in einem Aufruf (der Standard-Einstieg); dieselben Filter wie `search_wlo_content`, **Lizenz** eingeschlossen | *„Ich suche Bildungsinhalte für eine Mathestunde zur Bruchrechnung“* |
+| `search_wlo_content` | Nur einzelne Materialien (Videos, Arbeitsblätter …); Filter für Fach, Stufe, Typ, Anbieter und **Lizenz** | *„Zeig mir ein Video zur Eiszeit für die 6. Klasse“* · *„nur CC-BY-Material zur Optik“* |
 | `search_wlo_collections` | Sammlungen/Themenseiten zu einem Thema | *„Gibt es eine WLO-Sammlung zum Klimawandel?“* |
 | `search_wlo_topic_pages` | Themenseiten suchen (liefert deren URLs/Varianten) | *„Welche WLO-Themenseiten gibt es zu Optik?“* |
 
+> **Praxis-Hinweis zum Lizenzfilter:** `license` nimmt ein Label („CC BY 4.0“,
+> „gemeinfrei“) oder den Repository-Schlüssel (`CC_BY`) — und zusätzlich den
+> Sammelwert **`OER`** für alles frei Nachnutzbare (CC0, gemeinfrei,
+> urheberrechtsfrei, CC BY, CC BY-SA).
+>
+> Zwei Dinge, die in der Praxis auffallen und beide gewollt sind. **Erstens:** Das
+> Repository kann Lizenzen nur als *Familie* filtern — `CC_BY` liefert auch
+> CC BY-ND und CC BY-NC-ND. Die genaue Auswahl passiert danach im Server, und
+> wenn dabei etwas wegfällt, sagt die Antwort das ausdrücklich samt Zahl der
+> geprüften Kandidaten. Ein leeres Ergebnis lässt sich deshalb unterscheiden: mit
+> diesem Hinweis heißt es „nichts mit genau dieser Lizenz“, ohne ihn hat die
+> Suche selbst nichts gefunden.
+>
+> **Zweitens:** `OER` wird als fünf getrennte Suchen beantwortet. Auf Seite 2 und
+> danach ist das Ergebnis deshalb keine Fortsetzung, sondern die zweite Seite
+> *jeder* der fünf Lizenzen — Material wiederholt sich, anderes wird
+> übersprungen. Zum verlässlichen Weiterblättern die bereits gesehenen IDs über
+> `excludeNodeIds` mitgeben. Der Server weist im Ergebnis darauf hin.
+
 > **Praxis-Hinweis zu `search_wlo_topic_pages`:** Ohne `query` listet das Tool
-> Themenseiten auf und muss dafür jede gefundene Seiten-Variante ihrer
-> Sammlung zuordnen — der aufwendigste Pfad des Servers. `maxResults` klein
-> halten und, wenn möglich, `educationalContext` mitgeben: beides verkleinert
-> die Kandidatenmenge und verkürzt die Antwortzeit deutlich. Einen
-> `discipline`-Filter gibt es hier **nicht** (unbekannte Parameter werden still
-> verworfen) — fachlich filtern über `search_wlo_collections` /
+> Themenseiten auf und muss dafür jede Seite ihrer Sammlung zuordnen — der
+> aufwendigste Pfad des Servers. Was die Antwortzeit bestimmt, ist allein
+> **`maxResults`**: aufgelöst wird nur, was auch zurückkommt.
+>
+> `targetGroup` und `educationalContext` verkürzen die Antwort **nicht** — sie
+> wirken lokal, nicht in der Suche. Grund: rund 90 % der Themenseiten tragen
+> diese Felder gar nicht (gemessen 2026-08-07, Produktion: 98 von 109 ohne
+> Zielgruppe, 97 ohne Bildungsstufe). Ein serverseitiger Filter würde sie
+> deshalb nicht eingrenzen, sondern verbergen. Varianten **ohne** den jeweiligen
+> Wert bleiben darum stehen.
+>
+> `withinCollectionId` listet alle Themenseiten **unterhalb** einer Sammlung
+> (`collectionId` prüft nur diese eine): für das Fachportal Physik 20+ statt 1.
+>
+> Bei mehreren Varianten einer Seite steht die angezeigte vorn und trägt
+> `isDefault` — sie kommt aus `ccm:page_config.default`, nicht aus der
+> Zielgruppe: Geschwister-Varianten sind überwiegend redaktionelle Kopien.
+>
+> Einen `discipline`-Filter gibt es hier **nicht** (unbekannte Parameter werden
+> still verworfen) — fachlich filtern über `search_wlo_collections` /
 > `search_wlo_content`. Betreiber-Stellschraube: `WLO_TOPIC_POOL`.
 
 ### Inhalte im Volltext
@@ -106,7 +145,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `get_subject_portals` | Übersicht aller Fachportale (Mathe, Bio, Deutsch …) | *„Welche Fächer gibt es bei WLO?“* |
 | `browse_collection_tree` | Themenbaum / Unterthemen eines Fachs oder einer Sammlung | *„Zeig mir den Themenbaum zu Mathematik“* |
 | `get_collection_contents` | Inhalte einer konkreten Sammlung auflisten | *„Was ist in der Sammlung Bruchrechnung drin?“* |
-| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen/filtern | *„Welche Videos zu Zellteilung gibt es in dieser Sammlung?“* |
+| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen/filtern (auch nach **Lizenz**) | *„Welche Videos zu Zellteilung gibt es in dieser Sammlung?“* |
 | `get_collection_stats` | Zusammensetzung einer Sammlung (Anzahl, Typen, Fächer) | *„Woraus besteht diese Sammlung?“* |
 | `get_node_breadcrumb` | Pfad einer Sammlung im Themenbaum | *„Wo liegt diese Sammlung im WLO-Baum?“* |
 | `get_node_collections` | Umgekehrt: in **welchen Sammlungen** ein bestimmtes Material liegt | *„In welchen Sammlungen steckt dieses Arbeitsblatt?“* |
@@ -141,15 +180,17 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 ### System & Skills
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `find_wlo_skills` | Fertige WLO-Anleitungen (Skills) finden | *„Welche WLO-Skills passen zu meiner Aufgabe?“* |
+| `search_skill` | Passende WLO-Skills (kuratierte KI-Prompts) auflisten — nodeId, Titel, Beschreibung, Keywords; mit `collectionId` nur die Skills einer Sammlung, mit `discipline`/`educationalContext` die zu einem Fach bzw. einer Stufe verschlagworteten | *„Welche WLO-Skills passen zu meiner Aufgabe?“* · *„Welche Skills gibt es für Physik?“* |
+| `get_skill` | Die Anleitung (SKILL.md) zu einer nodeId laden — plus die Liste der weiteren Dateien des Skills (Name + nodeId, ohne Inhalt) | *(Folgeaufruf nach `search_skill`)* |
+| `get_skill_for_task` | Wählt den Skill selbst und liefert die Anleitung direkt — nur bei `WLO_SKILL_TOOL_MODE=one-tool` statt der beiden obigen | *„Gib mir die Anleitung für eine Vertretungsstunde“* |
 | `wlo_auth_status` | Mit welchen Rechten der Server gerade liest — anonym, gemeinsames Dienstkonto oder persönliches Konto | *„Bin ich angemeldet?“* · *„Warum sehe ich diesen Inhalt nicht?“* |
 | `wlo_health_check` | Erreichbarkeit der WLO-API prüfen | *„Ist die WLO-Verbindung gerade erreichbar?“* |
 
 ### ChatGPT-Wissenskonvention (RAG)
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `search` | Leichte Treffer ({id,title,url}) für belegte Antworten — ChatGPT ruft es oft automatisch | *„Suche in WLO nach Material zur Photosynthese“* |
-| `fetch` | Volltext eines Treffers per id (Folge zu `search`, meist modell-intern) | *„Lad den Volltext zu diesem Treffer“* |
+| `search` | Leichte Treffer ({id,title,url}) für belegte Antworten — ChatGPT ruft es oft automatisch. Mit `WLO_SEARCH_OUTPUT_MODE=rich` zusätzlich dieselben Töpfe und dieselbe Oberfläche wie `search_wlo_all` | *„Suche in WLO nach Material zur Photosynthese“* |
+| `fetch` | Volltext eines Treffers per id (Folge zu `search`, meist modell-intern). Mit `WLO_SEARCH_OUTPUT_MODE=rich` zusätzlich Vorschaubild, Download-Link und Beschreibung — und die Detailansicht wie `get_node_details` | *„Lad den Volltext zu diesem Treffer“* |
 
 ---
 
@@ -177,8 +218,8 @@ Drei Regeln gelten für **jedes** davon:
 ### Inhalte pflegen
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `wlo_update_content` | Metadaten eines Datensatzes ändern: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“* |
-| `wlo_create_content` | Neuen Datensatz für ein über URL erreichbares Material anlegen. Prüft vorher auf ein Duplikat und nennt den vorhandenen, statt einen zweiten anzulegen. Bleibt ein **Entwurf** | *„Leg für diese Seite einen WLO-Datensatz an“* |
+| `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“* |
+| `wlo_create_content` | Neuen Datensatz anlegen — **zwei Wege**: `url` für Material, das woanders liegt (prüft vorher auf ein Duplikat und nennt den vorhandenen), oder `content`/`fileBase64`, wenn der Datensatz den Inhalt **selbst tragen** soll (im Chat erstelltes Markdown, erzeugtes Bild). Bleibt ein **Entwurf** | *„Leg für diese Seite einen WLO-Datensatz an“* · *„Speichere dieses Arbeitsblatt in WLO“* |
 | `wlo_submit_content` | Einen vorhandenen Datensatz zur redaktionellen Prüfung einreichen — ein eigener Schritt, nie automatisch | *„Reiche diesen Datensatz zur Prüfung ein“* |
 | `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen | *„Lösche diesen Datensatz“* |
 
@@ -191,6 +232,17 @@ Drei Regeln gelten für **jedes** davon:
 | `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen | *„Nimm dieses Material aus der Sammlung heraus“* |
 | `wlo_delete_collection` | Sammlung samt Untersammlungen löschen. Das verlinkte Material bleibt bestehen | *„Lösche diese Sammlung“* |
 | `wlo_update_compendium` | Redaktionellen Kompendialtext einer Sammlung schreiben, ersetzen oder entfernen (Markdown) | *„Schreib einen Einführungstext für diese Sammlung“* |
+| `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert. Legt keine Varianten an, löscht und sortiert keine | *„Zeig auf dieser Themenseite künftig die Variante für die Oberstufe“* |
+
+> **Sofort öffentlich.** Dies ist das einzige Kurationswerkzeug, dessen Ergebnis
+> ohne weiteren Schritt auf einer öffentlichen Seite steht. Das Repository prüft
+> das zugrunde liegende Dokument (`ccm:page_config`) überhaupt nicht — gemessen
+> am 09.08.2026: es speichert auch die Zeichenkette `"not json at all"` und
+> antwortet mit 200. Alle Prüfungen liegen deshalb hier: Das gespeicherte
+> Dokument wird **bearbeitet, nie neu gebaut** (unbekannte Schlüssel und die
+> Variantenliste bleiben unangetastet), eine Variante, die nicht zu dieser Seite
+> gehört, wird abgelehnt, ein unlesbares Dokument nicht überschrieben, und nach
+> dem Schreiben wird zurückgelesen und neu geparst.
 
 ### Vorschlagen statt schreiben
 | Tool | Funktion | Bester Chat-Trigger |

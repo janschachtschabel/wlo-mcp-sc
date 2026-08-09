@@ -66,7 +66,7 @@ const MIXED_SECURITY_SCHEMES: ReadonlyArray<{ type: 'noauth' } | { type: 'oauth2
  * list down with it. Nothing appeared in our log — the request was answered
  * correctly; the client simply would not accept the answer.
  *
- * One constant rather than thirteen literals, and the scope comes from the
+ * One constant rather than fourteen literals, and the scope comes from the
  * authorization server's own metadata so the two cannot drift apart.
  */
 export const OAUTH_SECURITY_SCHEMES: ReadonlyArray<{ type: 'oauth2'; scopes: string[] }> =
@@ -95,7 +95,9 @@ const TOOL_TITLES: Readonly<Record<string, string>> = {
   get_related_content: 'WLO Verwandte Inhalte',
   get_node_breadcrumb: 'WLO Pfadnavigation',
   get_collection_stats: 'WLO Sammlungsstatistik',
-  find_wlo_skills: 'WLO Skills',
+  search_skill: 'WLO Skill-Suche',
+  get_skill: 'WLO Skill-Anleitung',
+  get_skill_for_task: 'WLO Skill für die Aufgabe',
   wlo_auth_status: 'WLO Anmeldestatus',
 };
 

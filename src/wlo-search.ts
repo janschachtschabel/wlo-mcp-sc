@@ -20,6 +20,18 @@ import type { SearchCriterion, SearchResponse, WloNode } from './wlo-types.js';
  */
 export type NgsearchContentType = 'FILES' | 'FILES_AND_FOLDERS';
 
+/**
+ * How many buckets a facet aggregation may return.
+ *
+ * Exported because a caller that SUMS buckets has to know it: a response holding
+ * exactly this many is possibly truncated, and a sum over a truncated list looks
+ * authoritative while understating the answer. Staging carries 16 distinct
+ * `ccm:commonlicense_key` values over the whole index (measured 2026-08-09), so
+ * 20 is complete there — but that is a property of one instance, not of the
+ * format.
+ */
+export const FACET_LIMIT = 20;
+
 export async function ngsearch(
   criteria: SearchCriterion[],
   contentType: NgsearchContentType = 'FILES',
@@ -43,7 +55,7 @@ export async function ngsearch(
   // given properties over the result set server-side (verified live).
   if (facets && facets.length) {
     payload['facets'] = facets.map(p => ({ property: p }));
-    payload['facetLimit'] = 20;
+    payload['facetLimit'] = FACET_LIMIT;
     payload['facetMinCount'] = 1;
   }
   const body = JSON.stringify(payload);

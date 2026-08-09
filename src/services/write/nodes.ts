@@ -109,6 +109,25 @@ async function writeProperty(
 }
 
 /**
+ * Write ONE property through the endpoint that bypasses the MDS.
+ *
+ * For properties outside `WRITABLE_FIELDS`, which is what `updateNodeMetadata`
+ * routes by. `ccm:page_config` is one: it is a page-builder document, not a
+ * metadata field, and putting it on the general write surface would let
+ * `wlo_update_content` drop arbitrary JSON into it.
+ *
+ * Values only — deletion keeps its own name below, so no caller of this one has
+ * to think about `null`.
+ */
+export async function setProperty(
+  nodeId: string,
+  property: string,
+  values: string[],
+): Promise<string | null> {
+  return writeProperty(nodeId, property, values);
+}
+
+/**
  * Remove a property entirely.
  *
  * Only the property endpoint can express this: `null` as the body deletes,

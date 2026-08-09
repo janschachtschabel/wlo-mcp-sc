@@ -325,3 +325,13 @@ a.wlo-tile__link { display: inline-block; min-height: 24px; }
 }
 
 .wlo-empty { color: var(--wlo-muted); font-size: 0.95rem; padding: 8px 0; }
+/* The reason an empty result is empty is the one thing on this screen that
+   prevents a wrong conclusion, so it carries full foreground contrast rather
+   than the muted tone of the generic line above it. */
+.wlo-empty__reason {
+  color: var(--wlo-fg);
+  font-size: 0.95rem;
+  max-width: 60ch;
+  margin: 0;
+  padding-bottom: 8px;
+}
