@@ -296,3 +296,108 @@ cases are handled: a folder holding more than 25 files is reported as a **count*
 instead of a file list (it is somebody's inbox, not a bundle), and a folder that
 cannot be read at all costs nothing — the instructions come back regardless.
 `includeFiles: false` skips the lookup entirely.
+
+---
+
+## The skill registry of a content collection
+
+The other direction on the same question. `search_skill` answers "which skills
+exist"; a registry answers **"which skills are approved for THIS collection"** —
+and the answer is written by the editorial team, as a document that lives in the
+collection.
+
+`get_skill_registry(collectionId)` reads it and returns the catalogue (title,
+nodeId, description, keywords per skill) plus the registry's own prose. The
+instructions themselves are not included: the model picks from the catalogue and
+calls `get_skill` with the nodeId, exactly as after a search.
+
+### How to create one
+
+A registry **is a skill record**. Same content type, same attached Markdown file,
+same `:::` blocks. Nothing new has to be configured:
+
+1. Upload a Markdown file into the collection as an ordinary content record.
+2. Set its content type to **`ai_prompt`** — the same one every skill carries.
+3. **Name the file `SKILL_REGISTRY.md`**, or put `SKILL REGISTRY` in the title.
+4. List the approved skills as `::: ki-skill` blocks (below).
+
+Step 3 is not decoration. Measured on staging 2026-08-10: **all 28** skill
+records are named `SKILL.md`, because that is what the upload produces. Two
+`ai_prompt` documents in one collection are therefore indistinguishable without
+it — the server picks the lowest nodeId and **says in its answer** that it had to
+choose, which is a warning, not a feature.
+
+### What the document looks like
+
+```markdown
+# Skills für die Sammlung Optik
+
+Diese Skills sind für die Arbeit mit dieser Sammlung freigegeben. Der
+Kompendialtext-Skill gilt nur für die Oberstufe; für die Mittelstufe bitte
+den Fragen-Skill verwenden.
+
+::: ki-skill
+[Fragen generieren](https://repository.staging.openeduhub.net/edu-sharing/components/render/12c04f9c-20b5-4461-804f-9c20b5346128)
+:::
+
+::: ki-skill
+[Kompendialtext schreiben](https://repository.staging.openeduhub.net/edu-sharing/components/render/ccdcae49-d4db-4e4a-9cae-49d4db6e4a25)
+:::
+```
+
+The prose around the blocks is carried over unchanged — that is where usage
+notes belong ("only for the upper grades", "run this one first"). The server
+renders its own catalogue **before** the document, because after it a
+server-built section could not be told apart from one the document forged.
+
+Rules the reader should know:
+
+- Only `::: ki-skill` blocks become catalogue entries. A `::: wlo-material`
+  block is teaching material and is ignored here.
+- The link must carry a **node id** (`/components/render/<uuid>` or
+  `?nodeId=<uuid>`). A block without one is reported as unresolvable rather than
+  dropped — the same for a skill that was deleted or is not readable.
+- At most **30** entries per registry; more are reported as capped, not silently
+  cut.
+
+### How a model finds out a registry exists
+
+Not by a lookup. Measured on staging 2026-08-10, checking every returned
+collection adds **~1.0-1.4 s** to a search — and the cost is the children
+listing, which is paid whether or not a registry is there. Neither of the two
+collections in that run had one, and it still cost 1.4 s.
+
+So the signal is **text, and text is free** — but a line written without reading
+anything may not claim anything either. One sentence per answer (not per
+collection) says the three things it can honestly say:
+
+> Hinweis: Ob eine Sammlung eigene Arbeitsanleitungen („Skills") freigegeben hat,
+> ist hier nicht geprüft — viele führen keine. `get_skill_registry` mit ihrer
+> nodeId beantwortet es, und lohnt sich, wenn es um das Vorgehen MIT einer
+> Sammlung geht („wie arbeite ich damit", „was ist hier vorgesehen") statt um
+> ihre Inhalte.
+
+The answer is UNKNOWN, HOW to get it, and WHEN it is worth a round-trip. The
+third part carries the most weight: without an occasion, a hint that fires on
+every collection listing is learned as decoration and ignored. The first part
+matters because an earlier draft said "Skills für diese Sammlung", which asserts
+that skills exist over data nobody fetched — and today that would be wrong for
+essentially every collection.
+
+The lookup then happens once, for the one collection the model is actually
+working with, instead of for all five.
+
+That is the COLD case. Once a collection has been seen, a background cache
+already holds its catalogue and every result carries it at no cost — the lookup
+happened minutes ago, off the request path, and it read the same children
+listing the live path reads. The search index is only used to decide WHERE
+looking is worth starting; an approval list never rests on it.
+
+**`includeSkillRegistry: true`** on `search_wlo_all` / `search_wlo_collections`
+forces the live lookup instead of the remembered one, which matters right after
+a registry is created or edited. `WLO_SKILL_CACHE=off` disables the background
+work altogether.
+
+A deployment that has moved entirely to this process can also drop the
+repository-wide search with `WLO_DISABLE_SKILL_SEARCH=1`. `get_skill` always
+stays: it is what the registry's node ids are for.

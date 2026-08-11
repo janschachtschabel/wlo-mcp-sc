@@ -34,6 +34,14 @@ export const formattedNodeSchema = z.object({
   topicPageUrl: z.string(),
   textContent: z.string().optional(),
   compendiumText: z.string().optional(),
+  // Declared, not inferred: zod strips unknown keys, so a field missing here
+  // disappears from structuredContent with nothing failing anywhere.
+  skillRegistry: z.object({
+    nodeId: z.string(),
+    title: z.string(),
+    entries: z.array(z.object({ nodeId: z.string(), title: z.string() })),
+    truncated: z.object({ listed: z.number(), referenced: z.number() }).optional(),
+  }).optional(),
 });
 
 /** `{ total, count, results }` — search_wlo_content / search_wlo_collections. */
@@ -125,7 +133,13 @@ export const searchAllEnvelopeSchema = z.object({
      */
     licenseFilter: z.object({ checked: z.number(), kept: z.number() }).optional(),
   }),
-  collections: z.object({ total: z.number(), count: z.number(), results: z.array(formattedNodeSchema) }),
+  // `registryChecked` declared for the same reason as `skillRegistry` above:
+  // zod strips unknown keys, so an undeclared field vanishes from
+  // structuredContent with nothing failing anywhere.
+  collections: z.object({
+    total: z.number(), count: z.number(), results: z.array(formattedNodeSchema),
+    registryChecked: z.literal(true).optional(),
+  }),
   topicPages: z.object({ total: z.number(), count: z.number(), results: z.array(topicPageResultSchema) }),
   wikipedia: wikiSummarySchema.optional(),
 });

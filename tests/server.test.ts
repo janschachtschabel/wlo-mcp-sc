@@ -39,9 +39,10 @@ const EXPECTED_TOOLS = [
   // — see tests/tools-skills.test.ts.
   'search_skill',
   'get_skill',
+  'get_skill_registry',
 ];
 
-test('createMcpServer registers exactly the 27 read tools and the 14 curation tools', async () => {
+test('createMcpServer registers exactly the 28 read tools and the 14 curation tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS, ...CURATION_TOOLS].sort());

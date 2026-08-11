@@ -201,11 +201,19 @@ test('.env.example activates no setting that a copy would silently adopt', () =>
   );
 });
 
-/** Every ACTIVE `NAME=value` line of .env.example. */
+/**
+ * Every ACTIVE `NAME=value` line of .env.example.
+ *
+ * `[^\r\n]*` rather than `.*`: JavaScript's `.` excludes `\r`, so on a CRLF copy
+ * of this file the pattern matched NOTHING and every assertion below turned into
+ * "the setting is missing" — a wrong and very confusing answer to a line-ending
+ * change. Found 2026-08-10 by saving the file from a tool that normalises to
+ * CRLF, which any Windows editor may do.
+ */
 function activeSettings(): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of read('.env.example').split('\n')) {
-    const m = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
+    const m = line.match(/^([A-Z][A-Z0-9_]*)=([^\r\n]*)$/);
     if (m) out.set(m[1]!, m[2]!.trim());
   }
   return out;

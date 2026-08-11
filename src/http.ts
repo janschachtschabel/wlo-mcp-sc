@@ -16,6 +16,7 @@ import { streamableHttpOptions } from './mcp-transport.js';
 import { createHttpRequestHandler } from './http-app.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
 import { resolveAccessSupport } from './auth/access-setup.js';
+import { startSkillRegistryCache } from './services/skill-registry-cache.js';
 import { setAccessSupport } from './auth/credential.js';
 
 const PORT = resolvePositiveInt(process.env['PORT'], 3000, 'PORT');
@@ -123,4 +124,8 @@ httpServer.listen(PORT, () => {
   // result logged. Not awaited — the server must accept requests immediately,
   // and a slow or unreachable repository must not delay or fail the boot.
   void verifyConfiguredCredential();
+  // Same reasoning for the skill catalogue: it warms in the background and its
+  // interval is unref'd, so a cold cache costs a caller the pointer line and
+  // never a wait.
+  startSkillRegistryCache();
 });

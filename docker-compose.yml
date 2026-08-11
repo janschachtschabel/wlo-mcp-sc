@@ -127,6 +127,18 @@ services:
       WLO_SKILLS_COLLECTION_ID: "${WLO_SKILLS_COLLECTION_ID:-}"
       # two-tool (default: search_skill + get_skill) | one-tool (get_skill_for_task).
       WLO_SKILL_TOOL_MODE: "${WLO_SKILL_TOOL_MODE:-}"
+      # Set → search_skill (the repository-wide skill search) is not registered;
+      # skills are reached through the collection that approves them.
+      # get_skill and get_skill_registry are unaffected.
+      WLO_DISABLE_SKILL_SEARCH: "${WLO_DISABLE_SKILL_SEARCH:-}"
+      # Set → every search result carries its collection's skill registry.
+      # The skill-registry cache. ON by default: it keeps each collection's
+      # catalogue warm in the background (source: the collection's children
+      # listing, refreshed every 5 min) so a result carries it for free. Without
+      # it the same answer cost ~1.0-1.4 s per collection, in the request path.
+      WLO_SKILL_CACHE: "${WLO_SKILL_CACHE:-}"
+      WLO_SKILL_CACHE_REFRESH_MS: "${WLO_SKILL_CACHE_REFRESH_MS:-}"
+      WLO_SKILL_CACHE_TTL_MS: "${WLO_SKILL_CACHE_TTL_MS:-}"
       # lean (default: the ChatGPT convention's {id,title,url}) | rich (adds the
       # search_wlo_all buckets + widget to `search`). See .env.example for the
       # unmeasured risk that comes with rich.

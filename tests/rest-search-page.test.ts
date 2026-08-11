@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { routeRestRequest } from '../src/rest/routes.js';
+import { renderSearchPage } from '../src/rest/search-page.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
 // `?format=html` renders the SAME search as a readable HTML page. Evidence
@@ -153,4 +154,35 @@ test('the HTML view states its own background, not just its text colour', async 
   assert.match(body, /color:/, 'text colour');
   assert.match(body, /background:/, 'and the surface it is read against');
   assert.match(html, /color-scheme:\s*light/, 'so the UA paints a light canvas and matching scrollbars');
+});
+
+test('the HTML view renders a collection registry the envelope carries', () => {
+  // The operator switch is read inside `searchAll`, so /api/search inherits the
+  // enrichment without asking for it — and paid ~1,0–1,4 s per search for a
+  // field this page dropped on the floor. An envelope field is not a disclosure
+  // if the renderer discards it.
+  const html = renderSearchPage({
+    query: 'optik',
+    collections: { total: 1, count: 1, results: [{
+      title: 'Sammlung Optik',
+      skillRegistry: {
+        nodeId: 'reg-1',
+        title: 'Skill Registry Optik',
+        entries: [{ nodeId: 'skill-a', title: 'Fragen generieren' }],
+      },
+    }] },
+  });
+
+  assert.match(html, /Skill Registry Optik/, 'the registry is named');
+  assert.match(html, /Fragen generieren/, 'and the skills it declares');
+});
+
+test('the HTML view escapes a registry title like every other backend field', () => {
+  const html = renderSearchPage({
+    collections: { results: [{
+      title: 'Sammlung',
+      skillRegistry: { nodeId: 'reg-1', title: '<img src=x onerror=alert(1)>', entries: [] },
+    }] },
+  });
+  assert.ok(!html.includes('<img src=x'), 'no raw markup from repository data');
 });

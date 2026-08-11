@@ -44,6 +44,23 @@ test('formattedNodeSchema accepts real formatNode output and rejects a partial',
   assert.equal(formattedNodeSchema.safeParse({ nodeId: 'n1' }).success, false);
 });
 
+test('formattedNodeSchema carries the skill registry through instead of stripping it', () => {
+  const fn = formatNode(makeNode('coll-1', 'Sammlung Optik'));
+  fn.skillRegistry = {
+    nodeId: 'reg-1',
+    title: 'Skill Registry Optik',
+    entries: [{ nodeId: 'skill-a', title: 'Fragen generieren' }],
+    truncated: { listed: 30, referenced: 44 },
+  };
+
+  const parsed = formattedNodeSchema.safeParse(fn);
+  assert.equal(parsed.success, true);
+  // Zod drops unknown keys silently, so a field missing from the schema would
+  // vanish from structuredContent with nothing failing — the widget and every
+  // schema-validating client would simply never see the registry.
+  assert.deepEqual(parsed.success ? parsed.data.skillRegistry : null, fn.skillRegistry);
+});
+
 test('nodeListSchema and searchAllEnvelopeSchema accept their envelopes', () => {
   const fn = formatNode(makeNode('n1', 'Titel'));
   assert.equal(nodeListSchema.safeParse({ total: 1, count: 1, results: [fn] }).success, true);

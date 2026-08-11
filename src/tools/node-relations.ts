@@ -10,7 +10,8 @@ import { z } from 'zod';
 import { readNodeBreadcrumb } from '../wlo-api.js';
 import { getRelatedContent } from '../services/related.js';
 import { getNodeCollections } from '../services/node-collections.js';
-import { oneLine, renderToText } from '../formatter.js';
+import { oneLine, registryHintFor, renderToText } from '../formatter.js';
+import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
@@ -74,12 +75,16 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
         ].filter(Boolean).join(' · ');
         if (basis) lines.push(`_Basis: ${basis}_`);
         lines.push('');
-        lines.push(renderToText(related.results) || 'Keine verwandten Inhalte gefunden.');
+        // Two lists, one answer — so the registry pointer is suppressed per list
+        // and emitted once over both (same rule as search_wlo_all).
+        const noHint = { registryHint: false };
+        lines.push(renderToText(related.results, undefined, noHint) || 'Keine verwandten Inhalte gefunden.');
         if (related.siblings) {
           lines.push('');
           lines.push(`## Aus derselben Sammlung (${related.siblings.length})`);
-          lines.push(renderToText(related.siblings) || 'Keine weiteren Inhalte in der Sammlung.');
+          lines.push(renderToText(related.siblings, undefined, noHint) || 'Keine weiteren Inhalte in der Sammlung.');
         }
+        lines.push(...registryHintFor([...related.results, ...(related.siblings ?? [])]).map(oneLine));
         return { content: [{ type: 'text' as const, text: lines.join('\n') }], structuredContent };
       } catch (err) {
         return toolError('Fehler beim Abruf verwandter Inhalte', err);
@@ -184,6 +189,8 @@ Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Bre
             }],
           };
         }
+
+        await ensureRegistries(result.collections);
 
         const heading = oneLine(`# ${result.title || result.nodeId}`);
         if (result.collections.length === 0) {

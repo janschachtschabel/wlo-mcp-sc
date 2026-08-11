@@ -7,11 +7,11 @@ AI agents **search and retrieve open educational resources (OER)** from
 [WirLernenOnline (WLO)](https://wirlernenonline.de) via the public
 edu-sharing REST API.
 
-It exposes **27 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
+It exposes **28 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 27 sit **fourteen curation tools** (creating, editing,
+On top of those 28 sit **fourteen curation tools** (creating, editing,
 submitting, collections, compendium texts, metadata proposals, which variant a
 topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
@@ -861,7 +861,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   signature, OAuth only) — including what the design does **not** protect.
   German.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
-  chatbot developer**: all 41 tools grouped, every externally callable URL (MCP,
+  chatbot developer**: all 42 tools grouped, every externally callable URL (MCP,
   REST, pages, OAuth), and the behaviour an integration has to know — licence
   filtering, the disclosure fields, the two-step write, the limits, and what
   deliberately does not exist. German.

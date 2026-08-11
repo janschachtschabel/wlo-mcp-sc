@@ -25,7 +25,13 @@ import { registerKnowledgeTools } from './tools/knowledge.js';
 import { registerNodeRelationTools } from './tools/node-relations.js';
 import { registerCollectionStatsTool } from './tools/collection-stats.js';
 import { registerSkillTools } from './tools/skills.js';
-import { WLO_SKILLS_COLLECTION_ID, WLO_SKILL_TOOL_MODE, WLO_SEARCH_OUTPUT_MODE } from './wlo-api.js';
+import { registerSkillRegistryTool } from './tools/skill-registry.js';
+import {
+  WLO_SKILLS_COLLECTION_ID,
+  WLO_SKILL_TOOL_MODE,
+  WLO_SEARCH_OUTPUT_MODE,
+  WLO_DISABLE_SKILL_SEARCH,
+} from './wlo-api.js';
 import { registerAuthTools } from './tools/auth.js';
 import { registerCurationContentTools } from './tools/curation-content.js';
 import { registerCurationCollectionTools } from './tools/curation-collections.js';
@@ -116,7 +122,12 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerSkillTools(server, {                 // search_skill + get_skill, or get_skill_for_task
     collectionId: WLO_SKILLS_COLLECTION_ID,
     mode: WLO_SKILL_TOOL_MODE,
+    disableSearch: WLO_DISABLE_SKILL_SEARCH,
   });
+  // The other direction on the same question: not "which skills exist" but
+  // "which skills has THIS collection approved". Unconditional — it needs no
+  // configuration, and a collection without a registry simply says so.
+  registerSkillRegistryTool(server);     // get_skill_registry
   registerAuthTools(server);            // wlo_auth_status
 
   // Curation tools are registered ALWAYS, including for a caller with no

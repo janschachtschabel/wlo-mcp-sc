@@ -8,6 +8,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createMcpServer } from './server.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
+import { startSkillRegistryCache } from './services/skill-registry-cache.js';
 import { log } from './logger.js';
 
 async function main(): Promise<void> {
@@ -17,6 +18,10 @@ async function main(): Promise<void> {
   // Same one-off credential check as the HTTP entry point. Logs go to stderr
   // (see logger.ts), so this cannot corrupt the stdout JSON-RPC framing.
   void verifyConfiguredCredential();
+  // Keeps each collection's skill catalogue warm in the background. Returns at
+  // once and its timer is unref'd, so this neither delays the first request nor
+  // keeps the process alive after stdin closes.
+  startSkillRegistryCache();
   // Server runs until stdin closes
 }
 

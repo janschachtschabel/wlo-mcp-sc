@@ -9,6 +9,186 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — `get_skill_registry`: the skills a collection declares approved (2026-08-10)
+
+The editorial process inverts the question `search_skill` answers. Not "which
+skills exist" but **"which skills are approved for this collection"**, declared
+by a registry document that lives in the collection. The new tool finds it, reads
+it, and returns the catalogue — title, nodeId, description, keywords per skill —
+plus the registry's own prose, which is where the editors put usage notes. The
+instructions are not included: the model picks and calls `get_skill`, as before.
+
+A registry **is** a skill record — same `ai_prompt` content type, same attached
+Markdown, same `:::` blocks — so the parser and the download rule are reused
+rather than rebuilt. It is found through the collection's CHILDREN listing, never
+the search index: the two are separate systems in edu-sharing, and a record can
+fall out of the index while sitting perfectly in the node store (a live
+collection did exactly that on 2026-08-09). An approval list must not depend on
+it.
+
+**How a model learns a registry exists — a pointer, not a lookup.** The search
+does NOT check: measured against staging, doing so adds **~1.0–1.4 s** to every
+search, and the cost is the children listing, which is paid whether or not a
+registry is there (neither collection in that run had one, and it still cost
+1.4 s). Instead every collection result carries a free line naming
+`get_skill_registry` with its nodeId, the server instructions say when to reach
+for it, and the collection tools' descriptions cross-reference it — so the lookup
+happens once, for the ONE collection in play, instead of for all five.
+
+A caller that knows it wants them can skip the second call: `search_wlo_all` and
+`search_wlo_collections` take **`includeSkillRegistry: true`**, whose description
+states the cost so a model can weigh it. `WLO_REGISTRY_IN_SEARCH=1` makes that the
+default where registries are widespread enough to be worth it. It then costs **two requests per collection** —
+the children listing and the document — no matter how many skills are declared,
+because the `:::` blocks already carry title and nodeId; descriptions and
+keywords need one read per skill and stay with the tool. `getNodeDownloadText` is
+called directly rather than `getSkill`, since the children listing already
+supplied the node.
+
+The other switch, `WLO_DISABLE_SKILL_SEARCH`, drops `search_skill` for a
+deployment that reaches skills only through the collection approving them.
+`get_skill` survives both — it is what the registry's node ids are for.
+
+Disclosed rather than assumed: an ambiguous pick (several `ai_prompt` documents
+in one collection), references naming no readable record, and a capped catalogue.
+The ambiguity case is the RULE and not a corner case — measured 2026-08-10, all
+28 skill records on staging are named `SKILL.md`, so the `SKILL_REGISTRY.md`
+tie-break distinguishes nothing until the convention spreads, and the title rule
+is what carries it. `docs/SKILLS.md` gains the editorial guide with an example
+document.
+
+**Measured before any of it was written** (staging, 2026-08-10; re-measure before
+contradicting): `/children` carries `mimetype` in every projection but
+`ccm:oeh_extendedType` **only when the request asks for it** — same node, same
+call, empty under the default projection. A SKILL.md reports
+`text/x-web-markdown`, not `text/markdown`. And **0 of 28** documents contain
+`:::` at all, so that path is exercised by unit tests and not yet by any live
+record — the live run waits on editorial work, not on code.
+
+Tool count: **42** (28 read + 14 curation); 22 offer `outputFormat`.
+
+### Added — the skill-registry cache: collection results carry their catalogue for free (2026-08-11)
+
+Collection results now arrive with the skills their collection has approved.
+A background service remembers, per collection, what its children listing said
+and refreshes every 5 minutes; anything it does not know is resolved live, once,
+and then remembered too. So the catalogue is always in the answer, and the
+~1.0–1.4 s it used to cost is paid at most once per collection instead of on
+every search. It is on by default (`WLO_SKILL_CACHE=off` disables it),
+and it reaches every path that renders collections: `search_wlo_all`,
+`search_wlo_collections`, `get_collection_contents`, `get_node_collections`.
+
+**The cache is a memo of the CHILDREN listing, not of the search index.** That
+distinction is the whole design. `CLAUDE.md` forbids resting an approval list on
+the index — a record can fall out of it while sitting perfectly in the node store,
+which a live collection did on 2026-08-09. So the tick calls the same
+`loadSkillRegistry` the live path calls, and one `ngsearch` serves only as a
+starting shot: the parents it names are QUEUED, never adopted. A remembered "no
+registry here" therefore rests on a listing that replied, and may count as an
+answer; a lookup that threw is remembered as nothing and simply tried again.
+
+**No pre-built index of the collection tree, and that is measured**
+(staging, 2026-08-11): level 1 holds 35 collections, level 2 holds 331, level 3
+about 1335 — a full walk is ~1700 collections and ~3400 requests per cycle,
+roughly 11 requests per second sustained on a five-minute schedule against a
+shared instance. The queue is bounded by what callers actually ask for instead:
+a search returns five collections, and the second time they cost nothing. The
+first contact with a collection stays cold on purpose — blocking would be the
+alternative — and the free pointer line covers it.
+
+Two measurements made the seeding possible at all: one query returns the whole
+skill corpus (28 records in 1175/1215/1322 ms over three runs), and every hit
+already carries `virtual:primaryparent_nodeid` in the existing projection. What
+it does NOT give is a collection: for harvested material that parent is the
+spider folder (`dwu_spider`, `leifi_spider`), which is a `ccm:map` as well — so
+the mapping is validated by looking up BY collection id rather than by any type
+check.
+
+Two things carry the speed. The warm-up adopts what the search corpus already
+reveals — a hit is a record the index handed over, so a POSITIVE finding needs
+no listing — while absence from the index is never treated as absence, because
+that is the claim an index gap can fabricate. And the per-request live fallback
+is bounded at ten pooled lookups, so a listing of fifty collections cannot turn
+one request into a crawl; the rest is queued and honestly reported as unchecked.
+
+`WLO_REGISTRY_IN_SEARCH` is **removed**; `includeSkillRegistry: true` now means
+"force a fresh lookup instead of the remembered one", which matters right after
+a registry is created or edited. New: `WLO_SKILL_CACHE`,
+`WLO_SKILL_CACHE_REFRESH_MS` (default 5 min), `WLO_SKILL_CACHE_TTL_MS`
+(default 10 min).
+
+### Fixed — eight review findings on the skill-registry cache (2026-08-11)
+
+**A scan that hit the file cap is no longer cached as "this collection has no
+registry".** `loadSkillRegistry` reports `scanTruncated` when it read 50 of a
+collection's 400 files, precisely so a null result cannot pass for a finding of
+absence — and both cache paths discarded it. The negative was then held for the
+TTL and re-affirmed by every refresh, because the same first page comes back each
+time. It is now carried into the entry: remembered, so the capped page is not
+re-read on every tick and every request, but not counted as answered, so the
+caller keeps its pointer to `get_skill_registry`. The tick reports it separately
+(`inconclusive`).
+
+**`WLO_SKILL_CACHE=off` now switches off what it says it does.** The guard sat
+only on the background timer, so the per-request live fallback kept running: an
+operator who flipped the switch for the cost got the worst of both — every
+request paying the full children listing, and with no tick to expire anything, a
+queue filling to its cap and warning forever. `ensureRegistries` returns 0
+immediately when the switch is off, which is what `.env.example`,
+`docs/SKILLS.md` and the startup log line already promised.
+
+**`CACHE_MAX_ENTRIES` exists.** The design named it as the mitigation against
+"the queue as a memory lever" and only `QUEUE_MAX` had been built. Entries are
+now bounded at 2000 — above the ~1700 collections this repository holds, so it
+does not bite in practice — and eviction drops the answer checked longest ago,
+with a log line rather than silently.
+
+**One mapping, not four.** The eight lines turning a `SkillRegistry` into the
+field a result node carries were copied across the live fallback, the tick, the
+seed and `enrichSkillRegistry`. They are now `toRegistrySummary`, whose return
+type is `FormattedNode`'s own field rather than a second declaration of the same
+shape, and `tests/shared-rule-discipline.test.ts` fails the fifth copy.
+
+Also: the corpus seed no longer overwrites an answer the children listing already
+gave (the index may only ever produce a positive for a collection nobody looked
+at); two concurrent requests for the same cold collection share one lookup
+instead of firing two; and `checkedAt` is taken after the lookup returns on both
+write paths rather than before it on one of them.
+
+### Fixed — seven review findings on the skill registry (2026-08-10)
+
+**A registry is recognised by the canonical title chain, not by one property.**
+Detection read `cclom:title` alone, while `cm:title` sits in the same projection
+and is second in `nodeTitle` — the chain every other consumer uses, and the
+carrier this repository has measured as the one actually set. A registry titled
+there was invisible, and with a second `ai_prompt` document present the nodeId
+tie-break then answered with the **wrong document's catalogue**. Every test
+fixture went through `makeNode`, which writes only `cclom:title`, so the suite
+validated the implementation's choice rather than the repository's reality.
+
+**The pointer belongs to an answer, not to a list.** It was emitted inside
+`renderToText`, so `search_wlo_all` — three rendered lists, and topic pages are
+`ccm:map` and format as collections — printed it twice, and printed "nicht
+geprüft" directly under a bucket where the registry HAD been looked up.
+`get_related_content` renders two lists and had the same shape. `registryHintFor`
+is now exported, composed answers suppress the per-list hint and emit it once,
+and `searchAll` reports **`collections.registryChecked`** — because a collection
+without a registry carries no field, so the results alone cannot tell "not looked
+up" from "looked up, none there".
+
+**A capped scan no longer claims absence.** The lookup reads 50 file children;
+`pagination.total` was discarded, so a larger collection whose registry sorts
+past that page was told "diese Sammlung führt keine Skill-Registry". It now
+reports what it read of what there was, and logs it.
+
+Also: the three tool descriptions carried the superseded 0,5–1,3 s estimate where
+a model decides whether to pay — corrected to the measured **1,0–1,4 s** and
+pinned by a test; a truncated registry no longer promises "alle mit
+`get_skill_registry`", which caps at 30 itself; `/api/search?format=html` renders
+the registry it was already paying for instead of dropping it, while the ChatGPT
+`search` tool declines the lookup its schema cannot carry; and the tool's JSON
+output carries the same untrusted-source note as its Markdown view.
+
 ### Added — `docs/AUTH-CONCEPT.md`, the authentication concept and its alternatives (2026-08-09)
 
 `AUTH.md` documents how the mechanism works; nothing explained **why** it looks

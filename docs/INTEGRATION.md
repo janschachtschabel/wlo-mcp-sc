@@ -22,7 +22,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 41 — 27 lesend, 14 kuratierend (schreibend) |
+| **Werkzeuge** | 42 — 28 lesend, 14 kuratierend (schreibend) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -32,7 +32,7 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 
 ---
 
-## 1. Die 41 MCP-Werkzeuge
+## 1. Die 42 MCP-Werkzeuge
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -91,15 +91,41 @@ immer anonym.
 | `lookup_wlo_vocabulary` | Fächer, Bildungsstufen, Ressourcentypen, Zielgruppen, Lizenzen |
 | `lookup_wlo_publishers` | Anbieter mit Trefferzahlen |
 
-**Skills (2)**
+**Skills (3)**
 
 | Werkzeug | Zweck |
 |---|---|
-| `search_skill` | Redaktionell gepflegte Anleitungen finden |
+| `search_skill` | Redaktionell gepflegte Anleitungen finden — im ganzen Repository |
 | `get_skill` | Eine Anleitung im Wortlaut holen |
+| `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat |
 
-> `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **beide** durch ein einziges
-> `get_skill_for_task` (dann 40 Werkzeuge statt 41).
+> Die beiden Richtungen unterscheiden sich in der Frage: `search_skill` sucht
+> Skills unabhängig von einer Sammlung, `get_skill_registry` beantwortet, was
+> für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
+>
+> `WLO_SKILL_TOOL_MODE=one-tool` ersetzt die ersten **beiden** durch ein
+> einziges `get_skill_for_task` (dann 41 Werkzeuge statt 42);
+> `get_skill_registry` bleibt.
+>
+> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 41), wenn
+> Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.
+>
+> **Der Katalog kommt bei Sammlungs-Ergebnissen mit — ohne Zusatzabruf.** Ein
+> Hintergrunddienst merkt sich je Sammlung, was ihre Kinderliste sagt, und
+> erneuert das alle 5 Minuten. Für den Aufrufer ist es ein Map-Zugriff: der
+> Abruf, der ohne Cache ~1,0–1,4 s je Sammlung kostete (gemessen 2026-08-10,
+> auch für Sammlungen ganz ohne Registry), findet nicht mehr im Anfragepfad statt.
+>
+> Beim **ersten** Kontakt mit einer Sammlung ist der Cache kalt: dann steht
+> **einmal je Antwort** die kostenlose Hinweiszeile — sie sagt ausdrücklich, dass
+> es NICHT geprüft ist, nennt `get_skill_registry` und den Anlass („Vorgehen mit
+> der Sammlung", nicht „Inhalte") — und die Sammlung wird für den nächsten Takt
+> vorgemerkt. Ab dem zweiten Abruf ist der Katalog da.
+>
+> `includeSkillRegistry: true` an `search_wlo_all`/`search_wlo_collections`
+> erzwingt den **Live**-Abruf statt der bis zu 10 Minuten alten Cache-Antwort —
+> nötig, wenn eine Registry gerade angelegt oder geändert wurde.
+> `WLO_SKILL_CACHE=off` schaltet den Hintergrunddienst ab.
 
 **ChatGPT-Konvention (2)**
 
@@ -248,7 +274,7 @@ Für Clients mit einem Header-Feld: einmal `/auth` besuchen, den Block als
 
 ### 3.1 Ausgabeformat
 
-21 der 41 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+22 der 42 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).

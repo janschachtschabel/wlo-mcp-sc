@@ -89,6 +89,15 @@ const REQUIRED: Record<string, string[]> = {
   // page.
   get_wikipedia_summary: ['get_url_text'],
   get_url_text: ['wikipedia'],
+  // The registry lookup has no natural trigger of its own: nothing in a user's
+  // question says "check which skills this collection approves". Since
+  // 2026-08-10 the search no longer attaches it either (it cost ~1.4 s per
+  // search, measured), so the ONLY way a model learns the tool applies is a
+  // pointer from the tools that hand out collection ids. Free, unlike a lookup.
+  search_wlo_collections: ['get_skill_registry'],
+  search_wlo_within_collection: ['get_skill_registry'],
+  get_skill_registry: ['get_skill'],
+  search_skill: ['get_skill_registry'],
 };
 
 for (const [name, phrases] of Object.entries(REQUIRED)) {

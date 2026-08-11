@@ -30,10 +30,10 @@ test('every caller sees the same tool list, write tools included', async () => {
   try {
     const names = (await client.listTools()).tools.map(t => t.name);
     for (const name of CURATION_TOOLS) assert.ok(names.includes(name), `${name} is offered`);
-    // 27 read tools + 14 curation tools. `get_url_text` is present because
+    // 28 read tools + 14 curation tools. `get_url_text` is present because
     // unsafe tools are registered unless the operator disables them — see
     // tests/server-unsafe-disabled.test.ts for that state.
-    assert.equal(names.length, 41, 'the read tools plus every curation tool');
+    assert.equal(names.length, 42, 'the read tools plus every curation tool');
   } finally {
     await client.close();
   }

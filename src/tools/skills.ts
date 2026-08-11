@@ -30,6 +30,14 @@ export interface SkillToolOptions {
   /** Configured skills root collection; empty → search the whole repository. */
   collectionId: string;
   mode: SkillToolMode;
+  /**
+   * `WLO_DISABLE_SKILL_SEARCH` — drop the repository-wide skill search.
+   *
+   * For a deployment that has moved to the registry process, where a skill is
+   * reached through the collection that approves it. `get_skill` stays either
+   * way: it is what the registry's nodeIds are for.
+   */
+  disableSearch?: boolean;
 }
 
 const UNTRUSTED_NOTE =
@@ -225,7 +233,8 @@ auswählen kann; die Anleitung selbst wird NICHT mitgeliefert. Danach \`get_skil
 aufrufen. Nutze dies, wenn die Anfrage auf einen vorbereiteten Arbeitsablauf passt (z. B. "Stunde
 planen", "Vertretungsstunde"). Nicht für gewöhnliche OER-Inhalte — dafür \`search_wlo_all\`.
 Ohne \`query\` wird der gesamte Katalog aufgelistet; mit \`collectionId\` nur die Skills einer
-bestimmten Sammlung (z. B. einer Fachsammlung).`,
+bestimmten Sammlung (z. B. einer Fachsammlung). Fragt jemand, was für EINE Sammlung freigegeben
+ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der Redaktion.`,
     SEARCH_SCHEMA,
     { readOnlyHint: true },
     async (params) => {
@@ -337,9 +346,11 @@ Arbeitsablauf passt. Nicht für gewöhnliche OER-Inhalte — dafür \`search_wlo
  */
 export function registerSkillTools(server: McpServer, opts: SkillToolOptions): void {
   if (opts.mode === 'one-tool') {
+    // `get_skill_for_task` IS the search — switching the search off would leave
+    // this mode with no skill surface at all, so the flag does not apply here.
     registerGetSkillForTask(server, opts.collectionId);
     return;
   }
-  registerSearchSkill(server, opts.collectionId);
+  if (!opts.disableSearch) registerSearchSkill(server, opts.collectionId);
   registerGetSkill(server);
 }

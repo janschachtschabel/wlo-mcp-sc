@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { SearchCriterion } from '../wlo-api.js';
 import { WLO_REPOSITORY_URL, getNodeTextContent, ngsearch } from '../wlo-api.js';
 import { enhancedSearch } from '../reranker.js';
-import { formatNodes, oneLine, renderToJson, renderToText } from '../formatter.js';
+import { formatNodes, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, filterByExactLicense, licenseFilterNotice, licensePagingNotice, pageSizeForLicense, formatUnresolvedHint } from '../filter-criteria.js';
 import { queryMetaContent, toolError, wikiResolutionNotice } from './shared.js';
@@ -254,6 +254,9 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         'Jeden Einzel-Inhalt zusätzlich mit seinem gespeicherten Volltext (gekürzt) anreichern ' +
         '(ein Zusatzabruf je Inhalt).'
       ),
+      includeSkillRegistry: z.boolean().optional().default(false).describe(
+        'Die freigegebenen Skills je Sammlung JETZT frisch abrufen, statt eine gemerkte Antwort zu nehmen (die bis zu 10 Minuten alt sein kann). Kostet 2 Abrufe je Sammlung, rund 1,0–1,4 Sekunden. NICHT nötig, damit der Katalog überhaupt kommt — der ist ohnehin in der Antwort. Nur nötig, wenn gerade eine Registry angelegt oder geändert wurde.'
+      ),
       includeWikipedia: z.boolean().optional().default(false).describe(
         'Zusätzlich eine kurze Wikipedia-Zusammenfassung zum Suchbegriff liefern (Feld "wikipedia").'
       ),
@@ -308,6 +311,7 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           excludeNodeIds: params.excludeNodeIds,
           skipCount: params.skipCount,
           includeCompendium: params.includeCompendium,
+          includeSkillRegistry: params.includeSkillRegistry,
           includeTextContent: params.includeTextContent,
           includeWikipedia: params.includeWikipedia,
           includeTopicPageContent: params.includeTopicPageContent,
@@ -368,9 +372,13 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           return { content: [{ type: 'text' as const, text: JSON.stringify(envelope) }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: envelope };
         }
         const md: string[] = [];
-        if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);        md.push(renderToText(envelope.content.results, envelope.content.total) || 'Keine Inhalte gefunden.'); }
-        if (want.has('collections')) { md.push(`# Sammlungen (${envelope.collections.count})`);  md.push(renderToText(envelope.collections.results) || 'Keine Sammlungen gefunden.'); }
-        if (want.has('topicPages'))  { md.push(`# Themenseiten (${envelope.topicPages.count})`); md.push(renderToText(envelope.topicPages.results) || 'Keine Themenseiten gefunden.'); }
+        // One ANSWER out of three rendered lists, so the registry pointer is
+        // suppressed per list and appended once below. Topic pages are `ccm:map`
+        // and format as collections, so a per-list hint fired twice.
+        const noHint = { registryHint: false };
+        if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);        md.push(renderToText(envelope.content.results, envelope.content.total, noHint) || 'Keine Inhalte gefunden.'); }
+        if (want.has('collections')) { md.push(`# Sammlungen (${envelope.collections.count})`);  md.push(renderToText(envelope.collections.results, undefined, noHint) || 'Keine Sammlungen gefunden.'); }
+        if (want.has('topicPages'))  { md.push(`# Themenseiten (${envelope.topicPages.count})`); md.push(renderToText(envelope.topicPages.results, undefined, noHint) || 'Keine Themenseiten gefunden.'); }
         if (envelope.wikipedia) {
           // Quoted, not inlined: the extract is world-editable text landing
           // between our own `# Inhalte` / `# Sammlungen` headings, and a line
@@ -384,6 +392,15 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           const notice = wikiResolutionNotice(query, envelope.wikipedia.title, envelope.wikipedia.match);
           md.push(`# Wikipedia`);
           md.push(`**${oneLine(envelope.wikipedia.title)}**${notice ? `\n\n${notice}` : ''}\n\n${quoted}\n\n[Wikipedia](${envelope.wikipedia.url})`);
+        }
+        // Gated on the envelope's own flag, not on the parameter: the operator's
+        // the background cache can answer without this call asking, and a
+        // collection with NO registry carries no field — so the results alone
+        // cannot tell "not checked" from "checked, none there".
+        if (!envelope.collections.registryChecked) {
+          md.push(...registryHintFor([
+            ...envelope.collections.results, ...envelope.topicPages.results,
+          ]).map(oneLine));
         }
         return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: envelope };
       } catch (err) {

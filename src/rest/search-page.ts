@@ -37,13 +37,32 @@ function safeHttpHref(v: unknown): string {
   return /^https?:\/\//i.test(s) ? s : '';
 }
 
+/**
+ * The skills a collection declares approved, when the envelope carries them.
+ *
+ * The envelope carries it whenever the background cache knows the collection,
+ * so this page gets it without asking — and used to drop the result on the
+ * floor. An envelope field is not a disclosure if the renderer discards it.
+ */
+function registry(node: Record<string, unknown>): string {
+  const r = node['skillRegistry'] as
+    { title?: unknown; nodeId?: unknown; entries?: { title?: unknown }[] } | undefined;
+  if (!r || typeof r !== 'object') return '';
+  const name = escapeHtml(str(r.title) || str(r.nodeId) || 'Skill-Registry');
+  const skills = (Array.isArray(r.entries) ? r.entries : [])
+    .map(e => str(e?.title)).filter(Boolean).slice(0, 4);
+  const list = skills.length ? `: ${escapeHtml(skills.join(', '))}` : '';
+  return `<br /><small>Skills der Sammlung (${name})${list}</small>`;
+}
+
 function item(node: Record<string, unknown>): string {
   const title = escapeHtml(str(node['title']) || '(ohne Titel)');
   const href = safeHttpHref(node['url']) || safeHttpHref(node['contentUrl']) || safeHttpHref(node['topicPageUrl']);
   const head = href ? `<a href="${escapeHtml(href)}" rel="noopener noreferrer">${title}</a>` : title;
   const desc = str(node['description']).slice(0, 220);
   const facts = [str(node['publisher']), str(node['license']) || 'Lizenz unklar'].filter(Boolean).join(' · ');
-  return `<li>${head}${desc ? ` — ${escapeHtml(desc)}` : ''}<br /><small>${escapeHtml(facts)}</small></li>`;
+  return `<li>${head}${desc ? ` — ${escapeHtml(desc)}` : ''}<br /><small>${escapeHtml(facts)}</small>`
+    + `${registry(node)}</li>`;
 }
 
 function section(heading: string, bucket: PageBucket | undefined): string {

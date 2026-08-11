@@ -165,6 +165,64 @@ export const WLO_ROOT_COLLECTION_ID: string = (() => {
 export const WLO_SKILLS_COLLECTION_ID: string = (process.env['WLO_SKILLS_COLLECTION_ID'] ?? '').trim();
 
 /**
+ * `WLO_DISABLE_SKILL_SEARCH` — drop `search_skill`, the repository-wide skill
+ * search, for a deployment that has moved to the registry process (a skill is
+ * reached through the collection that approves it, `get_skill_registry`).
+ *
+ * `get_skill` and `get_skill_registry` are unaffected: the registry hands out
+ * nodeIds and `get_skill` is what they are for. Only an explicit truthy value
+ * switches it off — the string "false" must not read as "yes".
+ */
+export const WLO_DISABLE_SKILL_SEARCH: boolean =
+  /^(1|true|yes|on)$/i.test((process.env['WLO_DISABLE_SKILL_SEARCH'] ?? '').trim());
+
+/** Bounded numeric env value; anything unparseable falls back to the default. */
+function envMs(name: string, fallback: number, min: number, max: number): number {
+  const raw = Number((process.env[name] ?? '').trim());
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  return Math.min(max, Math.max(min, Math.round(raw)));
+}
+
+/**
+ * `WLO_SKILL_CACHE` — keep each collection's skill registry warm in the
+ * background so a collection result can carry its catalogue for free. **On by
+ * default**; only an explicit off value disables it.
+ *
+ * What it replaces: `WLO_REGISTRY_IN_SEARCH`, which made every search pay
+ * ~1.0–1.4 s per collection (measured 2026-08-10) and was therefore off. The
+ * cache pays that cost once, off the request path, and remembers the answer.
+ */
+export const WLO_SKILL_CACHE: boolean =
+  !/^(0|false|no|off)$/i.test((process.env['WLO_SKILL_CACHE'] ?? '').trim());
+
+/** How often the background tick drains the queue and renews stale entries. */
+export const WLO_SKILL_CACHE_REFRESH_MS: number =
+  envMs('WLO_SKILL_CACHE_REFRESH_MS', 300_000, 60_000, 3_600_000);
+
+/**
+ * How long a remembered answer stands before it is checked again.
+ *
+ * Never below the refresh interval — a TTL shorter than the tick would re-queue
+ * every entry on every tick and turn the cache into a crawler.
+ */
+export const WLO_SKILL_CACHE_TTL_MS: number =
+  Math.max(WLO_SKILL_CACHE_REFRESH_MS, envMs('WLO_SKILL_CACHE_TTL_MS', 600_000, 60_000, 86_400_000));
+
+// Logged at module load, so each appears once per process rather than once per
+// session: behaviour that is missing on purpose must be visible to whoever
+// inherits the deployment, or it reads as a broken server.
+if (WLO_DISABLE_SKILL_SEARCH) {
+  log.info('WLO_DISABLE_SKILL_SEARCH is set — search_skill is not registered', {
+    unaffected: ['get_skill', 'get_skill_registry'],
+  });
+}
+if (!WLO_SKILL_CACHE) {
+  log.info('WLO_SKILL_CACHE is off — collection results carry no skill catalogue', {
+    stillAvailable: ['get_skill_registry', 'includeSkillRegistry: true'],
+  });
+}
+
+/**
  * Which skill tool surface is registered:
  *
  *   `two-tool` (default) — `search_skill` returns a catalogue, `get_skill`

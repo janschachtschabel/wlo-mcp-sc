@@ -18,5 +18,6 @@ export const WLO_SERVER_INSTRUCTIONS = `WirLernenOnline (WLO) — also called ed
 
 Anything a teacher asks for in everyday words belongs here, not in a web search: "ein Video zu Bruchrechnung", "Medien zum Klimawandel", "ein Arbeitsblatt", "Material für Klasse 7", "eine Unterrichtsstunde zu …". Call search_wlo_all ONCE — materials, collections and topic pages together — and name the medium as a filter rather than picking another tool. Enrich in the SAME call (includeWikipedia / includeCompendium / includeTopicPageContent / includeTextContent).
 Asked for ONE material's own text — summarize, simplify, build exercises? get_wlo_content_text with its nodeId; one already in the conversation is enough.
+Working with a COLLECTION? Its editors may declare which skills (prepared work instructions) apply to it. get_skill_registry with the collection's nodeId answers that; search_skill finds skills independently of any collection. Neither is looked up automatically — ask when the task is about how to work with a collection, not merely what is in it.
 
 ALWAYS carry a result's URL and nodeId into your answer, written out and linked. They are in every record; a user cannot open or cite what you paraphrase away.`;

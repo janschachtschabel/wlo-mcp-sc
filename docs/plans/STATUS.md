@@ -4258,3 +4258,710 @@ beschreibt, ist der teuerste dieser Funde.
 **Ein falscher Kommentar zur Rumpf-Grenze.** `http-app.ts` nannte „default 1 MB";
 dort gibt es gar keinen Default — der Einstiegspunkt reicht `MAX_BODY_BYTES`
 durch, 4 MiB, was in jeder anderen Datei richtig steht.
+
+
+---
+
+## Skill-Registry pro Inhaltssammlung — P0 + P1 fertig (2026-08-10)
+
+Entwurf: [`2026-08-10-skill-registry-design.md`](2026-08-10-skill-registry-design.md) ·
+Aufgaben: [`2026-08-10-skill-registry-tasks.md`](2026-08-10-skill-registry-tasks.md)
+
+Der neue Redaktionsprozess dreht die Frage um: nicht „welche Skills gibt es",
+sondern **„welche Skills sind fuer diese Sammlung freigegeben"**. Die Freigabe
+steht als Registry-Dokument in der Sammlung selbst.
+
+### P0 (T1) — die Messung gegen Staging, VOR dem Code
+
+Vier Fragen, vier Antworten. Drei davon haben den Entwurf geaendert.
+
+| Frage | Antwort |
+|---|---|
+| Traegt `/children` das Feld `mimetype`? | **Ja**, in jeder Projektion — `mimetype`/`mediatype` sind Knotenfelder, kein `propertyFilter` beruehrt sie |
+| Traegt `/children` `ccm:oeh_extendedType`? | **Nur mit ausdruecklicher Projektion.** Derselbe Knoten, derselbe Aufruf: mit `DISPLAY_PROPS` leer, mit `SKILL_PROPS` die volle URI |
+| Medientyp einer SKILL.md? | **`text/x-web-markdown`** (25/25), `mediatype: file-markdown` — weder `text/markdown` noch `text/plain` |
+| Gibt es schon eine Registry? | **Nein** (`SKILL_REGISTRY` → 0 Treffer) |
+
+Drei Zusatzbefunde derselben Messung, alle plan-relevant:
+
+- **28/28** Skill-Dateien heissen `cm:name = SKILL.md`. Die Namensregel des
+  Tie-Breaks unterscheidet heute also **nichts** — die Titelregel ist die, die
+  sofort greifen kann, und der Mehrdeutigkeitsfall ist der Regelfall, nicht die
+  Ausnahme.
+- **0/28** sind Sammlungsverweise (`ccm:original` ≠ eigene id). Skills liegen
+  heute in Arbeitsbereich-Ordnern, nicht in Sammlungen. Belastbar unabhaengig
+  von der kaputten Usage-Leseseite: ein Verweis waere ein eigener Datensatz in
+  der Suche, und `dedupeByOriginal` existiert genau deswegen.
+- **0/28** Dokumente enthalten `:::` ueberhaupt (roh geprueft, nicht nur ueber
+  den Parser — zwei Scheintreffer waren das Wort `wlo-material` im Fliesstext).
+  Das Blockformat ist in `docs/SKILLS.md` belegt, aber **kein Live-Dokument auf
+  Staging uebt es aus**. Der `:::`-Pfad gilt damit als ungemessen, nicht als
+  gruen; T12 ist die einzige echte Probe und haengt an Redaktionsarbeit.
+
+### Entscheidung des Nutzers waehrend P0
+
+Der Katalog soll **direkt in der Sammlungssuche** stehen, nicht nur ein Marker —
+bei begrenzten Kosten und spaeter wieder abschaltbar. Daraus wurden zwei Stufen
+**einer** Funktion:
+
+| Stufe | Wer | Eintraege tragen | Abrufe je Sammlung |
+|---|---|---|---|
+| `resolveHeads: false` | die Suche | Titel + nodeId, direkt aus dem `:::`-Block | **2** |
+| `resolveHeads: true` | `get_skill_registry` | zusaetzlich Beschreibung + Schlagwoerter | 2 + ≤ 30 parallel |
+
+Der Grund, warum die guenstige Stufe so guenstig ist: **der Block traegt den
+Titel schon selbst.** Titel und nodeId kosten keinen einzigen Zusatzabruf.
+
+### P1 (T2–T5) — der Dienst
+
+`src/services/skill-registry.ts` (neu, ~250 Zeilen) + `tests/skill-registry.test.ts`
+(21 Tests). Alles TDD, jeder Test zuerst rot gesehen.
+
+- `pickRegistryNode` — reine Auswahlregel: `ai_prompt` + Markdown, Tie-Break auf
+  `SKILL_REGISTRY.md` bzw. `SKILL REGISTRY` im Titel, danach stabil nach `nodeId`
+  sortiert. Der Markdown-Test nimmt den **gemessenen** Wert `text/x-web-markdown`
+  plus die IANA-Schreibweise und `mediatype: file-markdown`.
+- `findRegistryMarker` — ein Aufruf, `SKILL_PROPS` als Projektion (ohne die ist
+  jeder Kandidat unsichtbar), degradiert auf `null` statt zu werfen.
+- `loadSkillRegistry` — beide Stufen, `unresolved` fuer nicht lesbare Verweise,
+  `ambiguous` bei mehreren Kandidaten, Kappung bei `REGISTRY_MAX = 30` mit
+  Offenlegung.
+- Drei benannte Fehlerfaelle: `collection_not_found`, `no_registry`, `unreadable`.
+  Ein gefundenes, aber nicht lesbares Registry-Dokument kommt **benannt** zurueck
+  — „hier gibt es keine Registry" waere eine andere und falsche Aussage.
+
+### Zwei Duplikate im eigenen Diff gefunden und entfernt
+
+Beide waren schon geschrieben, bevor sie auffielen:
+
+- die `ai_prompt`-URI ein zweites Mal hingeschrieben, statt
+  `SKILL_CONTENT_TYPE_URI` aus `skill-catalogue.ts` zu importieren;
+- die Lesekette „Download, sonst `/textContent`" nachgebaut, statt `readSkillText`
+  aus `skills.ts` zu exportieren. Eine Registry **ist** ein Skill-Datensatz, und
+  zwei Kopien der Anonym-Download-Regel waeren zwei Stellen zum Auseinanderlaufen.
+
+### Was der Parser an meinen eigenen Testdaten fand
+
+Zwei Fehler, beide in den Tests, keiner im Code — und beide haetten den Katalog
+im Test leer aussehen lassen, ohne dass der Code schuld war:
+
+1. `parseSkillReferences` extrahiert nur **UUID-foermige** ids. Meine Bloecke
+   trugen `skill-a`, also parste jeder Verweis zu einer leeren nodeId.
+2. Nach dem Ersetzen durch UUID-Konstanten wurden aus Objektschluesseln
+   Bezeichner (`SKILL_A: {…}` statt `[SKILL_A]: {…}`) — der Schluessel hiess
+   danach woertlich `"SKILL_A"`.
+
+Lehre in derselben Familie wie die bekannte `fetchMock`-Regel: ein Test kann
+gruen aussehen wollen und dabei eine Bedingung pruefen, die es live nie gibt.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1631 Tests, 1631 pass, 0 fail** (30,5 s).
+
+### Offen (P2–P3)
+
+T6–T8 `get_skill_registry` + zwei Env-Schalter (`WLO_DISABLE_SKILL_SEARCH`,
+`WLO_DISABLE_REGISTRY_IN_SEARCH`) · T9–T10 Anreicherung und Darstellung in der
+Suche · T11 Doku · **T12 Live-Lauf — braucht zuerst eine echte Registry in einer
+Staging-Sammlung (Redaktion), weil es heute weder eine Registry noch einen Skill
+in einer Sammlung noch ein Dokument mit `:::`-Bloecken gibt.**
+
+
+## Skill-Registry — P2 fertig (2026-08-10)
+
+`get_skill_registry` ist das **28. Lesewerkzeug**; der Server bietet jetzt
+42 Werkzeuge (28 lesend + 14 kuratierend).
+
+### Was gebaut wurde
+
+- **`src/tools/skill-registry.ts` (neu, 137 Zeilen)** — eigenes Modul, nicht eine
+  vierte Registrierung in `tools/skills.ts`: das ist mit 346 Zeilen schon ueber
+  der Schwelle, und „welche Skills gelten fuer DIESE Sammlung" ist eine andere
+  Frage als „welche Skills gibt es". Reihenfolge der Ausgabe: Kopf → Katalog →
+  Offenlegungen → Hinweis → Trenner → **dann** das fremde Dokument. Das ist eine
+  Sicherheitseigenschaft, keine Layoutfrage.
+- **`WLO_DISABLE_SKILL_SEARCH`** — nimmt `search_skill` aus der Liste;
+  `get_skill` und `get_skill_registry` bleiben immer, weil die Registry nodeIds
+  ausgibt und `get_skill` das Werkzeug dafuer ist. Im `one-tool`-Modus ohne
+  Wirkung: dort IST `get_skill_for_task` die Suche. Als **Parameter** von
+  `registerSkillTools` gebaut (Env-Lesung in `wlo-config.ts`), damit er ohne
+  Env-Gefummel testbar ist — dasselbe Muster wie `mode`. Log-Zeile beim Start,
+  einmal je Prozess.
+- Apps-SDK-Metadaten (`tool-defaults.ts`, `tool-status.ts`) und
+  `.env.example` nachgezogen.
+
+### Planaenderung: der zweite Schalter wandert nach T9
+
+`WLO_DISABLE_REGISTRY_IN_SEARCH` war in T7 geplant, schaltet aber Verhalten ab,
+das es vor T9 nicht gibt. Ein Schalter fuer nichts ist spekulative Konfiguration;
+er wird in T9 gebaut und dort getestet. Beide Plandateien sind entsprechend
+korrigiert.
+
+### Was der Testlauf fand
+
+**Fuenf Regressionen, alle die erwartete Folge eines 28. Werkzeugs** — und genau
+deswegen wertvoll: der Bestand schreibt die Werkzeugzahl an vier Stellen fest
+(`server.test.ts`, `server-unsafe-disabled.test.ts`, `tools-curation-gating.test.ts`)
+und verlangt fuer JEDES Werkzeug Titel und Statustexte. Ein neues Werkzeug ohne
+Apps-SDK-Metadaten faellt damit auf, statt still unbeschriftet auszuliefern.
+
+**Zwei eigene Testfehler, keiner davon im Code:**
+
+1. Die Injektions-Zusicherung war zu grob formuliert („die nodeId darf auf keiner
+   Zeile stehen"). Der geflachte Titel *enthaelt* die eingeschleuste id — und das
+   ist korrekt: `oneLine` haelt sie auf EINER Zeile, statt eine zweite
+   Katalogzeile entstehen zu lassen. Die Zusicherung prueft jetzt die echte
+   Eigenschaft: keine Zeile beginnt als gefaelschter Eintrag.
+2. Ein Regex suchte nach dem Wort „mehrere", das in der Offenlegung nie steht.
+   Ersetzt durch die staerkere Pruefung: die **Anzahl** der Kandidaten und die
+   **gewaehlte** id muessen beide dastehen.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1640 Tests, 1640 pass, 0 fail** · Beschreibung von
+`get_skill_registry` an einem laufenden Server gemessen: **607 Zeichen** (Grenze
+1024).
+
+### Bewusst nicht getan
+
+`src/services/skill-registry.ts` liegt bei 312 Zeilen, knapp ueber der Schwelle.
+Etwa die Haelfte davon ist Dokumentation, die Verantwortung ist eine einzige
+(„die Registry einer Sammlung"), und die Datei liest sich von oben nach unten
+ohne Sprung. Eine Teilung waere hier ein Refactoring fuer eine Zahl, nicht fuer
+eine Naht — notiert statt gemacht.
+
+
+## Skill-Registry — P3 fertig, T12 nur teilweise (2026-08-10)
+
+### T9/T10 — die Anreicherung der Sammlungssuche
+
+Jedes Sammlungs-Ergebnis traegt jetzt die Skills, die diese Sammlung freigegeben
+hat. `enrichSkillRegistry` sitzt im vorhandenen Anreicherungs-Block von
+`searchAll` — als **einzige** Anreicherung, die standardmaessig AN ist, auf
+Nutzerentscheidung. Gerendert wird in `renderToText`, der einen Stelle, durch die
+beide Werkzeuge gehen; jede Zeile laeuft durch `oneLine`, und in der Liste stehen
+hoechstens 4 Skills je Sammlung, mit genannter Restzahl.
+
+Der Schalter `WLO_DISABLE_REGISTRY_IN_SEARCH` wird **in `searchAll`** gelesen,
+nicht an den drei Aufrufstellen: eine je Aufrufstelle wiederholte Bedingung ist
+genau die Form, in der in diesem Projekt schon zweimal ein Pfad von der Regel
+abgewichen ist. Der Betreiber-Schalter gewinnt ausserdem gegen einen Aufrufer,
+der die Anreicherung ausdruecklich anfordert — er existiert wegen der Kosten.
+
+### T11 — Doku
+
+`docs/SKILLS.md` bekommt die Redaktionsanleitung samt **Beispiel-Dokument** (das
+ist noetig, weil auf Staging noch keine Registry existiert), `docs/TOOLS.md` und
+`docs/INTEGRATION.md` das Werkzeug und die Abgrenzung, beide READMEs und der
+CHANGELOG den Eintrag. Zahlen **an einem laufenden Server gemessen**, nicht
+gezaehlt: **42 Werkzeuge, 22 mit `outputFormat`**.
+
+### T12 — was ohne Registry messbar war, gemessen
+
+**Der Live-Lauf hat die Kostenzusage widerlegt, die ich gegeben hatte.**
+
+| Messung | Ergebnis |
+|---|---|
+| Anreicherung allein, 2 Sammlungen parallel | 1390 / 1409 / 1500 ms |
+| `searchAll` aus → ein (3 Runden) | 2767→4111 · 3300→4263 · **7034→3769** |
+| `/children`, Sammlung mit 3 Dateien | ~0,53 s |
+| `/children`, Sammlung mit 28 Dateien | ~1,34 s |
+| Projektion 27 Felder vs. 3 Felder | 531 vs. 523 ms · 1345 vs. 1604 ms |
+
+Der Aufschlag betraegt **~1,0–1,4 s**, nicht die geschaetzten 0,5 s. Drei Dinge
+dazu, und alle drei binden kuenftige Aenderungen:
+
+1. **Der erste Messwert war falsch.** Eine einzelne Messung sah wie eine
+   Verdopplung aus (3,5 s → 7,0 s). Drei Runden zeigten, dass Staging stark
+   streut — ein Lauf OHNE Anreicherung brauchte 7,0 s und war damit langsamer als
+   jeder Lauf mit ihr. Ein Messpaar traegt hier keine Aussage.
+2. **Die Projektion kostet nichts.** Die naheliegende Optimierung (statt
+   `SKILL_PROPS` nur die drei gebrauchten Felder) bringt messbar **null** — die
+   Dauer haengt an der Kindzahl. Gemessen, bevor der Code danach geaendert wurde;
+   die Aenderung ist unterblieben.
+3. Da die Abrufe parallel laufen, bestimmt die **groesste** Sammlung die Dauer,
+   nicht ihre Anzahl. Wegoptimieren laesst sich das nicht — es ist die Latenz von
+   `/children`. Dafuer gibt es den Schalter.
+
+Ausserdem live geprueft: `reason: no_registry` an einer echten Sammlung,
+`collection_not_found` an einer unbekannten id (HTTP 404), `findRegistryMarker`
+liefert `null` statt zu werfen.
+
+**Offen und nur mit Redaktionsarbeit erreichbar:** der ganze `:::`-Pfad. Ein
+Registry-Dokument anlegen, den Katalog in der Suche sehen, `get_skill_registry`
+→ `get_skill` durchlaufen. Bis dahin ist dieser Pfad durch Unit-Tests gedeckt und
+durch **keinen** echten Datensatz — die zwei Live-Laeufe dieses Projekts fanden
+je Defekte, die kein Mock sah.
+
+### Ein Befund aus dem eigenen Diff
+
+`formattedNodeSchema` spiegelt `FormattedNode`, und **Zod entfernt unbekannte
+Schluessel stillschweigend**: ohne Eintrag waere `skillRegistry` aus jedem
+`structuredContent` verschwunden, ohne dass irgendwo etwas fehlschlaegt. Der
+Widget-Pfad und jeder schema-pruefende Client haetten die Registry nie gesehen.
+Test ergaenzt, der genau das festhaelt.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1655 Tests, 1655 pass, 0 fail**.
+
+
+## Skill-Registry — die Anreicherung ist jetzt AUS, der Auslöser ist Text (2026-08-10)
+
+Nutzerentscheidung nach dem Live-Lauf: **~1,4 s auf jede Suche sind zu teuer.**
+Die Anreicherung wird nur noch auf Anforderung ausgefuehrt.
+
+### Warum der Marker nichts gespart haette
+
+Im Live-Lauf hatte **keine** der beiden Sammlungen eine Registry — es gab also
+null Dokument-Abrufe, und die Anreicherung kostete trotzdem 1,4 s. Die Kosten
+stecken vollstaendig im `/children`-Aufruf. Ein blosser Marker ("hat eine, ja
+oder nein") haette denselben Aufruf gebraucht und exakt gleich viel gekostet.
+
+| | Kosten |
+|---|---|
+| Anreicherung an | +1,0-1,4 s bei JEDER Suche, fuer 5 Sammlungen, unabhaengig davon, ob eine Registry existiert |
+| Anreicherung aus | 0 s — und ~0,5-1,3 s nur dann, wenn das Modell fuer EINE Sammlung nachsieht |
+
+### Wie ein Modell die Registry jetzt findet: drei kostenlose Signale
+
+Die Frage des Nutzers war die richtige — ein generisches Werkzeug ohne Auslöser
+wird nicht gerufen. Der Auslöser muss aber kein ABRUF sein, er kann **Text** sein:
+
+1. **Eine Hinweiszeile an jedem Sammlungs-Ergebnis** (`registryLines` in
+   `formatter.ts`, wenn `skillRegistry` fehlt und `nodeType === 'collection'`) —
+   genau dort, wo das Modell die nodeId ohnehin in der Hand haelt. Nur fuer
+   Sammlungen: ein Material kann keine Registry haben.
+2. **Die Server-Instructions** nennen den Anlass ("arbeitest du mit einer
+   Sammlung") und sagen ausdruecklich, dass nichts automatisch nachgeschlagen wird.
+3. **Querverweise in den Werkzeugbeschreibungen**, festgehalten in
+   `tests/tool-descriptions.test.ts` — dasselbe Mittel, mit dem 2026-08-06 schon
+   `get_wikipedia_summary` → `get_url_text` verdrahtet wurde, nachdem eine
+   Live-Messung zeigte, dass das Modell sonst woanders hingeht.
+
+Der Schalter dreht sich mit: aus `WLO_DISABLE_REGISTRY_IN_SEARCH` wird
+**`WLO_REGISTRY_IN_SEARCH`** (Standard aus). Ein "Disable"-Flag fuer etwas, das
+ohnehin aus ist, waere irrefuehrend.
+
+**Offener Vorbehalt:** solange auf Staging keine einzige Registry existiert,
+fuehrt jeder dieser Hinweise zu einem Abruf, der "keine Registry" zurueckgibt.
+Verkraftbar (der Abruf ist billiger als die Dauer-Anreicherung), aber der Nutzen
+beginnt mit der Redaktionsarbeit, nicht mit dem Deploy.
+
+### Zwei Funde beim Umbau
+
+**Eine Beschreibung riss die 1024-Zeichen-Grenze.** Der Querverweis brachte
+`search_wlo_collections` auf 1149 Zeichen — ein Test faengt das ab (die Notiz in
+CLAUDE.md, fuenf Beschreibungen seien "ungemessen" ueber der Grenze, ist damit
+ueberholt). Beim Kuerzen schlug ein ZWEITER Test an, der genau den Satz schuetzt,
+den ich streichen wollte ("nur manche Sammlungen haben eine Themenseite") — er
+stammt aus einem beobachteten Fehlgriff. Geloest, indem der Verweis in den Satz
+ueber die Folgeaufrufe wanderte, wo er ohnehin hingehoert; die Messklammer
+(„5 Sammlungen, davon 1") entfiel, sie steht weiterhin in README.de.md.
+
+**Ein Schreibvorgang stellte `.env.example` von LF auf CRLF um** — und
+`deploy-env-passthrough.test.ts` parst diese Datei mit `/^([A-Z_]+)=(.*)$/`.
+JavaScripts `.` matcht kein ``, also fand die Regex **gar nichts**, und zwei
+Tests meldeten "die Einstellung fehlt" statt "die Zeilenenden haben sich
+geaendert". Datei zurueckgestellt und die Regex auf `[^
+]*` gehaertet: der
+naechste Windows-Editor loest sonst dieselbe Falle aus.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1665 Tests, 1665 pass, 0 fail**.
+
+### Aufraeumen erledigt (2026-08-10, nach Freigabe)
+
+**Zwei Testdateien entfernt**, nachdem belegt war, dass sie nichts mehr pruefen:
+`WLO_DISABLE_REGISTRY_IN_SEARCH` kommt in `src/` nicht mehr vor, und
+`tests/search-registry-disabled.test.ts` war trotzdem 2/2 gruen. Ausserhalb des
+Paares referenzierte sie niemand (`tests/disable-registry-env.ts` wurde nur von
+ihr importiert; der Runner liest das Verzeichnis). Ersetzt durch
+`tests/enable-registry-env.ts` + `tests/search-registry-enabled.test.ts`, die den
+Schalter in der neuen Richtung pruefen — inklusive der Zusicherung, dass er die
+Abrufe wirklich ausloest und nicht nur ein Feld setzt.
+
+**`findRegistryMarker` entfernt** — beim Nachsehen gefunden: **null Aufrufer im
+Produktivcode**. Die Funktion entstand in T3, als die Suche nur einen Marker
+tragen sollte; seit der Katalog-Entscheidung geht alles ueber die guenstige Stufe
+von `loadSkillRegistry`, und die Messung zeigte danach, dass ein reiner Marker
+ohnehin nichts spart — die Kosten stecken im `/children`-Aufruf, den beide
+brauchen. Exportiert, getestet, unbenutzt.
+
+Ihre vier Tests sind nicht verfallen, sondern **umgehaengt**: die zwei
+eigenstaendigen Zusicherungen (die Projektion `ccm:oeh_extendedType`, gemessen in
+T1, und der Titel-Fallback auf `cm:name`) laufen jetzt ueber
+`loadSkillRegistry`; die anderen beiden — „keine Registry" und „Abruf schlaegt
+fehl" — waren schon durch die `reason`-Tests gedeckt (`no_registry`,
+`unreadable`). `scanForRegistry` bleibt als benannter Schritt, sein Kommentar
+behauptet nicht mehr zwei Aufrufer.
+
+Nachgezogen: `CLAUDE.md` (nannte die Funktion in der Live-Zeile), der Entwurf
+(mit Begruendung, warum sie wieder verschwand) und die Aufgabenliste.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1661 Tests, 1661 pass, 0 fail** (1665 vor dem Aufraeumen; −2
+leerlaufende Tests, −2 zusammengefuehrte).
+
+
+## Skill-Registry — laesst sich der Abruf parallelisieren? (2026-08-10)
+
+Frage des Nutzers. Antwort: **nur an einer Stelle, und die ist jetzt doppelt so
+schnell.**
+
+`loadSkillRegistry` hat drei Stufen, und die ersten beiden sind zwingend
+sequenziell — jede braucht das Ergebnis der vorigen:
+
+```
+/children  ->  Registry-nodeId  ->  Dokument lesen  ->  welche Skills  ->  Koepfe holen
+```
+
+Nur die dritte Stufe kann parallel laufen, und sie tat es schon (`mapPool`).
+Gemessen wurde also die richtige Groesse dieser Grenze, ueber 28 echte
+Skill-Datensaetze, je zwei Laeufe, bester Wert:
+
+| Grenze | Dauer | gegenueber 5 |
+|---|---|---|
+| 1 | 9068 ms | — |
+| 5 (bisher) | 2083 ms | Basis |
+| **10 (neu)** | **1095 ms** | **~1,9x** |
+| 20 | 1048 ms | ~2,0x |
+| 30 | 870 ms | ~2,4x |
+
+Der Knick liegt bei 10: 10 halbiert die Phase fast, 10->20 bringt ~4 %, und 30
+hiesse, alle `REGISTRY_MAX` Abrufe gleichzeitig loszuschicken — die Form, die auf
+einer belebteren Instanz in ein Limit laeuft. Kein Abruf schlug bei irgendeiner
+Groesse fehl.
+
+**Wer davon profitiert, und wer nicht:**
+
+- Nur `get_skill_registry` (`resolveHeads: true`). Die **Suche** holt gar keine
+  Koepfe — Titel und nodeId stehen im `:::`-Block — und wird dadurch kein
+  bisschen schneller.
+- Der Gewinn beginnt erst **oberhalb von 5 Skills** je Registry: darunter war es
+  ohnehin eine Runde. Bei 28 Skills sinkt der ganze Aufruf von ~3,8 s auf ~2,8 s.
+
+**Was nicht schneller wird und warum:** die Kinderliste (ein Aufruf, 0,53–1,34 s,
+haengt an der Kindzahl) und das Dokument (ein Aufruf). Beide sind einzelne
+Abrufe an einer Kette — es gibt nichts, das man nebenher erledigen koennte, weil
+das jeweils Naechste erst aus dem Ergebnis hervorgeht. Ueber MEHRERE Sammlungen
+laeuft ohnehin schon alles parallel (`enrichSkillRegistry`, Grenze 5, und bei
+`maxCollections = 5` starten damit alle gleichzeitig).
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1661 Tests, 1661 pass, 0 fail**.
+
+
+## Skill-Registry — was darf ein Hinweis sagen, der nichts gelesen hat? (2026-08-10)
+
+Frage des Nutzers, und sie deckte einen Fehler in meiner eigenen Zeile auf. Sie
+lautete:
+
+> `Skills für diese Sammlung: mit get_skill_registry und dieser nodeId prüfen`
+
+Das ist eine **Existenzbehauptung ueber Daten, die niemand abgerufen hat** — und
+da heute praktisch keine Sammlung eine Registry fuehrt, waere sie fast immer
+falsch. Drei Folgen: das Modell meldet dem Nutzer moeglicherweise „es gibt
+Skills", bevor es nachgesehen hat; es ruft fuer jede Sammlung ins Leere; und ein
+Hinweis, der immer feuert und selten traegt, wird als Dekoration gelernt.
+
+**Was eine Zeile ohne Datenkenntnis sagen darf, sind genau drei Dinge:** dass die
+Antwort UNBEKANNT ist, WIE man sie bekommt, und WANN sich das lohnt. Der dritte
+Teil traegt am meisten — ohne Anlass ist es Rauschen.
+
+Neuer Text, **einmal je Antwort** statt einmal je Sammlung (der Satz ist fuer
+alle identisch, und die nodeIds stehen ohnehin im selben Block):
+
+> Hinweis: Ob eine Sammlung eigene Arbeitsanleitungen („Skills") freigegeben hat,
+> ist hier nicht geprueft — viele fuehren keine. `get_skill_registry` mit ihrer
+> nodeId beantwortet es, und lohnt sich, wenn es um das Vorgehen MIT einer
+> Sammlung geht („wie arbeite ich damit", „was ist hier vorgesehen") statt um
+> ihre Inhalte.
+
+Der Hinweis entfaellt, wenn die Frage schon beantwortet ist: traegt jede
+gerenderte Sammlung ihre Registry (opt-in-Anreicherung), waere „nicht geprueft"
+neben der Pruefung schlicht falsch.
+
+Vier Tests halten das fest: der Hinweis nennt die Unsicherheit, er nennt den
+Anlass, er steht bei drei Sammlungen **einmal**, und er verschwindet, sobald die
+Registry mitgeliefert wird.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1664 Tests, 1664 pass, 0 fail**.
+
+
+## Skill-Registry — kann man die Zuordnung billiger machen? (Messung 2026-08-10)
+
+Frage des Nutzers: die Registry zeitnah mitliefern, ohne die Sammlungsdaten zu
+ueberlasten — geht das? Vier Messungen, read-only.
+
+| Gemessen | Ergebnis |
+|---|---|
+| Traegt eine Verweis-Property durch die Sammlungssuche? | **JA** — 8 von 63 Treffern (8 Suchen) tragen `ccm:page_config_ref`, 7 den Kompendialtext |
+| Wird die angeforderte Projektion honoriert? | **JA** — Suche und direkter Knotenabruf liefern dieselben 9 Properties; die 16 „fehlenden" fehlen auch am Knoten |
+| Was kostet ein Feld mehr in der Projektion? | **nichts** (27 vs. 3 Felder: 531 vs. 523 ms, gemessen zuvor) |
+| Vertraegt die Suche eine Property, die es noch nicht gibt? | **JA** — gleiche Trefferzahl, kein Fehler, das Feld fehlt einfach |
+
+**Korrektur einer Code-Notiz.** In `services/search.ts` steht, der
+Sammlungs-Endpunkt habe eine „fixed reduced projection without
+`ccm:page_config_ref`". Das ist widerlegt — die Property kommt durch. Richtig ist
+die zweite Haelfte derselben Notiz: die **Portale** erscheinen in der
+Stichwortsuche gar nicht (an „Physik" geprueft: das Portal mit page_config_ref
+war in 15 Treffern nicht dabei). Der Code funktioniert, nur die Begruendung im
+Kommentar stimmt zur Haelfte nicht. NICHT geaendert — ausserhalb des Auftrags,
+hier notiert.
+
+**Was daraus folgt.** Die Kosten der heutigen Loesung entstehen, weil die
+Zuordnung nur IMPLIZIT existiert („irgendwo unter den Kindern liegt ein
+ai_prompt-Dokument") und deshalb ein `/children` je Sammlung braucht. Traegt die
+Sammlung selbst einen Verweis auf ihre Registry — dasselbe Muster wie
+`ccm:page_config_ref` —, dann:
+
+- kommt der Marker in jedem Suchtreffer **gratis** mit (0 Zusatzabrufe),
+- faellt `/children` ganz weg,
+- und ein Dokument wird nur noch fuer die Sammlungen gelesen, die wirklich eine
+  Registry haben, statt fuer alle fuenf.
+
+Offen ist, WO dieser Verweis wohnt (eigene Property vs. Keyword-Konvention) —
+das ist eine Repository-/Redaktionsentscheidung, keine Code-Entscheidung.
+
+
+## Skill-Registry — Entscheidung: kein Repository-Vertrag, dafuer ein Parameter (2026-08-10)
+
+Der Nutzer hat die drei Wege abgewogen und entschieden: **Keyword-Konvention geht
+nicht, eine eigene Property koennen wir nicht bauen.** Also bleibt der Abruf beim
+Werkzeug, und die Mitlieferung wird ein **optionaler Parameter**.
+
+### Was gebaut wurde
+
+`includeSkillRegistry` (Standard `false`) an den beiden Werkzeugen, die
+Sammlungen zurueckgeben: **`search_wlo_all`** und **`search_wlo_collections`**.
+Gesetzt, traegt jede Sammlung derselben Antwort ihre Registry — ohne zweiten
+Aufruf. Die Beschreibung nennt die Kosten (2 Abrufe je Sammlung, ~1,0–1,4 s,
+auch fuer Sammlungen ohne Registry), weil ein Modell eine Rundreise nicht
+abwaegen kann, von der es nichts weiss; ein Test haelt das fest — die Zahl,
+nicht nur das Wort (Review 2026-08-10: hier stand die verworfene 0,5-s-Schaetzung).
+
+`WLO_REGISTRY_IN_SEARCH` bleibt als betriebsweiter Standard daneben
+(`opts.includeSkillRegistry ?? WLO_REGISTRY_IN_SEARCH`).
+
+### Ein Umzug, den ein zweiter Aufrufer rechtfertigt
+
+`enrichSkillRegistry` lag privat in `services/search.ts`. `search_wlo_collections`
+geht **nicht** durch `searchAll`, brauchte die Funktion aber auch — also ist sie
+nach `services/skill-registry.ts` gewandert und exportiert. Dorthin gehoert sie
+ohnehin: „wie eine Registry an einen Knoten kommt" ist Registry-Wissen, kein
+Suchwissen. Verhalten unveraendert, die 8 Dienst-Tests blieben gruen.
+
+In `search_wlo_collections` sitzt die Anreicherung **nach** der Kappung auf
+`maxResults`, damit die Kosten an dem haengen, was tatsaechlich gezeigt wird.
+
+### Warum der teure Weg verworfen wurde — mit Zahlen
+
+Die Alternative waere gewesen, die Zuordnung explizit zu machen (ein Verweis an
+der Sammlung, wie `ccm:page_config_ref`). Gemessen ist sie klar ueberlegen — 0
+Zusatzabrufe statt 1 je Sammlung, weil die Projektion nichts kostet und
+Verweis-Properties nachweislich durch die Sammlungssuche reisen (8 von 63
+Treffern tragen `ccm:page_config_ref`). Sie scheitert nicht an der Technik,
+sondern daran, dass beide Traeger ausscheiden: Keywords sind fuer die Redaktion
+keine Option, und eine eigene Property verlangt eine MDS-Aenderung, die dieses
+Team nicht bauen kann. Festgehalten, falls sich das aendert.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1669 Tests, 1669 pass, 0 fail**.
+
+---
+
+## Review der Skill-Registry — 7 Befunde behoben (2026-08-10)
+
+`/better-coding-review` ueber die 8 neuen und 14 geaenderten Dateien: 0 critical,
+**2 major**, 4 minor, 1 nit. Alle behoben, jeder mit einem zuerst roten Test.
+
+### Die beiden MAJOR
+
+**Erkennung an EINER Property.** `isMarked` und `registryTitleOf` lasen
+`cclom:title`; `cm:title` liegt in derselben Projektion und ist die zweite
+Stufe von `nodeTitle` — der kanonischen Kette, die `formatNode` fuer die
+Eintraege desselben Katalogs benutzt, und der Traeger, den dieses Repo als den
+tatsaechlich gesetzten gemessen hat (109/109 Produktionsvarianten). Eine so
+betitelte Registry war unsichtbar, und bei zwei `ai_prompt`-Dokumenten fiel die
+Wahl auf die nodeId-Sortierung: **der Katalog eines fremden Dokuments** als
+Freigabeliste. Belegt durch Ausfuehrung (`picked aaa-0` statt `zzz-reg`).
+Warum kein Test das fand: jede Fixture geht durch `makeNode`, das ausschliesslich
+`cclom:title` schreibt — die Suite prueft die Wahl der Implementierung, nicht die
+Wirklichkeit des Repositories.
+
+**Der Hinweis gehoert zur Antwort, nicht zur Liste.** Er wurde in `renderToText`
+gesetzt. `search_wlo_all` rendert drei Listen, und Themenseiten sind `ccm:map`,
+formatieren also als Sammlung — gemessen: **zwei Hinweise je Antwort**, und mit
+`includeSkillRegistry: true` stand „nicht geprueft" direkt unter dem Block, in
+dem geprueft worden war. `get_related_content` hat dieselbe Form (zwei Listen).
+`registryHintFor` ist jetzt exportiert, zusammengesetzte Antworten unterdruecken
+den Listen-Hinweis und setzen ihn einmal ueber die Vereinigung. Dazu
+**`collections.registryChecked`** im Envelope, nach dem Muster von
+`content.licenseFilter`: eine Sammlung ohne Registry traegt gar kein Feld, die
+Ergebnisse koennen „nicht nachgesehen" und „nachgesehen, keine da" also nicht
+unterscheiden.
+
+### Die uebrigen fuenf
+
+- **Gekappter Scan behauptete Abwesenheit.** 50 Dateikinder werden gelesen,
+  `pagination.total` wurde verworfen — eine groessere Sammlung, deren Registry
+  dahinter einsortiert ist, bekam „fuehrt keine Skill-Registry". Jetzt
+  `scanTruncated {scanned,total}`, im Werkzeugtext genannt und geloggt.
+- **Kostenangabe.** Drei Werkzeugbeschreibungen (und `wlo-config`s Logzeile)
+  trugen die verworfene Schaetzung 0,5–1,3 s — genau dort, wo ein Modell
+  entscheidet, ob es zahlt. Auf **1,0–1,4 s** korrigiert; der Test pinnt die Zahl.
+- **Kappungs-Zusage.** „alle mit `get_skill_registry`" neben 44 deklarierten
+  Skills — das Werkzeug kappt selbst bei 30. Jetzt „die ersten 30".
+- **Wer nicht darstellen kann, zahlt nicht.** `WLO_REGISTRY_IN_SEARCH` wird in
+  `searchAll` gelesen, also erbten `/api/search?format=html` und das
+  ChatGPT-`search` die Anreicherung. Die HTML-Seite rendert sie jetzt; `search`
+  lehnt sie ab (`{id,title,url}` hat keinen Platz dafuer).
+- **JSON-Zweig ohne Untrusted-Hinweis.** Die Markdown-Ansicht rahmt das Dokument,
+  die JSON-Ansicht reichte denselben Text ohne Warnung weiter. Feld `note`.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm run build` → exit 0 · `npm test` → **1682 Tests, 1682 pass, 0 fail**
+(13 neue Tests, alle vor dem Fix rot gelaufen).
+
+---
+
+## Skill-Registry-Cache — P1–P4 (2026-08-11)
+
+Der Katalog kommt jetzt bei **jedem** Sammlungs-Ergebnis mit, fuer **0**
+Zusatzabrufe. Was das moeglich macht: ein Hintergrunddienst merkt sich je
+Sammlung, was ihre **Kinderliste** sagt, und erneuert es alle 5 Minuten.
+
+### Der Knackpunkt, und warum der erste Entwurf falsch war
+
+Der erste Entwurf baute den Cache aus dem **Suchindex** — ein Aufruf, sofort
+vollstaendig — und umging den Konflikt mit `CLAUDE.md:366` ueber eine
+Zusatzregel („nie Abwesenheit behaupten"). Der Nutzer wies darauf hin, dass die
+Kinderliste sicherer ist und im Hintergrund nichts kostet. Das ist richtig, und
+es macht die Zusatzregel ueberfluessig: der Cache ruft `loadSkillRegistry` auf,
+also denselben autoritativen Weg wie der Live-Pfad. Der Index liefert nur noch
+den Startschuss, welche Knoten ueberhaupt in Frage kommen.
+
+### Warum kein Vorab-Durchlauf (gemessen 2026-08-11)
+
+| Ebene | Sammlungen | Dauer |
+|---|---|---|
+| 1 | 35 | 1650 ms |
+| 2 | 331 | 6590 ms (35 Abrufe, Pool 10) |
+| 3 | ~1335 (hochgerechnet) | 4055 ms fuer 30 Stichproben |
+
+Vollstaendig waeren ~1700 Sammlungen und ~3400 Abrufe je Zyklus, ~11 Anfragen/s
+Dauerlast. Verworfen. Die Warteschlange ist stattdessen durch die tatsaechliche
+Nutzung begrenzt.
+
+### Weitere Messungen, die den Entwurf tragen
+
+- Repository-weite `ai_prompt`-Suche: **1 Aufruf**, 28 Treffer,
+  1175 / 1215 / 1322 ms (drei Laeufe). 28/28 Markdown, **0** Referenzen.
+- `virtual:primaryparent_nodeid` auf 28/28 und **schon in `SKILL_PROPS`**.
+- Der Elternknoten ist **nicht** verlaesslich die Sammlung: bei geharvestetem
+  Material ist es der Spider-Ordner (`dwu_spider`, `leifi_spider`) — ebenfalls
+  `ccm:map`. Deshalb Abfrage **mit der Sammlungs-id**, was sich selbst prueft.
+- `usedInCollections` ist bei 0/20 Material-Treffern und 0/28 Skills gefuellt.
+
+### Was gebaut wurde
+
+`src/services/skill-registry-cache.ts` (Warteschlange, Takt, Ablauf nach TTL,
+Startschuss, Anreicherung), Start **nur** aus `http.ts`/`stdio.ts`, angeschlossen
+an `searchAll`, `search_wlo_collections`, `get_collection_contents`,
+`get_node_collections`. `tools/browse.ts` bewusst nicht — es rendert eigene
+Zeilenformate ohne Registry-Zeile, das Feld laege nur in `structuredContent`.
+
+`WLO_REGISTRY_IN_SEARCH` **entfernt**; `includeSkillRegistry: true` heisst jetzt
+**Live-Abruf erzwingen**. Neu: `WLO_SKILL_CACHE` (an),
+`WLO_SKILL_CACHE_REFRESH_MS` (5 min), `WLO_SKILL_CACHE_TTL_MS` (10 min).
+
+### Zwei Dinge, die die Tests fanden
+
+**Rot-gruen erzwungen:** die drei Ausfall-Tests waren beim ersten Lauf sofort
+gruen, weil der Fehlerzweig schon aus T2 stand. Mit ausgehaengtem Zweig fielen
+genau zwei von ihnen — erst damit war belegt, dass sie die Regel halten.
+
+**Eine echte Regression, vom Altbestand gefangen:** `registryChecked` wurde
+zunaechst aus der Zahl der angereicherten Knoten abgeleitet. Ein Live-Lauf, der
+NICHTS findet, hinterlaesst aber ebenfalls kein Feld — die abgeschlossene
+Pruefung las sich als uebersprungen. Der Live-Pfad ist jetzt ein eigener Term.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1713 Tests, 1713 pass, 0 fail** (31 neue).
+
+### Offen
+
+Der Live-Lauf gegen Staging (Startschuss protokollieren, zwei Suchen
+vergleichen) und — weiterhin — der `:::`-Pfad, der auf Redaktionsarbeit wartet.
+
+---
+
+## Review des Skill-Registry-Cache — 8 Befunde behoben (2026-08-11)
+
+Vollstaendiges Review des Pakets gegen den Entwurf. Verdikt vorher:
+**1 critical, 2 major, 4 minor, 1 nit** — nicht merge-reif. Alle acht behoben.
+
+### Der schwerste: ein gekappter Scan wurde als Antwort gecacht
+
+`loadSkillRegistry` meldet `scanTruncated`, wenn es 50 von 400 Dateien gelesen
+hat — genau damit ein leeres Ergebnis nicht als Abwesenheit durchgeht. **Beide**
+Cache-Pfade warfen das Feld weg. Damit stand „diese Sammlung fuehrt keine
+Registry" fuer die volle TTL und wurde bei jeder Erneuerung neu bestaetigt, weil
+dieselbe erste Seite zurueckkommt. Das war Befund 3 des vorigen Reviews, eine
+Ebene hoeher wieder da — und diesmal haltbar.
+
+Am Quelltext verifiziert und **durch Ausfuehrung belegt**: `50 von 400 Dateien
+gelesen, als abgeschlossene Antwort gemeldet: true`.
+
+Die Loesung ist **nicht** „nichts merken und neu vormerken": das waere eine
+endlose Kriecherei nach einer Antwort, die die Kappung unerreichbar macht. Der
+Eintrag wird gemerkt (erneutes Lesen liefert nichts Neues), zaehlt aber **nicht**
+als geprueft. Ein eigener Test haelt beide Haelften; mit der naiven Variante
+fallen drei Tests.
+
+### Der zweite: `WLO_SKILL_CACHE=off` schaltete den Live-Rueckfall nicht ab
+
+Der Schalter sass nur am Timer. Gemessen: mit `off` **1 Kinderliste** pro
+Anfrage. Das ist das Schlechteste aus beiden Welten — jede Anfrage zahlt den
+vollen Abruf, und ohne Takt laeuft nichts ab, waehrend die Warteschlange bis zum
+Deckel volllaeuft und dauerhaft warnt. Drei Dokumentationsstellen sagten bereits
+das Gegenteil. `ensureRegistries` kehrt jetzt sofort mit 0 zurueck; eigene
+Testdatei `tests/skill-cache-disabled.test.ts` (der Schalter wird beim
+Modul-Load gelesen, also braucht es einen eigenen Prozess).
+
+### Die uebrigen sechs
+
+- **`CACHE_MAX_ENTRIES` gab es nur im Entwurf** — dort zweimal genannt, einmal
+  als *die* Minderung gegen „Warteschlange als Speicherhebel". Jetzt gebaut:
+  2000, aeltester **geprueft**-Zeitpunkt faellt heraus, mit Logzeile.
+- **Die Abbildung `SkillRegistry` → Knotenfeld stand viermal** (Live-Rueckfall,
+  Takt, Seed, `enrichSkillRegistry`). Jetzt `toRegistrySummary`, Rueckgabetyp ist
+  `FormattedNode`s eigenes Feld statt einer zweiten Deklaration. Neuer
+  Disziplin-Test faengt die fuenfte Kopie — als Gegenprobe eingebaut, faellt.
+- **Der Startschuss ueberschrieb Antworten der Kinderliste.** Der Index darf nur
+  fuer eine Sammlung sprechen, die noch niemand geprueft hat.
+- **Kein In-Flight-Schutz:** zwei gleichzeitige Anfragen auf dieselbe kalte
+  Sammlung feuerten zwei Abrufe. Jetzt `lookupOnce`.
+- **`checkedAt`** wird auf beiden Schreibpfaden **nach** dem Abruf genommen.
+- **Entwurfs-Drift:** Interfaces und Datenfluss beschrieben noch den Stand ohne
+  Live-Rueckfall; `ensureRegistries` kam gar nicht vor. Nachgezogen.
+
+### Was das Review ueber die Tests sagte
+
+Fuer die zwei schwersten Befunde gab es **keinen** Test. Beim ersten existierte
+der Fall eine Ebene tiefer (`tests/skill-registry.test.ts`: „a scan that hit its
+cap does not claim the collection has no registry") — der Cache konsumierte das
+Feld nur nicht. Beim zweiten wurde `WLO_SKILL_CACHE=off` nur gegen den Start
+geprueft, nie gegen den Anfragepfad. Beide Luecken sind jetzt geschlossen.
+
+**Rot-gruen belegt:** vor dem Fix fielen 5 der 6 neuen Tests in
+`skill-registry-cache.test.ts` mit den richtigen Meldungen
+(`undefined !== 1`, `1 !== 0`, `2 !== 1`, `2100 !== 2000`, „the listing keeps the
+last word") plus der Schalter-Test (`1 !== 0`).
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1730 Tests, 1730 pass, 0 fail** (9 neue).
+
+### Offen
+
+Unveraendert: der Live-Lauf gegen Staging und der `:::`-Pfad, der auf
+Redaktionsarbeit wartet.

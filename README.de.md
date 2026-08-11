@@ -902,7 +902,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Sitzungsspeicher, App-Signatur, nur OAuth), samt dem, was das Konzept
   **nicht** schützt.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **die Übergabe für das Team und
-  für Chatbot-Entwicklung**: alle 41 Werkzeuge gruppiert, jede von außen
+  für Chatbot-Entwicklung**: alle 42 Werkzeuge gruppiert, jede von außen
   aufrufbare Adresse (MCP, REST, Seiten, OAuth) und das Verhalten, das eine
   Integration kennen muss — Lizenzfilter, Offenlegungs-Felder, zweistufiges
   Schreiben, Grenzen, und was es bewusst nicht gibt.

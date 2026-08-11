@@ -44,6 +44,7 @@ export const TOOL_STATUS: Readonly<Record<string, ToolStatus>> = {
   get_wikipedia_summary: { invoking: 'Wikipedia wird abgefragt…', invoked: 'Zusammenfassung bereit' },
   search_skill: { invoking: 'Skills werden gesucht…', invoked: 'Skills gefunden' },
   get_skill: { invoking: 'Skill-Anleitung wird geladen…', invoked: 'Skill-Anleitung bereit' },
+  get_skill_registry: { invoking: 'Skill-Registry wird gelesen…', invoked: 'Skill-Registry bereit' },
   get_skill_for_task: { invoking: 'Passender Skill wird gesucht…', invoked: 'Skill-Anleitung bereit' },
   wlo_auth_status: { invoking: 'Anmeldestatus wird geprüft…', invoked: 'Anmeldestatus geprüft' },
   wlo_health_check: { invoking: 'Verbindung wird geprüft…', invoked: 'Status geprüft' },

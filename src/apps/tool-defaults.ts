@@ -97,6 +97,7 @@ const TOOL_TITLES: Readonly<Record<string, string>> = {
   get_collection_stats: 'WLO Sammlungsstatistik',
   search_skill: 'WLO Skill-Suche',
   get_skill: 'WLO Skill-Anleitung',
+  get_skill_registry: 'WLO Skills dieser Sammlung',
   get_skill_for_task: 'WLO Skill für die Aufgabe',
   wlo_auth_status: 'WLO Anmeldestatus',
 };

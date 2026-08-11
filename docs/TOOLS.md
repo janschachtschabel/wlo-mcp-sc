@@ -1,6 +1,6 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **41 MCP-Tools**
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **42 MCP-Tools**
 (27 lesende, 14 kuratierende), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
@@ -17,7 +17,7 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 41 Tools (`search_skill` + `get_skill`) |
+| **Standard** | 42 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
 | **`WLO_SKILL_TOOL_MODE=one-tool`** | 40 Tools — beide ersetzt durch `get_skill_for_task` |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
@@ -182,6 +182,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 |---|---|---|
 | `search_skill` | Passende WLO-Skills (kuratierte KI-Prompts) auflisten — nodeId, Titel, Beschreibung, Keywords; mit `collectionId` nur die Skills einer Sammlung, mit `discipline`/`educationalContext` die zu einem Fach bzw. einer Stufe verschlagworteten | *„Welche WLO-Skills passen zu meiner Aufgabe?“* · *„Welche Skills gibt es für Physik?“* |
 | `get_skill` | Die Anleitung (SKILL.md) zu einer nodeId laden — plus die Liste der weiteren Dateien des Skills (Name + nodeId, ohne Inhalt) | *(Folgeaufruf nach `search_skill`)* |
+| `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat — Katalog (Titel, nodeId, Beschreibung, Keywords) plus die Verwendungshinweise der Redaktion aus dem Registry-Dokument | *„Welche Skills gelten für diese Sammlung?“* · *„Was darf ich hier verwenden?“* |
 | `get_skill_for_task` | Wählt den Skill selbst und liefert die Anleitung direkt — nur bei `WLO_SKILL_TOOL_MODE=one-tool` statt der beiden obigen | *„Gib mir die Anleitung für eine Vertretungsstunde“* |
 | `wlo_auth_status` | Mit welchen Rechten der Server gerade liest — anonym, gemeinsames Dienstkonto oder persönliches Konto | *„Bin ich angemeldet?“* · *„Warum sehe ich diesen Inhalt nicht?“* |
 | `wlo_health_check` | Erreichbarkeit der WLO-API prüfen | *„Ist die WLO-Verbindung gerade erreichbar?“* |

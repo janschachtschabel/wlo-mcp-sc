@@ -8,7 +8,12 @@
  */
 
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
-import { getCollectionContents, getNodeTextContent, ngsearch, searchCollectionsByKeyword } from '../wlo-api.js';
+import {
+  getCollectionContents,
+  getNodeTextContent,
+  ngsearch,
+  searchCollectionsByKeyword,
+} from '../wlo-api.js';
 import { enhancedSearch, rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, resolveFacetCounts } from '../formatter.js';
@@ -23,6 +28,8 @@ import { capText } from '../text-cap.js';
 import { dedupeByUrl } from '../result-dedupe.js';
 import { searchWithLicense } from './license-search.js';
 import { getCompendiumTexts } from './compendium.js';
+import { enrichSkillRegistry } from './skill-registry.js';
+import { ensureRegistries } from './skill-registry-cache.js';
 import type { SwimlanePayload } from './topic-page.js';
 import { resolveTopicPageSwimlanes } from './topic-page.js';
 import { searchTopicPageCollections } from '../topic-page-api.js';
@@ -157,6 +164,15 @@ export interface SearchAllOptions {
   /** Enrichments (each opt-in, off by default; each adds bounded round-trips). */
   includeCompendium?: boolean;
   includeTextContent?: boolean;
+  /**
+   * Force a FRESH registry lookup for every collection in the answer.
+   *
+   * Not "include the registry" — that happens either way: `ensureRegistries`
+   * serves from the cache and falls back to the children listing for what it
+   * lacks. This flag exists for the case where a remembered answer (up to the
+   * TTL old) is not good enough, e.g. right after a registry was created.
+   */
+  includeSkillRegistry?: boolean;
   includeWikipedia?: boolean;
   includeTopicPageContent?: boolean;
   maxPerSwimlane?: number;
@@ -182,7 +198,22 @@ export interface LicenseFilterCounts {
 export interface SearchAllEnvelope {
   query: string;
   content:     { total: number; count: number; results: FormattedNode[]; licenseFilter?: LicenseFilterCounts };
-  collections: { total: number; count: number; results: FormattedNode[] };
+  collections: {
+    total: number;
+    count: number;
+    results: FormattedNode[];
+    /**
+     * Set when the registry lookup actually ran for this leg.
+     *
+     * A collection WITHOUT a registry carries no `skillRegistry` field, so the
+     * results cannot tell "not looked up" from "looked up, none there" — and a
+     * renderer that guesses tells a caller its answered question was skipped.
+     * Same shape and the same reason as `content.licenseFilter`: one gate every
+     * renderer hangs its sentence on, rather than each re-deriving the
+     * condition from the options.
+     */
+    registryChecked?: true;
+  };
   topicPages:  { total: number; count: number; results: TopicPageResult[] };
   wikipedia?:  WikiSummary;
 }
@@ -307,13 +338,36 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
     : [];
   const collectionsFmt = want.has('collections') ? collAll.filter(n => !n.topicPageUrl).slice(0, maxColl) : [];
 
-  // Opt-in enrichments run in parallel once the base results are known; each
-  // touches a distinct field, so they cannot conflict on shared nodes.
+  // The operator's switch is read HERE rather than at each call site: three
+  // callers reach `searchAll` (the tool, /api/search, the widget path), and a
+  // condition re-derived per call site is the shape that has already let one
+  // path drift from the rule twice in this codebase. Held in a variable because
+  // the envelope has to report it too — see `collections.registryChecked`.
+  const forceLiveRegistry = Boolean(opts.includeSkillRegistry && collectionsFmt.length);
+
+  // Enrichments run in parallel once the base results are known; each touches a
+  // distinct field, so they cannot conflict on shared nodes. All are opt-in.
   await Promise.all([
     opts.includeTextContent ? enrichTextContent(contentFmt) : Promise.resolve(),
     opts.includeCompendium ? enrichCompendium([...collectionsFmt, ...topicPagesFmt]) : Promise.resolve(),
     opts.includeTopicPageContent ? enrichTopicPageContent(topicPagesFmt, opts.maxPerSwimlane ?? 3) : Promise.resolve(),
+    forceLiveRegistry ? enrichSkillRegistry(collectionsFmt) : Promise.resolve(),
   ]);
+
+  // AFTER the forced pass, so a fresh answer is never overwritten. A cache hit
+  // is a map lookup; a miss falls back to the children listing so the answer
+  // carries the catalogue either way (bounded, pooled — one round-trip).
+  const cacheAnswered = await ensureRegistries(collectionsFmt);
+  // "Checked" means the CHILDREN listing answered for every collection here,
+  // live or remembered. Anything less and the caller keeps its pointer line:
+  // a collection without a registry carries no field, so the results alone
+  // cannot tell "not looked up" from "looked up, none there".
+  //
+  // The live pass has to be its own term, not inferred from `cacheAnswered`: a
+  // live lookup that found NOTHING leaves no field behind either, so counting
+  // fields would report a completed check as skipped.
+  const registryChecked = forceLiveRegistry
+    || (collectionsFmt.length > 0 && cacheAnswered === collectionsFmt.length);
 
   const envelope: SearchAllEnvelope = {
     query,
@@ -329,7 +383,12 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
         ? { licenseFilter: { checked: contentCandidates.length, kept: contentLicensed.length } }
         : {}),
     },
-    collections: { total: collectionsFmt.length, count: collectionsFmt.length, results: collectionsFmt },
+    collections: {
+      total: collectionsFmt.length,
+      count: collectionsFmt.length,
+      results: collectionsFmt,
+      ...(registryChecked ? { registryChecked: true as const } : {}),
+    },
     topicPages:  { total: topicPagesFmt.length, count: topicPagesFmt.length, results: topicPagesFmt },
   };
   if (wiki) envelope.wikipedia = wiki;

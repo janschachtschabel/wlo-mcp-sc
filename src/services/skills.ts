@@ -212,12 +212,16 @@ export async function searchSkills(opts: SearchSkillsOptions): Promise<SkillSumm
  * `/textContent` for a node whose binary is not anonymously downloadable. `null`
  * when neither source answers.
  *
+ * Exported because a skill REGISTRY is a skill record and its document is read
+ * the same way (`skill-registry.ts`). Two copies of this fallback would be two
+ * places for the anonymous-download rule to drift.
+ *
  * A REFERENCE id works here exactly like its original — measured 2026-08-08 on
  * staging: the same 3466 bytes, status 200, from both ids. So this deliberately
  * does NOT resolve `ccm:original` first; `readSkillBundle` has to, because the
  * folder hangs off the original, and the text does not.
  */
-async function readSkillText(nodeId: string): Promise<string | null> {
+export async function readSkillText(nodeId: string): Promise<string | null> {
   return (await getNodeDownloadText(nodeId)) ?? (await getNodeTextContent(nodeId));
 }
 

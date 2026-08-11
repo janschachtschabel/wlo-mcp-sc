@@ -217,3 +217,53 @@ test('every curation tool is registered through the seam that gates it', () => {
   assert.deepEqual(offending, [],
     'use registerCurationTool from tools/curation-shared.ts — it is where the write gate lives');
 });
+
+/** Building the catalogue field by hand instead of through `toRegistrySummary`. */
+const INLINE_REGISTRY_SUMMARY = /\.skillRegistry\s*=\s*\{/;
+
+test('the catalogue a node carries is built in exactly one place', () => {
+  // Four writers produce this field — `enrichSkillRegistry`, and in the cache
+  // the live fallback, the background tick and the corpus seed. Three of them
+  // carried their own copy of the same eight lines until 2026-08-11, which is
+  // the shape this file exists for: the copies drift on the field that is set
+  // least often. Here that is `truncated`, the disclosure that the catalogue is
+  // SHORTER than the registry declares — and a missing disclosure is the one
+  // kind of defect a reader cannot notice.
+  assert.deepEqual(
+    offenders(INLINE_REGISTRY_SUMMARY, []),
+    [],
+    'use toRegistrySummary from services/skill-registry.ts — its return type is FormattedNode\'s own '
+      + 'field, so the shape is checked rather than re-declared',
+  );
+});
+
+test('the skill-registry cache is started only by the transports', () => {
+  // A background timer that fires on module load would hit the network in every
+  // test — `tests/netguard.mjs` would (rightly) fail the run — and would start
+  // fetching in any process that merely imports a service. The two entry points
+  // are the only place a long-lived process is actually being set up.
+  const found = offenders(/startSkillRegistryCache\s*\(/, ['services/skill-registry-cache.ts']);
+  const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
+  assert.deepEqual(files, ['http.ts', 'stdio.ts'],
+    `only the transports may start the cache — got ${JSON.stringify(files)}`);
+});
+
+test('every path that renders collections attaches what the cache knows', () => {
+  // The catalogue is free once the cache is warm, so there is no cost to weigh
+  // and no reason for a path to opt out. What there IS reason to fear is drift:
+  // a new collection-rendering tool that silently carries no catalogue, which
+  // reads to a model as "this collection has no approved skills". The expected
+  // files are named so that adding one has to be a deliberate edit here.
+  //
+  // `tools/browse.ts` is deliberately NOT on this list. It renders its own
+  // line-oriented formats — a compact two-level outline, and a portal list with
+  // its own field set — neither of which carries a registry line. Attaching
+  // there would put the field into `structuredContent` while the text dropped
+  // it, which is the "an envelope field is not a disclosure if the renderer
+  // discards it" failure this project has already paid for twice. Rendering it
+  // would mean a second copy of `registryLines`. Out until browse needs it.
+  const found = offenders(/ensureRegistries\s*\(/, ['services/skill-registry-cache.ts']);
+  const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
+  assert.deepEqual(files, ['services/search.ts', 'tools/collections.ts', 'tools/node-relations.ts'],
+    `collection-rendering paths must attach the cache — got ${JSON.stringify(files)}`);
+});

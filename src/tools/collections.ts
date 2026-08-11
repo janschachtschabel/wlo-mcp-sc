@@ -18,6 +18,8 @@ import {
 import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, renderToJson, renderToText } from '../formatter.js';
+import { enrichSkillRegistry } from '../services/skill-registry.js';
+import { ensureRegistries } from '../services/skill-registry-cache.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, formatUnresolvedHint, licenseFilterNotice } from '../filter-criteria.js';
 import { queryMetaContent, toolError } from './shared.js';
@@ -38,9 +40,9 @@ export function registerCollectionTools(server: McpServer, searchResultsWidgetUr
     widgetUri: searchResultsWidgetUri,
     title: 'WLO Sammlungssuche',
     description: `Finde WLO-Sammlungen zu einem Thema — kuratierte Bündel von Materialien nach Thema/Fach/Stufe. Für Anfragen wie "Themenseite Algebra", "Sammlung Klimawandel", "Portal Mathematik". Für einzelne Materialien (Videos/Arbeitsblätter) nutze stattdessen search_wlo_content oder search_wlo_all.
-Sammlung und Themenseite sind NICHT dasselbe: eine Themenseite ist eine Sammlung, die zusätzlich ein kuratiertes Seiten-Layout mit Schwimmlinien trägt. Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen haben eine (gemessen für "Mathematik": 5 Sammlungen, davon 1 mit Themenseite). Dieses Werkzeug findet ALLE Sammlungen; geht es ausschließlich um Themenseiten, ist search_wlo_topic_pages das richtige.
-Mit der nodeId weiter zu get_collection_contents (die Inhalte) oder get_topic_page_content (die Schwimmlinien).
-Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wirken auf die Metadaten der Sammlung selbst — ohne passenden Fach-/Stufen-Eintrag fällt sie heraus.`,
+Sammlung und Themenseite sind NICHT dasselbe: eine Themenseite ist eine Sammlung, die zusätzlich ein kuratiertes Seiten-Layout mit Schwimmlinien trägt. Jede Themenseite ist eine Sammlung, aber nur manche Sammlungen haben eine. Dieses Werkzeug findet ALLE Sammlungen; geht es ausschließlich um Themenseiten, ist search_wlo_topic_pages das richtige.
+Mit der nodeId weiter zu get_collection_contents (die Inhalte), get_topic_page_content (die Schwimmlinien) oder get_skill_registry (die für diese Sammlung freigegebenen Skills).
+Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wirken auf die Metadaten der Sammlung — ohne passenden Fach-/Stufen-Eintrag fällt sie heraus.`,
     inputSchema: {
       query: z.string().optional().default('').describe('Search query in German, e.g. "Klimawandel" or "Algebra". Leave empty to browse top-level collections.'),
       parentNodeId: z.string().optional().describe(
@@ -58,6 +60,13 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
       ),
       excludeNodeIds: z.array(z.string()).max(200).optional().describe(
         'Skip these node IDs in the result (already-seen items, e.g. for paginated drill-downs). Max 200.'
+      ),
+      includeSkillRegistry: z.boolean().optional().default(false).describe(
+        'Die freigegebenen Skills je Sammlung JETZT frisch abrufen, statt eine '
+        + 'gemerkte Antwort zu nehmen (die bis zu 10 Minuten alt sein kann). '
+        + 'Kostet 2 Abrufe je Sammlung, rund 1,0–1,4 Sekunden. NICHT nötig, damit der '
+        + 'Katalog überhaupt kommt — der ist ohnehin in der Antwort. Nur nötig, wenn '
+        + 'gerade eine Registry angelegt oder geändert wurde.'
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown').describe(
         '"markdown" (default, human-readable) or "json" (structured)'
@@ -80,7 +89,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
       const keepNode = (n: WloNode) =>
         !(excluded.size && excluded.has(n.ref?.id ?? '')) && nodeMatchesCriteria(n, collCriteria);
 
-      const renderOut = (nodes: WloNode[], qType: string, emptyMsg = 'Keine Sammlungen gefunden.') => {
+      const renderOut = async (nodes: WloNode[], qType: string, emptyMsg = 'Keine Sammlungen gefunden.') => {
         const kept = nodes.filter(keepNode);
         // Shown-set semantics: after local exclusion + criteria filtering the
         // pre-filter backend count would overstate the result.
@@ -90,9 +99,18 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         // otherwise only removes deleted nodes — it cannot lose anything relevant.
         const ranked = rerankNodes(kept, params.query ?? '');
         const formatted = formatNodes(ranked.slice(0, maxResults));
+        // Opt-in and after the cap, so the cost is bounded by what is shown:
+        // 2 upstream calls per collection, ~1.0–1.4 s (measured 2026-08-10).
+        if (params.includeSkillRegistry) await enrichSkillRegistry(formatted);
+        // After the cap and after any live pass: free either way, and a cold
+        // collection is queued so the next call for it costs nothing.
+        await ensureRegistries(formatted);
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(formatted, total)
-          : (renderToText(formatted, total) || emptyMsg);
+          // No pointer once the caller asked for the lookup: a collection
+          // WITHOUT a registry carries no field, so "nicht geprüft" beside a
+          // requested check is simply false, whatever the check found.
+          : (renderToText(formatted, total, { registryHint: !params.includeSkillRegistry }) || emptyMsg);
         const baseCriteria: LabeledCriterion[] = params.query?.trim()
           ? [{ property: 'ngsearchword', values: [params.query] }]
           : [];
@@ -126,7 +144,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           // When every direct hit was excluded or filtered out, fall through to
           // the tree traversal instead of returning an empty page (audit Q-3).
           if (keptDirect.length > 0) {
-            return renderOut(keptDirect, 'keyword_collections');
+            return await renderOut(keptDirect, 'keyword_collections');
           }
         }
 
@@ -140,7 +158,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         }
 
         if (!query) {
-          return renderOut(level1.nodes, 'collection_children');
+          return await renderOut(level1.nodes, 'collection_children');
         }
 
         const matches = await findCollectionsByTreeTraversal(level1.nodes, query);
@@ -152,7 +170,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           return { content, structuredContent: { total: 0, count: 0, results: [] } };
         }
 
-        return renderOut(matches, 'collection_tree_traversal');
+        return await renderOut(matches, 'collection_tree_traversal');
       } catch (err) {
         return toolError('Fehler bei der Sammlungssuche', err);
       }
@@ -224,6 +242,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
           }
           allNodes = formatNodes(nodes.slice(0, maxResults));
         }
+        await ensureRegistries(allNodes);
 
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(allNodes, totalHits)
@@ -253,7 +272,8 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
     widgetUri: searchResultsWidgetUri,
     description: `Durchsuche/filtere die Inhalte INNERHALB einer bestimmten WLO-Sammlung — z.B. "welche Videos zu Zellteilung gibt es in dieser Sammlung?". Nutze dies, wenn du bereits eine Sammlung (nodeId) hast und sie per Volltext und Filtern (Fach/Stufe/Typ) eingrenzen willst.
 Für eine ungebundene Suche über ganz WLO nutze search_wlo_content; um Inhalte ungefiltert zu listen get_collection_contents.
-NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.`,
+NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.
+Welche Skills für diese Sammlung freigegeben sind, sagt get_skill_registry mit derselben nodeId.`,
     inputSchema: {
       nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),

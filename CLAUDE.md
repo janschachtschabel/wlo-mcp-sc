@@ -337,6 +337,169 @@ The current rebuild/extension is designed in:
   confirm token binds to the sentence naming page and both variants with ids —
   a document of store refs is not something a person can check in a preview.
 
+- **Skill-Registry pro Inhaltssammlung — CODE COMPLETE (P0–P3, 2026-08-10);
+  only the live `:::` run is open, and it waits on editorial work:**
+  - Design: `docs/plans/2026-08-10-skill-registry-design.md`
+  - Tasks:  `docs/plans/2026-08-10-skill-registry-tasks.md` (12 Aufgaben, 4 Phasen)
+
+  The editorial process inverts the question `search_skill` answers: not "which
+  skills exist" but "which skills are APPROVED for this collection", declared by
+  a registry document inside the collection. A registry **is** a skill record —
+  same `ai_prompt` content type, same attached Markdown, same `:::` blocks — so
+  `parseSkillReferences` and `readSkillText` are reused rather than rebuilt (both
+  duplications were written before being caught; `readSkillText` is exported from
+  `skills.ts` for exactly this).
+
+  Four measurements from T1 bind any change here (2026-08-10, re-measure before
+  contradicting): (1) `/children` carries `mimetype`/`mediatype` in EVERY
+  projection but `ccm:oeh_extendedType` **only when the request asks for it** —
+  same node, same call, empty under `DISPLAY_PROPS` — so the registry lookup must
+  pass `SKILL_PROPS` or every candidate is invisible. (2) A SKILL.md reports
+  `text/x-web-markdown`, not `text/markdown` (25/25). (3) **28/28** skill files
+  are named `SKILL.md`, so the `SKILL_REGISTRY.md` tie-break distinguishes
+  nothing today and the ambiguity disclosure is the RULE, not a corner case.
+  (4) **0/28** documents contain `:::` at all and **0/28** are collection
+  references — the block format is documented but unexercised on staging, so that
+  path counts as UNMEASURED until the live run, which waits on editorial work
+  rather than on code.
+
+  The registry is found through the collection's CHILDREN listing, never the
+  search index: the two are separate systems, and the Optik case (2026-08-09)
+  showed a record can fall out of the index while sitting in the node store. An
+  approval list must not depend on it.
+
+  Two rules the service holds: the catalogue has TWO cost tiers in ONE function
+  (`resolveHeads`) — the search tier costs exactly 2 upstream calls per
+  collection no matter how many skills are declared, because the `:::` block
+  already carries the title, and a test COUNTS those calls because the cost is
+  part of the contract; and a found-but-unreadable registry comes back NAMED with
+  `reason: 'unreadable'`, because "there is no registry here" is a different and
+  wrong claim.
+
+  P3 adds the search-side enrichment (`enrichSkillRegistry` in
+  `services/search.ts`), rendered once in `renderToText` (both tools go through
+  it, every line via `oneLine`, at most 4 skills listed per collection with the
+  rest counted). It is **off by default** and the default is a MEASUREMENT: the
+  live run showed ~1.0–1.4 s added per search, paid through the `/children` call
+  whether or not a registry exists — neither collection in that run had one and
+  it still cost 1.4 s. What replaces it is FREE: a pointer line on every
+  collection result (`registryLines` emits it when `skillRegistry` is absent and
+  `nodeType === 'collection'`), the server instructions, and cross-references
+  pinned in `tests/tool-descriptions.test.ts`. The lookup then happens once, for
+  the one collection in play, rather than for all five. Three rules bind any
+  change: `WLO_REGISTRY_IN_SEARCH` is read INSIDE `searchAll`, not at the three
+  call sites; a new `FormattedNode` field
+  must be DECLARED in `formattedNodeSchema`, because zod strips unknown keys and
+  the field would vanish from every `structuredContent` with nothing failing
+  (found in this diff); and the measured cost is **~1.0–1.4 s** per search, not
+  the 0.5 s first estimated — driven by the child COUNT of the largest
+  collection, while the projection costs nothing (27 fields vs 3: 531 vs 523 ms,
+  measured before the "obvious" optimisation was written, which is why it was
+  not). Staging's variance is large enough that one measurement pair proves
+  nothing: a run WITHOUT the enrichment took 7.0 s, slower than any run with it.
+
+  Live-verified 2026-08-10: `no_registry` on a real collection,
+  `collection_not_found` on an unknown id, and an unreadable listing degrading
+  rather than throwing. **NOT verified live: the `:::` path itself** — 0/28 staging
+  documents contain one, so it rests on unit tests until the editorial team
+  creates a registry.
+
+  The review of this package (2026-08-10, 7 findings) adds four rules and they
+  bind any change here. (1) A registry's TITLE is read through `nodeTitle`
+  (`node-match.ts`), the canonical chain, never through one property: `cm:title`
+  is in the same projection and is the carrier this repo measured as actually set
+  — reading `cclom:title` alone made a marked registry invisible and, with a
+  second `ai_prompt` document present, answered with the WRONG document's
+  catalogue. Every fixture goes through `makeNode`, which writes only
+  `cclom:title`, so the suite was validating the implementation's choice; a
+  detection test must set `cm:title`. (2) The registry pointer is an ANSWER-level
+  line, not a list-level one — `registryHintFor` is exported and a composed
+  answer (`search_wlo_all`: three lists, and topic pages are `ccm:map` so they
+  format as collections; `get_related_content`: two) suppresses `renderToText`'s
+  own hint and emits it once. (3) Whether the lookup RAN is reported as
+  `collections.registryChecked`, the same shape and the same reason as
+  `content.licenseFilter`: a collection without a registry carries no field, so
+  the results cannot tell "not looked up" from "looked up, none there", and a
+  renderer that guesses tells a caller its answered question was skipped.
+  (4) A bounded scan discloses its bound — `scanTruncated {scanned,total}` from
+  `pagination.total`, because "diese Sammlung führt keine Registry" over 50 of
+  400 files is a claim the read does not support. Corollary that cost two of the
+  seven findings: `WLO_REGISTRY_IN_SEARCH` living inside `searchAll` means every
+  caller inherits the cost, so a path that cannot RENDER the field either learns
+  to (`/api/search?format=html`) or declines it (`knowledge.ts`, whose
+  `{id,title,url}` shape has nowhere to put it).
+
+- **Skill-Registry-Cache — P1–P3 fertig (2026-08-11), P4 Doku läuft:**
+  - Design: `docs/plans/2026-08-11-skill-registry-cache-design.md`
+  - Tasks:  `docs/plans/2026-08-11-skill-registry-cache-tasks.md` (11 Aufgaben, 4 Phasen)
+
+  `services/skill-registry-cache.ts` makes the catalogue part of every collection
+  answer: `ensureRegistries` serves from memory and falls back to a bounded live
+  children listing for what it lacks. That retires `WLO_REGISTRY_IN_SEARCH`
+  (gone) and re-points `includeSkillRegistry` at FORCING a fresh lookup — it no
+  longer decides whether the registry appears at all. Five rules bind any change.
+
+  (1) **A NEGATIVE may only come from the CHILDREN listing; the index may only
+  produce a POSITIVE.** The asymmetry is the whole design. A corpus hit is a
+  record the index handed over, so "this collection HAS a registry" rests on
+  evidence and is adopted at once (fast path: one document read, no listing).
+  Absence from the index rests on a gap nobody can see — a record can fall out
+  of it while sitting in the node store (2026-08-09) — so a parent the corpus
+  does not name stays UNKNOWN and the listing answers it. Same asymmetry inside
+  the tick: only a lookup that ANSWERED is remembered; a throw or `unreadable`
+  is remembered as nothing and re-queued, or an outage becomes a statement.
+  (Measured 2026-08-11: `virtual:primaryparent_nodeid` is on 28/28 records and
+  already in `SKILL_PROPS`, but for harvested material the primary parent is the
+  spider folder — `dwu_spider`, `leifi_spider` — which is a `ccm:map` too, so a
+  type check would not save you; looking up BY collection id is what makes the
+  mapping self-validating.)
+
+  (2) **The live fallback is bounded per request** (`LIVE_FALLBACK_MAX = 10`,
+  pooled): a listing of 50 collections must not fire 50 upstream calls. What
+  does not fit is queued and reported as UNANSWERED, so the caller's "nicht
+  geprüft" line stays true instead of implying a look that never happened.
+  `collection_not_found` IS remembered — a nodeId that does not exist will not
+  start existing.
+
+  (3) **No pre-built index of the tree.** Measured 2026-08-11: level 1 = 35
+  collections, level 2 = 331, level 3 ≈ 1335 → a full walk is ~1700 collections
+  and ~3400 requests per cycle, ~11 req/s sustained on a 5-minute schedule.
+  The queue is bounded by real usage instead (a search returns five).
+  Re-measure before contradicting.
+
+  (4) **`registryChecked` needs the live pass as its own term**, not inferred
+  from how many nodes carry a field: a live lookup that found NOTHING also
+  leaves no field, so counting fields reports a completed check as skipped
+  (caught by an existing test the day it was written).
+
+  (5) **The cache starts ONLY from `http.ts`/`stdio.ts`**, never at module load —
+  a timer firing on import hits the network in every test and `tests/netguard.mjs`
+  fails the run. Pinned by `tests/shared-rule-discipline.test.ts`, which also
+  names the three files that must call `ensureRegistries`.
+  `tools/browse.ts` is deliberately excluded: it renders its own line formats
+  with no registry line, so attaching would put the field in
+  `structuredContent` while the text dropped it.
+
+  The review of this package (2026-08-11, 8 findings) adds three rules and they
+  bind any change here. (6) **A lookup has THREE outcomes, not two.** Beside
+  "answered" and "failed" there is the scan cut short at `REGISTRY_SCAN_MAX`:
+  `loadSkillRegistry` reports `scanTruncated` for exactly this, and both cache
+  paths dropped it — so 50 files read of 400 was cached as "this collection has
+  no registry", held for the TTL and re-affirmed by every refresh, because the
+  same first page comes back each time. It is remembered (re-reading answers
+  nothing) but does NOT count as answered, so the caller keeps its pointer line.
+  Do not simplify that to "remember nothing and re-queue": that is an endless
+  crawl for an answer the cap makes unobtainable. (7) **`WLO_SKILL_CACHE` covers
+  the REQUEST path**, not only the timer — the switch is flipped for the cost,
+  and a live fallback that kept running charges every request the full children
+  listing while no tick exists to expire anything or drain the queue it feeds.
+  (8) There is **one** function that turns a `SkillRegistry` into the field a
+  result node carries (`toRegistrySummary`, `services/skill-registry.ts`), its
+  return type is `FormattedNode`'s own field rather than a re-declaration, and
+  the discipline test fails a second copy — four existed, and what a copy drifts
+  on is `truncated`, the disclosure that the catalogue is shorter than the
+  registry declares.
+
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context
 before the next package.

@@ -66,6 +66,23 @@ export interface FormattedNode {
    * detail path (get_node_details / get_nodes_details).
    */
   compendiumText?: string;
+  /**
+   * The skill registry this COLLECTION declares — which skills are approved for
+   * it (`services/skill-registry.ts`). Present only when the collection carries
+   * one; no field means no registry.
+   *
+   * Entries carry title and nodeId only: both come out of the registry
+   * document's `:::` blocks, so the whole enrichment costs two requests per
+   * collection regardless of how many skills are declared. Description and
+   * keywords need one read per skill and stay with `get_skill_registry`.
+   */
+  skillRegistry?: {
+    nodeId: string;
+    title: string;
+    entries: { nodeId: string; title: string }[];
+    /** Set when the registry declares more skills than the catalogue lists. */
+    truncated?: { listed: number; referenced: number };
+  };
 }
 
 /**
@@ -296,7 +313,91 @@ function headingFor(title: string, url: string): string {
 }
 
 /** Render a list of FormattedNodes as a compact text format for LLM consumption. */
-export function renderToText(nodes: FormattedNode[], totalHits?: number): string {
+/**
+ * Skills shown per collection in a LISTING. The registry itself is capped
+ * separately (`REGISTRY_MAX`); this is the narrower bound that keeps one search
+ * answer readable — five collections carrying thirty skills each is a wall of
+ * text where a search result should be.
+ */
+const REGISTRY_LINES_MAX = 4;
+
+/**
+ * The registry a collection declares, as listing lines — one per part, so the
+ * caller's `oneLine` pass covers each of them.
+ *
+ * Two numbers can differ here and both are stated: how many skills the registry
+ * DECLARES (`truncated.referenced`, set when the service capped it) and how many
+ * this listing SHOWS. A short list that silently stands for a long one reads as
+ * the whole approval list, which is the one thing it must not do.
+ */
+function registryLines(n: FormattedNode): string[] {
+  const r = n.skillRegistry;
+  if (!r) return [];
+  const declared = r.truncated?.referenced ?? r.entries.length;
+  // What `get_skill_registry` will actually return. It caps at REGISTRY_MAX too,
+  // so promising "alle" beside a larger declared number points at a tool that
+  // cannot keep the promise — the bound belongs next to the number it bounds.
+  const reach = r.truncated
+    ? `die ersten ${r.truncated.listed} mit get_skill_registry`
+    : 'vollständig mit get_skill_registry';
+  const shown = r.entries.slice(0, REGISTRY_LINES_MAX);
+  const lines = [
+    `Skill-Registry: ${r.title || '(ohne Titel)'} (nodeId: ${r.nodeId}) — `
+    + `${declared} freigegebene Skills, ${reach}`,
+  ];
+  for (const e of shown) lines.push(`  Skill: ${e.title} (nodeId: ${e.nodeId}) — laden mit get_skill`);
+  if (declared > shown.length) lines.push(`  … und ${declared - shown.length} weitere`);
+  return lines;
+}
+
+/**
+ * One line telling a model that a collection MAY declare approved skills, and
+ * when it is worth finding out. Emitted once per answer, not per collection.
+ *
+ * Everything about this sentence follows from one constraint: **nothing has been
+ * read**. The search does not look a registry up — measured 2026-08-10 at
+ * ~1.0–1.4 s per search, paid through the `/children` call whether or not a
+ * registry exists — so this line cannot claim one is there. An earlier draft
+ * said "Skills für diese Sammlung", which is an existence claim over data nobody
+ * fetched; with today's staging (no collection has a registry yet) it would be
+ * wrong essentially every time, and a model may report it to a user before
+ * checking.
+ *
+ * So it says three things and no more: that the answer is UNKNOWN, HOW to get
+ * it, and WHEN that is worth a round-trip. The third is what keeps it from
+ * becoming noise — without an occasion, a hint that fires on every collection
+ * listing gets learned as decoration and ignored.
+ *
+ * Once per ANSWER, because the sentence is identical for every collection and
+ * the ids are all in the same block anyway — and "answer" is not the same as
+ * "list". `search_wlo_all` renders three lists into one answer and topic pages
+ * are `ccm:map`, so a hint emitted per list fired twice; `get_related_content`
+ * renders two. Which is why this is exported: a composed answer suppresses the
+ * per-list hint (`renderToText`'s `registryHint: false`) and calls this once
+ * over the union.
+ */
+export function registryHintFor(nodes: FormattedNode[]): string[] {
+  // Only when at least one collection has NOT already answered the question.
+  // Under the (opt-in) search enrichment a collection carries its registry, and
+  // repeating "not checked" beside the check would be plainly false.
+  const unanswered = nodes.some(n => n.nodeType === 'collection' && !n.skillRegistry);
+  if (!unanswered) return [];
+  return ['Hinweis: Ob eine Sammlung eigene Arbeitsanleitungen („Skills") freigegeben hat, '
+    + 'ist hier nicht geprüft — viele führen keine. `get_skill_registry` mit ihrer nodeId '
+    + 'beantwortet es, und lohnt sich, wenn es um das Vorgehen MIT einer Sammlung geht '
+    + '(„wie arbeite ich damit", „was ist hier vorgesehen") statt um ihre Inhalte.'];
+}
+
+/**
+ * @param opts.registryHint `false` for one list of an answer composed of
+ *   several — the caller then emits `registryHintFor` once over all of them, or
+ *   omits it because it already looked the registries up.
+ */
+export function renderToText(
+  nodes: FormattedNode[],
+  totalHits?: number,
+  opts: { registryHint?: boolean } = {},
+): string {
   const lines: string[] = [];
   if (totalHits !== undefined) {
     lines.push(`Gefundene Treffer gesamt: ${totalHits}, zeige ${nodes.length}\n`);
@@ -324,11 +425,13 @@ export function renderToText(nodes: FormattedNode[], totalHits?: number): string
     if (n.topicPageUrl)                parts.push(`Themenseite: ${n.topicPageUrl}`);
     if (n.compendiumText)              parts.push(`Kompendium: ${n.compendiumText.slice(0, 500)}${n.compendiumText.length > 500 ? '…' : ''}`);
     if (n.textContent)                 parts.push(`Volltext (Auszug): ${n.textContent.slice(0, 500)}${n.textContent.length > 500 ? '…' : ''}`);
+    parts.push(...registryLines(n));
     parts.push(`Typ: ${n.nodeType === 'collection' ? 'Sammlung' : 'Inhalt'}`);
     // Every part above is exactly one logical line, so flattening here covers
     // all of them — including fields added later.
     lines.push(parts.map(oneLine).join('\n'));
     lines.push('');
   }
+  if (opts.registryHint !== false) lines.push(...registryHintFor(nodes).map(oneLine));
   return lines.join('\n').trim();
 }
