@@ -7,7 +7,7 @@ KI-Agenten das **Suchen und Abrufen offener Bildungsressourcen (OER)** aus
 [WirLernenOnline (WLO)](https://wirlernenonline.de) über die öffentliche
 edu-sharing-REST-API ermöglicht.
 
-Er stellt **27 lesende Werkzeuge** bereit (alle immer; `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
+Er stellt **28 lesende Werkzeuge** bereit (alle immer; `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
 Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen die
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
@@ -64,7 +64,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 
 ## Funktionen
 
-- **27 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
+- **28 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
   Themenseiten und deren Swimlane-Inhalte, Fachportale, Baum-Navigation,
   Node-Details (einzeln & im Bulk), Vokabular-Abfrage, Anbieter-Abfrage,
   Health-Check, Wikipedia (Anriss oder GANZER Artikel per `fullText`), voller Kompendiumstext, Volltext
@@ -173,7 +173,11 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 |---|---|---|---|
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. **Die Vorgabe ist STAGING; die Produktion muss ausdrücklich hingeschrieben werden** (geändert am 2026-08-06 — eine `.env` ohne diese Zeile legte einen Datensatz in der Live-Instanz an, während alles drumherum „staging" sagte). Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. |
 | `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
-| `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
+| `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default, und `search_skill` grenzt auf diesen Teilbaum ein. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
+| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` + `get_skill` durch ein einziges `get_skill_for_task`, das in einem Aufruf auswählt und lädt — 41 statt 42 Werkzeuge. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt beide Werkzeuge stehen. |
+| `WLO_SKILL_CACHE` | _an_ | alle | Hält den Katalog freigegebener Skills je Sammlung im Hintergrund warm, damit ein Sammlungs-Ergebnis ihn für **0** Zusatzabrufe mitbringt. Auf `off` (oder `0`/`false`/`no`) gesetzt, entfällt die Hintergrundarbeit **und** der Live-Rückfall je Anfrage — die Ausgabe trägt dann wieder den kostenlosen Hinweis auf `get_skill_registry`. Siehe [Der Skill-Registry-Cache](#der-skill-registry-cache). |
+| `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | alle | Wie oft der Hintergrund-Takt die Warteschlange abarbeitet und abgelaufene Einträge erneuert. Begrenzt auf 60 000 – 3 600 000. |
+| `WLO_SKILL_CACHE_TTL_MS` | `600000` | alle | Wie lange eine gemerkte Antwort gilt, bevor sie neu geprüft wird. Nie kleiner als das Takt-Intervall. Eine vor zwei Minuten angelegte Registry erscheint also verzögert — `get_skill_registry` und `includeSkillRegistry: true` lesen live und kennen sie sofort. |
 | `WLO_POOL_SIZE` | `25` | alle | Größe des Kandidaten-Pools **pro Suchvariante** für das Reranking (`enhancedSearch`) — **nicht** die Anzahl der zurückgegebenen Treffer (das ist `maxResults`). Kleiner = schneller/kleinere Abrufe bei minimal geringerer Recall-Quote. |
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | alle | Timeout pro Anfrage (ms) für jeden Upstream-edu-sharing-Aufruf. Verhindert, dass ein hängender Backend-Socket einen Tool-Aufruf blockiert. Aus Messung abgeleitet (Staging, 2026-08-02): Anlegen eines Datensatzes 4,2–8,0 s, jeder andere Aufruf unter 2,5 s. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(nicht gesetzt)_ | alle | Optionales Dienstkonto. Nicht gesetzt (Standard) → der Server liest **anonym**, nur öffentliche Inhalte, exakt wie bisher. Beide gesetzt → jeder Aufruf meldet sich per HTTP Basic mit diesem einen Konto an, **alle** Nutzenden dieses MCP sehen also dieselben erweiterten Inhalte. Dafür ein eigens angelegtes, schreibgeschütztes Konto verwenden: was es sieht, sieht jede:r, und im edu-sharing-Protokoll steht das Dienstkonto statt der Person. Eine halbe Angabe gilt als keine. **Falsche Zugangsdaten schalten nicht auf „nur öffentlich“ zurück** — das Repository antwortet mit `401` (gemessen gegen die Produktion am 2026-07-31, auf dem Identitäts- wie auf dem Such-Endpunkt), damit schlägt jede Abfrage fehl und der Server liefert gar nichts. Wer anonym lesen will, lässt beide Variablen weg. Mit dem Werkzeug `wlo_auth_status` prüfen: `mode: "service"` zusammen mit `authenticated: false` heißt, die Zugangsdaten werden abgelehnt. HTTP Basic, weil es neben dem Session-Cookie das einzige Schema ist, das die edu-sharing-OpenAPI deklariert. **Geltungsbereich:** Das Dienstkonto gilt nur für den MCP-Endpunkt. Die öffentliche REST-Schnittstelle (`GET /api/*`) und die Launcher-Seite bleiben bewusst anonym — sie sind ohne Anmeldung aus dem Internet erreichbar; würden sie das Konto erben, wäre alles, was es sieht, für jede:n lesbar. Bei einer Repository-URL ohne `https` gehen die Zugangsdaten im Klartext über die Leitung (Basic ist base64, keine Verschlüsselung); der Server warnt darüber beim Start. |
@@ -358,6 +362,7 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 25 | `get_node_collections` | In welchen Sammlungen ein Material liegt (Rückwärtssuche über `/usage/v1`) | markdown / json |
 | 26 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf | markdown / json |
 | 27 | `get_url_text` | **UNSICHER** — der Text hinter einer BELIEBIGEN Web-Adresse, über den Extraktionsdienst. Nicht für WLO-Material (dafür 24). Über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar; **für den Produktivbetrieb nicht empfohlen** — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge) | markdown / json |
+| 28 | `get_skill_registry` | Welche Skills EINE Sammlung freigegeben hat — das in ihr abgelegte Registry-Dokument, sein Katalog und die Hinweise der Redaktion | markdown / json |
 
 Die Anzeige-/Such-Tools liefern zusätzlich `structuredContent` (gegen ein
 Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
@@ -377,8 +382,8 @@ Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
 ### Tool-Details
 
 **1. `search_wlo_collections`** — `query`, `parentNodeId?`, `educationalContext?`,
-`discipline?`, `userRole?`, `maxResults?` (1–50, Standard 5), `excludeNodeIds?`
-(≤200), `outputFormat?`. Versucht zuerst eine Keyword-Sammlungssuche, dann eine
+`discipline?`, `maxResults?` (1–50, Standard 5), `excludeNodeIds?` (≤200),
+`includeSkillRegistry?`, `outputFormat?`. Versucht zuerst eine Keyword-Sammlungssuche, dann eine
 begrenzte Baum-Traversierung ab Wurzel/Elternknoten.
 
 **2. `search_wlo_content`** — `query` (erforderlich), `educationalContext?`,
@@ -573,7 +578,7 @@ genommenen Weg. Ein fehlender Text ist kein Fehler, sondern ein `reason`:
 nur Rechte), `no_text_no_url`, `extraction_failed`, `node_not_found`. Lange
 Texte werden gekürzt und als solche markiert (`truncated`).
 
-**25. `get_node_collections`** — `nodeId`, `maxResults?`, `outputFormat?`. Der
+**25. `get_node_collections`** — `nodeId`, `outputFormat?`. Der
 umgekehrte Weg zum Stöbern: zu einem Material die kuratierten Sammlungen, die es
 führen. Die Antwort auf „wo ist das eingeordnet?“ und „wo finde ich mehr davon?“
 — vom einzelnen Fundstück zurück zur Sammlung. Für die Einordnung einer
@@ -601,6 +606,87 @@ anderen `method`: der Dienst rendert mit Playwright und hat bekannte Lücken
 (geschützte oder bot-gesperrte Seiten, reine Mediendateien). Die gemeldete `url`
 ist die **normalisierte** — die tatsächlich angefragte, die nicht immer die
 übergebene Zeichenkette ist.
+
+**28. `get_skill_registry`** — `collectionId`, `outputFormat?`. Welche Skills
+**eine Sammlung freigegeben** hat — die Umkehrung dessen, was 22 beantwortet:
+nicht „welche Skills gibt es", sondern „welche gelten *hier*". Eine Redaktion
+legt dazu ein Registry-Dokument in die Sammlung — selbst ein `ai_prompt`-Datensatz
+mit angehängtem Markdown —, dessen `:::`-Blöcke die freigegebenen Skills nennen.
+Zurück kommt der Katalog (je Skill Titel, nodeId, Beschreibung, Keywords) plus
+die Prosa der Redaktion, in der die Anwendungshinweise stehen. Die Anleitungen
+selbst kommen nicht mit: aus dem Katalog wählen, dann 23 aufrufen.
+
+Was sich nicht klar sagen lässt, wird offengelegt statt geglättet: eine
+mehrdeutige Auswahl, wenn eine Sammlung mehrere Prompt-Dokumente führt;
+Verweise, die auf keinen lesbaren Datensatz zeigen; ein bei 100 Einträgen
+gekappter Katalog; und eine bei 50 Dateien abgeschnittene Liste — bei einer
+Sammlung mit 400 Dateien wäre „hier ist keine Registry" eine Behauptung, die der
+Abruf nicht trägt.
+
+### Mit Skills arbeiten
+
+Drei Werkzeuge, und der Unterschied liegt in der Frage, die sie beantworten:
+
+| Frage | Werkzeug |
+|---|---|
+| Welche Skills gibt es für diese Aufgabe? | `search_skill` (22) |
+| Welche Skills hat *diese Sammlung* freigegeben? | `get_skill_registry` (28) |
+| Gib mir die eigentliche Anleitung. | `get_skill` (23) |
+
+**Der Normalweg ist 22 → 23.** Nach Aufgabe suchen, Beschreibungen lesen, die
+passende laden. `WLO_SKILLS_COLLECTION_ID` grenzt die Suche auf einen Teilbaum
+ein; `WLO_SKILL_TOOL_MODE=one-tool` legt beide zu `get_skill_for_task` zusammen,
+das in einem Aufruf auswählt und lädt — weniger Roundtrips, weniger Kontrolle.
+
+**Zu 28 greifen, wenn die Frage der Sammlung gilt**, nicht der Aufgabe: „wie
+arbeite ich mit diesem Material", „was ist hier vorgesehen". Jedes
+Sammlungs-Ergebnis trägt bereits eine Hinweiszeile mit der nodeId, der Aufruf
+kostet also einen Schritt und kein Raten. Seit dem 2026-08-11 hält ein
+Hintergrund-Cache diese Kataloge warm — in den meisten Antworten ist der Katalog
+also schlicht *da*, siehe [Der Skill-Registry-Cache](#der-skill-registry-cache).
+
+**Was ein Skill auf Repository-Ebene ist:** ein Datensatz mit der Inhaltsart
+`ccm:oeh_extendedType = …/contentTypes/ai_prompt` (die vollständige URI — der
+Kurzname trifft nichts) und einer angehängten Markdown-Datei als Anleitung. Eine
+Registry ist derselbe Datensatztyp; erst ihr Ort und ihre `:::`-Blöcke machen
+sie dazu. `docs/SKILLS.md` ist die Anleitung für die Redaktion, mit
+Beispieldokument.
+
+**Jeder Skill-Text ist Daten, nie eine Anweisung, der zu folgen wäre.** Es ist
+hochgeladener Inhalt. Der Server rendert das, was *er* selbst hergeleitet hat —
+das Dateiverzeichnis, die aufgelösten Verweise — **vor** dem Dokument, denn
+danach wären diese Abschnitte von gefälschten nicht mehr zu unterscheiden.
+
+### Der Skill-Registry-Cache
+
+Die Registry einer Sammlung zu lesen kostet eine Kinderliste — gemessen
+**1,0–1,4 s**, und zwar unabhängig davon, ob überhaupt eine Registry da ist. Je
+Suche war das zu teuer, deshalb merkt sich ein Hintergrunddienst die Antwort je
+Sammlung und erneuert sie alle 5 Minuten. Was der Cache nicht kennt, wird live
+aufgelöst, einmal, und dann ebenfalls gemerkt. Der Katalog ist damit in
+Sammlungs-Ergebnissen einfach vorhanden, und die Kosten fallen höchstens einmal
+je Sammlung an statt bei jeder Suche.
+
+Drei Eigenschaften entscheiden, was eine Antwort bedeutet:
+
+- **Ein „hier ist keine Registry" ruht immer auf einer Kinderliste, die
+  geantwortet hat** — nie auf dem Suchindex. Index und Node-Store sind in
+  edu-sharing getrennte Systeme, ein Datensatz kann aus dem Index fallen und
+  einwandfrei im Store liegen. Der Index dient nur als Startschuss dafür, *wo*
+  Nachsehen sich lohnt.
+- **Ein fehlgeschlagener Abruf wird als nichts gemerkt** und erneut versucht.
+  Ein Ausfall darf nicht zu „diese Sammlung hat keine freigegebenen Skills"
+  werden.
+- **Eine bei 50 Dateien abgeschnittene Liste entscheidet nichts.** Sie wird
+  gemerkt, damit dieselbe Seite nicht erneut gelesen wird, zählt aber nicht als
+  geprüft — bei 400 Dateien kann die Registry schlicht hinter der Kappung
+  liegen. Die Antwort behält dann ihre Hinweiszeile.
+
+**Aktualität:** ein Eintrag gilt bis zu `WLO_SKILL_CACHE_TTL_MS` (10 min), eine
+gerade angelegte Registry kann also nachhinken. `includeSkillRegistry: true` an
+`search_wlo_all` / `search_wlo_collections` erzwingt einen frischen Abruf, und
+`get_skill_registry` liest immer live — nach dem Anlegen oder Ändern einer
+Registry zu einem von beiden greifen.
 
 ### Wikipedia-Auflösung
 
@@ -671,9 +757,12 @@ OAuth-Verbindung. Es gibt kein `refresh_token` und keine Ablauffrist: der Zugang
 endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
 
 **Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
-`Authorization` bekommt unverändert die 27 öffentlichen Werkzeuge. Der `401`
-entsteht nur bei einem vorgelegten, aber unbrauchbaren Token — und trägt dann
-den Verweis auf die Discovery-Dokumente.
+`Authorization` bekommt die **vollständige** Liste — alle 42 Werkzeuge, die
+vierzehn Kurations-Werkzeuge eingeschlossen. Die sind für jeden *sichtbar* und
+verweigern erst beim Aufruf, mit einer OAuth-Aufforderung: genau daran bietet
+ein Host die Anmeldung an, denn ein Modell, das nie ein Schreibwerkzeug sieht,
+fragt auch nie danach. Der `401` entsteht nur bei einem vorgelegten, aber
+unbrauchbaren Token — und trägt dann den Verweis auf die Discovery-Dokumente.
 
 > **In ChatGPT:** eine im Einstellungsdialog verbundene App ist in einer
 > Unterhaltung noch nicht aktiv. ChatGPT zeigt dort eine eigene Karte
@@ -980,7 +1069,7 @@ Rückfallebene kosten.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 39 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 42 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

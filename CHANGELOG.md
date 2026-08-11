@@ -117,6 +117,117 @@ a registry is created or edited. New: `WLO_SKILL_CACHE`,
 `WLO_SKILL_CACHE_REFRESH_MS` (default 5 min), `WLO_SKILL_CACHE_TTL_MS`
 (default 10 min).
 
+### Changed — the approval list is shown in full, and the tool carries 100 (2026-08-11)
+
+Two decisions that interlock; changing one without the other makes a sentence in
+the output false.
+
+A search result listed at most **4** of a collection's approved skills and
+counted the rest ("… und 3 weitere"), on the grounds that five collections
+carrying thirty skills each is a wall of text where a search result should be.
+That traded away the wrong thing: an approval list showing four of nine is
+exactly the "short list standing for a long one" shape this project refuses
+everywhere else, and the entry a model needs may well be the fifth. The listing
+now shows the **whole** catalogue, up to the `REGISTRY_MAX` of 30 that the
+service already applies before a renderer ever sees it.
+
+The head line changed with it. It used to promise the full list "vollständig mit
+`get_skill_registry`" — pointing at a round-trip for something the caller was
+just handed. It now names what that tool actually adds: descriptions, keywords
+and the editors' prose. And when the SERVICE capped the catalogue, the line says
+plainly that `get_skill_registry` cannot close that gap either, because it caps
+at the same number:
+
+**Second: the catalogue cap is now per tier.** It was a single 30 for both, so a
+capped listing could promise nothing — `get_skill_registry` returned the same
+thirty, and the pointer beside the listing led to an answer no larger than the
+one already given. The cap now follows the tier, and the tier is `resolveHeads`:
+
+| Tier | Cap | Why |
+|---|---|---|
+| Listing (`resolveHeads: false`) | `REGISTRY_SEARCH_MAX` = 30 | five collections in one answer have to stay readable; equal to `REGISTRY_LINES_MAX`, so a listing is always complete for what it carries |
+| Tool (`get_skill_registry`) | `REGISTRY_MAX` = 100 | one explicit call about one collection; a curated list of sixty is a legitimate thing to declare |
+
+The tool tier fetches one metadata record per skill, pooled at 10 — extrapolated
+from the 2026-08-10 measurement (28 records in 1095 ms), a full hundred lands
+around 4 s, paid on request rather than per search.
+
+The head line follows from the pair, and says something different in each case:
+
+> 9 freigegebene Skills, alle hier gelistet; Beschreibungen und
+> Redaktionshinweise mit `get_skill_registry`
+
+> 44 freigegebene Skills, hier die ersten 30, mehr mit `get_skill_registry`
+
+Never "alle mit get_skill_registry": past 100 the tool caps as well, and a
+promise beside a declared 140 is one it cannot keep.
+
+### Fixed — the documentation now agrees with the server, and a test keeps it that way (2026-08-11)
+
+**Twelve wrong numbers across five documents.** The tool counts had drifted apart
+so far that README.md contradicted *itself* — "28 read tools" in the opening,
+"27 MCP read tools" fifty lines later, "registers all 39 tools" in the file tree.
+`docs/TOOLS.md` headed its sections "Lesende MCP-Tools (27)" and "Kuratierende
+MCP-Tools (13)" over a table of 28 and 14. The truth, measured: **42 = 28 read +
+14 curation**, and 41 under `WLO_SKILL_TOOL_MODE=one-tool`.
+
+**One of them was not stale but false.** Both READMEs told a reader that an
+anonymous request gets "25" / "27" public tools. It gets all 42 — the curation
+tools included, listed for everyone and refusing at call time, which is the whole
+mechanism by which a host learns to offer the login. That is the claim
+`docs-claims.test.ts` already forbids in prose, walking past the check in the
+shape of a digit. Both sentences now say what happens and why.
+
+**`get_skill_registry` was in no README.** It shipped on 2026-08-10; the
+reference had it and the two documents people actually open did not.
+
+**Two documented parameters do not exist.** `search_wlo_collections` was
+documented with `userRole?` (it has none — `search_wlo_content` does, and the
+entries are adjacent) and `get_node_collections` with `maxResults?`. A model
+reading either sends an argument the schema rejects.
+
+Three new tests in `tests/docs-claims.test.ts` derive all of this from the
+running server, so the documents cannot drift again: no stated count may
+contradict `tools/list`, every registered tool must be named in the reference and
+in both READMEs, and no `` `name?` `` in a tool entry may be a parameter the
+schema does not have. Each was verified to fail on a deliberately introduced
+regression. One of them passed for the wrong reason first — a bare `\n\n` in the
+entry-splitting regex matched **zero** entries against these CRLF files, so it
+checked nothing; it now asserts its own scan found something before trusting it.
+
+### Added — skill handling, documented where people look
+
+Both READMEs gain a **Working with skills** section (three tools, three
+questions), the missing `get_skill_registry` entry, and a **skill-registry
+cache** section: what the background cache is, why a "no registry" only ever
+rests on a children listing, why a failed lookup is remembered as nothing, and
+why a file listing cut short at 50 settles nothing. `docs/TOOLS.md` gains the
+same as a decision table, `docs/SKILLS.md` the corrected scope of
+`WLO_SKILL_CACHE=off`. Newly documented in the env table:
+`WLO_SKILL_TOOL_MODE`, `WLO_SKILL_CACHE`, `WLO_SKILL_CACHE_REFRESH_MS`,
+`WLO_SKILL_CACHE_TTL_MS` — the last three had shipped undocumented in both
+READMEs, one of them on by default.
+
+### Fixed — two bounds that bit without saying so (2026-08-11)
+
+**The unsafe-tool notice is a startup notice again.** Found by a live smoke run,
+not by a test. The warning that names each tool declared `unsafe` says in its own
+comment that it exists so an operator sees it "at startup" — but registration
+runs once per `createMcpServer()`, and the Streamable HTTP transport builds one
+per REQUEST. Measured against a live server: one start, six identical warnings
+for six requests; at the configured 120 rpm that is 120 lines a minute, which is
+how a real warning stops being read. Both unsafe-tool notices are now emitted
+once per process, keyed by tool name so a second unsafe tool still gets named —
+the notice exists to say which ones are switched on. Re-measured after the fix:
+8 requests, 1 warning.
+
+**A skill corpus larger than one page now says so.** The cache's starting shot
+reads one page (`CORPUS_PAGE_MAX = 100`); staging holds 28 records, so the bound
+does not bite today, but past it the collections simply lose the fast path. The
+numbers were in an info line and nothing marked the inequality — the same
+invisible incompleteness this module already warns about at its queue cap and
+its scan cap. It now warns when the corpus does not fit.
+
 ### Fixed — eight review findings on the skill-registry cache (2026-08-11)
 
 **A scan that hit the file cap is no longer cached as "this collection has no

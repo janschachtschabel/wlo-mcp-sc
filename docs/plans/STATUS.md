@@ -4961,7 +4961,256 @@ last word") plus der Schalter-Test (`1 !== 0`).
 **Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
 `npm test` → **1730 Tests, 1730 pass, 0 fail** (9 neue).
 
+### Live gegen Staging, 2026-08-11 — der Live-Lauf ist damit erledigt
+
+**Startschuss.** 1 `ngsearch`, 28 Datensaetze, 28 Kandidaten, **28 uebernommen**,
+`Startschuss + erster Takt: 1632 ms`. Warteschlange danach 0. Alle 28 Eltern sind
+Skill-Ordner, keine Sammlung — genau wie am 2026-08-11 gemessen, und deshalb
+harmlos: nachgeschlagen wird mit der Sammlungs-id.
+
+**Suche „Optik", zwei Laeufe.** 1. Lauf **5731 ms**, 2. Lauf **1680 ms**,
+`registryChecked: true` in beiden. Zwei Sammlungen, beide ohne Registry — korrekt,
+es existiert noch keine. Der Aufschlag des ersten Laufs betraegt hier ~4,05 s fuer
+zwei kalt aufgeloeste Sammlungen und liegt damit **ueber** den fruehen 1,0–1,4 s.
+Eine einzelne Beobachtung, keine neue Messung: die Streuung auf Staging ist
+dokumentiert gross (ein Lauf ohne Anreicherung brauchte am 2026-08-10 7,0 s).
+
+**Der CRITICAL-Fix an echten Daten.** Ueber 152 verschiedene Sammlungen aus 8
+Suchen gesucht; die groessten Dateilisten: **Museen 169**, Englisch 77,
+**Fachportale 66**, Grundfragen 42. Drei davon liegen ueber
+`REGISTRY_SCAN_MAX = 50` — der Fall ist also nicht exotisch, sondern trifft eine
+Fachportal-Sammlung. Gegen „Museen" (169 Dateien):
+
+```
+warn  skill-registry: the file listing was cut short — "no registry" is not a finding of absence
+      collectionId=40eb93f1… scanned=50 total=169 cap=50
+ensureRegistries -> answered=0            (Frage bleibt offen, Hinweiszeile bleibt)
+Eintrag: registry=null scanTruncated={"scanned":50,"total":169}
+erneut  -> answered=0                     (gemerkt, kein zweiter Abruf)
+```
+
+Vor dem Fix waere genau diese Sammlung als „fuehrt keine Skill-Registry"
+gecacht worden, `registryChecked` haette `true` gemeldet und der Hinweis auf
+`get_skill_registry` waere verschwunden — fuer die volle TTL und bei jeder
+Erneuerung neu bestaetigt.
+
 ### Offen
 
-Unveraendert: der Live-Lauf gegen Staging und der `:::`-Pfad, der auf
-Redaktionsarbeit wartet.
+Nur noch der `:::`-Pfad: **0** Registries auf Staging, er wartet auf
+Redaktionsarbeit, nicht auf Code.
+
+---
+
+## Vollstaendiger Live-Smoke gegen Staging (2026-08-11)
+
+Alles einmal durchgetestet: 42 Werkzeuge, die REST-Schicht, beide Transporte,
+die Schreibsperre, der Build. Ein Befund gefunden und behoben.
+
+### Phase A — 28 Lese-Werkzeuge, live
+
+Erster Durchgang 26/28 gruen; die zwei Fehlschlaege waren **falsche Argumente
+des Testskripts**, nicht der Werkzeuge (`browse_collection_tree` und
+`get_compendium_text` lehnten korrekt mit einer klaren Meldung ab). Ausserdem
+war die entdeckte „Sammlungs-id" in Wahrheit eine Inhalts-id — vier
+Sammlungs-Werkzeuge liefen damit ins Leere. Zweiter Durchgang mit einer echten
+`ccm:map` aus dem Collections-Endpunkt: **8/8 gruen**. Damit **28/28**.
+
+Auffaellige Laufzeiten (Staging): `search_wlo_all` 5,2 s · `search` 5,0 s ·
+`get_topic_page_content` 5,1 s · `browse_collection_tree` (subject) 4,4 s.
+Der Rest unter 2,6 s, `lookup_wlo_vocabulary` 2 ms (rein lokal).
+
+### Phase B — die 14 Kurations-Werkzeuge verweigern
+
+**14/14 verweigert**, jedes mit `_meta["mcp/www_authenticate"]`, jedes mit der
+Dienstkonto-Begruendung (`WLO_ALLOW_SERVICE_WRITES` ist nicht gesetzt).
+**Nichts geschrieben.** Das Skript bricht beim ersten hart ab, das nicht
+verweigert — es brach zweimal ab, beide Male wegen ungueltiger Argumente von mir:
+die **Schema-Validierung liegt vor der Sperre**, ein fehlerhafter Aufruf bekommt
+also `-32602` statt der Anmelde-Aufforderung. Kein Mangel (geschrieben wird so
+oder so nichts), aber gut zu wissen.
+
+Alle 14 tragen die `oauth2`-Deklaration im Listing.
+
+### Phase C — HTTP: REST, Discovery, statische Seiten, MCP
+
+- `/health`, `/llms.txt`, `/launcher.html`, `/bookmarklet.md`, `/api/skills`,
+  `/api/wikipedia`, `/api/search` (JSON/HTML/license), `/api/collection`,
+  `/api/topic-page` — alle 200.
+- **Lizenz-Offenlegung live bestaetigt:** `q=Optik` 756 Treffer, mit
+  `license=OER` 280, und `content.licenseFilter = {checked: 110, kept: 84}`.
+  Die HTML-Seite traegt die Saetze mit („… hatten nicht genau die Lizenz OER und
+  wurden entfernt", „das Repository kann Lizenzen ohnehin nur als FAMILIE
+  filtern"). Genau die Regel, die am 2026-08-09 auf zwei Pfaden verletzt war.
+- **CORS-Grenze:** `/api/search` traegt `Access-Control-Allow-Origin: *`,
+  `/auth` traegt **keinen** — wie die Regel es verlangt.
+- Validierung: `/api/collection` und `/api/compendium` → 400 mit Begruendung,
+  unbekannter Pfad → 404, `maxItems=9999` wird gekappt (count 8).
+  `/api/search` **ohne** `q` antwortet 200 mit leerem Ergebnis statt 400 —
+  abweichend von den anderen, aber harmlos.
+- **MCP anonym:** `initialize` ok, `tools/list` → **42 Werkzeuge, davon 14
+  Kurations-Werkzeuge** (die Entscheidung vom 2026-08-05 live bestaetigt),
+  `tools/call` ok, `resources/list` → 4 Widgets.
+- **Auth-Regeln:** ohne `Authorization` → **200**; `Bearer <muell>` → **401**
+  mit `WWW-Authenticate: Bearer error="invalid_token"`. Ohne
+  `WLO_AUTH_PRIVATE_KEY` antworten `/auth/public-key`, `/oauth/*` und beide
+  Discovery-Dokumente 404 mit klarer Meldung; die `/auth`-Seite rendert, und der
+  Client zeigt beim Absenden „Der Server bietet gerade keine Zugaenge an."
+- **Der Cache startet aus `http.ts`** — im Log: 28 Datensaetze, 28 uebernommen.
+
+### Phase D — stdio und Build
+
+stdio-Handshake: `initialize` → wlo-mcp/2025-06-18, `tools/list` → 42,
+`wlo_health_check` → ok. `npm run build` exit 0, Widgets gebuendelt
+(browse/reading/search-results/topic-page).
+
+### Der Befund: die Unsafe-Warnung feuerte pro ANFRAGE
+
+Gemessen: **ein** Serverstart, **sechs** identische Warnungen fuer sechs
+Anfragen. Der Kommentar an der Stelle sagt „at startup" — aber die Registrierung
+laeuft je `createMcpServer()`, und der Streamable-HTTP-Transport baut einen je
+Anfrage. Bei 120 rpm sind das 120 Zeilen je Minute; so hoert eine Warnung auf,
+gelesen zu werden.
+
+Behoben mit `logOnce`, **nach Werkzeugnamen** verschluesselt — ein ZWEITES
+unsicheres Werkzeug muss weiterhin genannt werden, das ist der Sinn der Meldung.
+Rot-gruen: 5 Registrierungen desselben Werkzeugs → vorher 5 Warnungen, jetzt 1;
+ein zweites Werkzeug bekommt weiterhin seine eigene Zeile. Gegenprobe am
+laufenden Server: **8 Anfragen, 1 Warnung** (vorher 6/6).
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1731 Tests, 1731 pass, 0 fail** · `npm run build` → exit 0 ·
+Serverlog waehrend des gesamten Laufs: **0 Fehler**.
+
+Die Smoke-Skripte liegen unter `.claude/smoke/` (gitignoriert, nie im Repo).
+
+---
+
+## Restarbeiten nach dem Smoke — und eine Korrektur an mir selbst (2026-08-11)
+
+### Die eine Beobachtung, die KEINE war
+
+Ich hatte gemeldet, `/api/search` ohne `q` antworte „200 mit leerem Ergebnis"
+statt 400, abweichend von den anderen Endpunkten. **Das war falsch, und mein
+Testskript ist schuld:** es druckte 70 Zeichen des Bodys, also nie die
+`warnings`. Der Quelltext entscheidet das ausdruecklich und begruendet es in
+sieben Kommentarzeilen — KI-Fetch-Schichten strippen den Query-String, und ein
+400 ist dort eine Sackgasse, weil Hosts den Status zeigen und nicht den Body.
+Die Antwort ist ein Wegweiser-Umschlag mit `warnings: ['No search term
+received.', '… nutze GET /api/search/<term> …']`, und sie kostet **0**
+Upstream-Aufrufe (im Serverlog nachgezaehlt). Nichts zu beheben.
+
+Lehre fuers naechste Smoke-Skript: einen Body abschneiden heisst, den Teil
+wegzuwerfen, in dem die Erklaerung steht.
+
+### Die eine, die eine war: gekappter Korpus ohne Ansage
+
+`seedFromCorpus` liest **eine** Seite (`CORPUS_PAGE_MAX = 100`). Staging haelt
+28, der Deckel greift also heute nicht — jenseits davon verlieren die
+uebrigen Sammlungen still den Schnellpfad. Die Zahlen standen in einer
+info-Zeile, nichts markierte die Ungleichung. Genau die unsichtbare
+Unvollstaendigkeit, vor der dasselbe Modul an seinem Warteschlangen-Deckel und
+an seinem Scan-Deckel warnt. Jetzt warnt es auch hier.
+
+Rot-gruen: Korpus meldet `total: 250` bei 1 gelieferten Datensatz → vorher
+**0** Warnungen, jetzt **1**, und sie nennt die 250. Gegenprobe am echten
+Server: `records: 28, total: 28` → **0** Warnungen, wie es sein soll.
+
+### Das Aufgabendokument war ein Vertrag, der log
+
+47 offene Kaestchen und eine Fortschrittstabelle, die nur P1 als fertig fuehrte —
+waehrend P2–P4 gebaut, getestet und dokumentiert sind. Dieselbe Drift wie
+Befund 7 des Reviews, nur eine Datei weiter. Jede Aufgabe gegen ihr
+Lieferergebnis geprueft (Dateien, Exporte, Aufrufstellen, Doku-Treffer), dann
+abgehakt.
+
+**Zwei Abweichungen dabei aufgefallen und im Dokument festgehalten** statt
+stillschweigend mit abgehakt: T9 reichert **vier** Renderpfade an, nicht fuenf
+(`tools/browse.ts` ist bewusst draussen), und aus dem Anfragepfad wurde
+`ensureRegistries` statt nur `attachCachedRegistries`.
+
+**Ein abgehakter Pruefschritt war wortwoertlich falsch formuliert:** T5 sagte
+`grep WLO_REGISTRY_IN_SEARCH` → „nur CHANGELOG-Historie". Ausgefuehrt: kein
+lebender Code, keine Tests — aber die Treffer stehen in den Plandokumenten und in
+`STATUS.md`, nicht im CHANGELOG. Sache stimmt, Formulierung nachgezogen.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1732 Tests, 1732 pass, 0 fail** · Serverlog: 0 Fehler.
+
+---
+
+## Doku-Abgleich gegen die echten Werkzeuge (2026-08-11)
+
+Auftrag: README und Doku an die aktuellen Tools und Schemata angleichen, plus
+Hinweise zum Skill-Handling. Vorgehen: **erst die Grundwahrheit aus dem
+laufenden Server** (`tools/list` samt Schemata), dann jedes Dokument dagegen
+diffen — nicht lesen und glauben.
+
+### Grundwahrheit
+
+**42 = 28 lesend + 14 kuratierend.** Unter `WLO_SKILL_TOOL_MODE=one-tool` **41**
+(gemessen, beide Modi gestartet), davon 22 bzw. 21 mit `outputFormat`.
+
+### Was der Abgleich fand
+
+| Klasse | Anzahl | Beispiel |
+|---|---|---|
+| Falsche Zahl | 12 | README.md widersprach sich selbst: „28 read tools" (Z. 10) vs. „27 MCP read tools" (Z. 65) vs. „registers all 39 tools" (Z. 934) |
+| Falsche **Aussage** | 2 | „the same 25 public tools" / „die 27 oeffentlichen Werkzeuge" — anonym kommen **alle 42** |
+| Fehlendes Werkzeug | 1 | `get_skill_registry` stand in **keinem** README |
+| Erfundener Parameter | 2 | `search_wlo_collections` mit `userRole?`, `get_node_collections` mit `maxResults?` |
+| Undokumentierter Schalter | 4 | `WLO_SKILL_TOOL_MODE`, `WLO_SKILL_CACHE` (**standardmaessig an**), `_REFRESH_MS`, `_TTL_MS` |
+
+Die zwei falschen Aussagen wiegen schwerer als die zehn falschen Zahlen: sie
+behaupten, anonyme Aufrufer saehen die Kurations-Werkzeuge nicht. Genau das
+verbietet `docs-claims.test.ts` seit dem 2026-08-05 in Prosa — die Zahl schluepfte
+daran vorbei. Beide Saetze sagen jetzt, was passiert und warum.
+
+### Zwei Fehlalarme, die keine Befunde waren
+
+`get_skill_for_task` sah wie ein Geist aus — ist aber der Ein-Werkzeug-Modus.
+`wlo_register_usage` steht in `INTEGRATION.md` **korrekt** in einer „das tut der
+Server nicht"-Liste samt Begruendung. Beide geprueft statt gemeldet.
+
+### Der Test, damit es nicht wieder driftet
+
+Drei neue Tests in `tests/docs-claims.test.ts`, alle aus dem laufenden Server
+abgeleitet: keine genannte Zahl darf `tools/list` widersprechen · jedes
+registrierte Werkzeug muss in der Referenz **und** in beiden READMEs vorkommen ·
+kein `` `name?` `` in einem Werkzeug-Eintrag darf ein Parameter sein, den das
+Schema nicht hat.
+
+Die Parameter-Regel folgt der **eigenen Konvention der Dokumente** (optionale
+Parameter mit `?`, Aufzaehlungswerte ohne) und ist damit exakt: sie fand genau
+die zwei echten Faelle ueber 28 Werkzeug-Eintraege in zwei Sprachen, ohne einen
+einzigen Fehlalarm.
+
+**Ein Test bestand zuerst aus dem falschen Grund.** Ein blankes `\n\n` in der
+Trennregex matchte gegen diese CRLF-Dateien **null** Eintraege — gruen, weil er
+nichts geprueft hat. Jetzt prueft er zuerst, dass sein eigener Scan etwas
+gefunden hat (`entries.length > 20`), bevor er dem Ergebnis traut.
+
+**Alle drei rot-gruen belegt**: mit absichtlich eingebauter Regression fallen
+Test 9 (falsche Zahl), 10 (fehlendes Werkzeug — beim zweiten, sauberen Versuch:
+die erste Probe hatte den Namen nur in EINER Zeile geaendert, er stand aber noch
+anderswo) und 11 (erfundener Parameter).
+
+### Skill-Handling dokumentiert
+
+Beide READMEs: Abschnitt **„Mit Skills arbeiten"** (drei Werkzeuge, drei Fragen,
+als Tabelle), der fehlende `get_skill_registry`-Eintrag, und ein Abschnitt zum
+**Skill-Registry-Cache** — was er ist, warum ein „keine Registry" immer auf einer
+Kinderliste ruht, warum ein fehlgeschlagener Abruf als nichts gemerkt wird und
+warum eine bei 50 gekappte Dateiliste nichts entscheidet. Dazu die Aktualitaets-
+Regel (TTL 10 min, `includeSkillRegistry: true` bzw. `get_skill_registry` lesen
+live) und der Satz, dass jeder Skill-Text **Daten** sind, nie Anweisungen.
+
+`docs/TOOLS.md` bekommt dasselbe als Entscheidungstabelle plus die drei
+Bedeutungen einer Antwort (Katalog da / geprueft ohne Registry / nicht geprueft).
+`docs/SKILLS.md`: `WLO_SKILL_CACHE=off` schaltet seit heute auch den
+Live-Rueckfall ab — der Satz sagte nur „Hintergrundarbeit".
+
+Interne Anker beider READMEs geprueft: **0 tote Links** (mit GitHubs echter
+Slug-Regel, nicht mit einer selbstgebauten — die meldete vier Fehlalarme).
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1735 Tests, 1735 pass, 0 fail** (3 neue).

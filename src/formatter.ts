@@ -314,12 +314,21 @@ function headingFor(title: string, url: string): string {
 
 /** Render a list of FormattedNodes as a compact text format for LLM consumption. */
 /**
- * Skills shown per collection in a LISTING. The registry itself is capped
- * separately (`REGISTRY_MAX`); this is the narrower bound that keeps one search
- * answer readable — five collections carrying thirty skills each is a wall of
- * text where a search result should be.
+ * Skills shown per collection in a LISTING.
+ *
+ * Was 4 until 2026-08-11, on the grounds that five collections carrying thirty
+ * skills each is a wall of text where a search result should be. That traded the
+ * wrong thing away: an approval list showing four of nine is exactly the
+ * "a short list standing for a long one" shape this project refuses everywhere
+ * else, and the entry a model needs may be the fifth.
+ *
+ * 30 mirrors `REGISTRY_MAX` in `services/skill-registry.ts`, which caps the
+ * catalogue before it ever reaches a renderer — so this is not a second, narrower
+ * bound but the same one, restated. It cannot be imported: `formatter.ts` is a
+ * leaf module and the service imports FROM it, so the dependency would be a
+ * cycle. `tests/formatter.test.ts` pins the number instead.
  */
-const REGISTRY_LINES_MAX = 4;
+const REGISTRY_LINES_MAX = 30;
 
 /**
  * The registry a collection declares, as listing lines — one per part, so the
@@ -334,12 +343,19 @@ function registryLines(n: FormattedNode): string[] {
   const r = n.skillRegistry;
   if (!r) return [];
   const declared = r.truncated?.referenced ?? r.entries.length;
-  // What `get_skill_registry` will actually return. It caps at REGISTRY_MAX too,
-  // so promising "alle" beside a larger declared number points at a tool that
-  // cannot keep the promise — the bound belongs next to the number it bounds.
+  // Two different sentences, because the two cases are different offers.
+  //
+  // Nothing capped: the whole catalogue is listed below, so pointing at
+  // `get_skill_registry` for completeness would send a model on a round-trip for
+  // something it was just handed. What that tool adds is depth per entry.
+  //
+  // Capped: the listing carries `REGISTRY_SEARCH_MAX` (30) while the tool
+  // carries `REGISTRY_MAX` (100), so it really is the way to see more — but not
+  // necessarily all of them, and a promise of "alle" beside a declared 140 is
+  // one the tool cannot keep.
   const reach = r.truncated
-    ? `die ersten ${r.truncated.listed} mit get_skill_registry`
-    : 'vollständig mit get_skill_registry';
+    ? `hier die ersten ${r.truncated.listed}, mehr mit get_skill_registry`
+    : 'alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry';
   const shown = r.entries.slice(0, REGISTRY_LINES_MAX);
   const lines = [
     `Skill-Registry: ${r.title || '(ohne Titel)'} (nodeId: ${r.nodeId}) — `

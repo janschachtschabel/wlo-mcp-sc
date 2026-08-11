@@ -315,14 +315,54 @@ test('renderToText: a collection without a registry gains no lines', () => {
   assert.ok(!text.includes('Skill-Registry'), 'no field means no line');
 });
 
-test('renderToText: a long registry is capped in the listing and says so', () => {
+/**
+ * CONTRACT CHANGED 2026-08-11. This used to pin the opposite — a listing showed
+ * at most four skills and counted the rest — on the grounds that five
+ * collections carrying thirty skills each is a wall of text where a search
+ * result should be. The decision now is that an approval list is shown in FULL:
+ * a catalogue that names four of nine is the same shape this project rejects
+ * everywhere else, and the entry a model needs may be the fifth. The service
+ * already caps the catalogue itself at `REGISTRY_MAX` (30), so the listing
+ * inherits a bound rather than adding a second, narrower one.
+ */
+test('renderToText: every skill the catalogue carries is listed, not a sample', () => {
   const many = Array.from({ length: 9 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
   const text = renderToText([collectionWithRegistry(many)]);
 
   const shown = text.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
-  assert.ok(shown.length < many.length, 'a search result does not list nine skills per collection');
-  // Silent truncation reads as "that is all of them" — the count must be there.
-  assert.match(text, /9/, 'the real number is stated');
+  assert.equal(shown.length, many.length, 'all nine, not a sample');
+  for (const e of many) assert.ok(text.includes(e.nodeId), `${e.nodeId} is loadable from the listing`);
+  assert.ok(!text.includes('weitere'), 'nothing was left out, so nothing is counted off');
+
+  // The head line used to promise the full list "mit get_skill_registry". Now
+  // the full list is already here, so pointing at that tool for completeness
+  // sends a model on a round-trip for something it was just handed. What the
+  // tool actually adds is descriptions, keywords and the editors' prose.
+  assert.doesNotMatch(text, /vollständig mit get_skill_registry/,
+    'the listing IS complete — the pointer must name what the tool adds instead');
+  assert.match(text, /Beschreibungen/, 'which is what get_skill_registry is for now');
+});
+
+test('renderToText: a full catalogue of 30 is still listed in full', () => {
+  // 30 is `REGISTRY_MAX`, the cap the service applies — so this is the largest
+  // catalogue that can reach the renderer at all.
+  const many = Array.from({ length: 30 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
+  const text = renderToText([collectionWithRegistry(many)]);
+  const shown = text.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
+  assert.equal(shown.length, 30);
+});
+
+test('renderToText: what the SERVICE capped is still disclosed as missing', () => {
+  // The registry declared 45; the service kept 30. The listing shows those 30
+  // and must still say that 15 exist which nobody here can see — the bound
+  // belongs next to the number it bounds.
+  const kept = Array.from({ length: 30 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
+  const text = renderToText([collectionWithRegistry(kept, { listed: 30, referenced: 45 })]);
+
+  const shown = text.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
+  assert.equal(shown.length, 30, 'everything that reached the renderer is shown');
+  assert.match(text, /45 freigegebene Skills/, 'the declared number is stated');
+  assert.match(text, /… und 15 weitere/, 'and the gap is named rather than implied');
 });
 
 test('renderToText: the registry truncation from the service is carried through', () => {
@@ -333,17 +373,27 @@ test('renderToText: the registry truncation from the service is carried through'
   assert.match(text, /44/, 'the number the registry declares is not hidden');
 });
 
-test('renderToText: a capped registry does not promise what get_skill_registry cannot deliver', () => {
+/**
+ * CONTRACT CHANGED 2026-08-11 (twice in one day, and the second time undid the
+ * first). The two caps were equal, so a capped listing could promise nothing —
+ * `get_skill_registry` returned the same 30. Now the tool carries `REGISTRY_MAX`
+ * = 100 against the listing's 30, so it genuinely CAN show more and the line
+ * must point at it again. What it still must not do is promise "alle": beyond
+ * 100 the tool caps too.
+ */
+test('renderToText: a capped listing points at the tool, without promising everything', () => {
   const text = renderToText([collectionWithRegistry(
-    [{ nodeId: 'skill-a', title: 'Fragen generieren' }],
+    Array.from({ length: 30 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` })),
     { listed: 30, referenced: 44 },
   )]);
 
-  // `get_skill_registry` caps at REGISTRY_MAX (30) too, so "alle mit
-  // get_skill_registry" beside a declared 44 points at a tool that cannot keep
-  // the promise. The bound belongs next to the number it bounds.
-  assert.ok(!/alle mit get_skill_registry/.test(text), `no blanket promise — got ${JSON.stringify(text)}`);
-  assert.match(text, /ersten 30/, 'what the tool actually returns is stated');
+  assert.match(text, /44 freigegebene Skills/, 'the declared number is stated');
+  assert.match(text, /ersten 30/, 'and how many of them are here');
+  assert.match(text, /get_skill_registry/, 'which now really is the way to see more');
+  assert.ok(!/mehr liefert auch get_skill_registry nicht/.test(text),
+    'that was true while both caps were 30 — the tool now carries 100');
+  assert.ok(!/alle mit get_skill_registry/.test(text),
+    'still no blanket promise — past 100 the tool caps as well');
 });
 
 test('renderToText: a newline in a registry title cannot forge a line', () => {

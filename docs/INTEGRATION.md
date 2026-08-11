@@ -43,7 +43,7 @@ trägt dann die Aufforderung, mit der der Client die Anmeldung startet.
 auf — also fordert nichts jemals eine Anmeldung an, und ein Connector bleibt für
 immer anonym.
 
-### 1.1 Lesen — 27 Werkzeuge (`noauth`)
+### 1.1 Lesen — 28 Werkzeuge (`noauth`)
 
 **Suchen (5)**
 

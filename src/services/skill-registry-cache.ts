@@ -490,6 +490,17 @@ async function seedFromCorpus(): Promise<void> {
   log.info('skill-registry-cache: seeded from the skill corpus', {
     records: res.nodes.length, total: res.pagination?.total, candidates: picks.length, adopted,
   });
+
+  // The seed reads ONE page. Nothing goes wrong when it is not enough — the
+  // collections past it are resolved by the children listing on first contact —
+  // but they lose the fast path, and a bound that bites without saying so is
+  // the invisible incompleteness this module warns about everywhere else.
+  const total = res.pagination?.total ?? res.nodes.length;
+  if (total > res.nodes.length) {
+    log.warn('skill-registry-cache: the skill corpus is larger than one page — the rest is not seeded', {
+      read: res.nodes.length, total, page: CORPUS_PAGE_MAX,
+    });
+  }
 }
 
 /**

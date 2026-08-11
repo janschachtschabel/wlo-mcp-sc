@@ -98,6 +98,25 @@ function widgetMeta(def: WloToolDef): Record<string, unknown> {
 }
 
 /**
+ * Notices already written in this process.
+ *
+ * The unsafe-tool notices describe the DEPLOYMENT, not the call, and their own
+ * wording says "at startup". But registration runs once per `createMcpServer()`,
+ * and the Streamable HTTP transport builds one per REQUEST — measured against a
+ * live server on 2026-08-11: one start, six identical warnings for six requests.
+ * At the configured 120 rpm that is 120 lines a minute, which is how a warning
+ * stops being read. Keyed by tool so a SECOND unsafe tool still gets named:
+ * the notice exists to say which ones are switched on.
+ */
+const noticed = new Set<string>();
+
+function logOnce(key: string, emit: () => void): void {
+  if (noticed.has(key)) return;
+  noticed.add(key);
+  emit();
+}
+
+/**
  * @param isDisabled injectable for tests — `unsafe-tools.ts` resolves the env
  *   once at module load, so a test cannot express "disabled" by mutating
  *   `process.env` after the fact.
@@ -109,15 +128,17 @@ export function registerWloTool(
 ): void {
   if (def.unsafe) {
     if (isDisabled(def.name)) {
-      log.info('unsafe tool disabled by configuration', {
+      logOnce(`disabled:${def.name}`, () => log.info('unsafe tool disabled by configuration', {
         tool: def.name,
         variable: 'WLO_DISABLE_UNSAFE_TOOLS',
-      });
+      }));
       return;
     }
     // Registered by default — so whoever inherits this deployment has to be able
     // to see it at startup rather than by reading the changelog.
-    log.warn('registering a tool declared UNSAFE', { tool: def.name, reason: def.unsafe.reason });
+    logOnce(`unsafe:${def.name}`, () => log.warn('registering a tool declared UNSAFE', {
+      tool: def.name, reason: def.unsafe!.reason,
+    }));
   }
 
   const config: Record<string, unknown> = {

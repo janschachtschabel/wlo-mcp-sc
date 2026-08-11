@@ -835,3 +835,42 @@ test('ensure: the live fallback is bounded per request', async () => {
     stopSkillRegistryCache();
   }
 });
+
+test('a skill corpus larger than one page says so, rather than seeding silently', async () => {
+  stopSkillRegistryCache();
+  // The seed reads ONE page (`CORPUS_PAGE_MAX`). Staging holds 28 records today,
+  // so the bound does not bite — but at three times that it would, and the
+  // collections past the page simply never get the fast path. That is invisible
+  // incompleteness, which this module warns about everywhere else it can happen
+  // (`queueCollections` at its cap, `scanForRegistry` at its scan cap).
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/ngsearch')) {
+      return { json: {
+        nodes: [{ ...registryChild(),
+          properties: { ...registryChild().properties, 'virtual:primaryparent_nodeid': ['coll-9'] } }],
+        pagination: { total: 250, from: 0, count: 1 },   // far more than one page
+      } };
+    }
+    if (url.includes('/eduservlet/download')) return { text: REGISTRY_MD };
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+
+  const original = process.stderr.write.bind(process.stderr);
+  const lines: string[] = [];
+  (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array, ...rest: unknown[]) => {
+    lines.push(String(chunk));
+    return (original as (c: unknown, ...r: unknown[]) => boolean)(chunk, ...rest);
+  };
+  try {
+    startSkillRegistryCache();
+    await cacheWarmup();
+  } finally {
+    (process.stderr as { write: unknown }).write = original;
+    stopSkillRegistryCache();
+    mock.restore();
+  }
+
+  const warned = lines.filter(l => l.includes('"level":"warn"') && l.includes('corpus'));
+  assert.equal(warned.length, 1, `the bound biting must be a warning — got ${warned.length}`);
+  assert.match(warned[0]!, /250/, 'and it names how many records exist');
+});

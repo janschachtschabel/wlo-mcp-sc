@@ -18,7 +18,7 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 | | Sichtbar |
 |---|---|
 | **Standard** | 42 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 40 Tools — beide ersetzt durch `get_skill_for_task` |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 41 Tools — beide ersetzt durch `get_skill_for_task` |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -33,7 +33,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 ---
 
-## 1. Lesende MCP-Tools (27) — mit Chat-Trigger
+## 1. Lesende MCP-Tools (28) — mit Chat-Trigger
 
 ### Suchen & Finden
 | Tool | Funktion | Bester Chat-Trigger |
@@ -187,6 +187,36 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `wlo_auth_status` | Mit welchen Rechten der Server gerade liest — anonym, gemeinsames Dienstkonto oder persönliches Konto | *„Bin ich angemeldet?“* · *„Warum sehe ich diesen Inhalt nicht?“* |
 | `wlo_health_check` | Erreichbarkeit der WLO-API prüfen | *„Ist die WLO-Verbindung gerade erreichbar?“* |
 
+**Welches der drei Skill-Tools?** Die Frage entscheidet, nicht der Zufall:
+
+| Frage | Tool |
+|---|---|
+| Welche Skills gibt es für *diese Aufgabe*? | `search_skill` → dann `get_skill` |
+| Welche Skills hat *diese Sammlung* freigegeben? | `get_skill_registry` |
+| Beides in einem Schritt, ohne eigene Auswahl | `get_skill_for_task` (nur `WLO_SKILL_TOOL_MODE=one-tool`) |
+
+`get_skill_registry` beantwortet die **Umkehrung** von `search_skill`: nicht
+„welche Skills existieren", sondern „welche gelten hier". Es lohnt sich, wenn es
+um das Vorgehen MIT einer Sammlung geht („wie arbeite ich damit", „was ist hier
+vorgesehen") statt um ihre Inhalte.
+
+**Der Katalog kommt meist von allein mit.** Ein Hintergrund-Cache
+(`WLO_SKILL_CACHE`, standardmäßig **an**) hält je Sammlung bereit, was ihre
+Kinderliste sagt, und erneuert es alle 5 Minuten. Drei Dinge, die die Antwort
+bedeuten kann:
+
+- **Katalog vorhanden** → die Sammlung führt eine Registry.
+- **Kein Feld, aber geprüft** → sie führt keine. Das ruht immer auf einer
+  Kinderliste, die geantwortet hat, nie auf dem Suchindex.
+- **Hinweiszeile auf `get_skill_registry`** → *nicht* geprüft. Entweder war die
+  Sammlung noch nie in einer Antwort, oder die Dateiliste war bei 50 gekappt und
+  die Registry könnte dahinter liegen.
+
+Ein Eintrag gilt bis zu 10 Minuten (`WLO_SKILL_CACHE_TTL_MS`). Direkt nach dem
+Anlegen oder Ändern einer Registry deshalb `includeSkillRegistry: true` an
+`search_wlo_all`/`search_wlo_collections` (erzwingt den frischen Abruf) oder
+gleich `get_skill_registry` — das liest immer live.
+
 ### ChatGPT-Wissenskonvention (RAG)
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
@@ -195,7 +225,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 ---
 
-## 1b. Kuratierende MCP-Tools (13) — mit Chat-Trigger
+## 1b. Kuratierende MCP-Tools (14) — mit Chat-Trigger
 
 **Nur sichtbar mit Schreibrechten.** Wer anonym liest, sieht diese Tools gar
 nicht — und ein Modell kann nicht missbrauchen, was es nicht sieht. Jedes lehnt

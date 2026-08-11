@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { REGISTRY_MAX, loadSkillRegistry, pickRegistryNode } from '../src/services/skill-registry.js';
+import { REGISTRY_MAX, REGISTRY_SEARCH_MAX, loadSkillRegistry, pickRegistryNode } from '../src/services/skill-registry.js';
 import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { installFetchMock, makeNode, type MockResult } from './fetchMock.js';
 import type { WloNode } from '../src/wlo-api.js';
@@ -351,14 +351,64 @@ test('loadSkillRegistry with resolveHeads:false costs exactly two upstream calls
   }
 });
 
-test('loadSkillRegistry caps the catalogue and says so', async () => {
-  const blocks = Array.from({ length: REGISTRY_MAX + 1 }, (_, i) => kiSkillBlock(`Skill ${i}`, uuid(100 + i))).join('\n\n');
+/**
+ * CONTRACT CHANGED 2026-08-11. One cap became two, because the two tiers pay
+ * different prices and answer different questions.
+ *
+ * The SEARCH tier rides along in a result list and resolves nothing; its bound
+ * is what a listing can carry without becoming a wall of text — five collections
+ * at once — and it is deliberately equal to `REGISTRY_LINES_MAX`, so a search
+ * listing is always COMPLETE for what it holds.
+ *
+ * The TOOL tier is one explicit call about one collection, and it fetches one
+ * metadata record per skill. There a hundred is affordable, and a curated list
+ * of sixty should not be cut to thirty.
+ */
+test('the search tier caps the catalogue at REGISTRY_SEARCH_MAX and says so', async () => {
+  const blocks = Array.from({ length: REGISTRY_SEARCH_MAX + 1 }, (_, i) => kiSkillBlock(`Skill ${i}`, uuid(100 + i))).join('\n\n');
   const { mock } = registryMock(blocks);
   try {
     const { registry } = await loadSkillRegistry('coll-1', { resolveHeads: false });
 
+    assert.equal(registry?.entries.length, REGISTRY_SEARCH_MAX);
+    assert.deepEqual(registry?.truncated, { listed: REGISTRY_SEARCH_MAX, referenced: REGISTRY_SEARCH_MAX + 1 });
+  } finally {
+    mock.restore();
+  }
+});
+
+/** `n` declared skills, with every head resolvable — the tool tier's real path. */
+function bigRegistry(n: number) {
+  const ids = Array.from({ length: n }, (_, i) => uuid(100 + i));
+  const blocks = ids.map((id, i) => kiSkillBlock(`Skill ${i}`, id)).join('\n\n');
+  const heads = Object.fromEntries(
+    ids.map((id, i) => [id, { title: `Skill ${i}`, desc: `Beschreibung ${i}`, keywords: [`k${i}`] }]),
+  );
+  return registryMock(blocks, heads);
+}
+
+test('the tool tier carries far more than the search tier', async () => {
+  // A registry of 60: the listing shows 30 and points onward, the tool answers
+  // with all 60. Before this change the tool cut it to 30 as well, so the
+  // pointer beside the listing led to an answer no larger than the one already
+  // given.
+  const { mock, counts } = bigRegistry(60);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1');
+    assert.equal(registry?.entries.length, 60, 'the tool answers with the whole approval list');
+    assert.equal(registry?.truncated, undefined, 'nothing was cut, so nothing is claimed to be');
+    assert.equal(counts.metadata, 60, 'one head per declared skill — that is what the tier costs');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('the tool tier has a bound of its own, and discloses it', async () => {
+  const { mock } = bigRegistry(REGISTRY_MAX + 5);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1');
     assert.equal(registry?.entries.length, REGISTRY_MAX);
-    assert.deepEqual(registry?.truncated, { listed: REGISTRY_MAX, referenced: REGISTRY_MAX + 1 });
+    assert.deepEqual(registry?.truncated, { listed: REGISTRY_MAX, referenced: REGISTRY_MAX + 5 });
   } finally {
     mock.restore();
   }

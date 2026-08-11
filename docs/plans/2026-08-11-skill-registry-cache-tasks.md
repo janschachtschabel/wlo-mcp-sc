@@ -13,9 +13,27 @@ keine zweite Erkennungsregel, keine zweite Auswahl, keine zweite Kappung.
 | Phase | Aufgaben | Ergebnis |
 |---|---|---|
 | P1 Cache-Kern | T1–T4 ✅ | Warteschlange, Takt, Ablauf, Ausfallverhalten — **fertig 2026-08-11**, 15 Tests |
-| P2 Lebenszyklus | ~~T5~~ T6–T7 | T5 (Konfiguration) wurde nach P1 vorgezogen — T4 braucht die TTL. Offen: Startschuss + Intervall, Start aus den Transports |
-| P3 Integration | T8–T10 | Fünf Renderpfade, Parametersemantik, Disziplin-Test |
-| P4 Doku | T11 | CHANGELOG, READMEs, CLAUDE.md, STATUS.md, `.env.example` |
+| P2 Lebenszyklus | ~~T5~~ T6–T7 ✅ | T5 (Konfiguration) wurde nach P1 vorgezogen — T4 braucht die TTL. Startschuss, Intervall, Start nur aus den Transports — **fertig 2026-08-11** |
+| P3 Integration | T8–T10 ✅ | **Vier** Renderpfade (nicht fünf, s. u.), Parametersemantik, Disziplin-Test — **fertig 2026-08-11** |
+| P4 Doku | T11 ✅ | CHANGELOG, READMEs, CLAUDE.md, STATUS.md, `.env.example` — **fertig 2026-08-11** |
+
+**Zwei Abweichungen vom Plan, während der Umsetzung entschieden und hier
+festgehalten — der Plan ist ein Vertrag, also wird eine Änderung eingetragen und
+nicht stillschweigend abgehakt:**
+
+1. **T9 reichert VIER Pfade an, nicht fünf.** `tools/browse.ts` ist bewusst
+   ausgenommen: es rendert eigene zeilenorientierte Formate ohne Registry-Zeile,
+   das Feld läge also nur in `structuredContent`, während der Text es fallen
+   lässt — genau der Fehler „ein Feld im Umschlag ist keine Offenlegung, wenn der
+   Renderer es verwirft", den dieses Projekt zweimal bezahlt hat. Der Grund steht
+   im Disziplin-Test, der die drei erlaubten Dateien namentlich führt.
+2. **Aus dem Anfragepfad wurde `ensureRegistries`, nicht nur
+   `attachCachedRegistries`.** Der Entwurf sah einen rein synchronen Lookup vor;
+   auf Wunsch des Nutzers kam der gebundene Live-Rückfall dazu, damit die Antwort
+   den Katalog auch beim ersten Kontakt trägt. Entwurfsdokument nachgezogen.
+
+**Nach dem Paket:** ein Review mit 8 Befunden (alle behoben, s. `STATUS.md`),
+ein Live-Lauf gegen Staging und ein vollständiger Smoke über alle 42 Werkzeuge.
 
 ---
 
@@ -36,11 +54,11 @@ Bekanntes), Deckel `QUEUE_MAX = 500` mit Warnung, `stopSkillRegistryCache()`
 setzt alles zurück (damit Tests sich nicht gegenseitig beeinflussen).
 
 **Schritte**
-- [ ] Test: `lookupCachedRegistry('x')` → `undefined`.
-- [ ] Test: `queueCollections(['a','a','b'])` → Warteschlangenlänge 2.
-- [ ] Test: eine bereits beantwortete Sammlung wird nicht erneut vorgemerkt.
-- [ ] Test: 600 ids → 500 vorgemerkt, `log.warn` gefeuert.
-- [ ] Rot laufen lassen, implementieren, grün.
+- [x] Test: `lookupCachedRegistry('x')` → `undefined`.
+- [x] Test: `queueCollections(['a','a','b'])` → Warteschlangenlänge 2.
+- [x] Test: eine bereits beantwortete Sammlung wird nicht erneut vorgemerkt.
+- [x] Test: 600 ids → 500 vorgemerkt, `log.warn` gefeuert.
+- [x] Rot laufen lassen, implementieren, grün.
 
 **Verifikation.** `node --import tsx --test tests/skill-registry-cache.test.ts`
 **Rollback.** Datei löschen.
@@ -65,13 +83,13 @@ bekommt eine eigene Konstante mit demselben Wert und einem Kommentar, warum sie
 denselben Wert hat — 10 ist die gemessene Knie-Stelle (2026-08-10).
 
 **Schritte**
-- [ ] Test: eine vorgemerkte Sammlung mit Registry → Eintrag trägt sie,
+- [x] Test: eine vorgemerkte Sammlung mit Registry → Eintrag trägt sie,
       `report.found === 1`, genau **1** `/children`-Abruf.
-- [ ] Test: eine ohne Registry → `registry: null`, `report.resolved === 1`,
+- [x] Test: eine ohne Registry → `registry: null`, `report.resolved === 1`,
       `found === 0`.
-- [ ] Test: 60 vorgemerkt → 50 abgearbeitet, `queueLeft === 10`.
-- [ ] Test: Warteschlange leer → 0 Abrufe, Report mit Nullen.
-- [ ] Rot → implementieren → grün.
+- [x] Test: 60 vorgemerkt → 50 abgearbeitet, `queueLeft === 10`.
+- [x] Test: Warteschlange leer → 0 Abrufe, Report mit Nullen.
+- [x] Rot → implementieren → grün.
 
 **Verifikation.** wie T1. **Rollback.** Funktion entfernen.
 
@@ -94,11 +112,11 @@ Warteschlange nicht dauerhaft belegen.
 die eine Bedingung, unter der ein Cache-Treffer `registryChecked` setzen darf.
 
 **Schritte**
-- [ ] Test: `/children` antwortet 503 → kein Eintrag, Sammlung wieder in der
+- [x] Test: `/children` antwortet 503 → kein Eintrag, Sammlung wieder in der
       Warteschlange, `report.failed === 1`.
-- [ ] Test: 404 → Eintrag `registry: null`, **nicht** wieder vorgemerkt.
-- [ ] Test: eine fehlgeschlagene Sammlung kostet die anderen im Batch nichts.
-- [ ] Rot → implementieren → grün.
+- [x] Test: 404 → Eintrag `registry: null`, **nicht** wieder vorgemerkt.
+- [x] Test: eine fehlgeschlagene Sammlung kostet die anderen im Batch nichts.
+- [x] Rot → implementieren → grün.
 
 **Verifikation.** wie T1. **Rollback.** Fehlerzweig entfernen.
 
@@ -117,11 +135,11 @@ alter Wert). `report.expired` zählt sie. Die Uhr kommt über einen injizierbare
 `now`-Parameter, damit der Test nicht schlafen muss.
 
 **Schritte**
-- [ ] Test: Eintrag mit `checkedAt` weit in der Vergangenheit → beim nächsten
+- [x] Test: Eintrag mit `checkedAt` weit in der Vergangenheit → beim nächsten
       Takt neu geprüft, `expired === 1`.
-- [ ] Test: frischer Eintrag → kein erneuter Abruf.
-- [ ] Test: während der Erneuerung liefert der Lookup weiterhin den alten Wert.
-- [ ] Rot → implementieren → grün.
+- [x] Test: frischer Eintrag → kein erneuter Abruf.
+- [x] Test: während der Erneuerung liefert der Lookup weiterhin den alten Wert.
+- [x] Rot → implementieren → grün.
 
 **Verifikation.** wie T1. **Rollback.** Ablauflogik entfernen.
 
@@ -144,10 +162,15 @@ Je eine Logzeile beim Modul-Load, wie bei den bestehenden Schaltern.
 `WLO_REGISTRY_IN_SEARCH` wird **entfernt**, samt Import in `services/search.ts`.
 
 **Schritte**
-- [ ] Test: Standardwerte; `off`; Werte unter der Untergrenze werden angehoben;
+- [x] Test: Standardwerte; `off`; Werte unter der Untergrenze werden angehoben;
       Unsinn fällt auf den Standard zurück.
-- [ ] Rot → implementieren → grün.
-- [ ] `grep -rn "WLO_REGISTRY_IN_SEARCH" src tests docs` → nur CHANGELOG-Historie.
+- [x] Rot → implementieren → grün.
+- [x] `grep -rn "WLO_REGISTRY_IN_SEARCH" src tests docs` → **kein lebender Code,
+      keine Tests.** Ausgeführt 2026-08-11: die verbleibenden Treffer sind
+      Historie — ein Kommentar in `wlo-config.ts`, der sagt, was `WLO_SKILL_CACHE`
+      ablöst, sowie die Plandokumente des Vorgängerpakets und `STATUS.md`.
+      (Der Schritt sagte ursprünglich „nur CHANGELOG-Historie"; das war zu eng
+      formuliert, die Sache selbst stimmt.)
 
 **Verifikation.** Volle Suite. **Rollback.** Konstanten zurücknehmen.
 
@@ -171,13 +194,13 @@ lohnt. Was gilt, sagt die Kinderliste — sonst hinge die Freigabeliste am Index
 was `CLAUDE.md:366` verbietet.
 
 **Schritte**
-- [ ] Test: der Aufruf kehrt **synchron** zurück, bevor der Mock geantwortet hat.
-- [ ] Test: die primaryparent-ids des Korpus landen in der Warteschlange, und
+- [x] Test: der Aufruf kehrt **synchron** zurück, bevor der Mock geantwortet hat.
+- [x] Test: die primaryparent-ids des Korpus landen in der Warteschlange, und
       **kein** Eintrag ist ohne Takt schon beantwortet.
-- [ ] Test: bei `off` kein einziger Abruf.
-- [ ] Test: zweiter Start legt kein zweites Intervall an.
-- [ ] Test: `stopSkillRegistryCache()` beendet es — der Testlauf endet von selbst.
-- [ ] Rot → implementieren → grün.
+- [x] Test: bei `off` kein einziger Abruf.
+- [x] Test: zweiter Start legt kein zweites Intervall an.
+- [x] Test: `stopSkillRegistryCache()` beendet es — der Testlauf endet von selbst.
+- [x] Rot → implementieren → grün.
 
 **Verifikation.** Der Lauf muss **von allein enden**; hängt er, fehlt `unref`.
 **Rollback.** Lebenszyklus-Funktionen entfernen.
@@ -195,10 +218,10 @@ Ort, und **kein Modul-Load** — sonst feuert der Timer in jedem Test und
 `tests/netguard.mjs` schlägt zu Recht an.
 
 **Schritte**
-- [ ] Disziplin-Test: `startSkillRegistryCache(` kommt in genau diesen beiden
+- [x] Disziplin-Test: `startSkillRegistryCache(` kommt in genau diesen beiden
       `src/`-Dateien vor.
-- [ ] Rot → Aufrufe einbauen → grün.
-- [ ] `npm test` → keine Netguard-Verletzung.
+- [x] Rot → Aufrufe einbauen → grün.
+- [x] `npm test` → keine Netguard-Verletzung.
 
 **Verifikation.** Volle Suite. **Rollback.** Aufrufe entfernen.
 
@@ -222,12 +245,12 @@ Cache **autoritativ** beantworten konnte — daraus leitet der Aufrufer
 `registryChecked` ab. Ein vom Live-Pfad gesetztes Feld wird nie überschrieben.
 
 **Schritte**
-- [ ] Test: Sammlung mit Registry im Cache → Feld gesetzt, **0** Fetches, Rückgabe 1.
-- [ ] Test: Sammlung mit `registry: null` → kein Feld, Rückgabe 1, **nicht** neu vorgemerkt.
-- [ ] Test: unbekannte Sammlung → kein Feld, Rückgabe 0, **vorgemerkt**.
-- [ ] Test: Inhaltsknoten werden nicht angefasst und nicht vorgemerkt.
-- [ ] Test: bereits gesetztes Feld bleibt unverändert.
-- [ ] Rot → implementieren → grün.
+- [x] Test: Sammlung mit Registry im Cache → Feld gesetzt, **0** Fetches, Rückgabe 1.
+- [x] Test: Sammlung mit `registry: null` → kein Feld, Rückgabe 1, **nicht** neu vorgemerkt.
+- [x] Test: unbekannte Sammlung → kein Feld, Rückgabe 0, **vorgemerkt**.
+- [x] Test: Inhaltsknoten werden nicht angefasst und nicht vorgemerkt.
+- [x] Test: bereits gesetztes Feld bleibt unverändert.
+- [x] Rot → implementieren → grün.
 
 **Verifikation.** wie T1. **Rollback.** Funktion entfernen.
 
@@ -247,15 +270,15 @@ alle Sammlungen autoritativ beantworten konnte. Live läuft nur noch bei
 `opts.includeSkillRegistry === true`.
 
 **Schritte**
-- [ ] Test: ohne Parameter, Cache gefüllt → Katalog da, `/children`-Zähler **0**,
+- [x] Test: ohne Parameter, Cache gefüllt → Katalog da, `/children`-Zähler **0**,
       `registryChecked === true`.
-- [ ] Test: Cache teilweise kalt → `registryChecked` **ungesetzt**, Hinweiszeile da.
-- [ ] Test: `includeSkillRegistry: true` → Live-Abruf, `registryChecked === true`.
-- [ ] Test je Werkzeug (`search_wlo_collections`, `get_collection_contents`,
+- [x] Test: Cache teilweise kalt → `registryChecked` **ungesetzt**, Hinweiszeile da.
+- [x] Test: `includeSkillRegistry: true` → Live-Abruf, `registryChecked === true`.
+- [x] Test je Werkzeug (`search_wlo_collections`, `get_collection_contents`,
       `get_node_collections`, `browse_collection_tree`): Katalog erscheint,
       **0** zusätzliche Abrufe.
-- [ ] Bestehende Tests der Env-Schalter-Datei umschreiben oder entfernen.
-- [ ] Rot → implementieren → grün.
+- [x] Bestehende Tests der Env-Schalter-Datei umschreiben oder entfernen.
+- [x] Rot → implementieren → grün.
 
 **Verifikation.** Volle Suite. **Rollback.** Aufrufe entfernen.
 
@@ -277,9 +300,9 @@ alle Sammlungen autoritativ beantworten konnte. Live läuft nur noch bei
    neuen Wortlaut gezogen, Zahl weiterhin gepinnt.
 
 **Schritte**
-- [ ] Beide Tests schreiben, rot laufen lassen.
-- [ ] Beschreibungen anpassen, Disziplin-Test erfüllen.
-- [ ] `npm test` → grün.
+- [x] Beide Tests schreiben, rot laufen lassen.
+- [x] Beschreibungen anpassen, Disziplin-Test erfüllen.
+- [x] `npm test` → grün.
 
 **Verifikation.** Volle Suite. **Rollback.** Test entfernen.
 
@@ -309,8 +332,8 @@ TTL-Staleness — und die Regeln, die in `CLAUDE.md` gehören:
   einem Widerspruch neu zu messen — sie ist der Grund gegen den Vorab-Durchlauf.
 
 **Schritte**
-- [ ] Alle neun Dateien fortschreiben.
-- [ ] `npm test`, `npm run build`, Typprüfung.
+- [x] Alle neun Dateien fortschreiben.
+- [x] `npm test`, `npm run build`, Typprüfung.
 
 **Verifikation.** Alle drei grün. **Rollback.** Doku zurücknehmen.
 

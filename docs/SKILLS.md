@@ -1,5 +1,8 @@
 # Skills — how to build the collection
 
+> Kurzfassung des Ablaufs (wie ein Skill ausgelöst wird):
+> [`SKILL-TRIGGER.md`](./SKILL-TRIGGER.md)
+
 A **skill** is a reusable instruction document (`SKILL.md`) that an AI applies to
 a task. In WLO a skill is one `ccm:io` record: its metadata says what the skill
 is for, and its **attached file** is the instruction Markdown.
@@ -395,8 +398,18 @@ looking is worth starting; an approval list never rests on it.
 
 **`includeSkillRegistry: true`** on `search_wlo_all` / `search_wlo_collections`
 forces the live lookup instead of the remembered one, which matters right after
-a registry is created or edited. `WLO_SKILL_CACHE=off` disables the background
-work altogether.
+a registry is created or edited. `WLO_SKILL_CACHE=off` switches off the
+background work **and** the per-request live fallback, and the answers go back
+to carrying the free pointer above — an operator who flips that switch does it
+for the cost, and a fallback that kept running would charge every request the
+full children listing while no tick existed to expire anything.
+
+**One thing "no registry" does not always mean.** The scan reads the first 50
+file children. Over a collection with more than that — staging has several, e.g.
+"Museen" with 169 — a registry can simply sit past the cap, so the read is
+remembered (re-reading the same page answers nothing) but does **not** count as
+checked, and the answer keeps its pointer line. A definite "this collection has
+none" is only ever made over a listing that was seen in full.
 
 A deployment that has moved entirely to this process can also drop the
 repository-wide search with `WLO_DISABLE_SKILL_SEARCH=1`. `get_skill` always

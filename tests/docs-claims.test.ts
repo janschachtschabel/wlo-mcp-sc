@@ -21,6 +21,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { connectedClient } from './fetchMock.js';
+
 const root = new URL('../', import.meta.url);
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
 
@@ -154,4 +156,169 @@ test('the auth document exists and names the rules it is there to protect', () =
   for (const [needle, why] of mustMention) {
     assert.ok(auth.includes(needle), `docs/AUTH.md must mention ${needle} — ${why}`);
   }
+});
+
+// ── Counts ───────────────────────────────────────────────────────────────────
+
+/**
+ * A number beside a noun that names what is being counted.
+ *
+ * Every one of these was wrong somewhere on 2026-08-11, and two of them
+ * disagreed inside the SAME file (README.md said "28 read tools" in its opening
+ * and "27 MCP read tools" fifty lines later). `llms.txt` solved this by stating
+ * no count at all — right for a served file, wrong for a README, where the
+ * number is orientation a reader actually wants. So the number stays and the
+ * source decides it.
+ *
+ * The worst one was not stale, it was FALSE: both READMEs told a reader that an
+ * anonymous request gets "25" / "27" public tools, when it gets all 42 — the
+ * curation tools included, refusing at call time. That is the claim
+ * `no overview still claims the write tools are hidden without a login` above
+ * exists to forbid, walking past it in the shape of a digit.
+ */
+const COUNTED_DOCS = [
+  'README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md',
+  'docs/INTEGRATION.md', 'CLAUDE.md',
+];
+
+async function realCounts(): Promise<{ total: number; readTools: number; curation: number; oneTool: number }> {
+  const client = await connectedClient();
+  try {
+    const names = (await client.listTools()).tools.map(t => t.name);
+    const curation = curationToolNames();
+    return {
+      total: names.length,
+      readTools: names.filter(n => !curation.includes(n)).length,
+      curation: curation.length,
+      // one-tool mode swaps `search_skill` + `get_skill` for a single tool.
+      oneTool: names.length - 1,
+    };
+  } finally {
+    await client.close();
+  }
+}
+
+test('no document states a tool count the server contradicts', async () => {
+  const { total, readTools, curation, oneTool } = await realCounts();
+
+  const claims: ReadonlyArray<[RegExp, number, string]> = [
+    [/(\d+)\s+(?:MCP\s+)?read tools/gi, readTools, 'read tools'],
+    [/(\d+)\s+lesende (?:MCP-Tools|Werkzeuge)/gi, readTools, 'lesende Werkzeuge'],
+    // The same count in a heading, written the other way round. `docs/TOOLS.md`
+    // carried "Lesende MCP-Tools (27)" and "Kuratierende MCP-Tools (13)" while
+    // the prose above it said 42 — a section heading is exactly where a reader
+    // looks for the number, and exactly where nobody looks when updating one.
+    [/Lesende MCP-Tools \((\d+)\)/g, readTools, 'read tools (heading)'],
+    [/Kuratierende MCP-Tools \((\d+)\)/g, curation, 'curation tools (heading)'],
+    // The compact overview's own spellings.
+    [/^## Lesend \((\d+)\)/gm, readTools, 'read tools (compact heading)'],
+    [/^## Kuratierend \((\d+)\)/gm, curation, 'curation tools (compact heading)'],
+    [/\*\*(\d+) lesend\*\*/g, readTools, 'read tools (compact intro)'],
+    [/\*\*(\d+) kuratierend\*\*/g, curation, 'curation tools (compact intro)'],
+    [/dann (\d+) Werkzeuge/g, oneTool, 'one-tool mode drops exactly one tool'],
+    [/registers all (\d+) tools/gi, total, 'the factory registers every tool'],
+    // The anonymous listing is the WHOLE list — this is a claim about
+    // visibility, not a headcount, which is why a wrong number here is a lie
+    // rather than a typo.
+    [/(?:same )?(\d+)\s+(?:public tools|öffentlichen Werkzeuge)/gi, total, 'anonymous callers see every tool'],
+    [/(\d+) Tools —[^\n]*get_skill_for_task/gi, oneTool, 'one-tool mode drops exactly one tool'],
+  ];
+
+  const wrong: string[] = [];
+  for (const doc of COUNTED_DOCS) {
+    const body = read(doc);
+    for (const [pattern, expected, what] of claims) {
+      for (const m of body.matchAll(pattern)) {
+        if (Number(m[1]) !== expected) {
+          wrong.push(`${doc}: "${m[0].trim()}" — ${what} is ${expected}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(wrong, [], 'the source is the fact; these numbers are not');
+});
+
+/**
+ * A registered tool that no user-facing overview names.
+ *
+ * `get_skill_registry` shipped on 2026-08-10 and neither README mentioned it —
+ * `docs/TOOLS.md` had it, so the reference was complete while the two documents
+ * people actually open were not. A tool nobody reads about is a tool nobody
+ * asks for, which is the same failure as not shipping it.
+ *
+ * Checked against BOTH READMEs together rather than each alone: they are
+ * translations of one another, so a name missing from one is a translation gap,
+ * and a name missing from both is a documentation gap. `docs/TOOLS.md` is the
+ * reference and must carry every one on its own.
+ */
+test('every registered tool is named in the tool reference and in both READMEs', async () => {
+  const client = await connectedClient();
+  let names: string[];
+  try {
+    names = (await client.listTools()).tools.map(t => t.name);
+  } finally {
+    await client.close();
+  }
+
+  // Both files claim completeness — the reference in full, the compact list as
+  // "alle 42 Werkzeuge auf einen Blick". A claim of completeness is the one kind
+  // of document where a missing row is a defect rather than an omission.
+  for (const doc of ['docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md']) {
+    const body = read(doc);
+    const missing = names.filter(n => !new RegExp(String.raw`\b${n}\b`).test(body));
+    assert.deepEqual(missing, [], `${doc} claims to list every tool`);
+  }
+
+  for (const doc of ['README.md', 'README.de.md']) {
+    const body = read(doc);
+    const missing = names.filter(n => !new RegExp(String.raw`\b${n}\b`).test(body));
+    assert.deepEqual(missing, [], `${doc} does not name these tools`);
+  }
+});
+
+/**
+ * A parameter the READMEs document that the tool does not take.
+ *
+ * `search_wlo_collections` was documented with `userRole?` (it has no such
+ * parameter — `search_wlo_content` does, and the entries sit next to each other)
+ * and `get_node_collections` with `maxResults?`, which it never had. A model
+ * reading either sends an argument the schema rejects, and the tool call fails
+ * for a reason the documentation caused.
+ *
+ * The rule is drawn along the documents' OWN convention: an optional parameter
+ * is written `name?` in backticks, while enum values and type names are written
+ * without the question mark. That makes the check exact — it found these two and
+ * nothing else across 28 tool entries in two languages.
+ */
+test('the READMEs document no parameter the schema does not have', async () => {
+  const client = await connectedClient();
+  let schemas: Map<string, Set<string>>;
+  try {
+    schemas = new Map((await client.listTools()).tools.map(t => [
+      t.name,
+      new Set(Object.keys((t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {})),
+    ]));
+  } finally {
+    await client.close();
+  }
+
+  const wrong: string[] = [];
+  for (const doc of ['README.md', 'README.de.md']) {
+    const body = read(doc);
+    // `**12. \`tool_name\`** — …` up to the blank line that ends the entry.
+    // `\r?` is not decoration: these files are CRLF, and a first version with a
+    // bare `\n\n` matched ZERO entries and passed by checking nothing — which is
+    // worse than the defect it was written to catch.
+    const entries = [...body.matchAll(/\*\*\d+\.\s+`([a-z_]+)`\*\*([\s\S]{0,900}?)(?=\r?\n\r?\n)/g)];
+    assert.ok(entries.length > 20, `${doc}: only ${entries.length} tool entries parsed — the scan is broken`);
+    for (const entry of entries) {
+      const [, tool, blob] = entry;
+      const params = schemas.get(tool!);
+      if (!params) continue;
+      for (const p of blob!.matchAll(/`([a-zA-Z][a-zA-Z0-9_]*)\?`/g)) {
+        if (!params.has(p[1]!)) wrong.push(`${doc}: ${tool} has no parameter \`${p[1]}\``);
+      }
+    }
+  }
+  assert.deepEqual(wrong, [], 'a documented parameter that does not exist makes the tool call fail');
 });

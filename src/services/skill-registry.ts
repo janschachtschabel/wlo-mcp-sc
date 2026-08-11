@@ -237,11 +237,33 @@ export type RegistryMiss =
   | 'unreadable';   // the listing failed, or the registry's own text could not be read
 
 /**
- * Entries one answer carries. A curated approval list is short by nature; the
- * cap exists so a document that grew a hundred references cannot turn one tool
- * call into a hundred reads — and it is DISCLOSED, never silent.
+ * Entries the TOOL tier carries — one explicit call about one collection.
+ *
+ * The cap exists so a document that grew unbounded references cannot turn one
+ * call into unbounded reads (this tier fetches one metadata record per skill),
+ * and it is DISCLOSED, never silent. Raised from 30 to 100 on 2026-08-11: a
+ * curated approval list of sixty is a legitimate thing for an editorial team to
+ * declare, and cutting it to thirty made the tool no more informative than the
+ * listing that pointed at it.
+ *
+ * At `REGISTRY_POOL` = 10 that is ten waves; extrapolated from the 2026-08-10
+ * measurement of 28 records in 1095 ms, a full hundred lands around 4 s. Paid
+ * once, on request, for one collection — not per search.
  */
-export const REGISTRY_MAX = 30;
+export const REGISTRY_MAX = 100;
+
+/**
+ * Entries the SEARCH tier carries — the catalogue that rides along in a result
+ * list, resolving nothing.
+ *
+ * A different bound because it answers a different question: five collections in
+ * one answer, each with its list, is what has to stay readable. Deliberately
+ * equal to `REGISTRY_LINES_MAX` in `formatter.ts`, so a search listing is always
+ * COMPLETE for what it carries and never shows a sample of its own catalogue.
+ * (The two constants cannot be shared: `formatter.ts` is a leaf module and this
+ * one imports from it, so the dependency would be a cycle.)
+ */
+export const REGISTRY_SEARCH_MAX = 30;
 
 /**
  * Skill heads fetched at once.
@@ -317,7 +339,10 @@ export async function buildRegistryFrom(
   if (markdown === null) return { registry: base, reason: 'unreadable' };
 
   const referenced = parseSkillReferences(markdown).filter(r => r.kind === 'ki-skill');
-  const capped = referenced.slice(0, REGISTRY_MAX);
+  // The tier decides how many, not just what: `resolveHeads: false` is the
+  // listing's cheap pass and carries the narrower bound, everything else is the
+  // tool answering about one collection.
+  const capped = referenced.slice(0, opts.resolveHeads === false ? REGISTRY_SEARCH_MAX : REGISTRY_MAX);
 
   // A block with no repository URL names nothing anyone can fetch — neither tier
   // can turn it into a usable entry, so it is reported as unresolved in both.

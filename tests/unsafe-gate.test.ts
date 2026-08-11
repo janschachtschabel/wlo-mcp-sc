@@ -92,3 +92,37 @@ test('switching one unsafe tool off leaves the others alone', async () => {
   });
   assert.deepEqual(names.sort(), ['other_unsafe_tool', 'safe_tool']);
 });
+
+/**
+ * The warning is a STARTUP notice, and its own comment says so: "whoever
+ * inherits this deployment has to be able to see it at startup". But
+ * registration runs per `createMcpServer()`, and the Streamable HTTP transport
+ * builds one per REQUEST — measured against a live server on 2026-08-11: one
+ * start, six identical warnings for six requests. At the configured 120 rpm
+ * that is 120 lines a minute, which is how a real warning stops being read.
+ */
+test('the unsafe-tool warning is emitted once per process, not once per registration', async () => {
+  const original = process.stderr.write.bind(process.stderr);
+  let warnings = 0;
+  (process.stderr as { write: unknown }).write = (chunk: string | Uint8Array, ...rest: unknown[]) => {
+    if (String(chunk).includes('registering a tool declared UNSAFE')) warnings++;
+    return (original as (c: unknown, ...r: unknown[]) => boolean)(chunk, ...rest);
+  };
+  try {
+    // The SAME tool five times, which is exactly what a stateless transport
+    // does: one `createMcpServer()` per request, each registering `get_url_text`.
+    for (let i = 0; i < 5; i++) {
+      const server = new McpServer({ name: 'warn-test', version: '0.0.0' });
+      registerWloTool(server, { ...unsafeDef, name: 'unsafe_repeat' }, disableNothing);
+    }
+    assert.equal(warnings, 1, `five registrations of ONE tool must warn once — got ${warnings}`);
+
+    // A DIFFERENT unsafe tool still gets its own line: the point of the warning
+    // is naming what is switched on, so silencing the second one would hide it.
+    const server = new McpServer({ name: 'warn-test', version: '0.0.0' });
+    registerWloTool(server, { ...unsafeDef, name: 'unsafe_other' }, disableNothing);
+    assert.equal(warnings, 2, 'a second unsafe tool is named too');
+  } finally {
+    (process.stderr as { write: unknown }).write = original;
+  }
+});
