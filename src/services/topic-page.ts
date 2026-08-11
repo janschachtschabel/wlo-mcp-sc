@@ -10,7 +10,7 @@
 
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
 import { WLO_TOPIC_POOL, buildTopicPageUrl, getNodesMetadata, ngsearch, searchCollectionsByKeyword, stripStoreRef } from '../wlo-api.js';
-import type { ThemePageInfo, VariantFilters } from '../topic-page-api.js';
+import type { ThemePageInfo, VariantFilters } from '../topic-page-variant.js';
 import { getCollectionThemePages, searchTopicPageCollections } from '../topic-page-api.js';
 import type { TopicPageStructure } from '../topic-page-structure.js';
 import type { FormattedNode } from '../formatter.js';

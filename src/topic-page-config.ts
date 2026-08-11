@@ -26,6 +26,74 @@ export interface PageConfigOrder {
 const NO_ORDER: PageConfigOrder = { order: [], defaultId: '' };
 
 /**
+ * How a Themenseite is PRE-SET when someone lands on it — the initial state of
+ * the page's profile selector, before anyone picks "Lehrkraft" or
+ * "Sekundarstufe I".
+ *
+ * This is deliberately NOT the variant's audience metadata
+ * (`ccm:page_variant_profiling_target_group`, `ccm:educationalcontext`). The two
+ * are near-disjoint and they disagree — measured over the 69 non-template
+ * staging variants on 2026-08-11: the official fields are set on 17 and 21 of
+ * them, the preset on 25 and 32, only 1 resp. 2 carry both, and in 3 of 3 such
+ * cases the values contradict (targetGroup `learner` beside intention `teach`;
+ * educationalcontext `elementarbereich` beside a preset spanning
+ * sekundarstufe_1…erwachsenenbildung). Using one as a fallback for the other
+ * would raise the reported coverage and lower the truth.
+ */
+export interface VariantPreset {
+  /** What the page assumes the visitor is doing: teaching or learning. */
+  intention?: 'teach' | 'learn';
+  /** Pre-selected education levels, as `educationalContext` vocabulary URIs. */
+  educationLevels?: string[];
+}
+
+/** The only two values staging uses; anything else is not a state we can name. */
+const INTENTIONS = new Set(['teach', 'learn']);
+
+/**
+ * Read the `variables` block out of a `ccm:page_variant_config` document.
+ *
+ * @returns the preset, or `undefined` when the variant declares none — 37 of 69
+ *   staging variants do, and "no preset" is a different claim from "a preset
+ *   with nothing in it".
+ */
+export function parseVariantPreset(raw: string | undefined): VariantPreset | undefined {
+  if (!raw) return undefined;
+  let vars: Record<string, unknown> | undefined;
+  try {
+    vars = (JSON.parse(raw) as { variables?: Record<string, unknown> })?.variables;
+  } catch {
+    // The repository validates nothing here — a sibling document accepted the
+    // literal "not json at all" with a 200 (measured 2026-08-09). Unparseable
+    // means no preset, never a throw in a read path.
+    return undefined;
+  }
+  if (!vars || typeof vars !== 'object') return undefined;
+
+  const rawIntention = vars['virtual:profiling_widget_intention'];
+  const intention = typeof rawIntention === 'string' && INTENTIONS.has(rawIntention)
+    ? rawIntention as 'teach' | 'learn'
+    : undefined;
+
+  // One comma-joined string upstream on 32 of 32 — not an array. Splitting is
+  // the whole reason this needs a parser rather than a property read.
+  const rawLevels = vars['virtual:profiling_widget_education_level'];
+  const educationLevels = typeof rawLevels === 'string'
+    ? rawLevels.split(',').map(s => s.trim()).filter(Boolean)
+    : undefined;
+
+  // `virtual:profiling_target_group` is deliberately ignored: both staging
+  // variants that carry it hold the full ["learner","teacher","general"], which
+  // is the selector's OPTION LIST. Reading it as a selection would turn a widget
+  // configuration into an audience claim.
+  if (!intention && !educationLevels?.length) return undefined;
+  return {
+    ...(intention ? { intention } : {}),
+    ...(educationLevels?.length ? { educationLevels } : {}),
+  };
+}
+
+/**
  * Read `ccm:page_config` off a page-config FOLDER — the document that says
  * which variant a Themenseite actually renders.
  *

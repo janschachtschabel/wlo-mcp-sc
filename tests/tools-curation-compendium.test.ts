@@ -145,7 +145,7 @@ test('a read-back mismatch is reported as not saved', async () => {
   setServiceCredentialForTest(USER);
   // The repository answers 200 and keeps the old value — the silent drop.
   const stored: Record<string, string[]> = { 'cm:title': ['Bruchrechnung'], [PROPERTY]: ['# Alt'] };
-  const mock = installFetchMock((url, init) => {
+  const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
       return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, properties: stored } } };
     }

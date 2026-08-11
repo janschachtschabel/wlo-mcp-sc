@@ -30,7 +30,7 @@
  */
 
 import { getChildCollectionsResult, getNodeMetadata, stripStoreRef } from '../../wlo-node.js';
-import { TOPIC_PAGE_PROPS, isUsableVariant } from '../../topic-page-api.js';
+import { TOPIC_PAGE_PROPS, isUsableVariant } from '../../topic-page-variant.js';
 import { parsePageConfigOrder, setDefaultVariant } from '../../topic-page-config.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { log } from '../../logger.js';

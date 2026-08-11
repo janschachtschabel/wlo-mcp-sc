@@ -11,7 +11,6 @@
 import type { SearchCriterion, WloNode } from './wlo-api.js';
 import {
   BASE_URL,
-  DISPLAY_PROPS,
   WLO_ROOT_COLLECTION_ID,
   appendPropertyFilter,
   buildTopicPageUrl,
@@ -24,91 +23,14 @@ import type { PageConfigOrder } from './topic-page-config.js';
 import { HEADERS, wloFetch, logUpstreamMiss } from './wlo-fetch.js';
 import { readJson } from './read-json.js';
 import { nodeMatchesText } from './node-match.js';
-import { displayTitleOrEmpty } from './topic-page-title.js';
+import {
+  TOPIC_PAGE_PROPS,
+  isUsableVariant,
+  variantFields,
+  variantMatchesFilters,
+} from './topic-page-variant.js';
+import type { ThemePageInfo, VariantFilters } from './topic-page-variant.js';
 
-// Topic-page variants additionally need the page_variant fields
-// (template flag, target group, swimlane config). Exported because
-// `topic-page-structure.ts` reads the same projection off the config folder.
-export const TOPIC_PAGE_PROPS: string[] = [
-  ...DISPLAY_PROPS,
-  'ccm:page_variant_is_template',
-  'ccm:page_variant_profiling_target_group',
-  'ccm:page_variant_config',
-];
-
-export type TargetGroup = 'teacher' | 'learner' | 'general';
-
-/**
- * The two profiling filters a caller may narrow a Themenseiten listing with.
- * `educationalContext` is a RESOLVED vocabulary URI, never a label — the
- * label→URI mapping happens in the tool layer.
- */
-export interface VariantFilters {
-  targetGroup?: TargetGroup;
-  educationalContext?: string;
-}
-
-/**
- * Does this page variant survive the caller's filters?
- *
- * **A variant that carries no value is never excluded.** Measured 2026-08-07
- * against both instances: 98 of 109 non-template variants on production have no
- * `ccm:page_variant_profiling_target_group` and 97 have no
- * `ccm:educationalcontext` (staging: 49 and 45 of 68). Treating "unset" as a
- * mismatch — which is what handing these fields to the search does, since the
- * ES query can only match a present value — hides nine Themenseiten out of ten.
- * See `docs/plans/2026-08-07-topic-page-variants-analysis.md` §1.
- *
- * This is the ONE place the rule lives, so the listing modes cannot drift apart
- * again: Mode C used to filter upstream while Modes A/B filtered here, and the
- * same `targetGroup` therefore produced two different result sets.
- */
-export function variantMatchesFilters(
-  props: Record<string, string[] | undefined>,
-  filters: VariantFilters,
-): boolean {
-  const tg = props['ccm:page_variant_profiling_target_group']?.[0];
-  if (filters.targetGroup && tg && tg !== filters.targetGroup) return false;
-  const contexts = props['ccm:educationalcontext'] ?? [];
-  if (filters.educationalContext && contexts.length && !contexts.includes(filters.educationalContext)) return false;
-  return true;
-}
-
-export interface ThemePageInfo {
-  variantId: string;
-  variantName: string;
-  /**
-   * Human-readable label of the page-variant node itself, from `cclom:title`
-   * — e.g. "Fachportalstartseite", "Vorlage: Themenseite". Distinct from
-   * `variantName`, which holds the auto-generated technical `cm:name`
-   * ("PAGE_VARIANT_<uuid>"). Used as a display fallback when the owning
-   * collection can't be resolved, so the UI never shows the raw
-   * PAGE_VARIANT/UUID string.
-   *
-   * `cm:title` is deliberately NOT a fallback: it carries that same technical
-   * string on 109 of 109 production variants (measured 2026-08-07), so falling
-   * back to it replaces "no label" with a UUID that only looks like one.
-   */
-  variantTitle?: string;
-  targetGroup: string;
-  educationalContexts: string[];
-  isTemplate: boolean;
-  topicPageUrl: string;
-  collectionId?: string;
-  collectionName?: string;
-  /**
-   * True for the variant the page actually renders: `ccm:page_config.default`
-   * of its page-config folder, or the first still-existing entry of that
-   * document's `variants[]` when no default is recorded (`readPageConfigOrder`).
-   *
-   * A collection can own SEVERAL page-config folders while its own
-   * `ccm:page_config_ref` names the active one, so this additionally requires
-   * the variant to sit in THAT folder. Variants of a superseded folder are still
-   * listed — dropping them would lose the pages whose only folder is superseded
-   * — they are simply never the rendered one.
-   */
-  isDefault?: boolean;
-}
 
 /**
  * POST /search/v1/queries/-home-/mds_oeh/page_variant
@@ -313,19 +235,7 @@ export async function getCollectionThemePages(
     if (!variantMatchesFilters(vProps, filters)) continue;
 
     out.push({
-      variantId: variant.ref?.id ?? '',
-      variantName: vProps['cm:name']?.[0] || variant.name || '',
-      // Checked, not trusted: `cclom:title` carries the technical
-      // `PAGE_VARIANT_<uuid>` string on 22 of 68 staging variants. Empty lets
-      // `pickThemePageTitle` fall through to the collection name.
-      variantTitle: displayTitleOrEmpty(vProps['cclom:title']?.[0]),
-      // Empty, not a German placeholder: this is the machine field. The
-      // "nicht gesetzt" wording belongs to `targetGroupLabel`, which the
-      // presentation layer derives — emitting it here made an unset value look
-      // set to any consumer comparing against ''.
-      targetGroup: vProps['ccm:page_variant_profiling_target_group']?.[0] || '',
-      educationalContexts: vProps['ccm:educationalcontext'] ?? [],
-      isTemplate: false,
+      ...variantFields(variant),
       topicPageUrl,
       collectionId,
       collectionName,
@@ -333,11 +243,5 @@ export async function getCollectionThemePages(
     });
   }
   return out;
-}
-
-/** A real, selectable page variant: configured, and not a template. */
-export function isUsableVariant(node: WloNode): boolean {
-  const p = node.properties ?? {};
-  return !!p['ccm:page_variant_config']?.[0] && p['ccm:page_variant_is_template']?.[0] !== 'true';
 }
 

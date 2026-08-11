@@ -12,7 +12,7 @@
 import type { WloNode } from './wlo-api.js';
 import { getChildCollections, getNodeMetadata, stripStoreRef } from './wlo-api.js';
 import { nodeTitle } from './node-match.js';
-import { TOPIC_PAGE_PROPS, isUsableVariant, type TargetGroup } from './topic-page-api.js';
+import { TOPIC_PAGE_PROPS, isUsableVariant, type TargetGroup } from './topic-page-variant.js';
 import { orderVariants, readPageConfigOrder } from './topic-page-config.js';
 import { displayTitleOrEmpty } from './topic-page-title.js';
 

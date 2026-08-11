@@ -30,7 +30,7 @@ test('isPlaceholderTitle: PAGE_VARIANT names and UUIDs are placeholders', () => 
 test('pickThemePageTitle: collection name > variant title > generic fallback', () => {
   const base = {
     variantId: 'v1', variantName: 'PAGE_VARIANT_abc', targetGroup: '',
-    educationalContexts: [], isTemplate: false, topicPageUrl: '',
+    educationalContexts: [], topicPageUrl: '',
   };
   assert.equal(pickThemePageTitle({ ...base, collectionName: 'Physik', variantTitle: 'Variante 1' }), 'Physik');
   assert.equal(pickThemePageTitle({ ...base, variantTitle: 'Seiten-Variante 1' }), 'Seiten-Variante 1');

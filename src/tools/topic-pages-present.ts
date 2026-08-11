@@ -6,17 +6,36 @@
  * here, which keeps the merge/sort/render rules unit-testable in isolation.
  */
 
-import type { ThemePageInfo } from '../topic-page-api.js';
+import type { ThemePageInfo } from '../topic-page-variant.js';
 import type { FormattedNode } from '../formatter.js';
 import { oneLine } from '../formatter.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
 import { labelFromUri } from '../vocabs.js';
 import { pickThemePageTitle } from './shared.js';
+import type { VariantPreset } from '../topic-page-config.js';
+
+/**
+ * How a Themenseite comes up before anyone touches its profile selector.
+ *
+ * Reported beside `targetGroup`, never merged into it: measured 2026-08-11 over
+ * 69 staging variants, the two sources are near-disjoint (1 resp. 2 carry both)
+ * and where both exist they disagree in 3 of 3 cases. Raw values plus labels,
+ * the same shape `targetGroup`/`targetGroupLabel` uses — a bare vocabulary URI
+ * is not something a model can weigh.
+ */
+export interface VariantPresetView {
+  intention?: 'teach' | 'learn';
+  intentionLabel?: string;
+  educationLevels?: string[];
+  educationLevelLabels?: string[];
+}
 
 export interface ThemePageVariant {
   variantId: string;
   targetGroup: string;
   targetGroupLabel: string;
+  /** Absent when the variant declares no preset — 37 of 69 staging variants. */
+  variantPreset?: VariantPresetView;
   topicPageUrl: string;
   /**
    * The variant the Themenseite actually renders (`ccm:page_config.default`).
@@ -25,6 +44,21 @@ export interface ThemePageVariant {
    * from the target group and has to be said out loud.
    */
   isDefault: boolean;
+}
+
+/** German labels for the two intentions the page builder stores. */
+const INTENTION_LABELS: Record<string, string> = { teach: 'Lehren', learn: 'Lernen' };
+
+function presetView(p: VariantPreset): VariantPresetView {
+  return {
+    ...(p.intention ? { intention: p.intention, intentionLabel: INTENTION_LABELS[p.intention] } : {}),
+    ...(p.educationLevels?.length
+      ? {
+          educationLevels: p.educationLevels,
+          educationLevelLabels: p.educationLevels.map(u => labelFromUri(u, 'educationalContext')),
+        }
+      : {}),
+  };
 }
 
 export interface PresentedThemePage {
@@ -64,6 +98,7 @@ export function mergeThemePages(
       variantId: r.variantId,
       targetGroup: r.targetGroup || '',
       targetGroupLabel: tgLabel,
+      ...(r.variantPreset ? { variantPreset: presetView(r.variantPreset) } : {}),
       topicPageUrl: r.topicPageUrl,
       isDefault: r.isDefault === true,
     };

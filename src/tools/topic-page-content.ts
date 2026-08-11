@@ -8,7 +8,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import type { TargetGroup } from '../topic-page-api.js';
+import type { TargetGroup } from '../topic-page-variant.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';

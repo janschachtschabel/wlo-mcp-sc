@@ -26,7 +26,7 @@ import { mergeThemePages, renderThemePages } from '../src/tools/topic-pages-pres
 import { registerSkillTools } from '../src/tools/skills.js';
 import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
-import type { ThemePageInfo } from '../src/topic-page-api.js';
+import type { ThemePageInfo } from '../src/topic-page-variant.js';
 
 /** The first text block of a tool result — the one that carries the payload. */
 function firstText(result: unknown): string {
@@ -147,7 +147,6 @@ test('renderThemePages: a newline in a Themenseite title cannot forge a second e
     targetGroup: '',
     educationalContexts: [],
     topicPageUrl: 'https://example.org/p',
-    isTemplate: false,
   }];
   const out = mergeThemePages(raw, { merge: true, sort: 'alpha', maxResults: 5 });
   const meta = { type: 'text' as const, text: '{}' };

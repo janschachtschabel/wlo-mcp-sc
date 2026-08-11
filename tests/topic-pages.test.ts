@@ -192,3 +192,104 @@ test('search_wlo_topic_pages: no content attached without includeContent', async
     mock.restore();
   }
 });
+
+/**
+ * The page's PRESET — how it comes up before anyone touches the profile
+ * selector — travels as its own field beside the audience metadata, never
+ * merged into it.
+ *
+ * The fixture is the real staging case (variant 0b637d52, measured 2026-08-11):
+ * `ccm:page_variant_profiling_target_group: learner` on a variant whose preset
+ * says `intention: teach`. Both are reported; deciding which one "wins" is not
+ * this layer's call, and silently picking one would make the answer wrong in a
+ * way no caller could see.
+ */
+const EC = 'http://w3id.org/openeduhub/vocabs/educationalContext';
+const contradictoryConfig = JSON.stringify({
+  structure: { swimlanes: [{ heading: 'Einführung', type: 'container', grid: [{ item: 'ai-text' }] }] },
+  variables: {
+    'virtual:profiling_widget_intention': 'teach',
+    'virtual:profiling_widget_education_level': `${EC}/sekundarstufe_1,${EC}/sekundarstufe_2`,
+  },
+});
+
+test('search_wlo_topic_pages: the variant preset is its own field, beside the audience metadata', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/collections')) {
+      return { json: { nodes: [makeNode('coll-1', 'Themenseite Optik', { 'cclom:title': ['Themenseite Optik'] })] } };
+    }
+    if (url.includes('/metadata') && url.includes('coll-1')) {
+      return { json: { node: makeNode('coll-1', 'Themenseite Optik', {
+        'cclom:title': ['Themenseite Optik'],
+        'ccm:page_config_ref': ['workspace://SpacesStore/cfg-1'],
+      }) } };
+    }
+    if (url.includes('cfg-1/children')) {
+      return { json: { nodes: [makeNode('var-1', 'Variante', {
+        'ccm:page_variant_config': [contradictoryConfig],
+        'ccm:page_variant_profiling_target_group': ['learner'],
+        'ccm:educationalcontext': [`${EC}/elementarbereich`],
+        'cclom:title': ['Variante Ideal'],
+      })] } };
+    }
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'search_wlo_topic_pages',
+      arguments: { query: 'Optik', outputFormat: 'json' },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
+    const page = JSON.parse(text).results[0];
+    const v = page.variants[0];
+
+    assert.equal(v.targetGroup, 'learner', 'the declared audience is untouched');
+    assert.equal(v.targetGroupLabel, 'Lernende');
+    // The page-level audience metadata is likewise unchanged by the preset.
+    assert.deepEqual(page.educationalContexts, ['Elementarbereich']);
+
+    assert.equal(v.variantPreset?.intention, 'teach', 'the preset is reported separately');
+    assert.deepEqual(v.variantPreset?.educationLevels,
+      [`${EC}/sekundarstufe_1`, `${EC}/sekundarstufe_2`],
+      'levels split from the comma-joined upstream string');
+    // Labels beside the URIs, exactly as targetGroup/targetGroupLabel does it —
+    // a raw vocabulary URI is not something a model can weigh.
+    //
+    // This line read "Sekundarstufe i"/"ii" until 2026-08-11, pinned as the
+    // measured reality: `labels[0]` doubled as a lowercase MATCHING alias and
+    // `labelFromUri` only upper-cases the first character. The display forms now
+    // come from the official prefLabels (19 concepts corrected, see
+    // `tests/vocabs.test.ts`), and this test is what caught the change reaching
+    // the tool output.
+    assert.deepEqual(v.variantPreset?.educationLevelLabels, ['Sekundarstufe I', 'Sekundarstufe II']);
+    assert.equal(v.variantPreset?.intentionLabel, 'Lehren');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('search_wlo_topic_pages: a variant without a variables block carries no preset field', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/collections')) {
+      return { json: { nodes: [makeNode('coll-1', 'Themenseite Optik', { 'cclom:title': ['Themenseite Optik'] })] } };
+    }
+    return topicPageMockHandler(url);   // its variant config has no `variables`
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'search_wlo_topic_pages',
+      arguments: { query: 'Optik', outputFormat: 'json' },
+    });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
+    const v = JSON.parse(text).results[0].variants[0];
+    // 37 of 69 staging variants declare none. An empty object would read as
+    // "preset, but nothing in it", which is a different and wrong claim.
+    assert.equal(v.variantPreset, undefined);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

@@ -12,13 +12,17 @@
  * has to run wherever such a value is read from the repository.
  *
  * This lives in a leaf module rather than in `tools/shared.ts`, where it started.
- * `topic-page-structure.ts`, `topic-page-api.ts` and `services/write/topic-page.ts`
- * all need it, and none of them may import from `tools/` — the direction is
- * enforced by `tests/shared-rule-discipline.test.ts`, and the same move was made
- * for `mapPool` and `buildFilterCriteria` before this one.
+ * `topic-page-variant.ts`, `topic-page-structure.ts` and
+ * `services/write/topic-page.ts` all need it, and none of them may import from
+ * `tools/` — the direction is enforced by
+ * `tests/shared-rule-discipline.test.ts`, and the same move was made for
+ * `mapPool` and `buildFilterCriteria` before this one.
+ *
+ * It imports nothing, and that is deliberate: `pickThemePageTitle` used to live
+ * here and needed `ThemePageInfo`, pointing this module back at one that imports
+ * it. It moved to `topic-page-variant.ts` beside that type on 2026-08-11;
+ * `tools/shared.ts` re-exports it, so no caller changed.
  */
-
-import type { ThemePageInfo } from './topic-page-api.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -46,20 +50,4 @@ export function isPlaceholderTitle(s: string | undefined | null): boolean {
 export function displayTitleOrEmpty(raw: string | undefined | null): string {
   const t = (raw ?? '').trim();
   return isPlaceholderTitle(t) ? '' : t;
-}
-
-/**
- * Pick the best human-readable title for a Themenseite, in priority order:
- *   1. owning collection name (`cclom:title`/`cm:name` of the collection),
- *   2. the variant node's own title,
- *   3. the variant's `cm:name` — only if it is NOT a placeholder.
- * Falls back to a generic "Themenseite" so a raw UUID is never displayed.
- */
-export function pickThemePageTitle(r: ThemePageInfo): string {
-  const candidates = [r.collectionName, r.variantTitle, r.variantName];
-  for (const c of candidates) {
-    const t = (c ?? '').trim();
-    if (t && !isPlaceholderTitle(t)) return t;
-  }
-  return 'Themenseite';
 }

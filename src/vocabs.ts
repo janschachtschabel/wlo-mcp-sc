@@ -36,8 +36,41 @@ import { universitySubjectLabel } from './vocabs-hochschule.js';
 export type VocabKey = 'educationalContext' | 'discipline' | 'userRole' | 'lrt' | 'license' | 'targetGroup';
 
 interface VocabEntry {
-  id: string;     // full URI
-  labels: string[]; // prefLabel + altLabel (lowercase for matching)
+  id: string;
+  /**
+   * `labels[0]` is the DISPLAY form — the concept's official German prefLabel —
+   * and every entry after it is a matching alias only.
+   *
+   * The two jobs share one array, which is why the display form used to be
+   * wrong: the table was written all-lowercase for the matching half, and
+   * `labelFromUri` only upper-cases the first character, so it rendered
+   * "Sekundarstufe i", "Deutsch als zweitsprache" and "Mint" for MINT. 23 of 152
+   * concepts across the six tables were affected (checked against the SKOS
+   * sources of record on 2026-08-11).
+   *
+   * WHERE that shows: `formatNode` prefers the server's `<property>_DISPLAYNAME`
+   * and only falls back here (`resolveLabels`), so a normal hit list usually
+   * carries the repository's label, not ours. What has no DISPLAYNAME to fall
+   * back on — and is therefore rendered from this table alone — is the facet
+   * breakdown, the licence, `lookup_wlo_vocabulary`, and the topic-page fields
+   * that come from raw URIs, `variantPreset.educationLevelLabels` among them.
+   *
+   * A test now fails any label whose continuation is lowercase, so this cannot
+   * come back through a new entry; the concepts whose official prefLabel is not
+   * simply the capitalised alias are pinned individually. Both in
+   * `tests/vocabs.test.ts`.
+   *
+   * Casing costs the matching nothing: `resolveVocab` and `labelFromUri`
+   * lowercase both sides. A display form that differs by more than casing —
+   * "Umweltgefährdung, Umweltschutz" gained a comma — must KEEP the previous
+   * spelling as an alias, or the exact-match path loses it.
+   *
+   * The AGGREGATED LRT table is the one that does not simply mirror its source:
+   * 9 of its 48 display forms are shortened on purpose ("Tests" for "Tests /
+   * Fragebögen"), and every dropped part exists as an alias. Only the casing was
+   * fixed there. `vocabs-lrt.ts` is the opposite — 220 of 220 verbatim.
+   */
+  labels: string[];
 }
 
 // ── Educational level ────────────────────────────────────────────────────────
@@ -62,15 +95,15 @@ const EDUCATIONAL_CONTEXT: VocabEntry[] = [
   { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'kita', 'kindergarten'] },
   { id: EC_BASE + 'schule',            labels: ['schule', 'school'] },
   { id: EC_BASE + 'grundschule',       labels: ['primarstufe', 'grundschule', 'primary school', 'elementary school', 'primär', ...gradeAliases(1, 4)] },
-  { id: EC_BASE + 'sekundarstufe_1',   labels: ['sekundarstufe i', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1', ...gradeAliases(5, 10)] },
-  { id: EC_BASE + 'sekundarstufe_2',   labels: ['sekundarstufe ii', 'sekundarstufe 2', 'secondary ii', 'upper secondary school', 'sek ii', 'sek2', 'gymnasium', 'oberstufe', ...gradeAliases(11, 13)] },
+  { id: EC_BASE + 'sekundarstufe_1',   labels: ['Sekundarstufe I', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1', ...gradeAliases(5, 10)] },
+  { id: EC_BASE + 'sekundarstufe_2',   labels: ['Sekundarstufe II', 'sekundarstufe 2', 'secondary ii', 'upper secondary school', 'sek ii', 'sek2', 'gymnasium', 'oberstufe', ...gradeAliases(11, 13)] },
   { id: EC_BASE + 'hochschule',        labels: ['hochschule', 'higher education', 'universität', 'uni', 'studium', 'hochschulbildung'] },
-  { id: EC_BASE + 'berufliche_bildung',labels: ['berufliche bildung', 'vocational education', 'berufsausbildung', 'berufsschule', 'ausbildung'] },
+  { id: EC_BASE + 'berufliche_bildung',labels: ['Berufliche Bildung', 'vocational education', 'berufsausbildung', 'berufsschule', 'ausbildung'] },
   { id: EC_BASE + 'fortbildung',       labels: ['fortbildung', 'further education', 'weiterbildung', 'fortbildungen'] },
   { id: EC_BASE + 'erwachsenenbildung',labels: ['erwachsenenbildung', 'continuing education', 'erwachsene'] },
   { id: EC_BASE + 'foerderschule',     labels: ['förderschule', 'special education', 'sonderpädagogische förderung', 'förderung'] },
   { id: EC_BASE + 'fernunterricht',    labels: ['fernunterricht', 'distance learning', 'fernstudium', 'e-learning'] },
-  { id: EC_BASE + 'informelles_lernen',labels: ['informelles lernen', 'informal learning'] },
+  { id: EC_BASE + 'informelles_lernen',labels: ['Informelles Lernen', 'informal learning'] },
 ];
 
 // ── Target audience ──────────────────────────────────────────────────────────
@@ -91,27 +124,27 @@ const DISC_BASE = 'http://w3id.org/openeduhub/vocabs/discipline/';
 
 const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '720',    labels: ['allgemein', 'interdisciplinary media', 'fächerübergreifend'] },
-  { id: DISC_BASE + '20003',  labels: ['alt-griechisch', 'ancient greek', 'griechisch'] },
+  { id: DISC_BASE + '20003',  labels: ['Alt-Griechisch', 'ancient greek', 'griechisch'] },
   { id: DISC_BASE + '04001',  labels: ['agrarwirtschaft', 'agricultural economics', 'landwirtschaft'] },
-  { id: DISC_BASE + 'oeh01',  labels: ['arbeit, ernährung, soziales'] },
+  { id: DISC_BASE + 'oeh01',  labels: ['Arbeit, Ernährung, Soziales'] },
   { id: DISC_BASE + '020',    labels: ['arbeitslehre', 'career education', 'arbeit wirtschaft technik', 'awt', 'polytechnik'] },
   { id: DISC_BASE + '04014',  labels: ['arbeitssicherheit', 'work safety'] },
   { id: DISC_BASE + '46014',  labels: ['astronomie', 'astronomy'] },
   { id: DISC_BASE + '04002',  labels: ['bautechnik', 'construction engineering'] },
-  { id: DISC_BASE + '040',    labels: ['berufliche bildung', 'vocational education', 'berufsausbildung'] },
+  { id: DISC_BASE + '040',    labels: ['Berufliche Bildung', 'vocational education', 'berufsausbildung'] },
   { id: DISC_BASE + '080',    labels: ['biologie', 'biology', 'bio'] },
   { id: DISC_BASE + '100',    labels: ['chemie', 'chemistry'] },
   { id: DISC_BASE + '20041',  labels: ['chinesisch', 'chinese'] },
-  { id: DISC_BASE + '12002',  labels: ['darstellendes spiel', 'performing game', 'theater', 'theaterpädagogik'] },
+  { id: DISC_BASE + '12002',  labels: ['Darstellendes Spiel', 'performing game', 'theater', 'theaterpädagogik'] },
   { id: DISC_BASE + '120',    labels: ['deutsch', 'german as mother tongue', 'muttersprache', 'german'] },
-  { id: DISC_BASE + '28002',  labels: ['deutsch als zweitsprache', 'german as second language', 'daz', 'daf', 'deutsch als fremdsprache'] },
+  { id: DISC_BASE + '28002',  labels: ['Deutsch als Zweitsprache', 'german as second language', 'daz', 'daf', 'deutsch als fremdsprache'] },
   { id: DISC_BASE + '04005',  labels: ['elektrotechnik', 'electrical engineering'] },
-  { id: DISC_BASE + '04006',  labels: ['ernährung und hauswirtschaft', 'nutrition and home economics'] },
+  { id: DISC_BASE + '04006',  labels: ['Ernährung und Hauswirtschaft', 'nutrition and home economics'] },
   { id: DISC_BASE + '20001',  labels: ['englisch', 'english'] },
   { id: DISC_BASE + '440',    labels: ['pädagogik', 'pedagogy', 'erziehungswissenschaften', 'erziehungswissenschaft'] },
   { id: DISC_BASE + '20090',  labels: ['esperanto'] },
   { id: DISC_BASE + '160',    labels: ['ethik', 'ethics', 'werte und normen'] },
-  { id: DISC_BASE + '04007',  labels: ['farbtechnik und raumgestaltung', 'color technology and interior design', 'raumgestaltung'] },
+  { id: DISC_BASE + '04007',  labels: ['Farbtechnik und Raumgestaltung', 'color technology and interior design', 'raumgestaltung'] },
   { id: DISC_BASE + '20002',  labels: ['französisch', 'french', 'franzoesisch'] },
   { id: DISC_BASE + '220',    labels: ['geografie', 'geography', 'erdkunde', 'geographie', 'geo'] },
   { id: DISC_BASE + '240',    labels: ['geschichte', 'history'] },
@@ -120,7 +153,7 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '50001',  labels: ['hauswirtschaft', 'home economics', 'verbraucherbildung'] },
   { id: DISC_BASE + '04009',  labels: ['holztechnik', 'wood engineering'] },
   { id: DISC_BASE + '320',    labels: ['informatik', 'ict', 'computer science', 'informationstechnologie', 'it', 'info'] },
-  { id: DISC_BASE + '340',    labels: ['interkulturelle bildung', 'intercultural education'] },
+  { id: DISC_BASE + '340',    labels: ['Interkulturelle Bildung', 'intercultural education'] },
   { id: DISC_BASE + '20004',  labels: ['italienisch', 'italian'] },
   { id: DISC_BASE + '060',    labels: ['kunst', 'art education', 'kunsterziehung', 'art'] },
   { id: DISC_BASE + '04010',  labels: ['körperpflege', 'body care'] },
@@ -130,11 +163,11 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '900',    labels: ['medienbildung', 'media education'] },
   { id: DISC_BASE + '400',    labels: ['mediendidaktik', 'medienerziehung'] },
   { id: DISC_BASE + '04011',  labels: ['metalltechnik', 'metal engineering'] },
-  { id: DISC_BASE + '04003',  labels: ['mint', 'chemie physik biologie', 'naturwissenschaften', 'natural sciences', 'stem'] },
+  { id: DISC_BASE + '04003',  labels: ['MINT', 'chemie physik biologie', 'naturwissenschaften', 'natural sciences', 'stem'] },
   { id: DISC_BASE + '420',    labels: ['musik', 'music'] },
   { id: DISC_BASE + '64018',  labels: ['nachhaltigkeit', 'sustainability', 'bne', 'bildung für nachhaltige entwicklung'] },
   { id: DISC_BASE + 'niederdeutsch', labels: ['niederdeutsch', 'platt german', 'platt'] },
-  { id: DISC_BASE + '44099',  labels: ['open educational resources', 'oer'] },
+  { id: DISC_BASE + '44099',  labels: ['Open Educational Resources', 'oer'] },
   { id: DISC_BASE + '450',    labels: ['philosophie', 'philosophy'] },
   { id: DISC_BASE + '460',    labels: ['physik', 'physics'] },
   { id: DISC_BASE + '480',    labels: ['politik', 'politics', 'politische bildung', 'sozialkunde'] },
@@ -148,17 +181,17 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '44007',  labels: ['sozialpädagogik', 'social education'] },
   { id: DISC_BASE + '20007',  labels: ['spanisch', 'spanish'] },
   { id: DISC_BASE + '600',    labels: ['sport', 'physical education', 'sportunterricht'] },
-  { id: DISC_BASE + '04012',  labels: ['textiltechnik und bekleidung', 'textile technology and clothing'] },
+  { id: DISC_BASE + '04012',  labels: ['Textiltechnik und Bekleidung', 'textile technology and clothing'] },
   { id: DISC_BASE + '20008',  labels: ['türkisch', 'turkish'] },
-  { id: DISC_BASE + '04013',  labels: ['wirtschaft und verwaltung', 'business and administration'] },
+  { id: DISC_BASE + '04013',  labels: ['Wirtschaft und Verwaltung', 'business and administration'] },
   { id: DISC_BASE + '700',    labels: ['wirtschaftskunde', 'economics', 'wirtschaftswissenschaften', 'economy', 'vwl', 'bwl'] },
-  { id: DISC_BASE + '640',    labels: ['umweltgefährdung umweltschutz', 'environmental education', 'umwelterziehung', 'umwelt'] },
+  { id: DISC_BASE + '640',    labels: ['Umweltgefährdung, Umweltschutz', 'umweltgefährdung umweltschutz', 'environmental education', 'umwelterziehung', 'umwelt'] },
   { id: DISC_BASE + '660',    labels: ['verkehrserziehung', 'road safety education'] },
   { id: DISC_BASE + '680',    labels: ['weiterbildung', 'further education'] },
   { id: DISC_BASE + '50005',  labels: ['werken', 'handicraft', 'textiles werken'] },
-  { id: DISC_BASE + '72001',  labels: ['zeitgemäße bildung', 'modern education', 'digitale bildung'] },
+  { id: DISC_BASE + '72001',  labels: ['Zeitgemäße Bildung', 'modern education', 'digitale bildung'] },
   { id: DISC_BASE + '72002',  labels: ['projektmanagement', 'project management'] },
-  { id: DISC_BASE + '72003',  labels: ['evidenzbasierte medizin', 'evidence-based medicine'] },
+  { id: DISC_BASE + '72003',  labels: ['Evidenzbasierte Medizin', 'evidence-based medicine'] },
   { id: DISC_BASE + '999',    labels: ['sonstiges', 'other'] },
 ];
 
@@ -169,7 +202,7 @@ const LRT: VocabEntry[] = [
   { id: LRT_BASE + 'b8fb5fb2-d8bf-4bbe-ab68-358b65a26bed', labels: ['bild', 'image'] },
   { id: LRT_BASE + '38774279-af36-4ec2-8e70-811d5a51a6a1', labels: ['video'] },
   { id: LRT_BASE + '39197d6f-dfb1-4e82-92e5-79f906e9d2a9', labels: ['audio', 'podcast'] },
-  { id: LRT_BASE + '05aa0f49-7e1b-498b-a7d5-c5fc8e73b2e2', labels: ['interaktives medium', 'interactive media', 'interaktiv', 'simulation'] },
+  { id: LRT_BASE + '05aa0f49-7e1b-498b-a7d5-c5fc8e73b2e2', labels: ['Interaktives Medium', 'interactive media', 'interaktiv', 'simulation'] },
   { id: LRT_BASE + '11f438d7-cb11-49c2-8e67-2dd7df677092', labels: ['unterrichtsidee', 'lesson idea'] },
   { id: LRT_BASE + '8526273b-2b21-46f2-ac8d-bbf362c8a690', labels: ['unterrichtsplan', 'lesson plan'] },
   { id: LRT_BASE + 'f1341358-3f91-449b-b6eb-f58636f756a0', labels: ['unterrichtsbaustein', 'unterrichtsreihe', 'lesson unit'] },
@@ -183,9 +216,9 @@ const LRT: VocabEntry[] = [
   { id: LRT_BASE + '0b2d7dec-8eb1-4a28-9cf2-4f3a4f5a511b', labels: ['übungsmaterial', 'exercise material', 'übung'] },
   { id: LRT_BASE + '90a082d8-ee5f-4b33-bd5c-f1738262c47d', labels: ['recherche', 'lernauftrag', 'research task'] },
   { id: LRT_BASE + 'ffe4d8e8-3cfd-4e9a-b025-83f129eb5c9d', labels: ['experiment'] },
-  { id: LRT_BASE + '71c71f72-fc8d-4263-902f-abf1366a73ca', labels: ['projekt-material', 'project material', 'projekt'] },
-  { id: LRT_BASE + '57bfc743-4c94-4bdd-bdfa-c638a062d151', labels: ['kreative aktivität', 'kreativ', 'creative activity'] },
-  { id: LRT_BASE + 'ec402e87-c623-47e2-8d2e-1c4ea6923409', labels: ['entdeckendes lernen', 'discovery learning'] },
+  { id: LRT_BASE + '71c71f72-fc8d-4263-902f-abf1366a73ca', labels: ['Projekt-Material', 'project material', 'projekt'] },
+  { id: LRT_BASE + '57bfc743-4c94-4bdd-bdfa-c638a062d151', labels: ['Kreative Aktivität', 'kreativ', 'creative activity'] },
+  { id: LRT_BASE + 'ec402e87-c623-47e2-8d2e-1c4ea6923409', labels: ['Entdeckendes Lernen', 'discovery learning'] },
   { id: LRT_BASE + 'd0c115e4-848d-4aea-8e31-23869e9add3e', labels: ['rollenspiel', 'role play'] },
   { id: LRT_BASE + '41eaccae-899b-4209-8a54-c793a3cdf538', labels: ['fallstudie', 'case study'] },
   { id: LRT_BASE + 'c77df53a-2611-4029-9712-f9c0eeb032a3', labels: ['artikel', 'article'] },
@@ -353,20 +386,33 @@ export function labelFromUri(uri: string, vocab: VocabKey): string {
     }
     return uri;
   }
-  const first = entry.labels[0];
-  // If the primary label has any uppercase already (e.g. "CC BY-SA 4.0"),
-  // assume the vocab author chose the display form deliberately — don't
-  // mangle it. Otherwise capitalize the first character so plain-lowercase
-  // labels like "mathematik" become "Mathematik".
-  if (/[A-ZÄÖÜ]/.test(first)) return first;
-  return first.charAt(0).toUpperCase() + first.slice(1);
+  return displayLabel(entry.labels[0]);
+}
+
+/**
+ * `labels[0]` as it should be shown.
+ *
+ * If it carries any uppercase already ("CC BY-SA 4.0", "MINT", "Sekundarstufe
+ * I"), the table author chose the display form deliberately — leave it alone.
+ * Otherwise upper-case the first character, which is all a one-word lowercase
+ * entry like "mathematik" needs.
+ *
+ * One function rather than two: `labelFromUri` had the uppercase guard and
+ * `listVocab` did not, so the two could disagree on any label that STARTS
+ * lowercase and contains capitals ("eLearning" → "eLearning" vs "ELearning").
+ * No such entry exists today (measured 2026-08-11), which is exactly why the
+ * divergence would have gone unnoticed until one was added.
+ */
+function displayLabel(raw: string): string {
+  if (/[A-ZÄÖÜ]/.test(raw)) return raw;
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 /** Return all entries of a vocabulary (for lookup tool). */
 export function listVocab(vocab: VocabKey): Array<{ uri: string; label: string; aliases: string[] }> {
   return VOCAB_MAP[vocab].map(e => ({
     uri: e.id,
-    label: e.labels[0].charAt(0).toUpperCase() + e.labels[0].slice(1),
+    label: displayLabel(e.labels[0]),
     aliases: e.labels.slice(1),
   }));
 }

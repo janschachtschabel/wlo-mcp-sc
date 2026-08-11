@@ -117,6 +117,139 @@ a registry is created or edited. New: `WLO_SKILL_CACHE`,
 `WLO_SKILL_CACHE_REFRESH_MS` (default 5 min), `WLO_SKILL_CACHE_TTL_MS`
 (default 10 min).
 
+### Added — `variantPreset`: how a Themenseite comes up before anyone filters it (2026-08-11)
+
+A user lands on a topic page with no filter and can then pick a role and an
+education level. Measured against staging: that is neither a variant switch (the
+URL carries only `?collectionId=`) nor a swimlane filter — **0** grid cells
+reference a variable. The profile selector's INITIAL state is stored per variant,
+in the `variables` block of `ccm:page_variant_config`:
+`virtual:profiling_widget_intention` (`teach`/`learn`) and
+`…_education_level` (educationalContext URIs, comma-joined in ONE string).
+
+`search_wlo_topic_pages` now reports it as `variantPreset` — raw values plus
+German labels, the same shape `targetGroup`/`targetGroupLabel` uses. It costs no
+request: `ccm:page_variant_config` was already in the projection, because the
+swimlanes come from the same document.
+
+**It is a separate field on purpose, and that is the whole point.** The coverage
+is tempting — 25/69 and 32/69 non-template staging variants against 17/69 and
+21/69 for the official profiling properties — but the two sources overlap on
+1 resp. 2 variants and **disagree in 3 of 3** of those (`targetGroup: learner`
+beside `intention: teach`; `educationalcontext: [elementarbereich]` beside a
+preset spanning sekundarstufe_1…erwachsenenbildung). They are different facts:
+metadata ABOUT the variant against the initial state of a widget INSIDE it.
+Using one as a fallback for the other would nearly double the reported coverage
+while making the answer wrong invisibly.
+
+What it is worth, live: a listing of 12 pages returned 15 variants, **13 of
+which carry a preset while `targetGroup` was empty on all 15** — for those pages
+the audience question had no answer at all before.
+
+Not queryable upstream (`400 DAOValidationException` for both
+`virtual:profiling_widget_intention` and `ccm:page_variant_config`), so it is
+read from the config and filtered locally, like the other profiling fields.
+
+### Fixed — subjects and education levels are shown under their official names (2026-08-11)
+
+`Sekundarstufe i`. `Deutsch als zweitsprache`. `Mint` — for the MINT subject.
+These were in every search result, because Fach and Bildungsstufe are printed on
+every node.
+
+The cause: one array does two jobs. `labels[0]` is both the display form and a
+matching alias, and it was written all-lowercase for the matching half, while
+`labelFromUri` only upper-cases the first character. Checked against the SKOS
+source of record, **19 of 116** concepts were affected, including one that was
+wrong beyond casing: `Umweltgefährdung, Umweltschutz` had lost its comma.
+
+Every display form now comes from the concept's official German prefLabel. The
+matching is untouched — every matcher lowercases both sides, so casing is free —
+and the one label that changed by more than casing keeps its previous spelling as
+an alias, so a caller who types it still resolves.
+
+`tests/vocabs.test.ts` pins the values with their source, and a second test pins
+the aliases that must survive. What proved the change reaches real output is the
+topic-page test that had pinned `Sekundarstufe i` as measured reality: it failed,
+which is what it was for.
+
+A second pass over the remaining four tables found **4 more** — all in the
+aggregated LRT vocabulary, `Interaktives medium`, `Projekt-material`,
+`Entdeckendes lernen`, `Kreative aktivität`. The first pass had missed them
+because it asked for a vocabulary key that does not exist (`learningResourceType`
+rather than `lrt`) and swallowed the throw. **23 of 152** concepts in total.
+
+The same pass also established what is NOT a defect. Nine aggregated-LRT display
+forms are shortened on purpose — `Tests` for `Tests / Fragebögen`, `Event` for
+`Event, Wettbewerb` — and every dropped part exists as a matching alias, so the
+shortening costs nothing and lengthening it would be taste overruling a
+maintained decision. Only the casing was fixed. And `vocabs-lrt.ts` is a verbatim
+copy of its source: **220 of 220** labels identical, which is what makes the
+hand-curated aggregated table the exception rather than the rule.
+
+A test now fails ANY label whose continuation is lowercase, so this cannot return
+through a new entry — verified by injecting `Darstellendes spiel`, which it named.
+
+Where this actually shows: `formatNode` prefers the server's
+`<property>_DISPLAYNAME` and only falls back to this table, so a normal hit list
+usually carries the repository's label. What is rendered from our table alone —
+and was therefore wrong — is the facet breakdown, the licence,
+`lookup_wlo_vocabulary`, and the topic-page fields built from raw URIs, including
+`variantPreset.educationLevelLabels`.
+
+Both places are measured against staging, not merely reasoned about:
+`lookup_wlo_vocabulary` returns all four corrected LRT labels, and the facet
+breakdown — the one path with no `_DISPLAYNAME` at all — now reads
+`Sekundarstufe I (22 504)`, `Berufliche Bildung (1 838)`. The two GENERATED
+tables were checked against their sources as well and are clean:
+`vocabs-lrt.ts` 220/220, `vocabs-hochschule.ts` 344/344 identical.
+
+### Changed — `topic-page-variant.ts`: what a variant IS, apart from how it is fetched (2026-08-11)
+
+`topic-page-api.ts` had grown to 389 lines around two jobs: the rules and shapes
+of a page variant, and the repository calls that find one. Split along that seam.
+
+The numbers are why it was worth doing rather than a matter of taste. **8 of its
+13 importers needed only the rule half** — a type, a filter predicate, a property
+list — and were pulling in the HTTP module for it. One of those eight was
+`topic-page-title.ts`, whose type import pointed back at the module that imports
+it: the one import cycle in this corner. `pickThemePageTitle` moved beside the
+type it operates on, and `topic-page-title.ts` now imports nothing at all.
+
+`TOPIC_PAGE_PROPS` sits next to `variantFields` on purpose: adding a field to the
+projection without adding it to the property list reads back empty with nothing
+failing, and in one small module that pairing is visible.
+
+Behaviour-preserving by construction — code moved, nothing rewritten — and
+checked rather than assumed: 1757 tests, and a live run against staging producing
+the same comparison across both search routes as before the move. Nothing needed
+a barrel; every importer now names the module it actually depends on.
+`tools/shared.ts` still re-exports `pickThemePageTitle`, so no tool changed.
+
+### Changed — one variant, one description, whichever search mode found it (2026-08-11)
+
+A page variant is reached on two independent routes — a collection's
+`ccm:page_config_ref` down to its config folder's children, and the page_variant
+index walked back up — and each carried its own copy of the same seven property
+reads.
+
+They had drifted on the one field of the seven that needs a rule rather than a
+read. `variantTitle` is documented as the value that keeps the technical
+`PAGE_VARIANT_<uuid>` string off a screen, and 22 of 68 staging variants carry
+exactly that string in `cclom:title`. One route ran it through
+`displayTitleOrEmpty`; the other returned it raw. It stayed invisible only
+because `pickThemePageTitle` checks again downstream — the broken promise sat one
+consumer short of a visible bug. Adding `variantPreset` is what exposed the
+duplication: the field had to be written into both copies by hand.
+
+The projection now lives once, as `variantFields` in `topic-page-api.ts`, beside
+`variantMatchesFilters` and for the same reason. Page-level facts —
+`topicPageUrl`, `collectionId`, `collectionName`, `isDefault` — deliberately stay
+out: the two routes genuinely learn those from different places.
+
+`tests/shared-rule-discipline.test.ts` fails a second copy, and a new test drives
+the same variant through both routes and compares. Verified live against staging:
+four pages compared across both routes, identical on all of them.
+
 ### Changed — the approval list is shown in full, and the tool carries 100 (2026-08-11)
 
 Two decisions that interlock; changing one without the other makes a sentence in

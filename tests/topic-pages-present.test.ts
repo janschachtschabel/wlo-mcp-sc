@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { ThemePageInfo } from '../src/topic-page-api.js';
+import type { ThemePageInfo } from '../src/topic-page-variant.js';
 import { mergeThemePages, renderThemePages } from '../src/tools/topic-pages-present.js';
 
 // Two variants of the SAME Themenseite (collection "Optik"), different target
@@ -14,7 +14,6 @@ const teacherVariant: ThemePageInfo = {
   variantTitle: 'Seiten-Variante 1',
   targetGroup: 'teacher',
   educationalContexts: ['http://ex/edu/A'],
-  isTemplate: false,
   topicPageUrl: 'https://wlo/optik-teacher',
   collectionId: 'coll-optik',
   collectionName: 'Optik',
@@ -25,7 +24,6 @@ const learnerVariant: ThemePageInfo = {
   variantTitle: 'Seiten-Variante 2',
   targetGroup: 'learner',
   educationalContexts: ['http://ex/edu/B'],
-  isTemplate: false,
   topicPageUrl: 'https://wlo/optik-learner',
   collectionId: 'coll-optik',
   collectionName: 'Optik',
@@ -123,7 +121,6 @@ const supersededVariant: ThemePageInfo = {
   variantTitle: 'Alte Fassung',
   targetGroup: '',
   educationalContexts: [],
-  isTemplate: false,
   topicPageUrl: 'https://wlo/optik',
   collectionId: 'coll-optik',
   collectionName: 'Optik',
@@ -135,7 +132,6 @@ const renderedVariant: ThemePageInfo = {
   variantTitle: 'Aktuelle Fassung',
   targetGroup: '',
   educationalContexts: [],
-  isTemplate: false,
   topicPageUrl: 'https://wlo/optik',
   collectionId: 'coll-optik',
   collectionName: 'Optik',

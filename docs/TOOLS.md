@@ -1,7 +1,7 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
 Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **42 MCP-Tools**
-(27 lesende, 14 kuratierende), 4 interaktive Widgets und die öffentlichen
+(28 lesende, 14 kuratierende), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
@@ -73,6 +73,14 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 > Zielgruppe, 97 ohne Bildungsstufe). Ein serverseitiger Filter würde sie
 > deshalb nicht eingrenzen, sondern verbergen. Varianten **ohne** den jeweiligen
 > Wert bleiben darum stehen.
+>
+> Wenn die Zielgruppe leer ist, lohnt der Blick auf **`variantPreset`**: so
+> kommt die Seite hoch, bevor jemand ihren Profil-Regler anfasst
+> (`intentionLabel` = Lehren/Lernen, `educationLevelLabels` = Stufen). Gemessen
+> 2026-08-11 an einer echten Liste: von 15 Varianten trugen **13** ein Preset,
+> während `targetGroup` bei **allen 15** leer war. Es ist aber **nicht** dasselbe
+> — wo beide gesetzt sind, widersprechen sie sich (3 von 3 Fällen). Also beide
+> lesen und keins fürs andere halten.
 >
 > `withinCollectionId` listet alle Themenseiten **unterhalb** einer Sammlung
 > (`collectionId` prüft nur diese eine): für das Fachportal Physik 20+ statt 1.

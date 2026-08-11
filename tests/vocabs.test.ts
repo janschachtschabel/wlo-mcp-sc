@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveVocab, labelFromUri, listVocab } from '../src/vocabs.js';
+import { LRT_CONCEPTS } from '../src/vocabs-lrt.js';
 
 test('resolveVocab: duplicate aliases resolve to the intended concept (regression L11)', () => {
   // "sonstiges" is the primary label of 999 (Sonstiges); it must not be shadowed
@@ -124,6 +125,135 @@ test('labelFromUri: the aggregated LRT concepts a facet can carry all have label
   assert.equal(labelFromUri(B + '25957b6b-338e-4379-ba4f-67fc7654ef34', 'lrt'), 'Modell / 3D');
   assert.equal(labelFromUri(B + '0d1f8d25-7a81-44d5-b250-1c42bb71c167', 'lrt'), 'Regelungsintrumente');
   assert.equal(labelFromUri(B + '9c2acd39-7207-4e28-87a5-06e60d59c9e1', 'lrt'), 'Orientierungsinstrumente');
+});
+
+/**
+ * The display form of every concept whose official German prefLabel is NOT what
+ * capitalising the first letter of a lowercase matching alias produces.
+ *
+ * Fetched 2026-08-11 from the SKOS source of record
+ * (`vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/<vocab>/index.json`) and
+ * pinned here rather than re-fetched, because the suite must not touch the
+ * network. Re-fetch before contradicting any line.
+ *
+ * `labels[0]` doubles as the display form and as a matching alias, and the
+ * table was written lowercase for the matching half — so `labelFromUri`, which
+ * only upper-cases the first character, rendered "Sekundarstufe i",
+ * "Deutsch als zweitsprache", and "Mint" for the MINT subject. Both fields
+ * appear in every single search result.
+ */
+const LRT_BASE = 'http://w3id.org/openeduhub/vocabs/new_lrt_aggregated/';
+
+const OFFICIAL_LABELS: Array<[vocab: 'educationalContext' | 'discipline' | 'lrt', slug: string, label: string]> = [
+  ['educationalContext', 'sekundarstufe_1', 'Sekundarstufe I'],
+  ['educationalContext', 'sekundarstufe_2', 'Sekundarstufe II'],
+  ['educationalContext', 'berufliche_bildung', 'Berufliche Bildung'],
+  ['educationalContext', 'informelles_lernen', 'Informelles Lernen'],
+  ['discipline', '20003', 'Alt-Griechisch'],
+  ['discipline', 'oeh01', 'Arbeit, Ernährung, Soziales'],
+  ['discipline', '040', 'Berufliche Bildung'],
+  ['discipline', '12002', 'Darstellendes Spiel'],
+  ['discipline', '28002', 'Deutsch als Zweitsprache'],
+  ['discipline', '04006', 'Ernährung und Hauswirtschaft'],
+  ['discipline', '04007', 'Farbtechnik und Raumgestaltung'],
+  ['discipline', '340', 'Interkulturelle Bildung'],
+  ['discipline', '04003', 'MINT'],
+  ['discipline', '44099', 'Open Educational Resources'],
+  ['discipline', '04012', 'Textiltechnik und Bekleidung'],
+  ['discipline', '04013', 'Wirtschaft und Verwaltung'],
+  ['discipline', '640', 'Umweltgefährdung, Umweltschutz'],
+  ['discipline', '72001', 'Zeitgemäße Bildung'],
+  ['discipline', '72003', 'Evidenzbasierte Medizin'],
+  ['lrt', '05aa0f49-7e1b-498b-a7d5-c5fc8e73b2e2', 'Interaktives Medium'],
+  ['lrt', '71c71f72-fc8d-4263-902f-abf1366a73ca', 'Projekt-Material'],
+  ['lrt', 'ec402e87-c623-47e2-8d2e-1c4ea6923409', 'Entdeckendes Lernen'],
+];
+
+const VOCAB_PATH = { educationalContext: 'educationalContext', discipline: 'discipline', lrt: 'new_lrt_aggregated' };
+
+test('labelFromUri: a concept is displayed under its official German prefLabel', () => {
+  for (const [vocab, slug, label] of OFFICIAL_LABELS) {
+    assert.equal(
+      labelFromUri(`http://w3id.org/openeduhub/vocabs/${VOCAB_PATH[vocab]}/${slug}`, vocab),
+      label,
+      `${vocab}/${slug}`,
+    );
+  }
+});
+
+test('labelFromUri: the aggregated LRT keeps its deliberately SHORT display forms', () => {
+  // The aggregated LRT table is the one vocabulary that does not simply mirror
+  // its source: 9 of its 48 concepts carry a shortened display form, and the
+  // shortening is a maintained decision rather than an oversight — every part
+  // dropped from the official label exists as a matching alias ("fragebögen",
+  // "lernauftrag", "handbuch", "vokabelliste", "wettbewerb", …), checked
+  // 2026-08-11 against `new_lrt_aggregated`. Only the CASING was wrong here, so
+  // only the casing was fixed. Restoring the long forms would be taste
+  // overruling a working decision, and these lines say so.
+  assert.equal(labelFromUri(LRT_BASE + '57bfc743-4c94-4bdd-bdfa-c638a062d151', 'lrt'), 'Kreative Aktivität');
+  assert.equal(labelFromUri(LRT_BASE + '02bfd0fe-96ab-4dd6-a306-ec362ec25ea0', 'lrt'), 'Tests');
+  assert.equal(resolveVocab('Fragebogen', 'lrt'), LRT_BASE + '02bfd0fe-96ab-4dd6-a306-ec362ec25ea0');
+  assert.equal(resolveVocab('Lernauftrag', 'lrt'), LRT_BASE + '90a082d8-ee5f-4b33-bd5c-f1738262c47d');
+});
+
+test('the LRT source table is a verbatim copy of its vocabulary, not a curated one', () => {
+  // Measured 2026-08-11: 220 of 220 concepts in `vocabs-lrt.ts` match the
+  // official `new_lrt` prefLabels exactly. That is what makes the aggregated
+  // table above the exception rather than the rule — and it is why the casing
+  // defect could not be there. A future edit that "tidies" a label in the copied
+  // table would silently fork it from its source.
+  const lowercaseStart = LRT_CONCEPTS.filter(c => /^[a-zäöü]/.test(c.label)).map(c => c.label);
+  assert.ok(
+    lowercaseStart.length >= 3,
+    `expected the verbatim lowercase prefLabels to still be there, got ${JSON.stringify(lowercaseStart)}`,
+  );
+});
+
+test('resolveVocab: fixing a display form does not cost the lowercase alias', () => {
+  // The regression the change above could have caused. Every matcher lowercases
+  // both sides, so casing is free — but "Umweltgefährdung, Umweltschutz" gained
+  // a COMMA the old alias did not have, and an exact match is what a caller
+  // typing the old spelling relies on. The old string stays an alias.
+  const D = 'http://w3id.org/openeduhub/vocabs/discipline/';
+  const EC = 'http://w3id.org/openeduhub/vocabs/educationalContext/';
+  assert.equal(resolveVocab('umweltgefährdung umweltschutz', 'discipline'), D + '640');
+  assert.equal(resolveVocab('Umweltgefährdung, Umweltschutz', 'discipline'), D + '640');
+  assert.equal(resolveVocab('sekundarstufe i', 'educationalContext'), EC + 'sekundarstufe_1');
+  assert.equal(resolveVocab('SEKUNDARSTUFE I', 'educationalContext'), EC + 'sekundarstufe_1');
+  assert.equal(resolveVocab('mint', 'discipline'), D + '04003');
+  assert.equal(resolveVocab('deutsch als zweitsprache', 'discipline'), D + '28002');
+});
+
+/**
+ * German function words, which are correctly lowercase inside a display label
+ * ("Ernährung UND Hauswirtschaft", "Deutsch ALS Zweitsprache"). Everything else
+ * that continues a label is a noun or an adjective opening a compound, and in
+ * this table it is lowercase only when the entry was written for the MATCHING
+ * half of `labels[0]` and never given a display form.
+ */
+const GERMAN_FUNCTION_WORDS = ['und', 'als', 'oder', 'für', 'im', 'in', 'von', 'zu', 'der', 'die', 'das', 'mit'];
+
+test('every display label continues in the case it is actually written in', () => {
+  // The guard for the defect class, not for its instances. `labels[0]` serves as
+  // both display form and matching alias, so an entry written lowercase for the
+  // matching half renders as "Sekundarstufe i" or "Interaktives medium" — in
+  // every search result, since Fach, Bildungsstufe and Inhaltstyp print on every
+  // node. It was found twice: 19 concepts on 2026-08-11, then 4 more the same
+  // day in the aggregated LRT table, which the first pass had missed because the
+  // scan asked for a vocabulary key that does not exist and swallowed the throw.
+  //
+  // Deliberately NOT a check against the official prefLabels: those are pinned
+  // above for the concepts where they matter, and 9 aggregated-LRT labels are
+  // shortened ON PURPOSE. Casing is the part that is never a decision.
+  const offenders: string[] = [];
+  for (const vocab of ['educationalContext', 'discipline', 'userRole', 'lrt', 'license', 'targetGroup'] as const) {
+    for (const e of listVocab(vocab)) {
+      const bad = e.label.split(/[ /-]+/).slice(1)
+        .filter(w => /^[a-zäöü]/.test(w) && !GERMAN_FUNCTION_WORDS.includes(w.toLowerCase()));
+      if (bad.length) offenders.push(`${vocab}: ${e.label}`);
+    }
+  }
+  assert.deepEqual(offenders, [], 'labels[0] is the DISPLAY form — write it as it should be shown');
 });
 
 test('listVocab: no label or alias resolves to two different concepts of one vocabulary', () => {

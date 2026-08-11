@@ -248,6 +248,31 @@ test('the skill-registry cache is started only by the transports', () => {
     `only the transports may start the cache — got ${JSON.stringify(files)}`);
 });
 
+test('a page variant is projected onto its fields in exactly one place', () => {
+  // `variantName` is set nowhere but the projection and declared nowhere but the
+  // type, and both live in the owner — so any other occurrence is a second copy.
+  //
+  // Two independent routes reach a variant (a collection's page_config_ref down
+  // to the folder's children, and the page_variant index walked back up), and
+  // each carried its own copy of the same seven property reads. They drifted on
+  // the one field of the seven that needs a RULE rather than a read:
+  // `variantTitle` ran through `displayTitleOrEmpty` on one route and raw on the
+  // other, so the index route returned the technical `PAGE_VARIANT_<uuid>`
+  // string that the field is documented to keep off a screen. It stayed
+  // invisible because `pickThemePageTitle` checks again downstream — the
+  // promise was broken one consumer short of a visible bug.
+  //
+  // What must NOT move into the projection: `topicPageUrl`, `collectionId`,
+  // `collectionName`, `isDefault`. Those are facts about the page, and the two
+  // routes genuinely learn them from different places.
+  assert.deepEqual(
+    offenders(/variantName:/, ['topic-page-variant.ts']),
+    [],
+    'use variantFields from topic-page-variant.ts — a variant must not describe itself '
+      + 'differently depending on which search mode found it',
+  );
+});
+
 test('every path that renders collections attaches what the cache knows', () => {
   // The catalogue is free once the cache is warm, so there is no cost to weigh
   // and no reason for a path to opt out. What there IS reason to fear is drift:

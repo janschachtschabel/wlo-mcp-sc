@@ -5214,3 +5214,220 @@ Slug-Regel, nicht mit einer selbstgebauten — die meldete vier Fehlalarme).
 
 **Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
 `npm test` → **1735 Tests, 1735 pass, 0 fail** (3 neue).
+
+---
+
+## Nacharbeit an zwei Fundstellen (2026-08-11)
+
+Kein geplantes Paket, sondern die beim `variantPreset`-Durchstich gefundenen und
+damals ausgeklammerten Stellen.
+
+### Eine Variante, eine Beschreibung
+
+`services/topic-page-discovery.ts` las `cclom:title` roh, wo `topic-page-api.ts`
+`displayTitleOrEmpty` anwendet — also lieferte der Index-Pfad den technischen
+`PAGE_VARIANT_<uuid>`-String, den das Feld laut Typdoku von jedem Bildschirm
+fernhalten soll (22 von 68 Staging-Varianten tragen ihn in `cclom:title`).
+
+Der Einzelfall war das kleinere Problem. Beide Pfade projizierten **dieselben
+sieben Properties von Hand**, und sie waren genau auf dem einen Feld
+auseinandergelaufen, das eine Regel statt eines Lesevorgangs braucht. Sichtbar
+wurde es nicht, weil `pickThemePageTitle` stromabwärts nochmal prüft — der
+gebrochene Vertrag saß einen Konsumenten vor einem echten Fehler.
+
+Behoben durch **eine** Projektion, `variantFields` in `topic-page-api.ts`, neben
+`variantMatchesFilters` und aus demselben Grund. Seitenbezogene Fakten
+(`topicPageUrl`, `collectionId`, `collectionName`, `isDefault`) bleiben bewusst
+draußen: die beiden Routen erfahren sie tatsächlich verschieden.
+
+Neuer Wächter in `tests/shared-rule-discipline.test.ts` (Marker `variantName:`,
+Owner `topic-page-api.ts`) — durch injizierte Verletzung geprüft, er nennt Datei
+und Zeile. Neuer Vertragstest `tests/topic-page-variant-fields.test.ts` schickt
+dieselbe Variante durch beide Routen und vergleicht.
+
+### 19 Konzepte hießen falsch
+
+`labels[0]` macht zwei Jobs — Anzeigeform und Match-Alias — und war für den
+Match-Teil kleingeschrieben, während `labelFromUri` nur den ersten Buchstaben
+großzieht. Ergebnis in **jeder** Trefferliste (Fach und Bildungsstufe stehen an
+jedem Knoten): `Sekundarstufe i`, `Deutsch als zweitsprache`, `Mint` für MINT.
+
+Gegen die SKOS-Quelle abgeglichen: **19 von 116** Konzepten betroffen, eines
+darüber hinaus falsch — `Umweltgefährdung, Umweltschutz` hatte das Komma
+verloren. Anzeigeformen kommen jetzt aus dem offiziellen deutschen prefLabel.
+Das Matching bleibt unberührt (alle Vergleiche lowercasen beidseitig); das eine
+Label, das sich um mehr als Groß-/Kleinschreibung ändert, behält die alte
+Schreibweise als Alias.
+
+Gemessen, nicht geraten: mein erstes Suchmuster fand 17 der 19 — es verpasste
+`Alt-Griechisch` und `MINT`.
+
+**Nachtrag am selben Tag, und er korrigiert den Absatz, der hier stand.** Der
+erste Durchgang prüfte nur zwei der sechs Tabellen gegen die offizielle Quelle,
+weil das Messskript einen Vokabelschlüssel abfragte, den es nicht gibt
+(`learningResourceType` statt `lrt`) und den Wurf in einem `catch { continue }`
+verschluckte — genau die Sorte Fehler, die die Workflow-Skill verbietet. Die
+Nachprüfung über **alle** Tabellen fand 4 weitere, alle im aggregierten
+LRT-Vokabular: `Interaktives medium`, `Projekt-material`, `Entdeckendes lernen`,
+`Kreative aktivität`. Damit **23 von 152**.
+
+Und es gibt nun doch einen **Wächter**: die Heuristik trägt, sobald sie nur
+deutsche Funktionswörter (`und`, `als`, `für`, …) ausnimmt statt Ad-hoc-Begriffe.
+Über alle sechs Tabellen 0 Fehlalarme; durch injiziertes `Darstellendes spiel`
+geprüft, er nennt das Konzept. Die gestrige Begründung („eine Heuristik trügt")
+galt für ein Muster, das ich nicht zu Ende gedacht hatte.
+
+Zwei Dinge, die der zweite Durchgang als **Nicht-Befund** belegt hat. Neun
+aggregierte LRT-Anzeigeformen sind absichtlich verkürzt (`Tests` für `Tests /
+Fragebögen`), und **jeder** weggelassene Teil existiert als Alias — die Kurzform
+ist eine gepflegte Entscheidung, ihre Verlängerung wäre Geschmack gegen eine
+funktionierende Wahl. Nur die Groß-/Kleinschreibung wurde geheilt. Und
+`vocabs-lrt.ts` ist eine wortgetreue Kopie seiner Quelle: **220 von 220** Labels
+identisch — deshalb ist die handgepflegte aggregierte Tabelle die Ausnahme.
+
+Wo das überhaupt sichtbar ist, war eine eigene Messung wert: `formatNode`
+bevorzugt den Server-`_DISPLAYNAME` und fällt nur auf unsere Tabelle zurück, eine
+normale Trefferliste trägt also meist das Repository-Label. Allein aus unserer
+Tabelle kommen Facetten, Lizenz, `lookup_wlo_vocabulary` und die
+Themenseiten-Felder aus rohen URIs — `variantPreset.educationLevelLabels`
+darunter. Ein Kommentar, der „in jeder Trefferliste" behauptete, ist entsprechend
+korrigiert.
+
+Beide Wirkungsorte sind inzwischen **gemessen**, nicht nur hergeleitet:
+`lookup_wlo_vocabulary(lrt)` liefert alle vier korrigierten Labels, und die
+Facetten — die einzige Stelle ganz ohne `_DISPLAYNAME` — zeigen
+`Sekundarstufe I (22 504)`, `Sekundarstufe II (17 181)`, `Berufliche Bildung
+(1 838)`. Der erste Versuch hatte keine Facetten zurückbekommen; das lag an
+meinem `_queryMeta`-Parsing, nicht am Server.
+
+Die beiden **generierten** Tabellen wurden zum Abschluss ebenfalls gegen ihre
+Quelle gestellt und sind sauber: `vocabs-lrt.ts` 220/220, `vocabs-hochschule.ts`
+344/344 identisch. Damit ist jede Vokabeltabelle des Projekts geprüft, und der
+Defekt saß ausschließlich in der handgepflegten.
+
+### Alle Label-Konsumenten geprüft, plus eine ungeschützte Invariante
+
+Zum Abschluss jeder Aufrufer von `labelFromUri`/`listVocab`/`resolveVocab`
+durchgesehen. Zwei waren noch nicht betrachtet und beide sind unberührt:
+`services/write/fields.ts` liest nur URIs, und `vocab-suggest.ts` lowercased vor
+dem Levenshtein-Vergleich, sodass die neuen Großbuchstaben keine Distanz
+verschieben. Sein `capitalize` schreibt nur den ersten Buchstaben groß und lässt
+den Rest stehen — hätte es `toLowerCase()` auf den Rest angewandt, wäre der Fix
+im Vorschlagspfad wieder verloren gegangen.
+
+Dabei fiel auf, dass die Eigenschaft, auf der das ruht, **nirgends geprüft** war:
+ein Vorschlag muss zurück auflösen. „Meinten Sie X" ist wertlos, wenn X eingetippt
+nicht erkannt wird — und weil `capitalize` den Vorschlag verändert, ist er nie
+wörtlich ein Tabelleneintrag. Zwei Tests decken das jetzt über die **vollen**
+Tabellen ab (152 + 220 Konzepte, jedes Label und jeder Alias als Eingabe).
+
+Der zweite war sofort rot, und das war ein Testfehler: `resolveLrt` antwortet für
+`Suchmaschine` mit `ambiguous`, weil zwei der 220 Labels von verschiedenen
+Konzepten geteilt werden und der Resolver bewusst beide Kandidaten meldet, statt
+den ersten zu wählen. Erkannt-aber-mehrdeutig ist kein Fehlschlag; nur `unknown`
+ist einer.
+
+Beide Wächter beschossen — und der Beschuss korrigierte meinen eigenen Kommentar.
+Ein **durchgehend** case-sensitiver Resolver lässt den Test an `Sekundarstufe I`
+scheitern. Ein nur im EXAKT-Pfad case-sensitiver **nicht**: der Fuzzy-Fallback
+(`includes`) antwortet weiter, exakte Auflösung degradiert also still zu Fuzzy.
+Diese Maskierung hat einen Boden — der Fuzzy-Zweig verlangt vier Zeichen auf
+beiden Seiten. Der Kommentar sagt das jetzt, statt mehr zu behaupten, als der
+Test leistet.
+
+**Beobachtung ohne Codeänderung** (der Mechanismus ist vorhanden und
+dokumentiert): die `discipline`-Facette liefert kollidierende Labels — für
+`Mathematik` drei Buckets mit demselben Text (38 284 / 16 599 / 380) und drei
+verschiedenen URIs, 5 von 100 Buckets betroffen. `resolveFacetCounts` gibt die
+URI je Bucket mit, und die Werkzeugbeschreibung nennt genau diesen Weg. Sie
+erwähnt allerdings nur die Kollision Schule↔Hochschule; zwei der drei
+`Mathematik`-Buckets sind **beide** Hochschulkonzepte (`n37`, `n105`).
+
+Der Test, der die Wirkung belegte, war der aus der Vorsitzung: er hatte
+`Sekundarstufe i` als gemessene Realität festgenagelt und schlug fehl.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1757 Tests, 1757 pass, 0 fail** (9 neue) · `npm run build` → exit 0
+· Live gegen Staging: 4 Seiten über beide Routen verglichen, identisch;
+`Sekundarstufe I` 14×, `Sekundarstufe II` 7×, `Berufliche Bildung` 4× in echter
+Ausgabe, keine kleingeschriebene Fortsetzung mehr. Die eine Seite, die Modus A
+nicht fand, ist belegtes Verhalten: ihre Varianten liegen in einem abgelösten
+page-config-Folder (`d68edc17`), während die Sammlung `e51327a5` als aktiven Ref
+führt — beide korrekt `isDefault=false`.
+
+### Split von `topic-page-api.ts` (2026-08-11, auf Zuruf mit Vorbehalt)
+
+Freigegeben unter „wenn sinnvoll und ohne Nachteile" — also erst gemessen, dann
+gemacht. Was den Ausschlag gab, war nicht die Zeilenzahl: **8 der 13 Importeure
+brauchten nur die Regel-Hälfte** (ein Typ, ein Filterprädikat, eine
+Property-Liste) und zogen dafür das HTTP-Modul mit. Einer dieser acht war
+`topic-page-title.ts`, dessen Typ-Import zurück auf das Modul zeigte, das es
+selbst importiert — der einzige Import-Zyklus in dieser Ecke.
+
+Neu: `src/topic-page-variant.ts` (189 Zeilen) — `TOPIC_PAGE_PROPS`,
+`ThemePageInfo`, `VariantFields`, `variantFields`, `variantMatchesFilters`,
+`isUsableVariant`, `pickThemePageTitle`. `topic-page-api.ts` 389 → 248 Zeilen,
+nur noch Repository-Aufrufe. `topic-page-title.ts` 47 Zeilen und **0 Importe**:
+`pickThemePageTitle` ist zu dem Typ gezogen, auf dem es arbeitet, damit ist der
+Zyklus aufgelöst. `tools/shared.ts` re-exportiert es unverändert, also hat sich
+für kein Werkzeug etwas geändert — und der Satz in CLAUDE.md über die
+Tool-Layer-Helfer bleibt wahr.
+
+`TOPIC_PAGE_PROPS` liegt bewusst neben `variantFields`: wer ein Feld in die
+Projektion aufnimmt, ohne es in die Property-Liste zu schreiben, liest leer
+zurück, ohne dass etwas fehlschlägt. In einem kleinen Modul ist diese Kopplung
+sichtbar.
+
+Kein Barrel. Jeder Importeur nennt jetzt das Modul, von dem er wirklich abhängt
+— 13 Importzeilen, mechanisch, vom Typechecker abgesichert. Zwei
+Off-by-One-Fehler beim Verschieben (eine schließende Klammer im falschen Modul)
+hat `tsc` sofort gemeldet.
+
+Der Disziplin-Wächter aus der Fehlerbehebung hat den Umzug bemerkt und musste
+seinen Owner nachziehen — genau sein Zweck.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1757 Tests, 1757 pass, 0 fail** · `npm run build` → exit 0 ·
+Live gegen Staging: derselbe Vergleich über beide Suchrouten wie vor dem
+Umbau, vier Seiten identisch.
+
+### Review der Sitzung und vier behobene Befunde (2026-08-11)
+
+Strukturierter Review über ca. 450 geänderte Codezeilen: 0 kritisch, 0 major,
+3 minor, 1 NIT — alle vier behoben.
+
+**(1) Drei tote Importe** in `topic-page-api.ts` (`DISPLAY_PROPS`,
+`parseVariantPreset`, `VariantPreset`), Rückstand des Splits. Der Standard-
+Typecheck erfasst das nicht; erst `--noUnusedLocals` zeigt es. Das war der eine
+echte Nachteil, den der Split hinterlassen hatte.
+
+**(2) Falscher Modulkopf** in `topic-page-title.ts`: nannte `topic-page-api.ts`
+als Konsumenten, obwohl das Modul es seit dem Split nicht mehr importiert —
+CLAUDE.md sagte es bereits richtig, Code-Kommentar und Projektdoku widersprachen
+sich also. Korrigiert, plus ein Satz, warum diese Datei nichts importiert.
+
+**(3) `ThemePageInfo.isTemplate` war ein totes Feld** und ist entfernt: nirgends
+gelesen, hart auf `false` gesetzt, obwohl der Node `ccm:page_variant_is_template`
+trägt. In einer Funktion, die laut Doku „den Node auf seine Felder projiziert",
+ist ein erfundener Wert das falsche Signal — für einen Template-Node wäre `false`
+schlicht gelogen. Templates werden weiter oben ausgeschlossen (`searchPageVariants`
+sendet das Kriterium, die Sammlungsroute filtert mit `isUsableVariant`); ein
+Kommentar an der Fundstelle sagt das, damit die Konstante nicht zurückkehrt.
+Sechs Fixtures zogen nach, vom Typechecker gefunden.
+
+**(4) `displayLabel` vereinheitlicht** (NIT): `labelFromUri` hatte den
+Uppercase-Guard, `listVocab` nicht. Die beiden konnten für jedes Label
+auseinanderlaufen, das klein beginnt und Großbuchstaben enthält („eLearning" →
+„eLearning" vs. „ELearning"). Kein solcher Eintrag existiert — genau deshalb wäre
+die Divergenz erst nach dem Hinzufügen aufgefallen. Jetzt eine Funktion, damit
+strukturell garantiert.
+
+Ein Verdacht wurde geprüft und **verworfen**: `suggestVocab` liefert den
+matchenden Begriff statt des primären Labels („Grundschule" statt
+„Primarstufe"). Der Testkommentar verlangt genau das ausdrücklich — es ist eine
+Entscheidung, kein Fehler.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler (auch mit
+`--noUnusedLocals`, bis auf drei vorbestehende `url`-Parameter in Tests) ·
+`npm test` → **1757 Tests, 1757 pass, 0 fail** · `npm run build` → exit 0 ·
+Live gegen Staging: vier Seiten über beide Suchrouten identisch, Labels korrekt.

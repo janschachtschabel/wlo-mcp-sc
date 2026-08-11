@@ -378,8 +378,21 @@ The current rebuild/extension is designed in:
 
   P3 adds the search-side enrichment (`enrichSkillRegistry` in
   `services/search.ts`), rendered once in `renderToText` (both tools go through
-  it, every line via `oneLine`, at most 4 skills listed per collection with the
-  rest counted). It is **off by default** and the default is a MEASUREMENT: the
+  it, every line via `oneLine`, the FULL catalogue listed per collection).
+  Two rules from 2026-08-11, both the user's decision, and they interlock —
+  changing one without the other makes a sentence in the output false.
+  (a) `REGISTRY_LINES_MAX` was 4, is now **30**: an approval list showing four of
+  nine is the "short list standing for a long one" shape this project refuses
+  elsewhere, and the entry a model needs may be the fifth. (b) The catalogue cap
+  is per TIER, and the tier IS `resolveHeads`: `REGISTRY_SEARCH_MAX` = **30** for
+  the listing (equal to `REGISTRY_LINES_MAX`, so a listing is always complete for
+  what it carries), `REGISTRY_MAX` = **100** for the tool, which fetches one head
+  per skill and is called about ONE collection. The head line follows from the
+  pair: nothing capped → "alle hier gelistet", and `get_skill_registry` is named
+  for what it ADDS (descriptions, keywords, prose), not for completeness it
+  cannot improve; capped → "hier die ersten 30, mehr mit get_skill_registry",
+  which is true only because the tool cap is higher — and never "alle", because
+  past 100 the tool caps too. It is **off by default** and the default is a MEASUREMENT: the
   live run showed ~1.0–1.4 s added per search, paid through the `/children` call
   whether or not a registry exists — neither collection in that run had one and
   it still cost 1.4 s. What replaces it is FREE: a pointer line on every
@@ -429,7 +442,8 @@ The current rebuild/extension is designed in:
   to (`/api/search?format=html`) or declines it (`knowledge.ts`, whose
   `{id,title,url}` shape has nowhere to put it).
 
-- **Skill-Registry-Cache — P1–P3 fertig (2026-08-11), P4 Doku läuft:**
+- **Skill-Registry-Cache — COMPLETE (2026-08-11), inkl. Review (8 Befunde) und
+  Live-Lauf gegen Staging; offen ist nur der `:::`-Pfad (0 Registries vorhanden):**
   - Design: `docs/plans/2026-08-11-skill-registry-cache-design.md`
   - Tasks:  `docs/plans/2026-08-11-skill-registry-cache-tasks.md` (11 Aufgaben, 4 Phasen)
 
@@ -572,7 +586,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   nobody starts.) Two thin entry points connect a
   transport to it: `stdio.ts` (local/Docker) and `http.ts` (self-hosted
   Streamable HTTP + rate limit + body cap — the production path).
-- `src/tools/*` — the 27 read tools (all unconditional, of which `get_url_text`
+- `src/tools/*` — the 28 read tools (all unconditional, of which `get_url_text`
   is declared `unsafe` and removable via `WLO_DISABLE_UNSAFE_TOOLS`;
   `search` gains the `search_wlo_all` buckets + widget and `fetch` the full
   record + detail widget under `WLO_SEARCH_OUTPUT_MODE=rich`, off by default —
@@ -609,7 +623,15 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   `wlo-node-text.ts` (`/textContent` + the anonymous download, byte-capped), and
   **`wlo-fetch.ts` — `wloFetch` plus the credential boundary**: the only place
   the operator's password is attached, and only ever to the repository host.
-  `src/topic-page-api.ts` — topic-page discovery;
+  `src/topic-page-api.ts` — topic-page discovery (repository I/O only);
+  **`src/topic-page-variant.ts` — what a variant IS**: `TOPIC_PAGE_PROPS`,
+  `ThemePageInfo`, `variantFields` (the ONE projection of a variant node onto
+  its fields — a second copy fails `tests/shared-rule-discipline.test.ts`),
+  `variantMatchesFilters`, `isUsableVariant`, `pickThemePageTitle`. Split out of
+  `topic-page-api.ts` on 2026-08-11 at 389 lines: 8 of its 13 importers needed
+  only this half, and one of them (`topic-page-title.ts`) closed an import cycle
+  by moving. The property list and the projection live together because adding a
+  field to one without the other reads back empty with nothing failing;
   `src/topic-page-structure.ts` — one page's variant → swimlanes;
   `src/topic-page-title.ts` — what may be SHOWN as a page's title. The rule is
   about the VALUE, not the property it came from: `cm:name` is
@@ -621,12 +643,16 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   `services/write/topic-page.ts`: real title, else the id) — the confirm token
   binds to that sentence, and a technical id is not something anyone can check.
   It is a leaf module and not `tools/shared.ts`, where it started, because
-  `topic-page-api.ts`, `topic-page-structure.ts` and `services/write/topic-page.ts`
-  all need it and none may import from `tools/`;
+  `topic-page-variant.ts`, `topic-page-structure.ts` and
+  `services/write/topic-page.ts` all need it and none may import from `tools/`.
+  Since the 2026-08-11 split it imports NOTHING: `pickThemePageTitle` needed
+  `ThemePageInfo` and so pointed back at the module that imports this one — the
+  one cycle in this corner. It moved to `topic-page-variant.ts` beside the type,
+  and `tools/shared.ts` re-exports it unchanged;
   `src/topic-page-config.ts` — the `ccm:page_config` document (which variant a
   page renders, and in which order) — the page builder's schema, which changes
   independently of edu-sharing's endpoints.
-  Three rules here rest on measurements in
+  Four rules here rest on measurements in
   `docs/plans/2026-08-07-topic-page-variants-analysis.md` — re-measure before
   contradicting any of them. (1) `targetGroup`/`educationalContext` are filtered
   LOCALLY and an unset value is never excluded (`variantMatchesFilters`, the one
@@ -641,6 +667,21 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   key a search hit carries), but count distinct OWNERS, and only the folder named
   by the owner's `ccm:page_config_ref` can hold the rendering variant. Both (3)
   defects were invisible to `fetchMock` and appeared on the first live run.
+  (4) **`variantPreset` is not `targetGroup`, and must never stand in for it**
+  (measured 2026-08-11, §3b). A variant may carry a `variables` block in
+  `ccm:page_variant_config` holding the profile selector's INITIAL state —
+  `virtual:profiling_widget_intention` (`teach`/`learn`) and
+  `…_education_level` (educationalContext URIs, **comma-joined in ONE string**,
+  not an array). That is the mechanism behind "land on the page, then pick
+  Lehrkraft + Sek I": not a variant switch, and not a swimlane filter — 0 grid
+  cells reference a variable. It is better filled than the official fields
+  (25/69 and 32/69 against 17/69 and 21/69), which is exactly the trap: the two
+  sources overlap on 1 resp. 2 of 69 variants and **disagree in 3 of 3** of
+  those. Merging them raises the reported coverage and lowers the truth. It is
+  parsed in one place (`parseVariantPreset`, `topic-page-config.ts`), carried as
+  its own field through both variant projections, and `virtual:profiling_target_group`
+  is deliberately ignored — both variants that carry it hold the full
+  `["learner","teacher","general"]`, i.e. the selector's OPTION LIST.
 - `src/wikipedia-api.ts` + **`src/wikipedia-relevance.ts`** — the encyclopedia
   client and the rule that decides which fuzzy search candidate a query is about.
   A direct/redirect hit is trusted (`match: 'exact'`); only search candidates are

@@ -82,7 +82,7 @@ test('a call without a token writes nothing at all', async () => {
 test('the token from the preview performs the write', async () => {
   setServiceCredentialForTest(USER);
   const written: Record<string, string[]> = { ...STORED };
-  const mock = installFetchMock((url, init) => {
+  const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
       return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: written } } };
     }

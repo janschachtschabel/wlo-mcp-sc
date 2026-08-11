@@ -11,14 +11,14 @@
 
 import type { WloNode } from '../wlo-api.js';
 import { WLO_TOPIC_POOL, buildTopicPageUrl, stripStoreRef } from '../wlo-api.js';
-import type { ThemePageInfo, VariantFilters } from '../topic-page-api.js';
+import type { ThemePageInfo, VariantFilters } from '../topic-page-variant.js';
+import { variantFields, variantMatchesFilters } from '../topic-page-variant.js';
 import { orderVariants } from '../topic-page-config.js';
 import {
   getCollectionThemePages,
   resolvePageFolder,
   resolveVariantCollection,
   searchPageVariants,
-  variantMatchesFilters,
 } from '../topic-page-api.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
@@ -144,16 +144,13 @@ async function enrichPage(group: WloNode[]): Promise<ThemePageInfo[]> {
   const isActiveFolder = !!owner && stripStoreRef(owner.pageConfigRef) === folderId;
 
   return ordered.flatMap((v, index) => {
-    const vProps = v.properties ?? {};
-    const variantId = v.ref?.id ?? '';
-    if (!variantId) return [];
+    // The variant's OWN fields come from the one shared projection, so a mode
+    // cannot describe a variant differently from how the other mode does — the
+    // difference would be a property of how the caller asked, not of the page.
+    const fields = variantFields(v);
+    if (!fields.variantId) return [];
     return [{
-      variantId,
-      variantName: vProps['cm:name']?.[0] || v.name || '',
-      variantTitle: vProps['cclom:title']?.[0] || '',
-      targetGroup: vProps['ccm:page_variant_profiling_target_group']?.[0] || '',
-      educationalContexts: vProps['ccm:educationalcontext'] ?? [],
-      isTemplate: false,
+      ...fields,
       topicPageUrl,
       collectionId: owner?.id,
       collectionName: owner?.name,

@@ -15,7 +15,8 @@ import { log } from '../logger.js';
 // The title rule moved to a leaf module (topic-page-api/-structure and the write
 // service need it and must not import from tools/). Re-exported so the tools
 // keep one import site.
-export { isPlaceholderTitle, pickThemePageTitle } from '../topic-page-title.js';
+export { isPlaceholderTitle } from '../topic-page-title.js';
+export { pickThemePageTitle } from '../topic-page-variant.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 
 // ── Query metadata for downstream consumers (backend → frontend) ────────────

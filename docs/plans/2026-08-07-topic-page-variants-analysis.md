@@ -134,6 +134,78 @@ once the data is maintained.
 
 ---
 
+## 3b. The profile selector's preset — `variables` (measured 2026-08-11)
+
+A user lands on a Themenseite with no filter and can then pick a role and an
+education level. That is neither a variant switch (the URL carries only
+`?collectionId=`) nor a swimlane filter: the selector's INITIAL STATE is stored
+per variant, in the `variables` block of `ccm:page_variant_config`.
+
+```json
+{"structure": {"swimlanes": [...]},
+ "variables": {
+   "virtual:profiling_widget_intention": "teach",
+   "virtual:profiling_widget_education_level": ".../sekundarstufe_1,.../sekundarstufe_2"}}
+```
+
+| key | values | of 69 non-template staging variants |
+|---|---|---|
+| `virtual:profiling_widget_intention` | `teach` / `learn` | 25 |
+| `virtual:profiling_widget_education_level` | educationalContext URIs, **comma-joined in ONE string** | 32 |
+| `virtual:profiling_target_group` | always `["learner","teacher","general"]` | 2 |
+
+Three things the shape decides:
+
+- **`virtual:profiling_target_group` is the selector's OPTION LIST, not a
+  selection.** Both variants that carry it hold the full list. Read as an
+  audience it turns a widget configuration into a claim about the page.
+- **The levels are one comma-joined string**, not an array. Treating the raw
+  value as an array yields a single entry holding every level at once.
+- **No grid cell references a variable** (0 of all inspected). The swimlanes are
+  not filtered by the profile; every widget instance carries fixed `nodeId`s.
+  Whether a widget re-queries at RENDER time using the live profile is a
+  frontend question and is not answerable from the config.
+
+### It is not a better-filled version of the profiling properties
+
+The coverage looks tempting — 25/69 against 17/69 for the target group, 32/69
+against 21/69 for the education level, and merging would take the answerable
+share from 25 % to 59 %. It does not survive the overlap:
+
+| | both present | identical |
+|---|---|---|
+| audience | 1 of 69 | 0 |
+| education level | 2 of 69 | 0 |
+
+```
+targetGroup="learner"                  beside  intention="teach"
+educationalcontext=[elementarbereich]  beside  preset=[sek_1, sek_2, hochschule, ...]
+```
+
+The two sources are near-disjoint AND they contradict each other wherever they
+meet. They are different facts: metadata ABOUT the variant against the initial
+state of a widget INSIDE it. Merging them would raise the reported coverage and
+lower the truth, invisibly. So it is carried as its own field, `variantPreset`,
+named for what it is (`parseVariantPreset`, `src/topic-page-config.ts`).
+
+**Not queryable.** Neither `virtual:profiling_widget_intention` nor
+`ccm:page_variant_config` is accepted as a search criterion — both answer
+`400 DAOValidationException`. Local read only, and it costs nothing extra:
+`ccm:page_variant_config` is already in `TOPIC_PAGE_PROPS` because the swimlanes
+come from the same document.
+
+**What it is worth, live (2026-08-11):** a listing of 12 pages returned 15
+variants, 13 of which carry a preset — while `targetGroup` was empty on all 15.
+For those pages the audience question had no answer at all before.
+
+### Widget types across the swimlanes (staging, 2026-08-11)
+
+`content-teaser` (94), `wlo-content-teaser` (84), `text` (22),
+`wlo-collection-chips` (16), `media-rendering` (14), `wlo-editorial-members`
+(10), `topics-column-browser` (9), `ai-text` (4), `wlo-iframe-widget` (2).
+
+---
+
 ## 4. What the `page_variant` query can and cannot do
 
 ### `virtual:page_variant_global` — `['false']` is a no-op

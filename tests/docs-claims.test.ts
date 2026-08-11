@@ -203,7 +203,8 @@ test('no document states a tool count the server contradicts', async () => {
 
   const claims: ReadonlyArray<[RegExp, number, string]> = [
     [/(\d+)\s+(?:MCP\s+)?read tools/gi, readTools, 'read tools'],
-    [/(\d+)\s+lesende (?:MCP-Tools|Werkzeuge)/gi, readTools, 'lesende Werkzeuge'],
+    [/(\d+)\s+lesende(?:n)?(?:\s+(?:MCP-Tools|Werkzeuge))?\b/gi, readTools, 'lesende Werkzeuge'],
+    [/(\d+)\s+kuratierende(?:n)?(?:\s+(?:MCP-Tools|Werkzeuge))?\b/gi, curation, 'kuratierende Werkzeuge'],
     // The same count in a heading, written the other way round. `docs/TOOLS.md`
     // carried "Lesende MCP-Tools (27)" and "Kuratierende MCP-Tools (13)" while
     // the prose above it said 42 — a section heading is exactly where a reader

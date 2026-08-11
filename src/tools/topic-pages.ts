@@ -9,7 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { WLO_REPOSITORY_URL } from '../wlo-api.js';
-import type { TargetGroup } from '../topic-page-api.js';
+import type { TargetGroup } from '../topic-page-variant.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
 import { labelFromUri } from '../vocabs.js';
 import { registerWloTool } from '../apps/register.js';

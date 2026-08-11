@@ -113,7 +113,7 @@ test('mixed fields use both routes in one update', async () => {
 test('a rejected bulk write is retried field by field', async () => {
   // One bad value must not cost the user the other four edits.
   let bulkSeen = 0;
-  const mock = installFetchMock((url, init) => {
+  const mock = installFetchMock((_url, init) => {
     const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
     const isBulk = Object.keys(body).length > 1;
     if (isBulk) { bulkSeen++; return { status: 400, json: { error: 'invalid' } }; }
