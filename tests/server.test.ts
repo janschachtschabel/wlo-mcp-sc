@@ -33,7 +33,7 @@ const EXPECTED_TOOLS = [
   'get_collection_stats',
   'wlo_auth_status',
   // The two-step skill surface, registered unconditionally: the search filters
-  // the repository by the `ai_prompt` content type, so it works without a
+  // the repository by the `ai_skill` content type, so it works without a
   // configured collection (WLO_SKILLS_COLLECTION_ID only narrows it to a
   // subtree). `WLO_SKILL_TOOL_MODE=one-tool` swaps both for `get_skill_for_task`
   // — see tests/tools-skills.test.ts.

@@ -141,6 +141,38 @@ test('a payload of the wrong shape is rejected', () => {
   assert.equal(bad({ ...payload, iat: 'soon' }), null, 'iat not a number');
 });
 
+// ── Ticket blocks: the `k` discriminator ───────────────────────────────────
+
+test('a ticket block round-trips with its kind intact', () => {
+  // The kind decides which Authorization scheme `credentialFromAccessBlock`
+  // builds (EDU-TICKET vs. Basic), so losing it silently would turn a ticket
+  // into a nonsense password — same block, wrong wire format.
+  const keys = keysOf(KEY_A);
+  const ticket: AccessPayload = { ...payload, k: 'ticket', secret: 'TICKET_0123abcd' };
+  const token = encodeAccessToken(ticket, keys.publicKeyPem);
+  assert.deepEqual(decodeAccessToken(token, keys), ticket);
+});
+
+test('a password block stays exactly shaped as before — no `k` key appears', () => {
+  // Backward compatibility is the point of an OPTIONAL discriminator: every
+  // block issued before the ticket kind existed must keep decoding, and the
+  // decoded object must not grow a `k: undefined` that changes deepEqual
+  // comparisons and JSON round trips.
+  const keys = keysOf(KEY_A);
+  const decoded = decodeAccessToken(encodeAccessToken(payload, keys.publicKeyPem), keys);
+  assert.deepEqual(decoded, payload);
+  assert.ok(decoded && !('k' in decoded), 'no k key on a password block');
+});
+
+test('an unknown kind is rejected, not passed on as a credential', () => {
+  const keys = keysOf(KEY_A);
+  const bad = (p: unknown) =>
+    decodeAccessToken(encodeAccessToken(p as AccessPayload, keys.publicKeyPem), keys);
+  assert.equal(bad({ ...payload, k: 'basic' }), null, 'explicit basic is not a value we issue');
+  assert.equal(bad({ ...payload, k: 'cookie' }), null, 'future kinds fail closed');
+  assert.equal(bad({ ...payload, k: 42 }), null, 'non-string kind');
+});
+
 // ── T5: the rotation window ────────────────────────────────────────────────
 
 test('a block issued under the previous key still decodes during rotation', () => {

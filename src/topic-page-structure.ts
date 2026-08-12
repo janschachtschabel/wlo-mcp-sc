@@ -8,6 +8,9 @@
  * The two change for different reasons: discovery follows edu-sharing's search
  * and containment endpoints, this follows the page-builder's config schema.
  */
+/* eslint @typescript-eslint/no-explicit-any: "off" -- this module parses the
+ * page builder's unvalidated `ccm:page_variant_config` JSON; every access is
+ * guarded at runtime (typeof / Array.isArray), which is the actual contract. */
 
 import type { WloNode } from './wlo-api.js';
 import { getChildCollections, getNodeMetadata, stripStoreRef } from './wlo-api.js';

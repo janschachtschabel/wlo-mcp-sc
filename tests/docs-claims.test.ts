@@ -278,6 +278,32 @@ test('every registered tool is named in the tool reference and in both READMEs',
 });
 
 /**
+ * A document that still calls a skill a prompt.
+ *
+ * Skills moved from `ai_prompt` to `ai_skill` on 2026-08-12. The filter that
+ * finds them was migrated with a constant, and the tool descriptions are guarded
+ * by `tests/tools-skills.test.ts` — the DOCUMENTS were migrated by hand and two
+ * were missed. A reader who learns "a skill is a KI-Prompt" then searches the
+ * repository for a term it no longer indexes; nothing fails loudly when they do.
+ *
+ * Scoped to the four overview documents, which describe TOOLS. The editorial
+ * guides (`docs/SKILLS.md`, `docs/SKILL-TRIGGER.md`) and the changelog describe
+ * the VOCABULARY, where the old term is still the right word for the one thing
+ * that kept it: the registry document. This guard must not push them into
+ * calling a registry something it is not.
+ */
+test('no overview still calls a skill a KI-Prompt', () => {
+  const wrong: string[] = [];
+  for (const doc of ['README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md']) {
+    read(doc).split('\n').forEach((line, i) => {
+      const m = line.match(/\b(?:KI-Prompts?|AI prompts?)\b/i);
+      if (m) wrong.push(`${doc}:${i + 1}: "${m[0]}" — a skill carries ai_skill since 2026-08-12`);
+    });
+  }
+  assert.deepEqual(wrong, [], 'these lines teach a vocabulary term the repository dropped');
+});
+
+/**
  * A parameter the READMEs document that the tool does not take.
  *
  * `search_wlo_collections` was documented with `userRole?` (it has no such

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { REGISTRY_MAX, REGISTRY_SEARCH_MAX, loadSkillRegistry, pickRegistryNode } from '../src/services/skill-registry.js';
-import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { installFetchMock, makeNode, type MockResult } from './fetchMock.js';
 import type { WloNode } from '../src/wlo-api.js';
 
@@ -17,7 +17,7 @@ function promptNode(
   opts: { name?: string; mimetype?: string; mediatype?: string; extendedType?: string | null } = {},
 ): WloNode {
   const ext: Record<string, string[]> =
-    opts.extendedType === null ? {} : { 'ccm:oeh_extendedType': [opts.extendedType ?? SKILL_CONTENT_TYPE_URI] };
+    opts.extendedType === null ? {} : { 'ccm:oeh_extendedType': [opts.extendedType ?? REGISTRY_CONTENT_TYPE_URI] };
   return {
     ...makeNode(id, title, { 'cm:name': [opts.name ?? 'SKILL.md'], ...ext }),
     mimetype: opts.mimetype ?? 'text/x-web-markdown',

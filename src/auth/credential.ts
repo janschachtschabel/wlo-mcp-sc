@@ -62,6 +62,43 @@ export interface WloCredential {
   /** Human-readable identity for logs and the status tool — never the secret. */
   label: string;
   source: 'service' | 'user';
+  /**
+   * The access id, when this credential came from a `wlo2.` block.
+   *
+   * Present ONLY on that branch — a `Basic` header carries no id, and the
+   * service account is not a block. `abuseBucketKey` is the one reader; it is a
+   * SECRET (revocation acts on it, `AUTH.md` §4) and must never be logged or
+   * returned.
+   */
+  jti?: string;
+}
+
+/**
+ * Which bucket the abuse limiter counts this credential in.
+ *
+ * `POST /mcp` forwards a caller-supplied credential upstream, so it can be used
+ * as an oracle for guessing WLO logins. What must be bounded is how many
+ * DISTINCT secrets are tried against one identity — and which identity that is
+ * depends on the scheme:
+ *
+ * - **`Basic`** has none. The guesser is bounded by the only thing available,
+ *   their address. Unchanged, and it must stay: this is the scheme that carries
+ *   a guessable secret in the clear.
+ * - **A `wlo2.` block** has one, its `jti`. Under a valid access id there is
+ *   exactly ONE correct password, so a legitimate holder contributes a single
+ *   entry for the life of the block, while a guesser contributes many — and they
+ *   land in the same bucket however many addresses they come from.
+ *
+ * Keying a block by address instead was wrong in both directions. It refused a
+ * RELAY client (a chatbot backend serving many people from one address hit the
+ * cap at its 11th signed-in person), and it let a guesser who had learned a
+ * `jti` multiply their budget simply by rotating addresses.
+ *
+ * The prefix keeps the two key spaces apart, so neither scheme can spend the
+ * other's budget.
+ */
+export function abuseBucketKey(cred: WloCredential, ip: string): string {
+  return cred.jti ? `jti:${cred.jti}` : `ip:${ip}`;
 }
 
 /**
@@ -108,7 +145,7 @@ export function credentialFromHeader(raw: string | undefined): WloCredential | n
   if (bearer) return credentialFromAccessBlock(bearer[1]!);
   const m = /^Basic\s+(\S+)$/i.exec(value);
   if (!m) return null;
-  let decoded = '';
+  let decoded: string;
   try {
     decoded = Buffer.from(m[1], 'base64').toString('utf8');
   } catch {
@@ -160,10 +197,21 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   const payload = decodeAccessToken(raw, accessSupport.keys);
   if (!payload) return null;
   if (!accessSupport.registry.has(payload.jti)) return null;
+  // A ticket block carries an edu-sharing ticket, and the scheme the repository
+  // accepts for one is `EDU-TICKET` (the md-editor's production embedding path).
+  // Everything else about the block — registry, revocation, abuse bucket — is
+  // kind-agnostic and stays shared.
+  const header = payload.k === 'ticket'
+    ? `EDU-TICKET ${payload.secret}`
+    : `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`;
   return {
-    header: `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`,
+    header,
     label: payload.u,
     source: 'user',
+    // The only branch that has an access id. `abuseBucketKey` bounds guessing
+    // per id rather than per address — see there for why that is both safer and
+    // what makes a relay client work.
+    jti: payload.jti,
   };
 }
 

@@ -268,6 +268,8 @@ test('a body that is not JSON is refused as client metadata', async (t) => {
   }
 });
 
+/* eslint-disable no-irregular-whitespace -- the zero-width space below IS the
+ * test payload: the assertion is precisely that it gets dropped. */
 test('a client name is capped and flattened — it is foreign text on a consent screen', async (t) => {
   await support(t);
   const r = await register({ redirect_uris: ['https://a.example/cb'], client_name: `Böse\nZeile​${'x'.repeat(300)}` });
@@ -277,6 +279,7 @@ test('a client name is capped and flattened — it is foreign text on a consent 
   assert.ok(!/​/.test(name), 'invisible characters are dropped');
   assert.ok(name.length <= 100, `capped, got ${name.length}`);
 });
+/* eslint-enable no-irregular-whitespace */
 
 test('a missing client name falls back rather than failing', async (t) => {
   await support(t);

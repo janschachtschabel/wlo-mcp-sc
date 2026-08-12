@@ -13,8 +13,8 @@ import {
   WLO_ROOT_COLLECTION_ID,
   getChildCollectionsResult,
   getCollectionContents,
-  searchCollectionsByKeyword,
 } from '../wlo-api.js';
+import { searchCollections } from '../services/collection-search.js';
 import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, renderToJson, renderToText } from '../formatter.js';
@@ -139,7 +139,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           // The `+200` clamp is redundant while the schema caps excludeNodeIds
           // at 200, and kept as a second bound if that cap ever moves.
           const upstreamMax = Math.min(maxResults + excluded.size, maxResults + 200);
-          const directHits = await searchCollectionsByKeyword(query, upstreamMax);
+          const directHits = await searchCollections(query, upstreamMax);
           const keptDirect = directHits.filter(keepNode);
           // When every direct hit was excluded or filtered out, fall through to
           // the tree traversal instead of returning an empty page (audit Q-3).

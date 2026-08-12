@@ -59,7 +59,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 
 | Tool | Funktion |
 |---|---|
-| `search_skill` | Sucht Skills — kuratierte KI-Prompts mit angehängter Anleitung — passend zu einer Aufgabe. |
+| `search_skill` | Sucht Skills (Inhaltsart „KI-Skill") mit angehängter Anleitung — passend zu einer Aufgabe. |
 | `get_skill` | Lädt die Anleitung (SKILL.md) eines Skills zu seiner nodeId. |
 | `get_skill_registry` | Nennt die Skills, die eine Sammlung freigegeben hat. |
 

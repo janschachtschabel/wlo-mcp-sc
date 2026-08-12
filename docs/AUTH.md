@@ -313,6 +313,36 @@ address as the origin. All three pass two limiters:
   really try upstream count) and before the upstream call (so a guesser never
   reaches WLO).
 
+`POST /mcp` passes the same credential guard, for the same reason: it forwards a
+caller-supplied credential upstream. **What differs there is the bucket, and it
+is not the address for every scheme** (`abuseBucketKey`, `auth/credential.ts`):
+
+| Scheme | Bucket | Why |
+|---|---|---|
+| `Basic` | the client address | the guesser has no identity to bound, and this is the scheme that carries a guessable secret |
+| `wlo2.` block | its **`jti`** | under a valid access id there is exactly ONE correct password, so rotating them is guessing wherever it comes from |
+
+Keying a block by address was wrong in both directions, and each half was
+measured (2026-08-12, `docs/plans/2026-08-12-relay-credential-limiter.md`).
+
+*It refused a legitimate caller.* A **relay client** — a chatbot backend serving
+many people from one address, forwarding each person's own block — hit the cap at
+its **11th signed-in person** in a window. The signature is misleading: signed-in
+users break while anonymous ones keep working, because a request with no
+credential is never counted.
+
+*And it under-bounded a guesser.* §4 explains that the public key is published,
+so **anyone who learns a `jti` can mint blocks carrying it** and any password
+they like. Against the address key that guesser simply rotated addresses and
+multiplied their budget; against the `jti` key the attempts land in one bucket.
+
+Two things follow and must not be undone. **Do not exclude blocks from the
+counter** on the argument that they are "already proven" — the paragraph above is
+why that is false. And **the bucket key must never be logged or returned**: for a
+block it *is* the access id, and §4 makes that the secret revocation hangs on.
+The refusal names its `scope` (`access-block` / `address`) and the address, never
+the key.
+
 Two things make those limits hold:
 
 **No CORS header on `/auth*` or `/oauth/authorize`.** Both limiters count per
@@ -435,6 +465,10 @@ refactor.
     the intent must be stated explicitly at the consent endpoint. Do not give it
     key material or an allow-list entry — it grants nothing that would justify
     either, and both would suggest it protects something.
+11. **The guessing guard bounds distinct secrets per IDENTITY, and a block's
+    identity is its `jti`, not its address** (§7). One client may legitimately be
+    a relay for many people; one `jti` may legitimately hold one password. Do not
+    exempt blocks from the counter, and do not put the key in a log or a reply.
 
 Design documents and the measurements behind them:
 `docs/plans/2026-08-04-mcp-access-token-design.md`,

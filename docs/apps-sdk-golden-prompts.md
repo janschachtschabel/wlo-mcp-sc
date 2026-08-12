@@ -47,7 +47,7 @@ Result of that pass, run 2026-08-03 against
 | D7 | `search_wlo_collections` | 857 | ✅ |
 | D8 | `get_node_details` | 381 | ✅ |
 | D9 | `search_wlo_within_collection` | 1400 | ✅ |
-| D10 | `search_skill` → `get_skill` | — | ⬜ registered, but no `ai_prompt` record exists in the repository yet |
+| D10 | `search_skill` → `get_skill` | — | ⬜ registered; skills carry the `ai_skill` content type since 2026-08-12 (28 Lehrtoolkit records), not re-measured since |
 | I1–I6 | `search_wlo_all`, `search_wlo_topic_pages`, `lookup_wlo_publishers`, `get_related_content`, `get_collection_stats`, `get_node_breadcrumb` | 456–2571 | ✅ all six |
 
 **17 of 17 runnable prompts delivered.** Two apparent failures in the first
@@ -168,7 +168,7 @@ should fire.
 | D7 | „Welche WLO-Sammlungen gibt es zum Klimawandel?“ | `search_wlo_collections` | text/JSON list | collections returned |
 | D8 | „Zeig mir Details und den Volltext zu diesem WLO-Inhalt: `<nodeId>`.“ | `get_node_details` | text | metadata + text content |
 | D9 | „Finde in der Sammlung `<nodeId>` nur die Videos zur Zellteilung.“ | `search_wlo_within_collection` | text/JSON list | scoped results |
-| D10 | „Gibt es fertige Anleitungen/Skills, um ein Arbeitsblatt zu erstellen?“ | `search_skill`, then `get_skill` with a returned nodeId | text (catalogue, then one instruction document) | catalogue returned; empty until skills carry the `ai_prompt` content type |
+| D10 | „Gibt es fertige Anleitungen/Skills, um ein Arbeitsblatt zu erstellen?“ | `search_skill`, then `get_skill` with a returned nodeId | text (catalogue, then one instruction document) | catalogue returned; the content type skills are found by is `ai_skill` since 2026-08-12 |
 
 ## B. Indirect-intent prompts
 

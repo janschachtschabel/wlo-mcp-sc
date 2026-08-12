@@ -18,16 +18,23 @@
     "dev:http": "tsx --env-file-if-exists=.env src/http.ts",
     "test": "node scripts/run-tests.mjs",
     "test:coverage": "node scripts/run-tests.mjs --coverage",
-    "typecheck": "tsc -p tsconfig.typecheck.json"
+    "test:live": "node scripts/run-live-tests.mjs",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "lint": "eslint .",
+    "sync:vocabs": "node --import tsx --env-file-if-exists=.env scripts/sync-vocabs.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.14.0",
     "esbuild": "^0.28.1",
+    "eslint": "^10.8.1",
+    "globals": "^17.11.0",
     "tsx": "^4.23.5",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.67.0"
   }
 }

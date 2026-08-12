@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from './server.js';
 import {
+  abuseBucketKey,
   configuredServiceCredential,
   credentialFromHeader,
   isUnusableAuthorization,
@@ -57,8 +58,20 @@ export interface HttpAppOptions {
  * Paths where someone's WLO password is checked, and which therefore get no
  * CORS header at all. Over-inclusive on purpose: denying a cross-origin read to
  * a path that does not exist costs nothing, while the reverse is an oracle.
+ *
+ * `/auth/ticket` is the one carved-out exception, exact-match on purpose. Its
+ * only real client is a chat widget on a FOREIGN origin (an edu-sharing page
+ * that handed it the ticket of the person signed in there), so without CORS
+ * the endpoint cannot serve its one purpose. And the reasoning that closes the
+ * rest of `/auth*` does not carry over: what a page could make every visitor
+ * present here is not a human-chosen password with guessable neighbours but a
+ * repository-issued ticket — machine-made, high-entropy, worthless to
+ * enumerate. Validating STOLEN tickets is not enabled by CORS either (a thief
+ * can ask the repository directly), and the distinct-value limiter still
+ * bounds attempts per address.
  */
 function isCredentialSurface(path: string): boolean {
+  if (path === '/auth/ticket') return false;
   return path.startsWith('/auth') || path.startsWith('/oauth/authorize');
 }
 
@@ -218,14 +231,31 @@ export function createHttpRequestHandler(
       }
 
       // That forwarding is what makes this endpoint usable as a relay for
-      // guessing WLO logins from our address. Cap the number of DISTINCT logins
-      // per client, not the request rate: a per-user client legitimately sends
-      // its header on every call. A scheme we refuse (Bearer, Digest) never
-      // leaves this server, so it is not a guessing attempt and costs nothing.
-      if (userCred && authAbuseLimiter.check(ip, userCred.header, Date.now())) {
-        log.warn('too many distinct credentials from one client', { ip });
+      // guessing WLO logins from our address. Cap the number of DISTINCT logins,
+      // not the request rate: a per-user client legitimately sends its header on
+      // every call. A scheme we refuse (Bearer, Digest) never leaves this server,
+      // so it is not a guessing attempt and costs nothing.
+      //
+      // WHICH bucket is `abuseBucketKey`'s decision, and it is not the address
+      // for every scheme — see there. Keying a block by address refused a relay
+      // client at its 11th signed-in person while letting a guesser who had
+      // learned a `jti` multiply their budget by rotating addresses.
+      if (userCred && authAbuseLimiter.check(
+        abuseBucketKey(userCred, ip), userCred.header, Date.now(),
+      )) {
+        // `scope` names which rule fired WITHOUT naming the bucket: for a block
+        // the bucket is the access id, and that id is a secret (AUTH.md §4) —
+        // it must never reach a log line or a response.
+        const perBlock = Boolean(userCred.jti);
+        log.warn('too many distinct credentials', {
+          ip, scope: perBlock ? 'access-block' : 'address',
+        });
         res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '600' });
-        res.end(JSON.stringify({ error: 'Too many different logins from this address.' }));
+        res.end(JSON.stringify({
+          error: perBlock
+            ? 'Too many different logins for this access block.'
+            : 'Too many different logins from this address.',
+        }));
         return;
       }
 

@@ -203,7 +203,7 @@ test('the OER bundle sends NO licence criterion — the repository cannot OR the
   assert.equal(unresolved.length, 0, 'and it is not treated as an unknown value');
   assert.deepEqual(
     [...(labeled.find(l => l.property === 'ccm:commonlicense_key')?.values ?? [])].sort(),
-    ['CC_0', 'CC_BY', 'CC_BY_SA', 'COPYRIGHT_FREE', 'PDM'],
+    ['CC_0', 'CC_BY', 'CC_BY_SA', 'PDM'],
     'the selection is still reported, so _queryMeta shows what was applied',
   );
 });

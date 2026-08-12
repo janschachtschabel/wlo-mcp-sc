@@ -487,3 +487,34 @@ test('get_skill_for_task returns the best match with its markdown and names the 
     mock.restore();
   }
 });
+
+/*
+ * The vocabulary term, as the MODEL reads it.
+ *
+ * Skills moved from `ai_prompt` to `ai_skill` on 2026-08-12. The filter that
+ * finds them was migrated with the constant; the tool DESCRIPTIONS are prose
+ * and were migrated by hand — and one of the three was missed, which is the
+ * failure mode this guard exists for. A description that still says "KI-Prompt"
+ * teaches the model a term the repository no longer uses, and nothing fails
+ * loudly when it does.
+ *
+ * Scoped to the skill tools on purpose: `get_skill_registry` describes the
+ * REGISTRY document, which genuinely still carries `ai_prompt`
+ * (`REGISTRY_CONTENT_TYPE_URI`) — a prompt document ABOUT skills, not a skill.
+ */
+test('no skill tool describes a skill as a KI-Prompt any more', async () => {
+  for (const mode of ['two-tool', 'one-tool'] as const) {
+    const client = await skillClient({ mode });
+    try {
+      const { tools } = await client.listTools();
+      assert.ok(tools.length > 0, `${mode} registered no tools`);
+      for (const tool of tools) {
+        const text = `${tool.description ?? ''}`;
+        assert.doesNotMatch(text, /ai_prompt|KI-Prompt/i,
+          `${tool.name} (${mode}) still names the old vocabulary term`);
+      }
+    } finally {
+      await client.close();
+    }
+  }
+});

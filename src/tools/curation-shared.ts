@@ -20,7 +20,8 @@ import { log } from '../logger.js';
 import { toolError } from './shared.js';
 import { renderChangeSet, hasSomethingToConfirm, type ChangeSet } from '../services/write/change-set.js';
 import { mintToken, consumeToken } from '../services/write/confirm.js';
-import { writeRefusal } from '../services/write/credential-gate.js';
+import { writeRefusal, mayPrepare } from '../services/write/credential-gate.js';
+import type { PreparedRequest } from '../services/write/prepared-request.js';
 import type { FieldWriteStatus } from '../services/write/nodes.js';
 import type { VerifyResult, MutationOutcome } from '../services/write/verify.js';
 import { registerWloTool, type WloToolDef, type WloToolResult } from '../apps/register.js';
@@ -57,14 +58,23 @@ export type WriteAuthChallenge = string;
 export function registerCurationTool(
   server: McpServer,
   challenge: WriteAuthChallenge,
-  def: Omit<WloToolDef, 'securitySchemes'>,
+  def: Omit<WloToolDef, 'securitySchemes'> & {
+    /**
+     * May this tool answer with a prepared request when the caller cannot write
+     * (E2)? Per tool rather than per server: `WLO_ALLOW_PREPARED_WRITES` says
+     * the operator wants the embedded route at all, this says the tool has one.
+     * Without it a curation tool keeps refusing exactly as before.
+     */
+    preparable?: boolean;
+  },
 ): void {
+  const { preparable, ...toolDef } = def;
   registerWloTool(server, {
-    ...def,
+    ...toolDef,
     securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (args, extra) => {
       const refusal = writeRefusal();
-      if (refusal === null) return def.handler(args, extra);
+      if (refusal === null || (preparable && mayPrepare())) return def.handler(args, extra);
       return {
         content: [{ type: 'text' as const, text: refusal }],
         _meta: { 'mcp/www_authenticate': [challenge] },
@@ -234,6 +244,33 @@ export function previewReply(cs: ChangeSet, whatHappensNext: string, notes: stri
       'Der Schlüssel gilt einmalig und zehn Minuten lang.',
     ].join('\n'),
   );
+}
+
+/**
+ * The reply for a confirmed change this server will NOT perform: the request,
+ * for the page to send with the visitor's own session (E2).
+ *
+ * Only ever produced after the token was redeemed. Handing the request out with
+ * the preview would let a browser execute without ever confirming, and the
+ * two-step approval — whose whole purpose is that an injected instruction
+ * cannot ride an approval given for something else — would be decoration.
+ *
+ * The descriptor travels in `structuredContent` and deliberately NOT in the
+ * text: the model has no use for a method and a path, and text is what ends up
+ * quoted into a conversation. No `outputSchema` is declared for these tools —
+ * the SDK validates structured content only when one exists
+ * (`server/mcp.js: if (!tool.outputSchema) return`), and declaring one would
+ * make every preview reply, which carries no structured content, invalid.
+ */
+export function preparedReply(request: PreparedRequest, doneMessage: string): WloToolResult {
+  return {
+    content: [{
+      type: 'text' as const,
+      text: 'Die Änderung wurde hier nicht ausgeführt. Die fertige Anfrage steht im strukturierten Teil '
+        + 'dieser Antwort; ausgeführt wird sie in der Seite, mit der dort bestehenden Anmeldung.',
+    }],
+    structuredContent: { preparedRequest: request, doneMessage },
+  };
 }
 
 /**

@@ -154,7 +154,7 @@ export const WLO_ROOT_COLLECTION_ID: string = (() => {
  * Optional nodeId of the WLO collection that holds ALL skillsets (each a
  * sub-collection, each holding the skill records whose attached file is the
  * SKILL.md). When set, the skill search walks that subtree; unset, it searches
- * the whole repository for records of the `ai_prompt` content type. It also
+ * the whole repository for records of the `ai_skill` content type. It also
  * makes `GET /api/collection` without a `nodeId` default to this collection.
  *
  * The subtree walk is not an optimisation but the only mechanism available:

@@ -86,6 +86,31 @@ test('the branch produces a Basic credential — a Bearer never goes upstream', 
   assert.equal(cred.header, basic('lehrerin', 'geheim'));
 });
 
+test('a ticket block produces an EDU-TICKET credential, not a Basic one', async (t) => {
+  // The one exception to `produces a Basic credential` above, and a deliberate
+  // one: the secret inside a ticket block IS an edu-sharing ticket, and the
+  // scheme the repository accepts for it is `EDU-TICKET` (measured practice of
+  // the md-editor, 2026-08-12). Encoding it as Basic would send
+  // `user:TICKET_…` — a login nobody has.
+  const registry = await withSupport(t);
+  const ticket: AccessPayload = {
+    v: 2, jti: 'ticket-id', u: 'lehrerin', secret: 'TICKET_0123abcd', iat: payload.iat, k: 'ticket',
+  };
+  await registry.add({ jti: ticket.jti, label: ticket.u, iat: ticket.iat });
+
+  const cred = credentialFromHeader(tokenFor(ticket));
+  assert.ok(cred);
+  assert.equal(cred.header, 'EDU-TICKET TICKET_0123abcd');
+  assert.equal(cred.source, 'user', 'ticket holders get user rights — writes carry their name');
+  assert.equal(cred.label, 'lehrerin');
+  assert.equal(cred.jti, 'ticket-id', 'abuse limiter buckets per access id, same as password blocks');
+
+  // Revocation must act on ticket blocks exactly like on password blocks —
+  // the registry is kind-agnostic, and this pins that it stays so.
+  await registry.remove(ticket.jti);
+  assert.equal(credentialFromHeader(tokenFor(ticket)), null);
+});
+
 test('a revoked block stops authenticating', async (t) => {
   const registry = await withSupport(t);
   await registry.add({ jti: payload.jti, label: payload.u, iat: payload.iat });

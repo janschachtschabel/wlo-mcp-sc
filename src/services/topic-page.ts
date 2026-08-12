@@ -7,9 +7,13 @@
  * Extracted from the get_topic_page_content tool so search_wlo_all and
  * search_wlo_topic_pages can reuse the exact same resolution.
  */
+/* eslint @typescript-eslint/no-explicit-any: "off" -- this module traverses the
+ * page builder's unvalidated `ccm:widget_config` JSON; every access below is
+ * guarded at runtime (typeof / Array.isArray), which is the actual contract. */
 
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
-import { WLO_TOPIC_POOL, buildTopicPageUrl, getNodesMetadata, ngsearch, searchCollectionsByKeyword, stripStoreRef } from '../wlo-api.js';
+import { WLO_TOPIC_POOL, buildTopicPageUrl, getNodesMetadata, ngsearch, stripStoreRef } from '../wlo-api.js';
+import { searchCollections } from './collection-search.js';
 import type { ThemePageInfo, VariantFilters } from '../topic-page-variant.js';
 import { getCollectionThemePages, searchTopicPageCollections } from '../topic-page-api.js';
 import type { TopicPageStructure } from '../topic-page-structure.js';
@@ -42,7 +46,7 @@ export async function findTopicPagesByQuery(
     // (their projection has no config ref at all), so a thrown keyword search
     // — timeout, reset — must not discard the portals, which are the only leg
     // that can surface a Themenseite. Same guard as searchAll's.
-    searchCollectionsByKeyword(q, 10).catch((err) => {
+    searchCollections(q, 10).catch((err) => {
       log.warn('findTopicPagesByQuery: keyword collection search failed, continuing without', {
         error: err instanceof Error ? err.message : String(err),
       });

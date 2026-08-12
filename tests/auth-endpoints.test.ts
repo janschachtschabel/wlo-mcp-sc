@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { handleAuthEndpoint } from '../src/rest/auth-pages.js';
-import { setAccessSupport } from '../src/auth/credential.js';
+import { credentialFromHeader, setAccessSupport } from '../src/auth/credential.js';
 import { encodeAccessToken, loadAuthKeys, type AuthKeys } from '../src/auth/access-token.js';
 import { openRegistry, type AccessRegistry } from '../src/auth/access-registry.js';
 import { createDistinctValueLimiter, createRateLimiter } from '../src/rate-limit.js';
@@ -48,10 +48,15 @@ const req = (method: string, url: string, body?: string, contentType = 'applicat
 
 function res() {
   const out = { status: 0, body: '' };
+  const headers: Record<string, string> = {};
   return {
     out,
+    headers,
     json: () => (out.body ? JSON.parse(out.body) as Record<string, unknown> : null),
-    writeHead(status: number) { out.status = status; },
+    writeHead(status: number, h?: Record<string, string>) {
+      out.status = status;
+      if (h) Object.assign(headers, h);
+    },
     end(body?: string) { out.body = body ?? ''; },
   };
 }
@@ -98,11 +103,80 @@ test('the public key is served so the page can encrypt', async (t) => {
 
 test('with the feature switched off the endpoints do not exist', async () => {
   setAccessSupport(null);
-  for (const [method, url] of [['GET', '/auth/public-key'], ['POST', '/auth/issue'], ['POST', '/auth/revoke']]) {
+  for (const [method, url] of [['GET', '/auth/public-key'], ['POST', '/auth/issue'], ['POST', '/auth/revoke'], ['POST', '/auth/ticket']]) {
     const r = res();
     assert.equal(await handleAuthEndpoint(req(method!, url!, '{}'), r, deps()), true);
     assert.equal(r.out.status, 404, `${method} ${url}`);
   }
+});
+
+// ── /auth/ticket — the embedding exchange ───────────────────────────────────
+
+const TICKET = 'TICKET_c001d00dfeedface0123456789abcdef01234567';
+const postTicket = (ticket: string) => req('POST', '/auth/ticket', JSON.stringify({ ticket }));
+
+test('an accepted ticket is answered with a block the Bearer path honours', async (t) => {
+  const { registry } = await support(t);
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  assert.equal(await handleAuthEndpoint(postTicket(TICKET), r, deps()), true);
+  assert.equal(r.out.status, 200);
+  const body = r.json();
+  assert.equal(body?.['ok'], true);
+  assert.equal(body?.['authority'], 'lehrerin');
+  const issued = body?.['block'];
+  assert.ok(typeof issued === 'string' && issued.startsWith('wlo2.'), 'an ordinary wlo2. block');
+  assert.ok(!issued.includes(TICKET), 'the ticket is not readable in it');
+
+  // The very block the response carries authenticates on the Bearer path and
+  // resolves to the EDU-TICKET scheme — the whole point of the exchange.
+  const cred = credentialFromHeader(`Bearer ${issued}`);
+  assert.ok(cred, 'listed and decodable');
+  assert.equal(cred.header, `EDU-TICKET ${TICKET}`);
+  assert.equal(cred.label, 'lehrerin');
+  assert.ok(cred.jti && registry.has(cred.jti));
+});
+
+test('a guest ticket is refused — the authority decides, not the status code', async (t) => {
+  await support(t);
+  t.after(upstream('esguest'));
+  const r = res();
+  await handleAuthEndpoint(postTicket(TICKET), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.match(r.out.body, /nicht angenommen/);
+});
+
+test('the ticket endpoint requires a declared JSON body like its siblings', async (t) => {
+  await support(t);
+  const r = res();
+  await handleAuthEndpoint(req('POST', '/auth/ticket', `{"ticket":"${TICKET}"}`, 'text/plain'), r, deps());
+  assert.equal(r.out.status, 415);
+});
+
+test('a missing or malformed ticket field is a 400, not an upstream call', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  for (const body of ['{}', '{"ticket":""}', '{"ticket":42}', '{"token":"' + TICKET + '"}']) {
+    const r = res();
+    await handleAuthEndpoint(req('POST', '/auth/ticket', body), r, deps());
+    assert.equal(r.out.status, 400, body);
+  }
+});
+
+test('distinct tickets share the guessing budget and carry the long Retry-After', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const shared = deps({ authAbuseLimiter: createDistinctValueLimiter(1, 600_000) });
+
+  const first = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), first, shared);
+  assert.equal(first.out.status, 200);
+
+  const second = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), second, shared);
+  assert.equal(second.out.status, 429);
+  assert.equal(second.headers['Retry-After'], '600', 'the distinct-login window, not the per-request one');
 });
 
 test('a path we do not own falls through', async (t) => {

@@ -9,6 +9,180 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — a lint gate and a live write-contract test (2026-08-12)
+
+Two of the three actionable findings of the 2026-08-12 whole-codebase audit,
+implemented together with the third (`serverupdate.txt` joined `.gitignore` —
+operator deployment notes must not be one `git add -A` away from publication).
+
+**`npm run lint`** (ESLint 10 + typescript-eslint, gated in CI after the type
+check) runs the recommended CORRECTNESS rules only — deliberately no formatter
+and no style rules, because the codebase predates the linter and a formatting
+sweep would bury every real change in the diff. The first run found 256
+problems; all but nine were the stray agent worktrees under `.claude/`
+(now ignored), missing environment globals (declared per area: Node for
+`*.mjs`, browser for `public/*.js`), and the test suite's `as any` fixture
+idiom (~170 sites — the rule is off for `tests/**` and stays ON for `src/`).
+The nine real ones: three useless initializers, two `_dropped` names the rule
+now knows are deliberate, and four deliberate test payloads (a zero-width
+space, a control-character range) that carry inline disables naming why. The
+project-specific invariants stay where they were — a generic linter cannot
+check "this rule has exactly one copy", `tests/shared-rule-discipline.test.ts`
+can.
+
+**`npm run test:live`** closes the audit's top finding: the offline suite fakes
+the upstream, so it proves the code sends what we decided to send — never that
+edu-sharing accepts it, the gap that let `wlo_create_collection` and
+`wlo_rename_collection` pass every test while never working (research doc §9).
+`tests/live/write-contract.test.ts` runs the mutating contract against a real
+repository — collection create → rename → delete, record create → delete, every
+assertion riding on the pipeline's own read-back. It is staging-ONLY (the host
+is hard-coded and checked in the file, because "testing target is staging,
+never production" must not be one env line away from breaking), needs the
+service credential from `.env`, and never enters `npm test` or CI:
+`scripts/run-tests.mjs` reads `tests/` flat, so `tests/live/` is invisible to
+the offline runner while `tsconfig.typecheck.json` (`tests/**/*`) still
+type-checks it. First run 2026-08-12 against staging: 2/2 pass, both throwaways
+deleted and confirmed gone (collection 5.3 s, record 23.1 s — the create alone
+is measured at 4.2–8.0 s).
+
+Not implemented from that audit, deliberately: the `get_url_text` SSRF residue
+(TOCTOU between our DNS check and the extraction service's fetch) is only
+closable INSIDE the fetching service — this repo already refuses literal and
+resolved private hosts and ships the tool off-switchable; and no Prettier, see
+above.
+
+### Changed — a skill is now marked `ai_skill`, a registry keeps `ai_prompt` (2026-08-12)
+
+**Behaviour change, driven by the vocabulary.** The openeduhub `contentTypes`
+vocabulary gained an `ai_skill` entry ("KI-Skill") alongside the existing
+`ai_prompt` ("KI-Prompt"), and WLO moved skill records onto it. `search_skill`,
+`get_skill` and the repository-wide catalogue now filter on
+`…/contentTypes/ai_skill`; against a repository still tagged the old way they
+return **nothing** rather than an error, so this is a coordinated change with the
+data.
+
+The registry lookup did **not** move with it. `skill-registry.ts` and
+`skill-registry-cache.ts` previously imported the skill constant on the reasoning
+that "a registry is marked exactly as a skill is" — true only while `ai_prompt`
+was the single entry available. Now the vocabulary distinguishes them and a
+registry is precisely what `ai_prompt` still means: a prompt document *about*
+skills. The term therefore has its own constant, `REGISTRY_CONTENT_TYPE_URI`, and
+existing registry documents need no re-tagging.
+
+Two things measured on staging while migrating the 28 Lehrtoolkit records:
+`mds_oeh` still lists only the nine older values, so the editorial dropdown shows
+the field blank for a skill — but the **index takes the new value regardless**,
+re-indexing all 28 under `ai_skill` within ~45 s of the write and dropping them
+out of the `ai_prompt` result set in the same pass. Afterwards the only
+`ai_prompt` records left in the corpus were the two registry documents and one
+skill belonging to another skillset; re-measured later the same day that last one
+is gone too — **31** records under `ai_skill`, **2** under `ai_prompt`, both
+registries. Both figures are as the service user: anonymously the same two
+queries answer **28** and **1**. Quote the identity with the count, or the next
+reader re-measures without one and concludes something moved.
+
+Every existing test used these constants symbolically and so stayed green through
+the switch — the value itself was unpinned. Two tests in `services-skills.test.ts`
+now assert the literal URIs, which is the only thing that catches a typo in a
+value whose failure mode is an empty result set.
+
+The prose migrated by hand, and two documents were missed: `README.md` still
+called a skill a "curated AI prompt", `docs/TOOLS-KOMPAKT.md` a "kuratierter
+KI-Prompt". The tool descriptions had a guard (`tests/tools-skills.test.ts`); the
+documents had none, which is the whole difference. `tests/docs-claims.test.ts`
+now checks the four overview documents for the old noun. The editorial guides
+(`docs/SKILLS.md`, `docs/SKILL-TRIGGER.md`) stay outside that guard on purpose:
+they describe the VOCABULARY, where "KI-Prompt" is still the right word for the
+one thing that kept it, and a guard must not push a document into calling a
+registry something it is not.
+
+### Changed — `license: "OER"` no longer returns material that is merely free to read (2026-08-12)
+
+**Behaviour change.** The OER bundle contained five licence keys, one of which
+grants no reuse right: `COPYRIGHT_FREE` means "kostenfrei zugänglich" with
+ordinary copyright otherwise — gratis, not libre. It answered **12 445 of
+403 461 records** to callers asking for "every freely reusable licence", which is
+the direction this codebase already calls the harmful one: a surplus *more*
+restrictive than what was asked for, invisible to the caller. A teacher filtering
+for OER to remix was handed material they may not remix.
+
+All three tool descriptions had always promised exactly the four remaining keys
+(CC0, public domain, CC BY, CC BY-SA) and never named the fifth — the code was
+the outlier, and what hid it was the label corrected below.
+
+What changes for callers: an OER search returns fewer results and a smaller
+total (measured live for "Mathematik": 13 620 instead of ~14 400), and everything
+it returns is genuinely reusable. `docs/TOOLS.md` and `docs/INTEGRATION.md` named
+the removed key by its old, wrong label ("urheberrechtsfrei") and now say why it
+is excluded.
+
+### Fixed — the licence vocabulary said the opposite of what it meant (2026-08-12)
+
+`COPYRIGHT_FREE` was displayed as **"urheberrechtsfrei"**. The repository means
+the opposite by it — its own description reads "Das Werk ist kostenfrei
+zugänglich. Nutzung und Quellenangabe gemäß den allgemeingültigen gesetzlichen
+Regelungen (UrhG)": copyrighted, merely free to access. It is the third most
+common licence in the corpus (**12 445 of 403 461 records**), so the wrong word
+was on a lot of screens. It now reads **"Copyright, freier Zugang"**, the
+repository's own name for it, and the misleading alias is gone: someone typing
+"urheberrechtsfrei" is asking for material free *of* copyright, and
+`gemeinfrei` → `PDM` is the answer to that question.
+
+Two more defects in the same table:
+
+- **Three keys were unknown**, together 1 871 records — `COPYRIGHT_LICENSE`
+  (1 359), `CC_BY_SA_NC` (497), `UNTERRICHTS_UND_LEHRMEDIEN` (15). An unknown key
+  costs twice: the raw string is shown to a reader, and `filterByExactLicense`
+  drops the record from every licence-filtered result. `CC_BY_SA_NC` is a legacy
+  spelling of the same three terms as `CC_BY_NC_SA` and became an alias of it,
+  because two keys for one licence must not read as two licences.
+- **Every CC label asserted "4.0"** — an invented fact. `ccm:commonlicense_version`
+  is absent on 90 of 90 sampled CC records, is not in the display projection, and
+  is not even facetable. The version is gone from the display forms and kept as
+  an alias, so "CC BY 4.0" in a prompt or tool description still resolves.
+
+New: `npm run sync:vocabs` (`scripts/sync-vocabs.mjs`) compares all six
+checked-in vocabularies against a live repository and reports the differences. It
+never writes — labels need judgement, and the defect above was a label that
+existed and looked fine. Two sources, because one does not cover both cases: the
+mds `values` endpoint carries captions for the five concept vocabularies but
+answers with the bare key for all 16 licence values in every locale, so licence
+names come from `config/v1/language/defaults` → `LICENSE.NAMES`.
+
+### Fixed — a collection search now asks both repository backends (2026-08-11)
+
+The repository answers "which collections match this word?" through two unrelated
+indexes, and measured against staging, **neither is a superset of the other**. The
+one the server used could not return the collection `9e7ae956` ("Optik") for *any*
+search word — terms occurring only in that record's own keywords
+("Oberflächenphänomene", "Die Lehre vom Licht") returned zero hits there and find
+it through the other endpoint every time. The reverse gap is real too: the mds
+query matches a collection's compendium text, which the second endpoint does not
+read at all.
+
+`services/collection-search.ts` merges both, and is the single place that knows
+they are two — pinned by `tests/shared-rule-discipline.test.ts`, because three
+call sites reach a collection search and a rule re-derived per call site is the
+shape this codebase has already seen drift twice.
+
+Two properties of the second endpoint shaped the implementation, both measured:
+
+- It **ignores `propertyFilter`** and answers with a fixed projection that omits
+  `ccm:page_config_ref` — the property the Themenseiten split is derived from.
+  Adopting its nodes verbatim would file a topic page as an ordinary collection,
+  so it is used as an ID source and what it contributes is re-read with our own
+  projection. Nothing new to fetch costs nothing.
+- Its latency scales with the number of collections it returns (~0.25 s each), so
+  it gets its own small cap (5) instead of the caller's. At the caller's cap of
+  10 the first version tripled the collections leg (984 → 3396 ms for
+  "Mathematik"); the leg is a repair for records the index cannot return at any
+  rank, not a second full search, and those rank high.
+
+Cost after that correction, median of 5 against staging: +0.6 to +1.2 s on the
+collections leg, one term unchanged. `search_wlo_all("Optik")` now returns the
+missing collection at position 1 of its topic-page bucket.
+
 ### Added — `get_skill_registry`: the skills a collection declares approved (2026-08-10)
 
 The editorial process inverts the question `search_skill` answers. Not "which

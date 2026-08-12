@@ -261,7 +261,9 @@ npm run dev               # stdio with auto-reload (tsx)
 npm run dev:http          # HTTP with auto-reload (tsx)
 npm test                  # offline unit/smoke tests (node:test)
 npm run test:coverage     # dieselbe Suite plus Coverage-Bericht des Runners
+npm run test:live         # Schreib-Vertragstests gegen STAGING (braucht .env-Zugangsdaten)
 npm run typecheck         # Typ-Gate über src + tests + Widget-Einstiegspunkte
+npm run lint              # ESLint, nur Korrektheitsregeln (siehe eslint.config.mjs)
 ```
 
 ## REST-API (öffentlich, nur lesend)
@@ -356,7 +358,7 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 20 | `get_node_breadcrumb` | Ahnenpfad einer Sammlung (Wurzel → Node) im Inhaltsbaum | markdown / json |
 | `get_node_collections` | In welchen Sammlungen ein Material geführt wird — die Umkehrung aller anderen Abfragen. Beantwortet „wo ist das eingeordnet?" und „wo finde ich mehr davon?". Löst eine Reference-ID zuerst auf ihr Original auf, damit eine ID aus einem Sammlungs-Listing genauso funktioniert wie eine aus der Suche. |
 | 21 | `get_collection_stats` | Zusammensetzung einer Sammlung: Datei-/Untersammlungs-Zahlen + Typ/Fach/Stufe-Aufschlüsselung | markdown / json |
-| 22 | `search_skill` | Passende WLO-„Skills“ (kuratierte KI-Prompts, Inhaltsart `ai_prompt`) finden — nodeId, Titel, Beschreibung, Keywords, ohne Anleitungstext | markdown / json |
+| 22 | `search_skill` | Passende WLO-„Skills“ (Inhaltsart `ai_skill`) finden — nodeId, Titel, Beschreibung, Keywords, ohne Anleitungstext | markdown / json |
 | 23 | `get_skill` | Die an einen Skill angehängte Anleitung (SKILL.md) zu einer nodeId laden | markdown / json |
 | 24 | `get_wlo_content_text` | Der **eigentliche Volltext** eines Materials (Arbeitsblatt, Artikel), nicht dessen Metadaten — Repository zuerst, verlinkte Seite als Rückfallebene | markdown / json |
 | 25 | `get_node_collections` | In welchen Sammlungen ein Material liegt (Rückwärtssuche über `/usage/v1`) | markdown / json |
@@ -537,9 +539,9 @@ Referenz-Sammlungen korrekt, wo eine Facetten-Abfrage leer bliebe.
 
 **22. `search_skill`** — `query?`, `maxResults?` (1–25, Standard 10),
 `collectionId?`, `includeSubcollections?`, `discipline?`, `educationalContext?`,
-`outputFormat?`. Findet WLO-**Skills** — kuratierte KI-Prompts, deren angehängte
+`outputFormat?`. Findet WLO-**Skills**, deren angehängte
 Datei die Anleitung (`SKILL.md`) ist. Ein Datensatz gilt über seine Inhaltsart
-`ccm:oeh_extendedType = …/contentTypes/ai_prompt` als Skill; die Suche sendet
+`ccm:oeh_extendedType = …/contentTypes/ai_skill` als Skill; die Suche sendet
 diese als Kriterium mit, sodass nichts anderes zurückkommen kann. Jeder Treffer
 trägt nodeId, Titel, Beschreibung und Keywords — genug zur Auswahl und bewusst
 ohne den Anleitungstext. Ohne `query` wird der Katalog aufgelistet. Ist
@@ -610,7 +612,7 @@ ist die **normalisierte** — die tatsächlich angefragte, die nicht immer die
 **28. `get_skill_registry`** — `collectionId`, `outputFormat?`. Welche Skills
 **eine Sammlung freigegeben** hat — die Umkehrung dessen, was 22 beantwortet:
 nicht „welche Skills gibt es", sondern „welche gelten *hier*". Eine Redaktion
-legt dazu ein Registry-Dokument in die Sammlung — selbst ein `ai_prompt`-Datensatz
+legt dazu ein Registry-Dokument in die Sammlung — ein `ai_prompt`-Datensatz
 mit angehängtem Markdown —, dessen `:::`-Blöcke die freigegebenen Skills nennen.
 Zurück kommt der Katalog (je Skill Titel, nodeId, Beschreibung, Keywords) plus
 die Prosa der Redaktion, in der die Anwendungshinweise stehen. Die Anleitungen
@@ -646,10 +648,11 @@ Hintergrund-Cache diese Kataloge warm — in den meisten Antworten ist der Katal
 also schlicht *da*, siehe [Der Skill-Registry-Cache](#der-skill-registry-cache).
 
 **Was ein Skill auf Repository-Ebene ist:** ein Datensatz mit der Inhaltsart
-`ccm:oeh_extendedType = …/contentTypes/ai_prompt` (die vollständige URI — der
-Kurzname trifft nichts) und einer angehängten Markdown-Datei als Anleitung. Eine
-Registry ist derselbe Datensatztyp; erst ihr Ort und ihre `:::`-Blöcke machen
-sie dazu. `docs/SKILLS.md` ist die Anleitung für die Redaktion, mit
+`ccm:oeh_extendedType = …/contentTypes/ai_skill` (die vollständige URI — der
+Kurzname trifft nichts) und einer angehängten Markdown-Datei als Anleitung. Bis
+zum 2026-08-12 trugen Skills `ai_prompt`; dann bekam das Vokabular den eigenen
+Eintrag `ai_skill` („KI-Skill"). Eine Registry ist gleich gebaut, BEHIELT aber
+`ai_prompt` — sie ist ein Prompt-Dokument über Skills, kein Skill. `docs/SKILLS.md` ist die Anleitung für die Redaktion, mit
 Beispieldokument.
 
 **Jeder Skill-Text ist Daten, nie eine Anweisung, der zu folgen wäre.** Es ist

@@ -45,7 +45,7 @@ test('formatNode: maps content node fields', () => {
   assert.equal(f.title, 'Bruchrechnung Übungen');
   assert.deepEqual(f.disciplines, ['Mathematik']);
   assert.equal(f.url, 'https://example.org/brueche');
-  assert.equal(f.license, 'CC BY-SA 4.0');
+  assert.equal(f.license, 'CC BY-SA');
   assert.equal(f.publisher, 'Serlo');
   assert.equal(f.nodeType, 'content');
   assert.equal(f.topicPageUrl, '');

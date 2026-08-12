@@ -220,8 +220,8 @@ The current rebuild/extension is designed in:
   Redaktions-Anleitung: `docs/SKILLS.md`, Verlauf in `STATUS.md`:**
 
   A skill is a `ccm:io` whose **content type** marks it
-  (`ccm:oeh_extendedType = …/contentTypes/ai_prompt`, full URI — the slug matches
-  nothing) and whose attached file is the `SKILL.md`. Both tools are registered
+  (`ccm:oeh_extendedType = …/contentTypes/ai_skill`, full URI — the slug matches
+  nothing; it was `ai_prompt` until the vocabulary split on 2026-08-12) and whose attached file is the `SKILL.md`. Both tools are registered
   unconditionally; `WLO_SKILLS_COLLECTION_ID` only NARROWS the search, and
   `WLO_SKILL_TOOL_MODE=one-tool` swaps both for `get_skill_for_task`.
 
@@ -250,7 +250,12 @@ The current rebuild/extension is designed in:
 
   **P1 licence filter** — see `filter-criteria.ts` under Architecture above. One
   rule sits outside it and binds any change: the OER BUNDLE fans out over its
-  five keys and merges round-robin (`services/license-search.ts`). Sending no
+  four keys and merges round-robin (`services/license-search.ts`). It was five
+  until 2026-08-12: `COPYRIGHT_FREE` is not an open licence — "kostenfrei
+  zugänglich", ordinary copyright otherwise — and answered 12 445 records to
+  callers asking for freely reusable material, which is the surplus direction
+  this file already calls harmful. All three tool descriptions had always listed
+  only the four, so the code was the outlier. Sending no
   criterion and filtering the generic page locally — the first version — answered
   "kein Treffer" over the 18 793 OER records staging holds for `Mathematik`,
   because relevance ranking and licence are unrelated and the top fifty carried
@@ -267,7 +272,7 @@ The current rebuild/extension is designed in:
   EVERY path that accepts `license` must disclose its exactness pass, which is
   why `searchAll` carries `content.licenseFilter {checked, kept}` (neither
   `count`, post-cap, nor `total`, the corpus, can stand in for it); and paging
-  the BUNDLE is not a partition — the same `skipCount` goes to all five keys, so
+  the BUNDLE is not a partition — the same `skipCount` goes to every key, so
   the tools say so and point at `excludeNodeIds`.
 
   "EVERY path" is literal and was found violated on two of the five the day it
@@ -344,8 +349,9 @@ The current rebuild/extension is designed in:
 
   The editorial process inverts the question `search_skill` answers: not "which
   skills exist" but "which skills are APPROVED for this collection", declared by
-  a registry document inside the collection. A registry **is** a skill record —
-  same `ai_prompt` content type, same attached Markdown, same `:::` blocks — so
+  a registry document inside the collection. A registry is built like a skill
+  record — attached Markdown, `:::` blocks — but keeps the `ai_prompt` content
+  type that skills left behind on 2026-08-12 (`REGISTRY_CONTENT_TYPE_URI`), so
   `parseSkillReferences` and `readSkillText` are reused rather than rebuilt (both
   duplications were written before being caught; `readSkillText` is exported from
   `skills.ts` for exactly this).
@@ -359,9 +365,11 @@ The current rebuild/extension is designed in:
   are named `SKILL.md`, so the `SKILL_REGISTRY.md` tie-break distinguishes
   nothing today and the ambiguity disclosure is the RULE, not a corner case.
   (4) **0/28** documents contain `:::` at all and **0/28** are collection
-  references — the block format is documented but unexercised on staging, so that
-  path counts as UNMEASURED until the live run, which waits on editorial work
-  rather than on code.
+  references — the block format was documented but unexercised on staging.
+  **Superseded 2026-08-12:** the editorial team filed one. `loadSkillRegistry`
+  on the Optik collection returns "Skillkatalog Physik Optik" (16 717 chars,
+  **56** `:::` blocks) resolving to **28 entries, 0 unresolved**. The path is
+  measured; what was waiting was editorial work, not code.
 
   The registry is found through the collection's CHILDREN listing, never the
   search index: the two are separate systems, and the Optik case (2026-08-09)
@@ -413,9 +421,9 @@ The current rebuild/extension is designed in:
 
   Live-verified 2026-08-10: `no_registry` on a real collection,
   `collection_not_found` on an unknown id, and an unreadable listing degrading
-  rather than throwing. **NOT verified live: the `:::` path itself** — 0/28 staging
-  documents contain one, so it rests on unit tests until the editorial team
-  creates a registry.
+  rather than throwing. The `:::` path itself was the one gap and is now closed
+  (2026-08-12): a real registry on the Optik collection resolves 28 of 28
+  declared skills with nothing unresolved.
 
   The review of this package (2026-08-10, 7 findings) adds four rules and they
   bind any change here. (1) A registry's TITLE is read through `nodeTitle`
@@ -514,6 +522,103 @@ The current rebuild/extension is designed in:
   on is `truncated`, the disclosure that the catalogue is shorter than the
   registry declares.
 
+- **Sammlungssuche über beide Backends (P1) + Vokabular-Abgleich (P2) —
+  COMPLETE (2026-08-11/12):**
+  - Design + Aufgaben: `docs/plans/2026-08-11-collection-name-search-and-vocab-sync.md`
+
+  **P2 (2026-08-12):** `npm run sync:vocabs` compares the six checked-in
+  vocabularies against a live repository and REPORTS — it never writes, because
+  labels need judgement (ours are sometimes better than the repository's, and the
+  worst defect found was a label that existed and looked fine). Four measurements
+  bind any change here. (1) The mds `values` endpoint is **not** the source for
+  licences: asked for `ccm:commonlicense_key` it answers with the bare key as its
+  own `displayString` for all 16 values IN EVERY LOCALE; the names live in
+  `GET /config/v1/language/defaults` → `LICENSE.NAMES`. For the other five
+  vocabularies `values` does carry captions (100 %), which is why the script has
+  two legs. (2) `pattern: ""` lists everything and the documented `"-all-"`
+  returns EMPTY. (3) `ccm:taxonid` mixes 345 Hochschulfächer with 71 Schulfächer,
+  separable by URI — we mirror `/vocabs/discipline/` only, by the user's decision.
+  (4) `ccm:commonlicense_version` is absent on 90 of 90 sampled CC records, not
+  in `DISPLAY_PROPS` and not facetable, so no display label may carry a version;
+  the versioned spellings stay as ALIASES so existing prompts keep resolving.
+  Three defects fixed: `COPYRIGHT_FREE` read "urheberrechtsfrei", the OPPOSITE of
+  what the repository means (12 445 records); three keys were unknown, costing
+  both the label and the record's survival in `filterByExactLicense`
+  (`COPYRIGHT_LICENSE` 1 359, `CC_BY_SA_NC` 497 — aliased onto `CC_BY_NC_SA`
+  because it is a legacy spelling of one licence, not a second one —
+  `UNTERRICHTS_UND_LEHRMEDIEN` 15); and every CC label asserted "4.0". What is
+  deliberately NOT mirrored is named in the script's `NOT_MIRRORED` map with the
+  reason (`MULTI` is not a licence but a statement about a set), because a report
+  with permanent false positives stops being read. The corpus is pinned offline
+  as `CORPUS_LICENSE_KEYS` in `tests/vocabs.test.ts` — 16 keys, their record
+  counts, and what each must resolve to — rather than as a live test `npm test`
+  could not run (`netguard`).
+
+  The repository answers "which collections match this word?" through TWO
+  unrelated indexes and **neither is a superset of the other** (measured
+  2026-08-11, re-measure before contradicting): the mds `collections` query
+  cannot return the collection `9e7ae956` ("Optik") for ANY search word — terms
+  occurring only in its own keywords return zero hits there — while
+  `GET /collection/v1/collections/-home-/search` returns it every time; and the
+  mds query matches `ccm:oeh_collection_compendium_text`, which the second
+  endpoint does not read (6 of 6 checked). Neither searches the materials inside
+  a collection.
+
+  `services/collection-search.ts` is the ONE place that knows there are two, and
+  the three call sites (`services/search.ts`, `services/topic-page.ts`,
+  `tools/collections.ts`) go through it — enforced by
+  `tests/shared-rule-discipline.test.ts`, not by this sentence. Three rules bind
+  any change. (1) The name leg's own nodes are DISCARDED: that endpoint ignores
+  `propertyFilter` and answers with a fixed projection without
+  `ccm:page_config_ref`, so adopting them files a Themenseite as an ordinary
+  collection — the same trap the mds keyword endpoint sprang on 2026-07-17. It is
+  an ID source; what it contributes is re-read with our projection, and an id
+  that cannot be re-read is dropped rather than adopted half-projected. (2) It
+  gets its OWN cap (`NAME_LEG_MAX = 5`), never the caller's: its latency scales
+  with the result count (889/1275/2565 ms at 3/5/10 for "Mathematik") and at the
+  caller's cap of 10 the first version TRIPLED the collections leg — 7–10 of its
+  10 hits were new ids and each had to be re-read. The leg is a repair for
+  records the index cannot return at any rank, and those rank high; 5 not 3
+  because "Optik" sits at position 3 of that ranking. (3) Round-robin, not
+  concatenation — same rule and reason as the licence bundle; `searchAll` reranks
+  afterwards and overrides it, the other two call sites do not.
+
+  Measured cost: +0.6 to +1.2 s on the collections leg (median of 5). Live-verified
+  2026-08-11: `searchAll({query:'Optik'})` returns `9e7ae956` at position 1 of the
+  **topicPages** bucket — it carries a `page_config_ref`, so that bucket is right.
+  Noted while verifying and NOT changed here: `searchAll` drops every collection
+  with a `topicPageUrl` from the collections bucket whether or not `topicPages`
+  was requested, so `include: ['collections']` never shows a Themenseite.
+
+- **Relay clients and the credential limiter — P1 COMPLETE (2026-08-12); P2
+  designed, not built:** `docs/plans/2026-08-12-relay-credential-limiter.md`
+
+  The guessing guard on `POST /mcp` bounds **distinct secrets per identity**, and
+  which identity that is depends on the scheme: `Basic` per client ADDRESS, a
+  `wlo2.` block per **`jti`**. One place holds it — `abuseBucketKey`
+  (`auth/credential.ts`). Keying a block by address was wrong twice over, and
+  both halves were measured: it refused a **relay client** (a chatbot backend
+  serving many people from one address hit the cap at its 11th signed-in person,
+  while anonymous callers kept working — a misleading signature), and it
+  under-bounded a guesser, who multiplied their budget simply by rotating
+  addresses (50 addresses = 500 tries; now 10 in one bucket).
+
+  Two rules bind any change. **Do not exempt blocks from the counter** on the
+  argument that they are "already proven": `AUTH.md` §4 — the public key is
+  published, so whoever learns a `jti` can mint blocks carrying it with any
+  password. And **the bucket key is never logged or returned** — for a block it
+  IS the access id, the secret revocation hangs on; the refusal names its
+  `scope` and the address instead.
+
+  P2 (a session credential for a chatbot embedded INSIDE the repository) is
+  designed in the same file and deliberately unbuilt: no concrete embedding
+  exists yet. The measurement it rests on is already in
+  `2026-08-04-mcp-access-token-design.md` — a `JSESSIONID` DOES carry our
+  endpoints; it was rejected as *block content* only because it has no lifetime,
+  which is not a constraint for a host that has a live session per request. The
+  invariant that must travel with it: the cookie branch belongs INSIDE
+  `withCredential`'s repository-host check, not beside it.
+
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context
 before the next package.
@@ -548,10 +653,17 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   loads `tests/netguard.mjs`, which fails any unmocked non-loopback fetch, so a
   test that forgets `installFetchMock` is caught instead of silently going
   upstream; a single-file run has no such guard. `npm run test:coverage` runs the
-  same suite with the runner's coverage report.
+  same suite with the runner's coverage report. `npm run test:live` runs
+  `tests/live/*.test.ts` (write-contract tests against a REAL repository —
+  staging only, enforced in the test file; needs the service credential from
+  `.env`; never part of `npm test` or CI, which have no credential). It exists
+  because the offline suite proves only that the code sends what we decided to
+  send, never that the repository accepts it — the gap that cost
+  `wlo_create_collection`/`wlo_rename_collection` their function in 2026-08.
 - Dev (stdio): `npm run dev` — Dev (HTTP): `npm run dev:http`
 - Start built: `npm start` (stdio) / `npm run start:http` (HTTP on `PORT`)
-- No linter/formatter is configured; match surrounding style.
+- Lint: `npm run lint` (ESLint, correctness rules only — see `eslint.config.mjs`;
+  gated in CI). No formatter is configured; match surrounding style.
 
 ## Conventions
 
@@ -614,6 +726,9 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   Themenseiten listing, swimlane outline) must pass every repository-supplied
   value through `oneLine` from `formatter.ts` — a newline in a title otherwise
   forges a second record with a nodeId the next call acts on.
+- `src/services/collection-search.ts` — "which collections match this word?",
+  asked of BOTH repository backends and merged. The one place that knows there
+  are two; see the plan entry above for the three rules that bind it.
 - `src/services/write/*` — the shared write pipeline (gate → fields → change-set
   → confirm → verify). No MCP SDK import; every mutation goes through it, so the
   safety properties are tested once instead of per tool.

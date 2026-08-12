@@ -13,6 +13,10 @@
  *     "wlo-mcp" for a change some unknown caller asked for. Read access under a
  *     shared account is ordinary; write access is a decision.
  *
+ * A second, independent question lives here too: may this call PREPARE a write
+ * for somebody else to perform (`resolveMayPrepare`, E2)? It is deliberately not
+ * a fourth `WriteMode` — see the reasoning at that function.
+ *
  * Checked at CALL time, and only there. Curation tools are registered
  * unconditionally and appear in `tools/list` for every caller, anonymous ones
  * included — reversed on 2026-08-05 after the earlier design turned out to be
@@ -86,4 +90,54 @@ export function writeRefusal(): string | null {
 export function requireWrite(): void {
   const reason = writeRefusal();
   if (reason) throw new Error(reason);
+}
+
+/**
+ * May this call PREPARE a write it does not perform?
+ *
+ * A second axis rather than a fourth `WriteMode`, because the question is a
+ * different one. A prepared request changes nothing here: it describes a call
+ * that a repository page will make with the visitor's own session
+ * (`prepared-request.ts`). So the objection that closes writing to the shared
+ * service account — an edit under a collective identity is attributable to
+ * nobody — does not apply, since the edit ends up attributed to whoever
+ * confirmed it in their own browser.
+ *
+ * Two things still hold. Anonymous callers are out: building the preview reads
+ * the record under OUR identity, and a public prepare call would turn that into
+ * a way to read what the caller may not. And it is off by default — an operator
+ * who has not decided to be embedded anywhere should not be answering with
+ * request descriptors.
+ */
+export function resolveMayPrepare(cred: WloCredential | null, allowPrepared: boolean): boolean {
+  return allowPrepared && cred !== null;
+}
+
+/**
+ * Whether the operator has enabled prepared (browser-executed) writes.
+ * Separate from `WLO_ALLOW_SERVICE_WRITES`: that one hands the shared account
+ * the right to change data, this one hands it no rights at all.
+ */
+export const ALLOW_PREPARED_WRITES: boolean = isEnabledFlag(process.env['WLO_ALLOW_PREPARED_WRITES']);
+
+/** Whether the call in scope may prepare. */
+export function mayPrepare(): boolean {
+  return resolveMayPrepare(currentCredential(), ALLOW_PREPARED_WRITES);
+}
+
+export type WriteRoute = 'execute' | 'prepare';
+
+/**
+ * How a curation tool may proceed — or, as a throw, why it may not.
+ *
+ * Writing wins where it is possible: a caller with their own login should have
+ * the change made and verified here, not handed back as homework. Preparing is
+ * the fallback for the one case that has no other route — the embedded page,
+ * where the visitor is signed in at the repository and not at this server.
+ */
+export function requireWriteRoute(): WriteRoute {
+  const refusal = writeRefusal();
+  if (refusal === null) return 'execute';
+  if (mayPrepare()) return 'prepare';
+  throw new Error(refusal);
 }

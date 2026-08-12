@@ -14,15 +14,18 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { requireWrite } from '../services/write/credential-gate.js';
+import { requireWrite, requireWriteRoute } from '../services/write/credential-gate.js';
 import { buildChangeSet, type ChangeSet } from '../services/write/change-set.js';
 import {
   createCollection,
   renameCollection,
   addToCollection,
+  addToCollectionRequest,
   removeFromCollection,
+  removeFromCollectionRequest,
 } from '../services/write/collections.js';
 import type { MutationOutcome } from '../services/write/verify.js';
+import type { PrepareOutcome } from '../services/write/prepared-request.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
@@ -32,6 +35,7 @@ import {
   confirmOrExplain,
   errorText,
   reportMutation,
+  preparedReply,
   prependText,
   collectDesired,
   rejectionReply,
@@ -80,7 +84,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       parentId: z.string().optional().describe('nodeId der übergeordneten Sammlung; weglassen für oberste Ebene.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: WRITE_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -130,7 +134,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       description: z.string().optional().describe('Neue Beschreibung.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: WRITE_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -172,6 +176,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
 
   registerCurationTool(server, challenge, {
     name: 'wlo_add_to_collection',
+    preparable: true,
     title: 'WLO Material in Sammlung aufnehmen',
     description:
       'Nimm ein vorhandenes Material in eine WLO-Sammlung auf. Das Material bleibt dabei dort, wo es ist — ' +
@@ -182,13 +187,16 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       nodeId: z.string().describe('nodeId des Materials.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: WRITE_ANNOTATIONS,
     handler: (params) => referenceHandler(params, {
       verb: 'Aufnehmen',
       action: (material, collection, ids) =>
         `Nimmt „${material}“ in die Sammlung „${collection}“ auf (${ids}). ` +
         'Das Material selbst wird dabei nicht verändert.',
       apply: addToCollection,
+      // Filing needs no lookup — both ids are the caller's, so the descriptor
+      // is ready by construction.
+      prepare: (collection, nodeId) => ({ status: 'ready', request: addToCollectionRequest(collection, nodeId) }),
       done: (material, collection) => `„${material}“ ist jetzt in „${collection}“.`,
       context: 'Das Material konnte nicht aufgenommen werden',
     }),
@@ -196,6 +204,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
 
   registerCurationTool(server, challenge, {
     name: 'wlo_remove_from_collection',
+    preparable: true,
     title: 'WLO Material aus Sammlung nehmen',
     description:
       'Nimm ein Material aus einer WLO-Sammlung heraus. Das Material selbst wird NICHT gelöscht und bleibt ' +
@@ -207,13 +216,14 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       nodeId: z.string().describe('nodeId des Materials.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: WRITE_ANNOTATIONS,
     handler: (params) => referenceHandler(params, {
       verb: 'Herausnehmen',
       action: (material, collection, ids) =>
         `Nimmt „${material}“ aus der Sammlung „${collection}“ heraus (${ids}). ` +
         'Das Material selbst bleibt bestehen und wird nicht gelöscht.',
       apply: removeFromCollection,
+      prepare: removeFromCollectionRequest,
       done: (material, collection) => `„${material}“ ist nicht mehr in „${collection}“. Das Material selbst besteht weiter.`,
       context: 'Das Material konnte nicht herausgenommen werden',
     }),
@@ -225,6 +235,10 @@ interface ReferenceSpec {
   verb: string;
   action: (material: string, collection: string, ids: string) => string;
   apply: (collection: string, nodeId: string) => Promise<MutationOutcome>;
+  /** The same call as `apply`, described instead of sent (E2). Only tools
+   *  registered `preparable` need one. Async because a removal has to resolve
+   *  the reference id first, and that lookup can honestly come up empty. */
+  prepare?: (collection: string, nodeId: string) => PrepareOutcome | Promise<PrepareOutcome>;
   done: (material: string, collection: string) => string;
   context: string;
 }
@@ -236,7 +250,7 @@ interface ReferenceSpec {
  */
 async function referenceHandler(params: Record<string, unknown>, spec: ReferenceSpec) {
   try {
-    requireWrite();
+    const route = requireWriteRoute();
     const collectionId = String(params['collectionId'] ?? '');
     const nodeId = String(params['nodeId'] ?? '');
 
@@ -255,6 +269,22 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
     });
     const refusal = gate(params, cs, `Zum ${spec.verb} bitte bestätigen.`);
     if (refusal) return refusal;
+
+    if (route === 'prepare') {
+      // Never fall through to the write: without a descriptor this call would
+      // otherwise change data under the shared account, which is the one thing
+      // the prepare route exists to avoid. Unreachable while only preparable
+      // tools take this route — and cheap insurance if one is added past that.
+      if (!spec.prepare) {
+        return errorText('Dieser Vorgang lässt sich in dieser Betriebsart nicht vorbereiten. Es wurde nichts geändert.');
+      }
+      const prepared = await spec.prepare(collectionId, nodeId);
+      // A refusal is a finding about the collection, not a failure of this
+      // server — and it must not become a request anyway, since somebody else
+      // would then send it with a real person's rights.
+      if (prepared.status === 'refused') return errorText(prepared.detail);
+      return preparedReply(prepared.request, spec.done(materialTitle, collectionTitle));
+    }
 
     return reportMutation(
       await spec.apply(collectionId, nodeId),

@@ -44,7 +44,7 @@ import {
   WLO_SKILL_CACHE_REFRESH_MS,
   WLO_SKILL_CACHE_TTL_MS,
 } from '../wlo-config.js';
-import { SKILL_CONTENT_TYPE_URI, SKILL_PROPS } from './skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI, SKILL_PROPS } from './skill-catalogue.js';
 import {
   buildRegistryFrom,
   isMarkdownSkillDoc,
@@ -455,7 +455,7 @@ let warmup: Promise<void> = Promise.resolve();
  */
 async function seedFromCorpus(): Promise<void> {
   const res = await ngsearch(
-    [{ property: 'ccm:oeh_extendedType', values: [SKILL_CONTENT_TYPE_URI] }],
+    [{ property: 'ccm:oeh_extendedType', values: [REGISTRY_CONTENT_TYPE_URI] }],
     'FILES', CORPUS_PAGE_MAX, 0, SKILL_PROPS,
   );
 

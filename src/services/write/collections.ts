@@ -19,7 +19,7 @@
  * not endpoint-specific. So every function here reads back before it reports.
  */
 
-import { BASE_URL } from '../../wlo-config.js';
+import { BASE_URL, WLO_REPOSITORY_URL } from '../../wlo-config.js';
 import { wloFetch, HEADERS } from '../../wlo-fetch.js';
 import { readJson } from '../../read-json.js';
 import { log } from '../../logger.js';
@@ -28,6 +28,7 @@ import { getNodeMetadata, getCollectionContents } from '../../wlo-node.js';
 import { getNodeCollections } from '../node-collections.js';
 import { failureDetail, updateNodeMetadata } from './nodes.js';
 import { confirmDeleted, type MutationOutcome } from './verify.js';
+import { toRepositoryPath, type PreparedRequest, type PrepareOutcome } from './prepared-request.js';
 
 /** Where a top-level collection is created. Sub-collections name their parent. */
 const ROOT = '-root-';
@@ -227,6 +228,27 @@ export async function renameCollection(
   return await finishCollection(collection, fields);
 }
 
+/** Where a collection's reference to one material lives. */
+function referencePath(collection: string, nodeId: string): string {
+  return collectionPath(collection, `/references/${encodeURIComponent(nodeId)}`);
+}
+
+/**
+ * The filing request as data, for someone else to send.
+ *
+ * The embedded case (E2): a repository page performs the write with the
+ * visitor's own session, so it needs to be told which call to make. It is
+ * deliberately built from the same `referencePath` the executing function uses
+ * — the endpoint knowledge measured here must not gain a second copy in a
+ * browser bundle, where it would drift silently.
+ */
+export function addToCollectionRequest(collection: string, nodeId: string): PreparedRequest {
+  return {
+    method: 'PUT',
+    path: toRepositoryPath(referencePath(collection, nodeId), WLO_REPOSITORY_URL),
+  };
+}
+
 /**
  * Put existing material into a collection.
  *
@@ -235,7 +257,7 @@ export async function renameCollection(
  */
 export async function addToCollection(collection: string, nodeId: string): Promise<MutationOutcome> {
   const res = await wloFetch(
-    collectionPath(collection, `/references/${encodeURIComponent(nodeId)}`),
+    referencePath(collection, nodeId),
     { method: 'PUT', headers: { Accept: 'application/json' } },
   );
   if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
@@ -311,6 +333,45 @@ async function findReference(collection: string, nodeId: string): Promise<Refere
 }
 
 /**
+ * Why a removal cannot name a reference — worded once, for both routes.
+ *
+ * The executing path and the prepared one reach this together, and they are
+ * answers to the same question about the same collection. Two wordings would
+ * read as two different findings.
+ */
+function noReference(found: { status: 'absent' } | { status: 'unknown'; detail: string }, nodeId: string): string {
+  return found.status === 'unknown'
+    ? found.detail
+    : `Das Material „${sanitizeText(nodeId)}“ ist nicht in dieser Sammlung enthalten — es wurde nichts geändert.`;
+}
+
+/**
+ * The removal request as data, for someone else to send.
+ *
+ * Unlike filing (see {@link addToCollectionRequest}) this cannot be built from
+ * the arguments: the endpoint takes the REFERENCE id and the caller names the
+ * material. The lookup therefore runs HERE, under our identity — which is the
+ * whole argument for preparing rather than publishing a recipe. A page building
+ * this request itself would send `DELETE …/references/{originalId}`, and that
+ * call is measured to answer 200 while removing nothing (see
+ * {@link findReference}).
+ */
+export async function removeFromCollectionRequest(
+  collection: string,
+  nodeId: string,
+): Promise<PrepareOutcome> {
+  const found = await findReference(collection, nodeId);
+  if (found.status !== 'found') return { status: 'refused', detail: noReference(found, nodeId) };
+  return {
+    status: 'ready',
+    request: {
+      method: 'DELETE',
+      path: toRepositoryPath(referencePath(collection, found.referenceId), WLO_REPOSITORY_URL),
+    },
+  };
+}
+
+/**
  * Take material out of a collection.
  *
  * This removes the REFERENCE. The material itself is untouched and stays in
@@ -321,17 +382,15 @@ async function findReference(collection: string, nodeId: string): Promise<Refere
  */
 export async function removeFromCollection(collection: string, nodeId: string): Promise<MutationOutcome> {
   const found = await findReference(collection, nodeId);
-  if (found.status === 'unknown') return { status: 'unverified', detail: found.detail };
-  if (found.status === 'absent') {
+  if (found.status !== 'found') {
     return {
-      status: 'failed',
-      detail: `Das Material „${sanitizeText(nodeId)}“ ist nicht in dieser Sammlung enthalten — `
-        + 'es wurde nichts geändert.',
+      status: found.status === 'unknown' ? 'unverified' : 'failed',
+      detail: noReference(found, nodeId),
     };
   }
 
   const res = await wloFetch(
-    collectionPath(collection, `/references/${encodeURIComponent(found.referenceId)}`),
+    referencePath(collection, found.referenceId),
     { method: 'DELETE', headers: { Accept: 'application/json' } },
   );
   if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };

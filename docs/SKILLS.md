@@ -16,7 +16,7 @@ curates the content — what the server needs to find a skill, and why.
 | | |
 |---|---|
 | Node type | `ccm:io` |
-| Content type | `ccm:oeh_extendedType` = `http://w3id.org/openeduhub/vocabs/contentTypes/ai_prompt` |
+| Content type | `ccm:oeh_extendedType` = `http://w3id.org/openeduhub/vocabs/contentTypes/ai_skill` |
 | Title | `cclom:title` — names what the skill does |
 | Description | `cclom:general_description` — **when** to reach for it |
 | Keywords | `cclom:general_keyword` — the trigger words |
@@ -24,13 +24,21 @@ curates the content — what the server needs to find a skill, and why.
 
 **The content type is what makes a record a skill.** `search_skill` sends it as a
 search criterion, so a record without it is invisible to the search no matter
-where it sits. The full vocabulary URI is required — the bare slug `ai_prompt`
-matches nothing (measured 2026-08-08).
+where it sits. The full vocabulary URI is required — the bare slug `ai_skill`
+matches nothing (measured 2026-08-08 on the predecessor term).
+
+> **This term changed on 2026-08-12.** Skills used to carry `ai_prompt`
+> ("KI-Prompt"); the vocabulary then gained its own `ai_skill` entry ("KI-Skill")
+> and WLO moved skill records onto it. Staging's `mds_oeh` still lists only the
+> nine older values, so the editorial dropdown shows the field blank — the index
+> takes the new value regardless (measured 2026-08-12: the 28 Lehrtoolkit records
+> re-indexed under `ai_skill` within ~45 s of the write). A registry document is
+> the one thing that KEEPS `ai_prompt` — see below.
 
 > **`propertyFilter=-all-` does NOT return this field.** Only an explicit
 > `propertyFilter=ccm:oeh_extendedType` does — measured 2026-08-08 against the
 > staging test collection: `-all-` reported the field missing on all 28 records,
-> the explicit projection reported `ai_prompt` on all 28. Anyone checking whether
+> the explicit projection reported the content type on all 28. Anyone checking whether
 > a record is tagged must ask for the field by name; `-all-` will say no.
 
 **Upload the Markdown as the node's content.** A web-link node (`ccm:wwwurl`)
@@ -82,7 +90,7 @@ resolves the companion files without a second lookup.
 ```
 Skills (the configured root — WLO_SKILLS_COLLECTION_ID)
 ├── Lehrtoolkit            (a skillset)
-│   ├── Stunde planen      ← ccm:io, ai_prompt, SKILL.md attached
+│   ├── Stunde planen      ← ccm:io, ai_skill, SKILL.md attached
 │   └── Prüfung erstellen
 └── WLO-Technik
     └── Themenseiten
@@ -129,7 +137,7 @@ That composes with the content-type filter — measured 2026-08-08:
 | both together | **9877** (the AND works) |
 | both + `ngsearchword = Optik` | 318 |
 
-So `extendedType = ai_prompt AND taxonid = Physik` answers "welche Skills gehören
+So `extendedType = ai_skill AND taxonid = Physik` answers "welche Skills gehören
 zu Physik" without any collection membership at all, and one skill can carry
 several subjects and education levels. The two approaches are not exclusive —
 tag every skill, and place a reference only where the visibility is wanted.
@@ -197,7 +205,7 @@ makes the manifest possible:
 
 ```
 Workspace/SKILLS/lehrtoolkit/stunde-planen/
-├── SKILL.md        ← the skill record (ai_prompt, referenced into collections)
+├── SKILL.md        ← the skill record (ai_skill, referenced into collections)
 ├── vorlage.docx
 └── ablauf.png
 ```
@@ -316,11 +324,13 @@ calls `get_skill` with the nodeId, exactly as after a search.
 
 ### How to create one
 
-A registry **is a skill record**. Same content type, same attached Markdown file,
-same `:::` blocks. Nothing new has to be configured:
+A registry is built like a skill record — attached Markdown file, `:::` blocks —
+but carries its OWN content type. Nothing new has to be configured:
 
 1. Upload a Markdown file into the collection as an ordinary content record.
-2. Set its content type to **`ai_prompt`** — the same one every skill carries.
+2. Set its content type to **`ai_prompt`** ("KI-Prompt"). This is the one place
+   the old term survives: since 2026-08-12 skills carry `ai_skill`, and a registry
+   is a prompt document ABOUT skills, not a skill.
 3. **Name the file `SKILL_REGISTRY.md`**, or put `SKILL REGISTRY` in the title.
 4. List the approved skills as `::: ki-skill` blocks (below).
 

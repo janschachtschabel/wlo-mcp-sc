@@ -14,7 +14,9 @@ import {
   createCollection,
   renameCollection,
   addToCollection,
+  addToCollectionRequest,
   removeFromCollection,
+  removeFromCollectionRequest,
   deleteCollection,
 } from '../src/services/write/collections.js';
 import { installFetchMock } from './fetchMock.js';
@@ -560,4 +562,106 @@ test('an unparseable create response is reported as "created, but no id" — not
     assert.equal(out.status, 'failed');
     assert.match(String(out.detail), /keine verwertbare Antwort/);
   } finally { mock.restore(); }
+});
+
+/*
+ * The request as data (E2). Filing material is the narrowest of these
+ * mutations, and the first whose request a repository PAGE may perform with the
+ * visitor's own session instead of ours. What is pinned here is that the
+ * descriptor addresses the same endpoint the executing path uses — a second,
+ * drifting copy of that knowledge in a browser bundle is the failure this whole
+ * split exists to prevent.
+ */
+
+test('the filing request is a PUT on the reference endpoint, carrying no body', () => {
+  const req = addToCollectionRequest(COLLECTION, NODE);
+  assert.equal(req.method, 'PUT');
+  assert.equal(req.path, `/edu-sharing/rest/collection/v1/collections/-home-/${COLLECTION}/references/${NODE}`);
+  assert.equal(req.body, undefined, 'the node is named in the path; a body is at best ignored');
+});
+
+test('the descriptor and the executing call address the same endpoint', () => {
+  // The guarantee behind "the browser never gets a second implementation".
+  const mock = installFetchMock(() => ({ json: {} }));
+  try {
+    void addToCollection(COLLECTION, NODE);
+  } finally {
+    const sent = mock.calls.find(c => (c.init?.method ?? 'GET') === 'PUT');
+    assert.ok(sent, 'the executing path sent a PUT');
+    assert.ok(sent.url.endsWith(addToCollectionRequest(COLLECTION, NODE).path.replace('/edu-sharing', '')),
+      `descriptor and call diverged:\n  call: ${sent.url}`);
+    mock.restore();
+  }
+});
+
+test('ids that need escaping are escaped once, in both', () => {
+  const req = addToCollectionRequest('a b', 'c/d');
+  assert.match(req.path, /a%20b/);
+  assert.match(req.path, /c%2Fd/);
+});
+
+/*
+ * Taking material OUT, prepared. Unlike filing, this one cannot be written down
+ * from its arguments: the endpoint takes the REFERENCE id and the caller names
+ * the material, so the descriptor can only be built after a lookup — and that
+ * lookup has two honest ways to end without an id.
+ */
+
+test('the removal request names the REFERENCE id, never the material id', async () => {
+  // The measured asymmetry (staging 2026-08-03) that makes preparing worth the
+  // trouble: DELETE …/references/{originalId} answers 200 and removes NOTHING.
+  // A browser building this request from the ids it has would hit exactly that.
+  const mock = repo({ usage: [] });
+  try {
+    const out = await removeFromCollectionRequest(COLLECTION, NODE);
+    assert.equal(out.status, 'ready');
+    const req = out.status === 'ready' ? out.request : null;
+    assert.equal(req?.method, 'DELETE');
+    assert.equal(req?.path, `/edu-sharing/rest/collection/v1/collections/-home-/${COLLECTION}/references/${REFERENCE}`);
+    assert.equal(mock.calls.filter(c => c.init?.method === 'DELETE').length, 0, 'describing is not deleting');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('the removal descriptor and the executing DELETE address the same endpoint', async () => {
+  const mock = repo({ usage: [] });
+  try {
+    const out = await removeFromCollectionRequest(COLLECTION, NODE);
+    await removeFromCollection(COLLECTION, NODE);
+    const sent = mock.calls.find(c => c.init?.method === 'DELETE');
+    assert.ok(sent, 'the executing path sent a DELETE');
+    assert.ok(out.status === 'ready' && sent.url.endsWith(out.request.path.replace('/edu-sharing', '')),
+      `descriptor and call diverged:\n  call: ${sent.url}`);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('material the collection does not hold is refused in the same words as the executing path', async () => {
+  // Both routes have to say the same thing about the same collection. Two
+  // wordings would be two answers to one question.
+  const mock = repo({ references: {} });
+  try {
+    const out = await removeFromCollectionRequest(COLLECTION, NODE);
+    assert.equal(out.status, 'refused');
+    const executed = await removeFromCollection(COLLECTION, NODE);
+    assert.equal(out.status === 'refused' ? out.detail : '', executed.status === 'failed' ? executed.detail : '?');
+    assert.match(out.status === 'refused' ? out.detail : '', /nicht in dieser Sammlung/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('a reference listing that cannot be read yields no request at all', async () => {
+  // "Not in the collection" is a claim about the collection; a failed listing
+  // supports no claim — least of all a request someone else would then send.
+  const mock = repo({ childrenStatus: 500 });
+  try {
+    const out = await removeFromCollectionRequest(COLLECTION, NODE);
+    assert.equal(out.status, 'refused');
+    assert.match(out.status === 'refused' ? out.detail : '', /nicht lesbar/);
+  } finally {
+    mock.restore();
+  }
 });

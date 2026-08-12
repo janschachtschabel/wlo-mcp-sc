@@ -32,6 +32,9 @@ jobs:
       # types) and the widget DOM entry points (esbuild does not type-check).
       # See tsconfig.typecheck.json.
       - run: npm run typecheck
+      # Correctness rules only (see eslint.config.mjs) — no formatter, and the
+      # project-specific invariants stay in tests/shared-rule-discipline.test.ts.
+      - run: npm run lint
       - run: npm test
       # Gate on SHIPPED vulnerabilities: production dependency tree must be
       # free of high/critical advisories. Dev-only findings (e.g. the tsx →

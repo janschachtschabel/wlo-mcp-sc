@@ -5431,3 +5431,261 @@ Entscheidung, kein Fehler.
 `--noUnusedLocals`, bis auf drei vorbestehende `url`-Parameter in Tests) ·
 `npm test` → **1757 Tests, 1757 pass, 0 fail** · `npm run build` → exit 0 ·
 Live gegen Staging: vier Seiten über beide Suchrouten identisch, Labels korrekt.
+
+## Sammlungssuche über beide Backends — P1 fertig (2026-08-11)
+
+Design + Aufgaben: [2026-08-11-collection-name-search-and-vocab-sync.md](2026-08-11-collection-name-search-and-vocab-sync.md).
+Ausgelöst durch einen Swagger-Durchgang der Staging-REST-API (316 Pfade); P2
+(Vokabular-Abgleich) ist entworfen und **noch nicht umgesetzt**.
+
+**Der Befund.** Das Repository beantwortet „welche Sammlungen passen zu diesem
+Wort?" über zwei unabhängige Indizes, und **keiner ist eine Obermenge des
+anderen**. Die mds-Abfrage, die der Server bisher allein benutzt hat, kann die
+Sammlung `9e7ae956` („Optik") für **kein** Suchwort zurückgeben — Begriffe, die
+nur in deren eigenen Keywords stehen („Oberflächenphänomene", „Die Lehre vom
+Licht"), liefern dort 0 Treffer und finden sie über
+`GET /collection/v1/collections/-home-/search` jedes Mal. Umgekehrt findet die
+mds-Abfrage Sammlungen über `ccm:oeh_collection_compendium_text`, das der zweite
+Endpunkt gar nicht liest (6 von 6 geprüften „Klimawandel"-Treffern). Keiner von
+beiden durchsucht die enthaltenen Materialien.
+
+Das setzt den Optik-Fall vom 09.08. fort („ein Datensatz kann aus dem Index
+fallen, während er im Node-Store liegt") und ergänzt ihn: ein zweiter Endpunkt
+sieht ihn trotzdem.
+
+**Zwei Messungen haben den Entwurf korrigiert, beide erst im Live-Lauf.**
+
+1. Der REST-Endpunkt **ignoriert `propertyFilter`** und antwortet mit einer festen
+   Projektion ohne `ccm:page_config_ref` — genau das Feld, aus dem `searchAll`
+   die Themenseiten-Trennung ableitet. Seine Knoten werden deshalb verworfen; er
+   dient als ID-Quelle, und was er beisteuert, wird mit unserer Projektion
+   nachgelesen. Dieselbe Falle wie beim mds-Keyword-Endpunkt am 17.07.
+2. Die erste Fassung gab ihm die Kappe des Aufrufers (10) und **verdreifachte das
+   Sammlungs-Bein** (984 → 3396 ms für „Mathematik"). Ursache gemessen: bei
+   Kappe 10 kostet das Bein selbst 2565 ms, und 7–10 seiner 10 Treffer waren neue
+   IDs, die alle nachgelesen werden mussten. Jetzt hat es eine eigene Kappe
+   (`NAME_LEG_MAX = 5`) — es ist eine **Reparatur** für Datensätze, die der Index
+   auf keinem Rang liefert, kein zweiter Volltextlauf, und solche Datensätze
+   stehen in einer namensorientierten Liste weit oben. 5 statt 3, weil „Optik"
+   auf Position 3 der eigenen Rangfolge steht.
+
+**Kosten nach der Korrektur** (Median aus 5, Sammlungs-Bein, cap 10): Optik
+391 → 1550 ms, Mathematik 1395 → 1273 ms, Nachhaltigkeit 934 → 1562 ms, Deutsch
+1160 → 2071 ms. „Optik" zahlt am meisten, weil sein mds-Bein das schnellste ist
+— und ist zugleich die Anfrage, die die fehlende Sammlung gewinnt.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1768 Tests, 1768 pass, 0 fail** · Wächter rot-grün geprüft (mit
+eingeschleuster Verletzung rot, ohne grün) · Live gegen Staging:
+`searchAll({query:'Optik'})` liefert `9e7ae956` auf Platz 1 des
+**topicPages**-Eimers — die Sammlung trägt einen `page_config_ref`, der Eimer ist
+also richtig.
+
+**Beim Verifizieren aufgefallen, bewusst NICHT geändert** (vorbestehend, gehört
+in eine eigene Änderung): `searchAll` entfernt jede Sammlung mit `topicPageUrl`
+aus dem Sammlungs-Eimer, unabhängig davon, ob `topicPages` angefragt wurde. Ein
+Aufruf mit `include: ['collections']` sieht deshalb nie eine Themenseite — so sah
+der erste Verifikationslauf wie ein Fehlschlag aus.
+
+**Häufigkeit des Defekts, nachgemessen (2026-08-11).** An 70 echten
+Unter-Sammlungen: 2 von 70 (3 %) sind über die mds-Abfrage unter ihrem eigenen
+Titel nicht auffindbar, das Namens-Bein rettet davon **eine** („Optik", 1,4 %).
+Gegenrichtung: **3 von 70 (4 %) findet nur die mds-Abfrage** — die Beine ergänzen
+sich messbar, ein Austausch wäre ein Rückschritt gewesen. Ende-zu-Ende-Kosten auf
+`search_wlo_all`: **+430 ms im Median** (11 abwechselnde Läufe je Suchwort, Delta
+aus den Minima — bei 5 Läufen war ein Term *schneller* mit dem Extra-Bein, so groß
+ist die Staging-Streuung). Alle Raten stammen von Staging; vor Aussagen über
+Produktion dort neu messen.
+
+**Portal-Bein für `search_wlo_collections` — vorgeschlagen und vom Nutzer
+abgelehnt (2026-08-11).** Dieselbe Probe über die 35 Fachportale ergibt 8 von 35
+nicht auffindbar (Physik, Chemie, Deutsch, Geschichte, Biologie, Religion, Sport,
+Französisch), 4 davon rettet das Namens-Bein. `searchAll` ist nicht betroffen —
+es hat ein eigenes Portal-Bein und liefert das Portal auf Platz 1.
+`search_wlo_collections` hat keins (der Baum-Durchlauf greift nur bei NULL
+Direkttreffern, hier sind es zehn) und beantwortet „Physik" ohne das Fachportal
+Physik — über das Werkzeug verifiziert. Festgehalten, damit die Messung nicht neu
+hergeleitet wird; die Lösung wäre das Bein, das `searchAll` schon hat, nicht eine
+Änderung an `collection-search.ts`.
+
+## Vokabular-Abgleich (P2) — fertig (2026-08-12)
+
+Design + Aufgaben: [2026-08-11-collection-name-search-and-vocab-sync.md](2026-08-11-collection-name-search-and-vocab-sync.md).
+Damit ist das Paket aus dem Swagger-Durchgang vollständig.
+
+**Neu:** `npm run sync:vocabs` (`scripts/sync-vocabs.mjs`) vergleicht alle sechs
+eingecheckten Vokabulare mit einem laufenden Repository und **berichtet** — es
+schreibt nie. Der Grund steht im Skriptkopf: Labels brauchen Urteil. Unsere
+Schreibweise ist teils besser als die des Repositories (`PDM` „Public Domain
+Mark" gegen das offizielle „PDM"), und der schwerste gefundene Fehler war ein
+Label, das existierte und unauffällig aussah.
+
+**Zwei Quellen, weil eine nicht reicht** (gemessen 2026-08-12): der
+mds-`values`-Endpunkt liefert für `ccm:commonlicense_key` den rohen Schlüssel als
+eigenen `displayString` — für alle 16 Werte, in **jeder** Locale. Diese Liste ist
+die Menge der im Index vorkommenden Werte, kein beschriftetes Vokabular. Die
+Namen stehen in `GET /config/v1/language/defaults` → `LICENSE.NAMES` (15
+Schlüssel). Für die anderen fünf Vokabulare trägt `values` zu 100 % Beschriftungen.
+
+**Drei Defekte behoben, einer davon schwerer als die fehlenden Schlüssel:**
+
+1. `COPYRIGHT_FREE` hieß bei uns **„urheberrechtsfrei"** — das Gegenteil dessen,
+   was das Repository darunter versteht („Das Werk ist kostenfrei zugänglich.
+   Nutzung und Quellenangabe gemäß den allgemeingültigen gesetzlichen Regelungen
+   (UrhG)"): urheberrechtlich geschützt, nur frei zugänglich. Dritthäufigste
+   Lizenz im Korpus, **12 445 von 403 461 Datensätzen**. Jetzt „Copyright, freier
+   Zugang"; der irreführende Alias ist weg, `gemeinfrei` → `PDM` beantwortet die
+   Frage, die jemand mit diesem Wort stellt.
+2. Drei Schlüssel waren unbekannt, zusammen **1 871 Datensätze**:
+   `COPYRIGHT_LICENSE` (1 359), `CC_BY_SA_NC` (497), `UNTERRICHTS_UND_LEHRMEDIEN`
+   (15). Das kostet zweimal — roher Schlüssel in der Anzeige, und
+   `filterByExactLicense` verwirft den Datensatz aus jedem gefilterten Ergebnis.
+   `CC_BY_SA_NC` wurde **Alias** von `CC_BY_NC_SA`, nicht eigener Eintrag: eine
+   Altschreibweise derselben drei Bedingungen, und zwei Schlüssel für eine Lizenz
+   dürfen nicht wie zwei Lizenzen aussehen.
+3. Jedes CC-Label behauptete **„4.0"**. `ccm:commonlicense_version` fehlt auf
+   90 von 90 geprüften CC-Datensätzen, steht nicht in `DISPLAY_PROPS` und ist
+   nicht facettierbar (400). Die Version ist aus den Anzeigeformen raus und als
+   Alias erhalten, damit „CC BY 4.0" in Prompts und Tool-Beschreibungen weiter
+   auflöst.
+
+**Bewusst nicht angefasst:** `PDM`, `CUSTOM`, `NONE`, `CC_0` sowie die
+`userRole`-, `targetGroup`- und aggregierten-LRT-Formulierungen. Sie weichen vom
+Repository ab, ohne falsch zu sein, und mehrere sind gepflegte Entscheidungen mit
+eigenen Tests. `MULTI` („Unterschiedliche Lizenzen.") wird berichtet, aber nicht
+gespiegelt — es ist keine Lizenz, sondern eine Aussage über eine Menge; es steht
+mit Begründung in `NOT_MIRRORED`, weil ein Bericht mit dauerhaften Fehlalarmen
+nicht mehr gelesen wird.
+
+**T2.3 hat die Form gewechselt.** Ein Live-Test läuft unter `npm test` nicht
+(`netguard`), und einer hinter einer Env-Variable wäre ein Test, den niemand
+ausführt. Stattdessen ist der Korpus als gemessene Konstante gepinnt:
+`CORPUS_LICENSE_KEYS` in `tests/vocabs.test.ts` führt alle 16 vorkommenden
+`ccm:commonlicense_key`-Werte mit Datensatzzahl und Soll-Auflösung. Deterministisch,
+ohne Netz, und es sagt das, worauf es ankommt.
+
+**Ein eigener Wächter war zu streng.** Der Casing-Test („every display label
+continues in the case it is actually written in") meldete „Copyright, freier
+Zugang" und „Copyright, lizenzpflichtig" — „freier" und „lizenzpflichtig" sind
+korrekt kleingeschriebene Adjektive. Statt sie in die Funktionswort-Liste zu
+lügen, sind gegen die Quelle gepinnte Labels jetzt vom Heuristik-Scan
+ausgenommen: die Heuristik existiert für Labels, die **niemand** geprüft hat.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1773 Tests, 1773 pass, 0 fail** (vier neue Lizenz-Tests rot vor
+der Änderung, grün danach; zwei bestehende Zusicherungen auf „4.0" bewusst
+nachgezogen) · `npm run build` → exit 0 · `npm run sync:vocabs` gegen Staging
+gelaufen: kein einziges FEHLT mehr, nur noch als Urteil markierte
+Formulierungsunterschiede.
+
+## Review des P2-Diffs — 5 Befunde behoben (2026-08-12)
+
+Der Review fand 0 kritische, 2 major, 2 minor, 1 nit. Alle behoben.
+
+**Der wichtigste Befund stand nicht im Diff, wurde aber durch ihn zum
+Widerspruch.** `OER_LICENSES` enthielt fünf Schlüssel, darunter
+`COPYRIGHT_FREE` — das ist keine offene Lizenz („kostenfrei zugänglich",
+Urheberrecht im Übrigen). Es beantwortete **12 445 von 403 461 Datensätzen**
+Anfragen nach „allem frei Nachnutzbaren": ein Überschuss, der *restriktiver* ist
+als angefragt, und das ist die Richtung, die dieses Projekt an anderer Stelle
+selbst als schädlich benennt. Eine Lehrkraft, die zum Remixen filtert, bekam
+Material, das sie nicht remixen darf.
+
+Entscheidend für die Entscheidung: **alle drei Werkzeugbeschreibungen nannten
+immer nur die vier verbleibenden Schlüssel** (CC0, gemeinfrei, CC BY, CC BY-SA)
+und die fünfte nie — der Code war der Ausreißer, nicht die Beschreibung. Verdeckt
+wurde das durch das falsche Label („urheberrechtsfrei"), also dieselbe Ursache
+wie der Vokabular-Defekt. `COPYRIGHT_FREE` ist raus; `docs/TOOLS.md` und
+`docs/INTEGRATION.md` nannten es unter dem alten falschen Namen und sagen jetzt,
+warum es nicht dazugehört.
+
+Wirkung, live gemessen: `search_wlo_content("Mathematik", license="OER")` liefert
+nur noch CC 0, Public Domain Mark und CC BY-SA, Gesamtzahl 13 620 statt ~14 400.
+
+**Die übrigen vier:** zwei Kommentare behaupteten `LICENSE.NAMES` habe 14
+Schlüssel — es sind 15 (14 Lizenzen plus `MULTI`); die 14 stammten aus meiner
+ersten Handextraktion, deren Suchmuster genau das übersah, was das Skript danach
+fand. Das Skript benutzte nacktes `fetch` statt `wloFetch` und hätte damit bei
+einer hängenden Instanz unbegrenzt blockiert und auf einer authentifizierungs-
+pflichtigen Instanz für jedes Vokabular „NICHT GEPRÜFT" gemeldet. Und die
+Ausnahme im Casing-Wächter galt für alle sechs Vokabulare statt nur für Lizenzen.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1774 Tests, 1774 pass, 0 fail** (der OER-Vertragstest war vor der
+Änderung rot; sieben weitere Zusicherungen hingen an der Fünfer-Menge und wurden
+einzeln nachgezogen, nicht pauschal) · `npm run build` → exit 0 ·
+`npm run sync:vocabs` über `wloFetch` gegen Staging gelaufen · Live über das
+echte Werkzeug geprüft, dass kein „Copyright, freier Zugang" mehr in einer
+OER-Antwort steht.
+
+Ein Zwischenlauf meldete 503 auf allen sechs Legs. Das war **nicht** die
+`wloFetch`-Umstellung: bare `fetch` und `wloFetch` gegen denselben Endpunkt
+lieferten unmittelbar danach beide 200 — Staging war kurz weg.
+
+---
+
+## Relais-Client und der Zugangszähler — P1 fertig 2026-08-12
+
+Plan: [2026-08-12-relay-credential-limiter.md](2026-08-12-relay-credential-limiter.md).
+P2 (Session-Berechtigung für eine Repo-Einbettung) ist dort entworfen und
+**bewusst nicht gebaut** — es fehlt eine konkrete Einbettung.
+
+**Der Befund, der das ausgelöst hat.** `authAbuseLimiter` bewacht `POST /mcp`
+gegen Rate-Versuche und zählte **verschiedene Berechtigungen je Adresse**
+(`AUTH_CREDENTIAL_LIMIT`, Standard 10, festes 10-Minuten-Fenster). Die
+Begründung im Quelltext nennt ihre Annahme wörtlich — *"a real user has exactly
+one [login]"* —, und die gilt für **einen Rechner einer Person**. Ein
+Chatbot-Backend ist das nicht: es bedient viele Menschen von **einer** Adresse
+und reicht je Person deren eigenen Zugangsblock weiter. Gemessen gegen die
+ausgelieferte Topologie (ein MCP-Prozess): **die 11. angemeldete Person in zehn
+Minuten wird mit 429 abgewiesen.** Anonyme Aufrufe sind unberührt (ohne
+Berechtigung wird nicht gezählt), Wiederholungen derselben Person kosten nichts.
+Das Signalbild führt in die Irre — angemeldet kaputt, anonym heil.
+
+**Was NICHT die Lösung war, und warum.** „Blöcke nicht mitzählen, die sind ja
+schon geprüft" wäre falsch: AUTH.md §4 sagt, dass der öffentliche Schlüssel
+veröffentlicht ist, also kann **jeder, der eine `jti` kennt**, Blöcke mit dieser
+`jti` und beliebigem Passwort bauen. Genau das Orakel, das der Zähler schliessen
+soll. Der erste Entwurf ging in diese Falle und wurde verworfen.
+
+**Gebaut:** der Schlüssel des Eimers hängt jetzt am Schema, nicht am Aufrufer —
+`abuseBucketKey` (`auth/credential.ts`) ist die eine Stelle. `Basic` bleibt bei
+der **Adresse** (ein Rater hat keine Identität, und es ist das Schema mit dem
+erratbaren Geheimnis); ein `wlo2.`-Block zählt je **`jti`** (unter einer gültigen
+Zugangs-ID gibt es genau EIN richtiges Passwort). Das ist auf beiden Achsen
+besser: der Relais-Client hört auf zu kollidieren, **und** die Adressen-Rotation,
+die den Schutz bisher aushebelte, wirkt nicht mehr — 50 Adressen brachten vorher
+500 Versuche, jetzt 10. `WloCredential` trägt dafür ein optionales `jti`, das nur
+der Block-Zweig setzt. Das Präfix (`jti:` / `ip:`) hält beide Schlüsselräume
+getrennt, damit kein Schema das Budget des anderen ausgibt.
+
+**Die `jti` ist ein Geheimnis** (§4: der Widerruf hängt daran) und wird als
+Map-Schlüssel benutzt, also nirgends protokolliert oder zurückgegeben. Die
+Ablehnung nennt `scope` (`access-block` / `address`) plus Adresse, nie den
+Schlüssel; der Block-Zweig bekam einen eigenen Ablehnungstext, weil „from this
+address" für ihn nicht mehr stimmt.
+
+**Rot-Grün, ausdrücklich geführt:** `abuseBucketKey` wurde zuerst mit dem
+**heutigen** Verhalten gebaut (Schlüssel = Adresse), damit die Probe die alte
+gegen die neue Regel stellt und nicht bloss einen fehlenden Export meldet. In
+diesem Zustand fielen 3 von 4 Zusicherungen, jede aus ihrem eigenen Grund —
+„person 3 was refused" (der Relais-Fall), „the 4th guess … despite a fresh
+address" (das Rotations-Loch) und der geteilte Eimer. Der vierte Test (`Basic`
+bleibt je Adresse) war in **beiden** Zuständen grün; das ist die Zusicherung,
+dass die Änderung den Bestandsschutz nicht anfasst.
+
+**Nachweis:** `npx tsc -p tsconfig.typecheck.json --noEmit` → 0 Fehler ·
+`npm test` → **1778 Tests, 1778 pass, 0 fail** (1774 vorher + 4 neue) ·
+`tests/auth-relay-limiter.test.ts` neu · AUTH.md §7 + Regel 11 nachgezogen.
+
+**Angefasst:** `src/auth/credential.ts`, `src/http-app.ts`,
+`tests/auth-relay-limiter.test.ts`, `docs/AUTH.md`,
+`docs/plans/2026-08-12-relay-credential-limiter.md`, diese Datei.
+
+**Offen, bewusst nicht mitgenommen** (im Plan notiert): ein **engerer Deckel für
+den Block-Eimer** — ein legitimer braucht genau 1, nicht 10. Und die zweite Wand
+dahinter, die keine Code-Frage ist: `RATE_LIMIT_RPM` steht auf **120/Minute je
+Adresse** und wird VOR der Berechtigung geprüft (`http-app.ts:177`), ein
+Relais-Client gibt diesen einen Topf also für alle seine Nutzer aus, anonyme
+eingeschlossen. Ein Agent-artiger Client mit ~15 Werkzeugaufrufen je Lauf ist
+bei ~8 Läufen/Minute am Anschlag. Betreiber-Entscheidung.

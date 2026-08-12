@@ -47,6 +47,16 @@ rückholbar ist.
 gleiche angehängte Markdown-Datei, gleiche `:::`-Verweisblöcke. Damit ist der
 Neubau klein — drei vorhandene Bausteine tragen ihn:
 
+> **Nachtrag 2026-08-12 — die Inhaltsart ist NICHT mehr dieselbe.** Das
+> Vokabular bekam einen eigenen Eintrag `ai_skill` („KI-Skill"), und WLO hat die
+> Skill-Datensätze darauf umgezogen. Ein Skill trägt seither `ai_skill`
+> (`SKILL_CONTENT_TYPE_URI`), ein Registry-Dokument behält `ai_prompt`
+> (`REGISTRY_CONTENT_TYPE_URI`) — genau das, was der Begriff jetzt noch meint:
+> ein Prompt-Dokument ÜBER Skills. Alles Übrige dieses Abschnitts gilt
+> unverändert: Dateiform und `:::`-Blöcke sind gleich, die drei Bausteine tragen
+> den Neubau weiterhin. Gemessen als Dienstnutzer: 31 Datensätze unter
+> `ai_skill`, 2 unter `ai_prompt` (beide Registries).
+
 | Vorhanden | Leistet |
 |---|---|
 | `services/skills.ts` → `getSkill()` | liest die Datei, parst die `:::`-Blöcke zu `references` |

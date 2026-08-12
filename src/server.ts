@@ -117,7 +117,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerNodeRelationTools(server, widgets['search-results']); // get_related_content (W1), get_node_breadcrumb
   registerCollectionStatsTool(server);  // get_collection_stats
   // Registered unconditionally: the skill search no longer NEEDS a configured
-  // collection — without one it filters the whole repository by the `ai_prompt`
+  // collection — without one it filters the whole repository by the `ai_skill`
   // content type. `WLO_SKILLS_COLLECTION_ID` narrows it to a subtree when set.
   registerSkillTools(server, {                 // search_skill + get_skill, or get_skill_for_task
     collectionId: WLO_SKILLS_COLLECTION_ID,

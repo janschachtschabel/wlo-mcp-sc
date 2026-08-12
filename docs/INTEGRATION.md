@@ -286,7 +286,9 @@ Ein Filter, den der Server verwerfen musste, steht dort nicht.
 
 Der Parameter `license` nimmt ein Label („CC BY 4.0", „gemeinfrei"), den
 Repository-Schlüssel (`CC_BY`) oder den Sammelwert **`OER`** (CC0, gemeinfrei,
-urheberrechtsfrei, CC BY, CC BY-SA).
+CC BY, CC BY-SA). `COPYRIGHT_FREE` („Copyright, freier Zugang") gehört nicht
+dazu — kostenfrei zugänglich, aber urheberrechtlich geschützt und nicht
+nachnutzbar.
 
 1. **Das Repository filtert nur Lizenz-FAMILIEN.** `CC_BY` liefert auch CC BY-ND
    und CC BY-NC-ND — die Zugabe ist *restriktiver* als gewünscht. Die genaue

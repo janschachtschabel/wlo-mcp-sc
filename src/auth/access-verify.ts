@@ -27,7 +27,7 @@ import {
   type AccessSupport,
   type WloCredential,
 } from './credential.js';
-import { checkIdentity } from './identity.js';
+import { checkIdentity, type WloIdentity } from './identity.js';
 import { log } from '../logger.js';
 import type { DistinctValueLimiter } from '../rate-limit.js';
 import { sanitizeText } from '../text-sanitize.js';
@@ -45,10 +45,36 @@ export interface VerifyDeps {
   support: AccessSupport;
 }
 
-/** Does this login actually work? The authority decides, not the status code. */
-async function loginWorks(credential: WloCredential): Promise<boolean> {
+/** What proving a login can end in. `limited` never reached the repository. */
+export type LoginProof =
+  | { ok: true; identity: WloIdentity }
+  | { ok: false; reason: 'limited' | 'refused' };
+
+/**
+ * Bound the guessing, then prove ONE credential against the repository.
+ *
+ * The shared core under everything on this server that checks a credential —
+ * block issuance, revocation-by-account, the ticket exchange. Two rules live
+ * here and nowhere else: the distinct-login limiter runs BEFORE the upstream
+ * call (a guesser never reaches WLO), and what decides is the reported
+ * AUTHORITY, never the status code (`checkIdentity` — a 200 with the guest
+ * authority is not a login, measured in P0). Callers translate the two
+ * failure reasons into their own wording; the identity travels back so the
+ * one caller that needs it (the ticket exchange labels its block with it)
+ * does not have to ask twice.
+ */
+export async function proveLogin(
+  credential: WloCredential,
+  deps: VerifyDeps,
+  now: number,
+  purpose: 'issuance' | 'revocation' | 'ticket-exchange',
+): Promise<LoginProof> {
+  if (deps.authAbuseLimiter.check(deps.ip, credential.header, now)) {
+    log.warn('too many distinct logins offered', { ip: deps.ip, purpose });
+    return { ok: false, reason: 'limited' };
+  }
   const identity = await runWithCredential(credential, () => checkIdentity());
-  return identity.authenticated;
+  return identity.authenticated ? { ok: true, identity } : { ok: false, reason: 'refused' };
 }
 
 /**
@@ -83,12 +109,11 @@ export async function verifyBlockLogin(
     source: 'user',
   };
 
-  if (deps.authAbuseLimiter.check(deps.ip, credential.header, now)) {
-    log.warn('too many distinct logins offered', { ip: deps.ip, purpose });
-    return { ok: false, status: 429, error: 'Zu viele verschiedene Anmeldungen von dieser Adresse.' };
-  }
-
-  if (!(await loginWorks(credential))) {
+  const proof = await proveLogin(credential, deps, now, purpose);
+  if (!proof.ok) {
+    if (proof.reason === 'limited') {
+      return { ok: false, status: 429, error: 'Zu viele verschiedene Anmeldungen von dieser Adresse.' };
+    }
     log.info('access request refused — credentials not accepted', {
       label: sanitizeText(payload.u),
       purpose,

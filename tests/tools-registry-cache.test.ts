@@ -16,7 +16,7 @@ import {
   runCacheTick,
   stopSkillRegistryCache,
 } from '../src/services/skill-registry-cache.js';
-import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { connectedClient, installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
 
 const SKILL_A = '00000001-0000-4000-8000-000000000000';
@@ -31,7 +31,7 @@ function collectionNode(id: string, title: string) {
 function registryChild() {
   return {
     ...makeNode('reg-1', 'Skill Registry Optik', {
-      'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI],
+      'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
     }),
     mimetype: 'text/x-web-markdown',
     mediatype: 'file-markdown',

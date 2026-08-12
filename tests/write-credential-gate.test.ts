@@ -16,6 +16,8 @@ import {
   resolveWriteMode,
   writeMode,
   requireWrite,
+  resolveMayPrepare,
+  mayPrepare,
   type WriteMode,
 } from '../src/services/write/credential-gate.js';
 import {
@@ -81,4 +83,39 @@ test('requireWrite passes for an individual login', () => {
 test('the write modes are exactly the three the design names', () => {
   const all: WriteMode[] = ['user', 'service', 'none'];
   assert.equal(all.length, 3);
+});
+
+/*
+ * Preparing (E2) is a second axis, not a fourth write mode.
+ *
+ * A prepared request changes nothing here — it describes a call that a
+ * repository page will make with the visitor's OWN session. The objection that
+ * closes writing to a shared service account ("the edit would be attributable
+ * to nobody") therefore does not apply: the edit ends up attributed to the
+ * person who confirmed it. What stays is that the preview reads the record
+ * under our identity, so anonymous callers are out either way.
+ */
+
+test('anonymous callers may never prepare, flag or not', () => {
+  assert.equal(resolveMayPrepare(null, false), false);
+  assert.equal(resolveMayPrepare(null, true), false, 'the flag widens a configured identity, not the public');
+});
+
+test('a service account prepares only when the operator enabled it', () => {
+  assert.equal(resolveMayPrepare(SERVICE, false), false);
+  assert.equal(resolveMayPrepare(SERVICE, true), true);
+});
+
+test('an individual login may prepare when preparing is enabled at all', () => {
+  // Moot in practice — such a call can just write, and the tool prefers that.
+  // Pinned so the rule stays "the flag decides", not "the source decides".
+  assert.equal(resolveMayPrepare(USER, false), false);
+  assert.equal(resolveMayPrepare(USER, true), true);
+});
+
+test('mayPrepare reads the credential in scope', () => {
+  // The suite runs without WLO_ALLOW_PREPARED_WRITES, so this is the off state.
+  setServiceCredentialForTest(null);
+  runAnonymous(() => assert.equal(mayPrepare(), false));
+  runWithCredential(USER, () => assert.equal(mayPrepare(), false));
 });

@@ -1,7 +1,7 @@
 /**
- * services/skills.ts – Find WLO "skills" (AI prompts) and read their Markdown.
+ * services/skills.ts – Find WLO "skills" and read their Markdown.
  *
- * A skill is a `ccm:io` whose content type is the `ai_prompt` entry of the
+ * A skill is a `ccm:io` whose content type is the `ai_skill` entry of the
  * openeduhub `contentTypes` vocabulary and whose ATTACHED FILE is the SKILL.md.
  * Two steps, deliberately separate (see `tools/skills.ts` for the tool surface):
  * `searchSkills` returns a short catalogue — nodeId, title, description,

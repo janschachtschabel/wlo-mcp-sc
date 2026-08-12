@@ -130,7 +130,7 @@ test('the server instructions answer to the repository’s other names', async (
   // aliases belong in the instructions rather than in thirteen write-tool
   // descriptions: they are read once and apply to every tool.
   const client = await connectedClient();
-  let instructions = '';
+  let instructions: string;
   try {
     instructions = client.getInstructions() ?? '';
   } finally {

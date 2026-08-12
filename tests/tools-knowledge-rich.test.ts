@@ -103,7 +103,7 @@ test('rich mode keeps the convention shape and ADDS the buckets', async () => {
 
     // The point of the whole exercise: the fields the lean projection drops.
     const hit = content.results[0];
-    assert.equal(hit['license'], 'CC BY 4.0');
+    assert.equal(hit['license'], 'CC BY');
     assert.deepEqual(hit['disciplines'], ['Biologie']);
     assert.deepEqual(hit['educationalContexts'], ['Sekundarstufe I']);
     assert.equal(hit['previewUrl'], 'https://example.org/preview.png');

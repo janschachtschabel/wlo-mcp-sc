@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { searchAll } from '../src/services/search.js';
-import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { queueCollections, queueLength, runCacheTick, stopSkillRegistryCache } from '../src/services/skill-registry-cache.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
@@ -18,7 +18,7 @@ function registryDoc(id = 'reg-1') {
   return {
     ...makeNode(id, 'Skill Registry Optik', {
       'cm:name': ['SKILL_REGISTRY.md'],
-      'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI],
+      'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
     }),
     mimetype: 'text/x-web-markdown',
     mediatype: 'file-markdown',

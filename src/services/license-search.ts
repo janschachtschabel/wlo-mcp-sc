@@ -41,9 +41,13 @@ import { mapPool } from '../concurrency.js';
 const LICENSE_PROPERTY = 'ccm:commonlicense_key';
 
 /**
- * All five keys at once: the fan-out is the point, and five concurrent requests
- * is the same order of parallelism `enhancedSearch` already spends on its query
- * variants.
+ * Every key at once: the fan-out is the point, and this order of parallelism is
+ * what `enhancedSearch` already spends on its query variants.
+ *
+ * Deliberately not tied to the bundle's current size (four keys since
+ * 2026-08-12, when `COPYRIGHT_FREE` was removed as not-an-open-licence). A limit
+ * BELOW the bundle would silently serialise the last key, so the headroom is the
+ * point of the constant, not the number.
  */
 const FANOUT_LIMIT = 5;
 

@@ -21,11 +21,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { toolError } from './shared.js';
-import { requireWrite } from '../services/write/credential-gate.js';
+import { requireWrite, requireWriteRoute, type WriteRoute } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { validateField } from '../services/write/fields.js';
 import {
   createSuggestions,
+  createSuggestionsRequest,
   listSuggestions,
   type Suggestion,
   type SuggestionDraft,
@@ -41,6 +42,7 @@ import {
   rejectionReply,
   errorText,
   plainText,
+  preparedReply,
   recordTitle,
   fieldLabel,
   timeoutOrError,
@@ -77,11 +79,14 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
       })).min(1).describe('Ein Eintrag je Feld. Für mehrere Schlagwörter mehrere Einträge mit field="keywords".'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // Preparable (user decision 2026-08-12): a proposal is one request, it
+    // changes no record, and a person decides on it afterwards — so it is the
+    // one write beyond collection membership the embedded page may carry out.
+    preparable: true,
     handler: async (params: Record<string, unknown>) => {
       try {
-        requireWrite();
-        return await handleSuggest(params);
+        return await handleSuggest(params, requireWriteRoute());
       } catch (err) {
         return timeoutOrError('Die Vorschläge konnten nicht gespeichert werden', err,
           `Ob die Vorschläge zu „${sanitizeText(String(params['nodeId'] ?? ''))}“ hinterlegt wurden, ist offen`);
@@ -100,7 +105,7 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
       status: z.enum(['PENDING', 'ACCEPTED', 'DECLINED']).optional()
         .describe('Filter; ohne Angabe werden alle gezeigt. PENDING = noch offen.'),
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -144,7 +149,7 @@ interface RawSuggestion {
   confidence?: number;
 }
 
-async function handleSuggest(params: Record<string, unknown>) {
+async function handleSuggest(params: Record<string, unknown>, route: WriteRoute) {
   const nodeId = String(params['nodeId'] ?? '');
   const raw = (Array.isArray(params['suggestions']) ? params['suggestions'] : []) as RawSuggestion[];
 
@@ -199,6 +204,16 @@ async function handleSuggest(params: Record<string, unknown>) {
   if (!token) return previewReply(cs, 'Zum Hinterlegen der Vorschläge bitte bestätigen.');
   const refusal = confirmOrExplain(token, cs);
   if (refusal) return refusal;
+
+  if (route === 'prepare') {
+    // Deliberately no id list in the sentence: the repository assigns the ids in
+    // its answer to the POST, and in this direction nobody here reads it. Naming
+    // ids we never saw would be the one thing worse than not naming them.
+    return preparedReply(createSuggestionsRequest(nodeId, kept), [
+      `Als Vorschlag hinterlegt (Status: offen) — „${recordTitle(before)}“ ist unverändert.`,
+      'Mit wlo_list_suggestions lassen sich die Vorschläge samt ID ansehen.',
+    ].join(' '));
+  }
 
   const result = await createSuggestions(nodeId, kept);
   if (!result.ok) return errorText(`Die Vorschläge konnten nicht gespeichert werden: ${result.detail}`);

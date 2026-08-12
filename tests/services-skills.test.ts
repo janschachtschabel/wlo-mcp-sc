@@ -2,8 +2,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { getSkill, pickBestSkill, searchSkills, searchSkillsDetailed } from '../src/services/skills.js';
-import { SKILL_CONTENT_TYPE_URI, SKILL_VISIT_MAX } from '../src/services/skill-catalogue.js';
+import {
+  REGISTRY_CONTENT_TYPE_URI,
+  SKILL_CONTENT_TYPE_URI,
+  SKILL_VISIT_MAX,
+} from '../src/services/skill-catalogue.js';
 import { installFetchMock, makeNode, type MockResult } from './fetchMock.js';
+
+// ── the vocabulary terms themselves ──────────────────────────────────────────
+//
+// Every other test uses these constants symbolically, so all of them stay green
+// no matter which URI the constants hold. Only a literal pins the actual value —
+// and the value is the whole contract with the repository: get it wrong and the
+// tools return an empty result set rather than an error.
+
+test('a skill is marked with the ai_skill vocabulary term', () => {
+  assert.equal(SKILL_CONTENT_TYPE_URI, 'http://w3id.org/openeduhub/vocabs/contentTypes/ai_skill');
+});
+
+test('a registry keeps ai_prompt — skills moved off it on 2026-08-12, registries did not', () => {
+  assert.equal(REGISTRY_CONTENT_TYPE_URI, 'http://w3id.org/openeduhub/vocabs/contentTypes/ai_prompt');
+  assert.notEqual(REGISTRY_CONTENT_TYPE_URI, SKILL_CONTENT_TYPE_URI);
+});
 
 /** A `ccm:io` carrying an attached SKILL.md — the shape the curation produces. */
 function skillNode(
@@ -32,7 +52,7 @@ function lastPostBody(mock: { calls: Array<{ url: string; init?: RequestInit }> 
 
 // ── searchSkills: repository-wide (no skills collection configured) ───────────
 
-test('searchSkills filters the whole repository by the ai_prompt content type', async () => {
+test('searchSkills filters the whole repository by the ai_skill content type', async () => {
   const mock = installFetchMock((url): MockResult => {
     if (url.includes('/ngsearch')) {
       return { json: {
@@ -167,7 +187,7 @@ test('searchSkills scoped to a collection walks its skillset sub-collections', a
   }
 });
 
-test('searchSkills drops collection entries that are not ai_prompt content', async () => {
+test('searchSkills drops collection entries that are not ai_skill content', async () => {
   const mock = collectionMock([
     skillNode('s-plan', 'Stunde planen', 'Plant eine Unterrichtsstunde.'),
     skillNode('m-video', 'Ein Video', 'Gewöhnliches Lernmaterial.', [],

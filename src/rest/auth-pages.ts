@@ -1,25 +1,28 @@
 /**
- * rest/auth-pages.ts – the three endpoints behind the access-block pages.
+ * rest/auth-pages.ts – the endpoints behind the access-block pages.
  *
  *   GET  /auth/public-key  → the key the page encrypts with
  *   POST /auth/issue       → verify a block's login, then list its id
  *   POST /auth/revoke      → strike an id from the list
  *   POST /auth/revoke-all  → verify a login, then strike every id of that account
+ *   POST /auth/ticket      → exchange an edu-sharing ticket for a ticket block
  *
- * `/auth/issue` and `/auth/revoke-all` are the endpoints on this server that
- * check a password, which makes each a guessing oracle with our address as the
- * origin. They therefore pass BOTH limiters: requests per address, and distinct
- * logins per address.
+ * `/auth/issue`, `/auth/revoke-all` and `/auth/ticket` are the endpoints on
+ * this server that check a credential, which makes each a guessing oracle with
+ * our address as the origin. They therefore pass BOTH limiters: requests per
+ * address, and distinct logins per address.
  *
  * The work itself lives in `auth/` — `access-verify.ts` decodes, limits and
  * verifies the login at the AUTHORITY (not the status code), `access-issue.ts`
- * and `access-revoke.ts` each add their one step. This module keeps the HTTP
- * shape around them, including the `Retry-After` the 429 carries.
+ * and `access-revoke.ts` each add their one step, `ticket-exchange.ts` does
+ * the same for the embedding ticket. This module keeps the HTTP shape around
+ * them, including the `Retry-After` the 429 carries.
  *
  * Returns `false` for a path it does not own so the caller falls through.
  */
 
 import { issueAccessBlock } from '../auth/access-issue.js';
+import { exchangeTicket } from '../auth/ticket-exchange.js';
 import { revokeAllForBlock } from '../auth/access-revoke.js';
 import { decodeAccessToken } from '../auth/access-token.js';
 import { currentAccessSupport } from '../auth/credential.js';
@@ -60,6 +63,7 @@ const ROUTES: Record<string, 'GET' | 'POST'> = {
   '/auth/issue': 'POST',
   '/auth/revoke': 'POST',
   '/auth/revoke-all': 'POST',
+  '/auth/ticket': 'POST',
 };
 
 function send(res: AuthRes, status: number, body: unknown): true {
@@ -68,15 +72,15 @@ function send(res: AuthRes, status: number, body: unknown): true {
   return true;
 }
 
-/** The `token` field of a JSON body, or null if the body is not usable. */
-async function readToken(req: AuthReq, maxBodyBytes: number): Promise<string | null> {
+/** One string field of a JSON body, or null if the body is not usable. */
+async function readField(req: AuthReq, maxBodyBytes: number, name: string): Promise<string | null> {
   const { tooLarge, text } = await readBodyWithLimit(req, maxBodyBytes);
   if (tooLarge || !text) return null;
   try {
     const data: unknown = JSON.parse(text);
     if (typeof data !== 'object' || data === null) return null;
-    const token = (data as Record<string, unknown>)['token'];
-    return typeof token === 'string' && token ? token : null;
+    const value = (data as Record<string, unknown>)[name];
+    return typeof value === 'string' && value ? value : null;
   } catch {
     return null;
   }
@@ -152,19 +156,39 @@ async function route(
     return send(res, 200, { publicKey: support.keys.publicKeyPem });
   }
 
-  // Both remaining paths carry a block in the body, and `/auth/issue` checks the
-  // password inside it. Refusing a body that is not DECLARED JSON is what keeps
-  // a cross-origin form out of here: it makes the request non-simple, so the
-  // browser must preflight, and the preflight fails because this surface sends
-  // no CORS header (see `isCredentialSurface` in http-app.ts). Without it a page
-  // could spend every visitor's address on a guess — the exact thing
+  // Every remaining path carries a credential in the body, and `/auth/issue`
+  // checks the password inside it. Refusing a body that is not DECLARED JSON is
+  // what keeps a cross-origin form out of here: it makes the request non-simple,
+  // so the browser must preflight, and the preflight fails because this surface
+  // sends no CORS header (see `isCredentialSurface` in http-app.ts). Without it
+  // a page could spend every visitor's address on a guess — the exact thing
   // `authAbuseLimiter` is here to bound. All three access-block pages send the
-  // header already.
+  // header already. (`/auth/ticket` IS reachable cross-origin — the carve-out
+  // and its reasoning live at `isCredentialSurface` — and keeps this check for
+  // the same reason as its siblings: JSON-only means preflight, preflight means
+  // the response stays unreadable for origins the carve-out does not cover.)
   if (!isJsonContentType(req.headers?.['content-type'])) {
     return send(res, 415, { error: 'Dieser Endpunkt erwartet einen JSON-Body (Content-Type: application/json).' });
   }
 
-  const token = await readToken(req, deps.maxBodyBytes);
+  if (parsed.pathname === '/auth/ticket') {
+    const ticket = await readField(req, deps.maxBodyBytes, 'ticket');
+    if (!ticket) return send(res, 400, { error: 'Es wurde kein Ticket übermittelt.' });
+    const outcome = await exchangeTicket(
+      ticket,
+      { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
+      Date.now(),
+    );
+    if (!outcome.ok) return sendFailure(res, outcome);
+    return send(res, 200, {
+      ok: true,
+      block: outcome.block,
+      authority: outcome.authority,
+      ...(outcome.displayName ? { displayName: outcome.displayName } : {}),
+    });
+  }
+
+  const token = await readField(req, deps.maxBodyBytes, 'token');
   if (!token) return send(res, 400, { error: 'Es wurde kein Zugangsblock übermittelt.' });
 
   if (parsed.pathname === '/auth/revoke') {

@@ -32,7 +32,7 @@ import { formatNode } from '../formatter.js';
 import { mapPool } from '../concurrency.js';
 import { nodeTitle } from '../node-match.js';
 import { log } from '../logger.js';
-import { SKILL_CONTENT_TYPE_URI, SKILL_PROPS } from './skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI, SKILL_PROPS } from './skill-catalogue.js';
 import { parseSkillReferences } from './skill-references.js';
 import { readSkillText } from './skills.js';
 
@@ -40,8 +40,10 @@ import { readSkillText } from './skills.js';
  * What a SKILL.md reports as its media type.
  *
  * `text/x-web-markdown` is edu-sharing's own spelling and the only one staging
- * actually produces (measured 2026-08-10: 25/25 `ai_prompt` records, alongside
- * `mediatype: file-markdown`). The IANA form and the historical `x-` form are
+ * actually produces (measured 2026-08-10: 25/25 skill records — then still
+ * `ai_prompt` — alongside `mediatype: file-markdown`). The media type is
+ * unaffected by the 2026-08-12 vocabulary move; only the content type changed.
+ * The IANA form and the historical `x-` form are
  * accepted too, so a repository that starts reporting either keeps working.
  */
 const MARKDOWN_MIME = new Set(['text/x-web-markdown', 'text/markdown', 'text/x-markdown']);
@@ -60,15 +62,17 @@ export function isMarkdownSkillDoc(node: WloNode): boolean {
 }
 
 /**
- * A registry is marked exactly as a skill is — same vocabulary entry, imported
- * from the one module that owns it rather than spelled out a second time.
+ * A registry carries the `ai_prompt` entry — the vocabulary term skills
+ * themselves left behind on 2026-08-12 (see `REGISTRY_CONTENT_TYPE_URI`).
+ * Imported from the one module that owns it rather than spelled out a second
+ * time.
  *
  * The listing must be projected with `SKILL_PROPS` for this to see anything:
  * measured 2026-08-10, `/children` returns `ccm:oeh_extendedType` only when the
  * request asks for it — the default projection reports the same node as empty.
  */
 function isAiPrompt(node: WloNode): boolean {
-  return node.properties?.['ccm:oeh_extendedType']?.includes(SKILL_CONTENT_TYPE_URI) ?? false;
+  return node.properties?.['ccm:oeh_extendedType']?.includes(REGISTRY_CONTENT_TYPE_URI) ?? false;
 }
 
 /**

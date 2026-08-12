@@ -122,7 +122,7 @@ services:
       # the documented way to switch the tools on would silently not work.
       WLO_DISABLE_UNSAFE_TOOLS: "${WLO_DISABLE_UNSAFE_TOOLS-all}"
       # Narrows the skill search to one collection subtree (unset → the whole
-      # repository, filtered by the `ai_prompt` content type) and gives
+      # repository, filtered by the `ai_skill` content type) and gives
       # GET /api/collection its default collection.
       WLO_SKILLS_COLLECTION_ID: "${WLO_SKILLS_COLLECTION_ID:-}"
       # two-tool (default: search_skill + get_skill) | one-tool (get_skill_for_task).

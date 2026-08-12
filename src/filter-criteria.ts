@@ -161,7 +161,24 @@ export function buildFilterCriteria(params: {
  * family over-match caused. `CUSTOM`, `NONE` and `SCHULFUNK` are out because
  * they say nothing verifiable about reuse.
  */
-const OER_LICENSES = ['CC_0', 'PDM', 'COPYRIGHT_FREE', 'CC_BY', 'CC_BY_SA'] as const;
+/**
+ * The licences "OER" selects: open licences that permit reuse and remixing.
+ *
+ * `COPYRIGHT_FREE` was in this list until 2026-08-12 and does not belong: the
+ * repository describes it as "Das Werk ist kostenfrei zugänglich. Nutzung und
+ * Quellenangabe gemäß den allgemeingültigen gesetzlichen Regelungen (UrhG)" —
+ * free of charge to access, with ordinary copyright otherwise. It grants no
+ * reuse right at all. It answered 12 445 of 403 461 records (measured
+ * 2026-08-12) to callers asking for "every freely reusable licence", which is
+ * the direction `filterByExactLicense` below already calls the harmful one: a
+ * surplus MORE restrictive than what was asked for, invisible to the caller.
+ *
+ * All three tool descriptions promised exactly these four and never named the
+ * fifth, so the code was the outlier. What hid it was the label: the key read
+ * "urheberrechtsfrei" — free OF copyright — which is the opposite of what the
+ * repository means, and is corrected in `vocabs.ts` in the same change.
+ */
+const OER_LICENSES = ['CC_0', 'PDM', 'CC_BY', 'CC_BY_SA'] as const;
 
 /** Words a caller may use for the bundle instead of a single licence. */
 const OER_ALIASES = ['oer', 'oer-lizenz', 'oer-lizenzen', 'freie lizenz', 'freie lizenzen', 'offene lizenz', 'offene lizenzen'];

@@ -73,6 +73,10 @@ export interface WloToolDef {
    * host that surfaces descriptions shows it.
    */
   unsafe?: { reason: string };
+  // The SDK validates args against the tool's zod schema before this seam;
+  // typing it `unknown` would force a cast into all ~40 tool handlers for no
+  // added check.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handler: (args: any, extra: unknown) => Promise<WloToolResult>;
 }
 

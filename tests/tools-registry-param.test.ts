@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import { stopSkillRegistryCache } from '../src/services/skill-registry-cache.js';
 import { connectedClient, installFetchMock, makeNode, toolText } from './fetchMock.js';
-import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 
 const SKILL_A = '00000001-0000-4000-8000-000000000000';
 const REGISTRY_MD =
@@ -38,7 +38,7 @@ function searchMock() {
       return { json: {
         nodes: [{
           ...makeNode('reg-1', 'Skill Registry Optik', {
-            'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI],
+            'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
           }),
           mimetype: 'text/x-web-markdown',
           mediatype: 'file-markdown',
@@ -116,7 +116,7 @@ function composedMock(opts: { withRegistry?: boolean; childrenStatus?: number } 
       return { json: {
         nodes: opts.withRegistry === false ? [makeNode('pdf', 'Arbeitsblatt')] : [{
           ...makeNode('reg-1', 'Skill Registry Optik', {
-            'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI],
+            'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
           }),
           mimetype: 'text/x-web-markdown',
           mediatype: 'file-markdown',

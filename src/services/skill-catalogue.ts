@@ -17,12 +17,36 @@ import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
 
 /**
- * The `contentTypes` vocabulary entry that marks a record as an AI prompt —
- * i.e. a skill. Full URI: the short form is not indexed (measured 2026-08-08,
- * `ai_prompt` alone matches 0 while the URI form is the value the facet reports
- * for every other content type).
+ * The `contentTypes` vocabulary entry that marks a record as a skill.
+ *
+ * Was `ai_prompt` until 2026-08-12, when the vocabulary gained its own
+ * `ai_skill` entry ("KI-Skill") and WLO moved skill records onto it. Staging's
+ * `mds_oeh` still lists only the nine older values, so the editorial dropdown
+ * shows the field blank — the INDEX takes the new value regardless (measured
+ * 2026-08-12: the 28 Lehrtoolkit records re-indexed under `ai_skill` within
+ * ~45 s of the write, and dropped out of the `ai_prompt` result set).
+ *
+ * Full URI: the short form is not indexed (measured 2026-08-08, `ai_prompt`
+ * alone matches 0 while the URI form is the value the facet reports for every
+ * other content type).
  */
-export const SKILL_CONTENT_TYPE_URI = 'http://w3id.org/openeduhub/vocabs/contentTypes/ai_prompt';
+export const SKILL_CONTENT_TYPE_URI = 'http://w3id.org/openeduhub/vocabs/contentTypes/ai_skill';
+
+/**
+ * The vocabulary entry that marks a REGISTRY document — the Markdown catalogue
+ * whose `:::` blocks name the skills approved for a collection.
+ *
+ * This used to be the same constant as above, on the reasoning that a registry
+ * is marked exactly as a skill is. That held only while `ai_prompt` was the one
+ * entry available. Now the vocabulary distinguishes the two, and a registry is
+ * precisely what `ai_prompt` still means: a prompt document ABOUT skills, not a
+ * skill. Staging agrees — re-measured 2026-08-12 as the service user, the only
+ * `ai_prompt` records left are the two registry documents (`skill_registry.md`,
+ * `skill_katalog.md`), against 31 under `ai_skill`. Anonymously the same query
+ * answers 1 and 28, so quote the identity with the number: a reader who
+ * re-measures without one sees different figures and concludes something moved.
+ */
+export const REGISTRY_CONTENT_TYPE_URI = 'http://w3id.org/openeduhub/vocabs/contentTypes/ai_prompt';
 
 /**
  * Projection for skill reads: what the formatter needs, the type field we filter
@@ -133,7 +157,7 @@ export async function collectSkillNodes(rootId: string, includeSubcollections: b
   // rather than an empty collection — say so, or the operator sees "no skills"
   // and has nothing to look at.
   if (!found.length && candidates > 0) {
-    log.warn('skills: the collection subtree holds content, but none of it is marked as an AI prompt', {
+    log.warn('skills: the collection subtree holds content, but none of it is marked as a skill', {
       rootId, candidates, expected: SKILL_CONTENT_TYPE_URI,
     });
   }

@@ -13,11 +13,12 @@
  * lives in a single helper that accepts either.
  */
 
-import { BASE_URL } from '../../wlo-config.js';
+import { BASE_URL, WLO_REPOSITORY_URL } from '../../wlo-config.js';
 import { wloFetch, HEADERS } from '../../wlo-fetch.js';
 import { readJson } from '../../read-json.js';
 import { log } from '../../logger.js';
 import { failureDetail } from './nodes.js';
+import { toRepositoryPath, type PreparedRequest } from './prepared-request.js';
 
 export type SuggestionStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED';
 
@@ -63,6 +64,38 @@ function suggestionPath(nodeId: string, params: URLSearchParams): string {
   return `${BASE_URL}/suggestions/v1/-home-/${encodeURIComponent(nodeId)}?${params}`;
 }
 
+/**
+ * The query every creation carries. One helper rather than two literals: it is
+ * where the provenance lives, and a second copy could drift into a proposal that
+ * no longer says a model wrote it.
+ */
+function createParams(): URLSearchParams {
+  return new URLSearchParams({ type: TYPE, version: VERSION });
+}
+
+/**
+ * The proposal request as data, for someone else to send (E2).
+ *
+ * The embedded case: a repository page stores the proposal with the visitor's
+ * own session, so it needs to be told which call to make. Built from the same
+ * `suggestionPath` and `createParams` as {@link createSuggestions} — the
+ * provenance query must not gain a second copy in a browser bundle.
+ *
+ * One honest difference to executing it here: the repository answers the POST
+ * with the ids it assigned, and in this direction nobody reads that answer. The
+ * caller therefore learns THAT the proposals were stored, not under which ids —
+ * `wlo_list_suggestions` shows them.
+ */
+export function createSuggestionsRequest(
+  nodeId: string, drafts: SuggestionDraft[],
+): PreparedRequest {
+  return {
+    method: 'POST',
+    path: toRepositoryPath(suggestionPath(nodeId, createParams()), WLO_REPOSITORY_URL),
+    body: JSON.stringify(drafts),
+  };
+}
+
 function toSuggestion(raw: unknown): Suggestion | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
@@ -104,8 +137,7 @@ export async function createSuggestions(
   nodeId: string,
   drafts: SuggestionDraft[],
 ): Promise<CreateOutcome> {
-  const params = new URLSearchParams({ type: TYPE, version: VERSION });
-  const res = await wloFetch(suggestionPath(nodeId, params), {
+  const res = await wloFetch(suggestionPath(nodeId, createParams()), {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(drafts),

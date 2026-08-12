@@ -19,8 +19,8 @@ import { installFetchMock } from './fetchMock.js';
  * A filter that answers "there is none" over 18 793 records is not a weak
  * filter, it is a wrong one.
  *
- * Each key on its own DOES narrow upstream. So the bundle fans out over its five
- * keys and merges. These tests pin that, and they do it without a network: the
+ * Each key on its own DOES narrow upstream. So the bundle fans out over its keys
+ * and merges. These tests pin that, and they do it without a network: the
  * caller passes the search as a function, which is also what lets the same rule
  * serve `enhancedSearch` and plain `ngsearch`.
  */
@@ -103,18 +103,38 @@ test('an unresolvable licence changes nothing — the caller reports it as unres
 test('the OER bundle fans out: one search per key, each with its own criterion', async () => {
   const { calls, run } = recorder();
   await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 4);
   assert.deepEqual(
     calls.map(keyOf).sort(),
-    ['CC_0', 'CC_BY', 'CC_BY_SA', 'COPYRIGHT_FREE', 'PDM'],
+    ['CC_0', 'CC_BY', 'CC_BY_SA', 'PDM'],
   );
+});
+
+test('the OER bundle contains no licence that merely grants free ACCESS', async () => {
+  // `COPYRIGHT_FREE` was in the bundle until 2026-08-12 and is not an open
+  // licence: the repository's own description reads "Das Werk ist kostenfrei
+  // zugänglich. Nutzung und Quellenangabe gemäß den allgemeingültigen
+  // gesetzlichen Regelungen (UrhG)" — gratis, not libre. Nothing may be remixed
+  // or redistributed under it.
+  //
+  // It was 12 445 of 403 461 records (measured 2026-08-12), all of them answered
+  // to a caller asking for "every freely reusable licence". That is the
+  // direction `filterByExactLicense` already calls harmful: a surplus MORE
+  // restrictive than what was asked for, which the caller cannot see.
+  //
+  // All three tool descriptions promised the four keys below and never named the
+  // fifth, so the code was the outlier — and the mislabelling that hid this
+  // ("urheberrechtsfrei") is the same root cause fixed in `vocabs.ts`.
+  const { calls, run } = recorder();
+  await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
+  assert.ok(!calls.map(keyOf).includes('COPYRIGHT_FREE'));
 });
 
 test('the bundle result carries nodes from every key', async () => {
   const { run } = recorder();
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
   const ids = res.nodes.map(n => n.ref?.id ?? '');
-  for (const key of ['CC_0', 'PDM', 'COPYRIGHT_FREE', 'CC_BY', 'CC_BY_SA']) {
+  for (const key of ['CC_0', 'PDM', 'CC_BY', 'CC_BY_SA']) {
     assert.ok(ids.includes(`${key}-1`), `${key} contributed`);
   }
 });
@@ -159,7 +179,7 @@ test('the total is the exact facet count, not the sum of overlapping families', 
   ];
   const { run } = recorder(27351);
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
-  assert.equal(res.pagination.total, 14343, 'the five OER buckets, each counted once');
+  assert.equal(res.pagination.total, 13578, 'the four OER buckets, each counted once');
 });
 
 test('a bucket spelled with spaces counts, because the node filter resolves it too', async () => {
@@ -193,12 +213,12 @@ test('without a facet answer the total degrades to the sum over the keys', async
   // the caller the number counts more than the list.
   const { run } = recorder(7);
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
-  assert.equal(res.pagination.total, 35);
+  assert.equal(res.pagination.total, 28);
 });
 
 test('when every key fails the bundle throws instead of reporting "no hits"', async () => {
-  // Losing ONE key is tolerated — losing the other four with it would be worse.
-  // Losing ALL five is a different event: an empty answer is indistinguishable
+  // Losing ONE key is tolerated — losing the others with it would be worse.
+  // Losing ALL of them is a different event: an empty answer is indistinguishable
   // from "there is no OER material on this topic", and the single-licence path
   // throws in exactly this situation.
   const run = async (): Promise<SearchResponse> => { throw new Error('upstream is down'); };
@@ -208,22 +228,22 @@ test('when every key fails the bundle throws instead of reporting "no hits"', as
   );
 });
 
-test('one failing key does not lose the other four', async () => {
+test('one failing key does not lose the other three', async () => {
   const run = async (extra: SearchCriterion[]): Promise<SearchResponse> => {
     const key = extra.find(c => c.property === LICENSE_PROPERTY)?.values[0] ?? '';
     if (key === 'CC_BY') throw new Error('upstream said no');
     return { nodes: [node(`${key}-1`)], pagination: { total: 3, from: 0, count: 1 } };
   };
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
-  assert.equal(res.nodes.length, 4);
-  assert.equal(res.pagination.total, 12);
+  assert.equal(res.nodes.length, 3);
+  assert.equal(res.pagination.total, 9);
 });
 
 test('the keys are interleaved, not concatenated', async () => {
   // Concatenating hands the whole result cap to whichever key is listed first.
   // Measured live: `Mathematik` + OER returned six hits, all CC 0 — the rarest
-  // of the five (191 records) — while the 11 563 CC BY-SA ones never reached the
-  // page. There is no ranking ACROSS the five result sets, so the fair merge is
+  // of them (191 records) — while the 11 563 CC BY-SA ones never reached the
+  // page. There is no ranking ACROSS the result sets, so the fair merge is
   // round-robin: each key contributes its best hit before any key contributes
   // its second.
   const run = async (extra: SearchCriterion[]): Promise<SearchResponse> => {
@@ -234,13 +254,13 @@ test('the keys are interleaved, not concatenated', async () => {
     };
   };
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
-  const firstFive = res.nodes.slice(0, 5).map(n => n.ref?.id ?? '');
+  const firstFour = res.nodes.slice(0, 4).map(n => n.ref?.id ?? '');
   assert.deepEqual(
-    [...new Set(firstFive.map(id => id.replace(/-\d$/, '')))].sort(),
-    ['CC_0', 'CC_BY', 'CC_BY_SA', 'COPYRIGHT_FREE', 'PDM'],
-    `the first five results should hold one per key, got ${firstFive.join(', ')}`,
+    [...new Set(firstFour.map(id => id.replace(/-\d$/, '')))].sort(),
+    ['CC_0', 'CC_BY', 'CC_BY_SA', 'PDM'],
+    `the first four results should hold one per key, got ${firstFour.join(', ')}`,
   );
-  assert.ok(firstFive.every(id => id.endsWith('-1')), 'each key contributes its best hit first');
+  assert.ok(firstFour.every(id => id.endsWith('-1')), 'each key contributes its best hit first');
 });
 
 test('interleaving survives keys of unequal length', async () => {
@@ -278,7 +298,7 @@ test('a facet answer that may be truncated is not trusted as a total', async () 
   }));
   const { run } = recorder(7);
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
-  assert.equal(res.pagination.total, 35, 'the summed fallback, not the possibly-partial 1');
+  assert.equal(res.pagination.total, 28, 'the summed fallback, not the possibly-partial 1');
 });
 
 test('one bucket short of the limit is a complete answer and is used', async () => {

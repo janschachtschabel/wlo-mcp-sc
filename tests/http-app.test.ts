@@ -122,6 +122,15 @@ test('the access-block surface is not offered to cross-origin pages', async () =
 
     const mcp = await fetch(`${base}/mcp`, { method: 'OPTIONS' });
     assert.equal(mcp.headers.get('access-control-allow-origin'), '*', 'MCP keeps its wildcard');
+
+    // `/auth/ticket` is the ONE exception on this surface: its only real client
+    // is a widget on a foreign origin, and what travels in its body is a
+    // repository-ISSUED ticket (high-entropy, machine-made), not a password a
+    // page could make visitors guess. Without CORS the endpoint cannot serve
+    // its one purpose; the distinct-value limiter still bounds validation
+    // attempts per address.
+    const ticket = await fetch(`${base}/auth/ticket`, { method: 'OPTIONS' });
+    assert.equal(ticket.headers.get('access-control-allow-origin'), '*', '/auth/ticket preflight passes');
   } finally { await close(server); }
 });
 

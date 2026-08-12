@@ -12,8 +12,8 @@ import {
   getCollectionContents,
   getNodeTextContent,
   ngsearch,
-  searchCollectionsByKeyword,
 } from '../wlo-api.js';
+import { searchCollections } from './collection-search.js';
 import { enhancedSearch, rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, resolveFacetCounts } from '../formatter.js';
@@ -294,7 +294,7 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
     needColl
       // Degrade like the wiki leg below: a thrown collections search (timeout,
       // DNS, reset) must not discard the content results already fetched.
-      ? searchCollectionsByKeyword(query, (maxColl + excluded.size) * 2).catch((err) => {
+      ? searchCollections(query, (maxColl + excluded.size) * 2).catch((err) => {
           log.warn('searchAll: collections search failed, continuing without', {
             error: err instanceof Error ? err.message : String(err),
           });

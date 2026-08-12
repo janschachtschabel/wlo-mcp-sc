@@ -22,7 +22,7 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
-durchsucht `search_skill` das ganze Repository nach der Inhaltsart `ai_prompt`,
+durchsucht `search_skill` das ganze Repository nach der Inhaltsart `ai_skill`,
 mit ihr den Unterbaum dieser Sammlung. Unabhängig davon liefert der Parameter
 `collectionId` die Skills einer *beliebigen* Sammlung — siehe
 [SKILLS.md](SKILLS.md).
@@ -45,8 +45,10 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 > **Praxis-Hinweis zum Lizenzfilter:** `license` nimmt ein Label („CC BY 4.0“,
 > „gemeinfrei“) oder den Repository-Schlüssel (`CC_BY`) — und zusätzlich den
-> Sammelwert **`OER`** für alles frei Nachnutzbare (CC0, gemeinfrei,
-> urheberrechtsfrei, CC BY, CC BY-SA).
+> Sammelwert **`OER`** für alles frei Nachnutzbare (CC0, gemeinfrei, CC BY,
+> CC BY-SA). Nicht enthalten ist `COPYRIGHT_FREE` („Copyright, freier Zugang“):
+> das Material ist kostenfrei zugänglich, aber urheberrechtlich geschützt und
+> gerade nicht nachnutzbar.
 >
 > Zwei Dinge, die in der Praxis auffallen und beide gewollt sind. **Erstens:** Das
 > Repository kann Lizenzen nur als *Familie* filtern — `CC_BY` liefert auch
@@ -188,7 +190,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 ### System & Skills
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `search_skill` | Passende WLO-Skills (kuratierte KI-Prompts) auflisten — nodeId, Titel, Beschreibung, Keywords; mit `collectionId` nur die Skills einer Sammlung, mit `discipline`/`educationalContext` die zu einem Fach bzw. einer Stufe verschlagworteten | *„Welche WLO-Skills passen zu meiner Aufgabe?“* · *„Welche Skills gibt es für Physik?“* |
+| `search_skill` | Passende WLO-Skills (Inhaltsart „KI-Skill") auflisten — nodeId, Titel, Beschreibung, Keywords; mit `collectionId` nur die Skills einer Sammlung, mit `discipline`/`educationalContext` die zu einem Fach bzw. einer Stufe verschlagworteten | *„Welche WLO-Skills passen zu meiner Aufgabe?“* · *„Welche Skills gibt es für Physik?“* |
 | `get_skill` | Die Anleitung (SKILL.md) zu einer nodeId laden — plus die Liste der weiteren Dateien des Skills (Name + nodeId, ohne Inhalt) | *(Folgeaufruf nach `search_skill`)* |
 | `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat — Katalog (Titel, nodeId, Beschreibung, Keywords) plus die Verwendungshinweise der Redaktion aus dem Registry-Dokument | *„Welche Skills gelten für diese Sammlung?“* · *„Was darf ich hier verwenden?“* |
 | `get_skill_for_task` | Wählt den Skill selbst und liefert die Anleitung direkt — nur bei `WLO_SKILL_TOOL_MODE=one-tool` statt der beiden obigen | *„Gib mir die Anleitung für eine Vertretungsstunde“* |

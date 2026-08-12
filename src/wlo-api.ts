@@ -6,7 +6,9 @@
  * `./wlo-api.js`:
  *   - `wlo-config.ts` — resolved env config, shared node/response types, the
  *     timeout-enforcing `wloFetch`, `HEADERS`, `DISPLAY_PROPS` + `propertyFilter`.
- *   - `wlo-search.ts` — the search endpoints (`ngsearch`, collection keyword search).
+ *   - `wlo-search.ts` — the search endpoints (`ngsearch`, and BOTH collection
+ *     searches; callers go through `services/collection-search.ts`, which merges
+ *     them — neither is a superset of the other).
  *   - `wlo-node.ts`   — node endpoints (children/metadata/text/download/breadcrumb)
  *     and the node URL builders.
  */

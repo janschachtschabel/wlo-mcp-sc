@@ -46,6 +46,16 @@ export interface AccessPayload {
   u: string;
   secret: string;
   /**
+   * What KIND of credential `secret` is — absent means the original password
+   * block. `'ticket'` carries an edu-sharing ticket (`/auth/ticket` issues
+   * these for a widget embedded in a repository page), and the decoder builds
+   * `EDU-TICKET <secret>` from it instead of `Basic`. Optional so every block
+   * issued before the kind existed keeps decoding unchanged; an unknown value
+   * fails closed, because a kind we cannot name is a wire format we cannot
+   * build.
+   */
+  k?: 'ticket';
+  /**
    * Issued-at, seconds, as claimed by the BROWSER that built the block. Inside
    * the AEAD, so nobody else can change it — but the issuer chose it, so it is
    * not a fact about when we registered anything. `/auth/issue` records its own
@@ -137,13 +147,17 @@ export function encodeAccessToken(payload: AccessPayload, publicKeyPem: string):
 function validatePayload(value: unknown): AccessPayload | null {
   if (typeof value !== 'object' || value === null) return null;
   const p = value as Record<string, unknown>;
-  const { v, jti, u, secret, iat } = p;
+  const { v, jti, u, secret, iat, k } = p;
   if (v !== 2) return null;
   if (typeof jti !== 'string' || !jti) return null;
   if (typeof u !== 'string' || !u) return null;
   if (typeof secret !== 'string' || !secret) return null;
   if (typeof iat !== 'number' || !Number.isFinite(iat)) return null;
-  return { v: 2, jti, u, secret, iat };
+  // `undefined` is the password block; the ONLY named kind is 'ticket'. Spread
+  // conditionally so an old block decodes to an object without a `k` key at
+  // all — a `k: undefined` would survive into deepEqual comparisons and JSON.
+  if (k !== undefined && k !== 'ticket') return null;
+  return { v: 2, jti, u, secret, iat, ...(k === 'ticket' ? { k } : {}) };
 }
 
 function open(privateKey: KeyObject, wrapped: Buffer, iv: Buffer, body: Buffer): AccessPayload | null {

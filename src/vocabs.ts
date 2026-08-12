@@ -260,22 +260,58 @@ const LRT: VocabEntry[] = [
 // We map them to human-readable labels here for consistent output.
 
 // NOTE: For licenses we store the *display form* as the primary label
-// (e.g. "CC BY-SA 4.0" instead of "cc by-sa 4.0"). Capitalize-logic in
+// (e.g. "CC BY-SA" instead of "cc by-sa"). Capitalize-logic in
 // labelFromUri only kicks in for fully-lowercase primary labels — otherwise
-// "cc by-sa 4.0" would render as the unhelpful "Cc by-sa 4.0".
+// "cc by-sa" would render as the unhelpful "Cc by-sa".
+//
+// The display forms come from the REPOSITORY's own UI strings —
+// `GET /config/v1/language/defaults` → `LICENSE.NAMES`, 15 keys, read
+// 2026-08-12 — 14 licences plus `MULTI`, which is not one (see below). The mds `values` endpoint is deliberately NOT the source here:
+// asked for `ccm:commonlicense_key` it returns the bare key as its own
+// `displayString` for all 16 values in every locale, i.e. the set of values the
+// index holds rather than a captioned vocabulary. (For every other vocabulary we
+// mirror it DOES carry captions, which is why `scripts/sync-vocabs.mjs` uses it
+// for those and this resource for licences.)
+//
+// Where the repository's wording is merely different and ours is at least as
+// clear — `PDM` ("Public Domain Mark" vs the official "PDM"), `CUSTOM`, `NONE`,
+// `CC_0` — ours stays. A rename with no defect behind it is taste.
+//
+// No primary label carries a version. Measured 2026-08-12:
+// `ccm:commonlicense_version` is absent on 90 of 90 sampled CC records, is not
+// in DISPLAY_PROPS and is not facetable, so the former "CC BY 4.0" asserted a
+// fact nothing in the data supports — on 62 093 CC_BY records alone. The
+// versioned spellings are kept as ALIASES so prompts and tool descriptions that
+// already use them keep resolving.
 const LICENSE: VocabEntry[] = [
-  { id: 'CC_0',         labels: ['CC 0', 'cc0', 'public domain dedication'] },
+  { id: 'CC_0',         labels: ['CC 0', 'cc0', 'cc-0', 'public domain dedication'] },
   { id: 'PDM',          labels: ['Public Domain Mark', 'gemeinfrei'] },
-  { id: 'CC_BY',        labels: ['CC BY 4.0', 'creative commons by'] },
-  { id: 'CC_BY_SA',     labels: ['CC BY-SA 4.0', 'creative commons by-sa'] },
-  { id: 'CC_BY_ND',     labels: ['CC BY-ND 4.0', 'creative commons by-nd'] },
-  { id: 'CC_BY_NC',     labels: ['CC BY-NC 4.0', 'creative commons by-nc'] },
-  { id: 'CC_BY_NC_SA',  labels: ['CC BY-NC-SA 4.0', 'creative commons by-nc-sa'] },
-  { id: 'CC_BY_NC_ND',  labels: ['CC BY-NC-ND 4.0', 'creative commons by-nc-nd'] },
-  { id: 'COPYRIGHT_FREE', labels: ['urheberrechtsfrei', 'copyright free'] },
-  { id: 'CUSTOM',       labels: ['Individuelle Lizenz', 'custom'] },
+  { id: 'CC_BY',        labels: ['CC BY', 'CC BY 4.0', 'creative commons by'] },
+  { id: 'CC_BY_SA',     labels: ['CC BY-SA', 'CC BY-SA 4.0', 'creative commons by-sa'] },
+  { id: 'CC_BY_ND',     labels: ['CC BY-ND', 'CC BY-ND 4.0', 'creative commons by-nd'] },
+  { id: 'CC_BY_NC',     labels: ['CC BY-NC', 'CC BY-NC 4.0', 'creative commons by-nc'] },
+  // `CC_BY_SA_NC` is a legacy spelling of the same three terms carried by 497
+  // records. As an alias rather than an entry of its own, those records get a
+  // readable label and are not dropped by `filterByExactLicense` when a caller
+  // asks for CC BY-NC-SA — two keys for one licence must not read as two.
+  { id: 'CC_BY_NC_SA',  labels: ['CC BY-NC-SA', 'CC BY-NC-SA 4.0', 'creative commons by-nc-sa', 'cc_by_sa_nc'] },
+  { id: 'CC_BY_NC_ND',  labels: ['CC BY-NC-ND', 'CC BY-NC-ND 4.0', 'creative commons by-nc-nd'] },
+  // NOT "urheberrechtsfrei", which claims the opposite. The repository's own
+  // description: "Das Werk ist kostenfrei zugänglich. Nutzung und Quellenangabe
+  // gemäß den allgemeingültigen gesetzlichen Regelungen (UrhG)" — copyrighted,
+  // merely free to access. Third most common licence in the corpus (12 445
+  // records), so the wrong word was on a lot of screens. The alias is gone with
+  // it: someone typing "urheberrechtsfrei" is asking for material free OF
+  // copyright, and `gemeinfrei` → PDM is the answer to that question.
+  { id: 'COPYRIGHT_FREE', labels: ['Copyright, freier Zugang', 'copyright free'] },
+  { id: 'COPYRIGHT_LICENSE', labels: ['Copyright, lizenzpflichtig', 'copyright license'] },
+  { id: 'UNTERRICHTS_UND_LEHRMEDIEN', labels: ['§60b Unterrichts- und Lehrmedien', 'unterrichts- und lehrmedien'] },
+  { id: 'CUSTOM',       labels: ['Individuelle Lizenz', 'custom', 'andere lizenz'] },
   { id: 'NONE',         labels: ['Keine Angabe', 'no license info'] },
-  { id: 'SCHULFUNK',    labels: ['Schulfunk §47 UrhG', 'schulfunk'] },
+  // Kept although the staging index holds zero records with it: the repository
+  // lists it as a current licence, so a record carrying it must still get a
+  // label rather than the raw key.
+  { id: 'SCHULFUNK',    labels: ['Schulfunk (§47 UrhG)', 'schulfunk'] },
 ];
 
 // ── Topic-page target audience ───────────────────────────────────────────────

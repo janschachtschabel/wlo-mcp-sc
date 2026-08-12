@@ -11,7 +11,12 @@
     "declarationMap": false,
     "sourceMap": false,
     // Widget entry points + host bridge use DOM globals.
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // A test may import a `scripts/*.mjs` measurement helper. Letting tsc infer
+    // that module's types from the source beats a hand-written `.d.mts` twin,
+    // which would drift from the implementation without anything noticing.
+    // `checkJs` stays off: the scripts are tooling, not part of the type gate.
+    "allowJs": true
   },
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"]

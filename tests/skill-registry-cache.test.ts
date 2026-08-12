@@ -28,7 +28,7 @@ import {
   startSkillRegistryCache,
   stopSkillRegistryCache,
 } from '../src/services/skill-registry-cache.js';
-import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { formatNode } from '../src/formatter.js';
 
 import { installFetchMock, makeNode, type MockResult } from './fetchMock.js';
@@ -79,7 +79,7 @@ const REGISTRY_MD =
 function registryChild() {
   return {
     ...makeNode('reg-1', 'Skill Registry Optik', {
-      'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI],
+      'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
     }),
     mimetype: 'text/x-web-markdown',
     mediatype: 'file-markdown',
@@ -355,12 +355,12 @@ test('while an entry is being renewed, the old answer still stands', async () =>
 const PARENT_A = 'parent-aaa';
 const PARENT_B = 'parent-bbb';
 
-/** A skill corpus as `ngsearch` returns it, plus the children listings behind it. */
+/** The registry corpus as `ngsearch` returns it, plus the children listings behind it. */
 function lifecycleMock(opts: { withRegistry?: boolean } = {}) {
   const counts = { search: 0, children: 0 };
-  const skill = (id: string, parent: string) => ({
+  const corpusDoc = (id: string, parent: string) => ({
     ...makeNode(id, `Skill ${id}`, {
-      'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI],
+      'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
       'virtual:primaryparent_nodeid': [parent],
     }),
     mimetype: 'text/x-web-markdown',
@@ -370,7 +370,7 @@ function lifecycleMock(opts: { withRegistry?: boolean } = {}) {
     if (url.includes('/ngsearch')) {
       counts.search++;
       return { json: {
-        nodes: [skill('s-1', PARENT_A), skill('s-2', PARENT_B)],
+        nodes: [corpusDoc('s-1', PARENT_A), corpusDoc('s-2', PARENT_B)],
         pagination: { total: 2, from: 0, count: 2 },
       } };
     }

@@ -74,7 +74,10 @@ test('labelFromUri: URI → capitalized German label', () => {
 });
 
 test('labelFromUri: license keys keep their display form', () => {
-  assert.equal(labelFromUri('CC_BY_SA', 'license'), 'CC BY-SA 4.0');
+  // Without "4.0" since 2026-08-12 — see the version test at the end of this
+  // file: no record carries `ccm:commonlicense_version`, so the suffix was an
+  // invented fact. The versioned spelling still resolves as an alias.
+  assert.equal(labelFromUri('CC_BY_SA', 'license'), 'CC BY-SA');
 });
 
 test('labelFromUri: trailing-slug match for namespaced values', () => {
@@ -245,9 +248,22 @@ test('every display label continues in the case it is actually written in', () =
   // Deliberately NOT a check against the official prefLabels: those are pinned
   // above for the concepts where they matter, and 9 aggregated-LRT labels are
   // shortened ON PURPOSE. Casing is the part that is never a decision.
+  // A label pinned against its authority is exempt. The heuristic exists to
+  // catch labels NOBODY checked; where one was checked against the source, that
+  // evidence beats the guess — and the guess is wrong for a label that is a
+  // phrase rather than a noun compound. "Copyright, freier Zugang" and
+  // "Copyright, lizenzpflichtig" are the repository's own strings, and "freier"
+  // and "lizenzpflichtig" are adjectives that are correctly lowercase. Adding
+  // them to GERMAN_FUNCTION_WORDS instead would be making the test agree with
+  // the code by calling them something they are not.
+  const verified = new Set(OFFICIAL_LICENSE_NAMES.map(([, label]) => label));
   const offenders: string[] = [];
   for (const vocab of ['educationalContext', 'discipline', 'userRole', 'lrt', 'license', 'targetGroup'] as const) {
     for (const e of listVocab(vocab)) {
+      // Scoped to `license`: the exemption is keyed on the label STRING, and a
+      // concept of another vocabulary that happened to share one would lose the
+      // guard without anyone noticing.
+      if (vocab === 'license' && verified.has(e.label)) continue;
       const bad = e.label.split(/[ /-]+/).slice(1)
         .filter(w => /^[a-zäöü]/.test(w) && !GERMAN_FUNCTION_WORDS.includes(w.toLowerCase()));
       if (bad.length) offenders.push(`${vocab}: ${e.label}`);
@@ -270,4 +286,113 @@ test('listVocab: no label or alias resolves to two different concepts of one voc
     const shared = [...owners].filter(([, uris]) => new Set(uris).size > 1);
     assert.deepEqual(shared, [], `${vocab}: alias shared by several concepts`);
   }
+});
+
+/**
+ * The licence names the REPOSITORY itself displays, read from
+ * `GET /config/v1/language/defaults` → `LICENSE.NAMES` (15 keys, measured
+ * 2026-08-12 against staging: 14 licences plus `MULTI`, which is a statement
+ * about a SET of licences rather than one — `scripts/sync-vocabs.mjs` lists it
+ * under `NOT_MIRRORED` with that reason).
+ *
+ * That resource is the authority for licences and the mds `values` endpoint is
+ * NOT: asked for `ccm:commonlicense_key` it answers with the bare key as its own
+ * `displayString` for all 16 values, in every locale — that list is the set of
+ * values the index holds, not a captioned vocabulary. For every other
+ * vocabulary we mirror, `values` DOES carry captions (100 % of
+ * educationalcontext, taxonid, oeh_lrt_aggregated, intendedenduserrole).
+ *
+ * Only the keys where the repository's wording is a FACT we were getting wrong
+ * are pinned here. Where ours is merely different and at least as clear
+ * (`PDM` "Public Domain Mark" over the official "PDM", `CUSTOM`, `NONE`,
+ * `CC_0`), ours stays — a rename with no defect behind it is taste, and
+ * `scripts/sync-vocabs.mjs` reports those differences for a human to judge.
+ */
+const OFFICIAL_LICENSE_NAMES: Array<[key: string, label: string]> = [
+  ['CC_BY', 'CC BY'],
+  ['CC_BY_SA', 'CC BY-SA'],
+  ['CC_BY_ND', 'CC BY-ND'],
+  ['CC_BY_NC', 'CC BY-NC'],
+  ['CC_BY_NC_SA', 'CC BY-NC-SA'],
+  ['CC_BY_NC_ND', 'CC BY-NC-ND'],
+  ['COPYRIGHT_FREE', 'Copyright, freier Zugang'],
+  ['COPYRIGHT_LICENSE', 'Copyright, lizenzpflichtig'],
+  ['UNTERRICHTS_UND_LEHRMEDIEN', '§60b Unterrichts- und Lehrmedien'],
+  ['SCHULFUNK', 'Schulfunk (§47 UrhG)'],
+];
+
+test('a licence is displayed under the name the repository itself uses', () => {
+  for (const [key, label] of OFFICIAL_LICENSE_NAMES) {
+    assert.equal(labelFromUri(key, 'license'), label, key);
+  }
+});
+
+test('"Copyright, freier Zugang" is not "urheberrechtsfrei" — and the wrong alias is gone', () => {
+  // The defect this replaces: COPYRIGHT_FREE was labelled "urheberrechtsfrei",
+  // which claims the opposite of what the repository means by it. Its own
+  // description (LICENSE.DESCRIPTION.COPYRIGHT_FREE) reads "Das Werk ist
+  // kostenfrei zugänglich. Nutzung und Quellenangabe gemäß den allgemeingültigen
+  // gesetzlichen Regelungen (UrhG)" — copyrighted, merely free to access. It is
+  // the third most common licence in the corpus (12 445 of 403 461 records
+  // measured 2026-08-12), so the wrong word was on a lot of screens.
+  //
+  // The alias goes with it: someone typing "urheberrechtsfrei" wants material
+  // free OF copyright, and handing them COPYRIGHT_FREE answers a different
+  // question silently. Unresolved is the honest outcome — `buildFilterCriteria`
+  // then reports it and lists the valid values.
+  assert.notEqual(resolveVocab('urheberrechtsfrei', 'license'), 'COPYRIGHT_FREE');
+  // What that word actually describes:
+  assert.equal(resolveVocab('gemeinfrei', 'license'), 'PDM');
+});
+
+/**
+ * Every distinct `ccm:commonlicense_key` the staging corpus holds, with its
+ * record count — a facet over all 403 461 records, measured 2026-08-12.
+ * `null` marks the two values that are not licence keys of their own.
+ */
+const CORPUS_LICENSE_KEYS: Array<[key: string, records: number, resolvesTo: string | null]> = [
+  ['CC_BY_NC_SA', 70627, 'CC_BY_NC_SA'],
+  ['CC_BY', 62093, 'CC_BY'],
+  ['CUSTOM', 57197, 'CUSTOM'],
+  ['CC_BY_SA', 50240, 'CC_BY_SA'],
+  ['CC_BY_NC_ND', 32080, 'CC_BY_NC_ND'],
+  ['COPYRIGHT_FREE', 12445, 'COPYRIGHT_FREE'],
+  ['CC_BY_NC', 4663, 'CC_BY_NC'],
+  ['CC_BY_ND', 3710, 'CC_BY_ND'],
+  ['CC_0', 2024, 'CC_0'],
+  ['COPYRIGHT_LICENSE', 1359, 'COPYRIGHT_LICENSE'],
+  // A legacy spelling of the same three terms, aliased onto the canonical key so
+  // its 497 records get a readable label and survive the local exactness pass.
+  ['CC_BY_SA_NC', 497, 'CC_BY_NC_SA'],
+  ['PDM', 408, 'PDM'],
+  ['NONE', 56, 'NONE'],
+  // The spaced spelling the index also carries; it already resolved before this
+  // change, through the fuzzy path rather than as a value of its own.
+  ['CC BY-SA', 23, 'CC_BY_SA'],
+  ['UNTERRICHTS_UND_LEHRMEDIEN', 15, 'UNTERRICHTS_UND_LEHRMEDIEN'],
+  // Not a licence: the empty key is "no value set".
+  ['', 56, null],
+];
+
+test('every licence key the corpus actually holds resolves to a known licence', () => {
+  // The corpus is the specification here, not our table. An unresolved key costs
+  // twice: `labelFromUri` shows the raw string to a reader, and
+  // `filterByExactLicense` drops the record from every licence-filtered result.
+  for (const [key, records, expected] of CORPUS_LICENSE_KEYS) {
+    assert.equal(resolveVocab(key, 'license'), expected, `${key} (${records} Datensätze)`);
+  }
+});
+
+test('a licence label never asserts a version the records do not carry', () => {
+  // Measured 2026-08-12: `ccm:commonlicense_version` is absent on 90 of 90 CC
+  // records sampled across CC_BY / CC_BY_SA / CC_BY_NC_SA, is not in
+  // DISPLAY_PROPS, and is not even facetable (400). "CC BY 4.0" was therefore an
+  // invented fact on 62 093 CC_BY records alone. The versioned spelling stays as
+  // an ALIAS, so every prompt and tool description that already uses it keeps
+  // resolving.
+  for (const entry of listVocab('license')) {
+    assert.ok(!/\d\.\d/.test(entry.label), `${entry.uri} behauptet eine Version: ${entry.label}`);
+  }
+  assert.equal(resolveVocab('CC BY 4.0', 'license'), 'CC_BY');
+  assert.equal(resolveVocab('CC BY-SA 4.0', 'license'), 'CC_BY_SA');
 });

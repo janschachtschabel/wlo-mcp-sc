@@ -55,8 +55,9 @@ könnte dahinterliegen.
 
 ## Was die Redaktion dafür anlegt
 
-Ein Dokument **in der Sammlung** — selbst ein Datensatz der Inhaltsart
-`ai_prompt` mit angehängtem Markdown. Freigegeben wird über `::: ki-skill`-Blöcke:
+Ein Dokument **in der Sammlung** — ein Datensatz der Inhaltsart `ai_prompt`
+(„KI-Prompt") mit angehängtem Markdown. Nicht `ai_skill`: das tragen seit
+2026-08-12 die Skills selbst, das Registry-Dokument spricht nur über sie. Freigegeben wird über `::: ki-skill`-Blöcke:
 
 ```markdown
 # Skills für die Sammlung Optik

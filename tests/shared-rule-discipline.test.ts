@@ -292,3 +292,22 @@ test('every path that renders collections attaches what the cache knows', () => 
   assert.deepEqual(files, ['services/search.ts', 'tools/collections.ts', 'tools/node-relations.ts'],
     `collection-rendering paths must attach the cache — got ${JSON.stringify(files)}`);
 });
+
+test('a collection search asks BOTH backends, and only one module knows that', () => {
+  // Measured 2026-08-11: the mds query cannot return the collection `9e7ae956`
+  // ("Optik") for any search word, while the REST collection search returns it
+  // every time — and the REST endpoint in turn reads no compendium text. So
+  // "search collections" means asking two backends, and a call site that reaches
+  // for one leg directly answers a narrower question than it looks like it does.
+  //
+  // Named files rather than a bare emptiness check, so that adding a fourth
+  // caller has to be a deliberate edit here — the same reason the registry guard
+  // above names its three.
+  const raw = /searchCollectionsBy(Keyword|Name)\s*\(/;
+  const found = offenders(raw, ['wlo-search.ts', 'services/collection-search.ts']);
+  assert.deepEqual(
+    found, [],
+    'use searchCollections from services/collection-search.ts — one leg alone is a '
+      + `different question: ${JSON.stringify(found)}`,
+  );
+});

@@ -7,7 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { registerSkillTools } from '../src/tools/skills.js';
 import { registerSkillRegistryTool } from '../src/tools/skill-registry.js';
-import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
 
@@ -27,7 +27,7 @@ const SKILL_A = uuid(1);
 
 function registryNode(title: string, id = 'reg-1') {
   return {
-    ...makeNode(id, title, { 'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [SKILL_CONTENT_TYPE_URI] }),
+    ...makeNode(id, title, { 'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI] }),
     mimetype: 'text/x-web-markdown',
     mediatype: 'file-markdown',
   };
