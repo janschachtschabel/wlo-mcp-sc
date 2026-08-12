@@ -40,6 +40,13 @@ export interface HttpAppOptions {
   apiRateLimiter: RateLimiter;
   /** Cap on DISTINCT logins one IP may present (AUTH_CREDENTIAL_LIMIT). */
   authAbuseLimiter: DistinctValueLimiter;
+  /**
+   * Cap on DISTINCT tickets one IP may exchange (TICKET_CREDENTIAL_LIMIT), on
+   * its own bucket space. Higher than the password budget and separate from it —
+   * the reasoning lives with the field in `rest/auth-pages.ts`. Absent falls
+   * back to `authAbuseLimiter`, the tighter of the two.
+   */
+  ticketAbuseLimiter?: DistinctValueLimiter;
   /** Max buffered request-body size in bytes (MAX_BODY_BYTES). */
   maxBodyBytes: number;
   /** Derive the client IP from X-Forwarded-For (TRUST_PROXY; see clientKey). */
@@ -80,7 +87,8 @@ export function createHttpRequestHandler(
   opts: HttpAppOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const {
-    rateLimiter, apiRateLimiter, authAbuseLimiter, maxBodyBytes, trustProxy, streamOptions, publicBaseUrl,
+    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter,
+    maxBodyBytes, trustProxy, streamOptions, publicBaseUrl,
   } = opts;
 
   // One store per process, held here rather than passed in: it takes no
@@ -393,6 +401,7 @@ export function createHttpRequestHandler(
       maxBodyBytes,
       rateLimiter: apiRateLimiter,
       authAbuseLimiter,
+      ...(ticketAbuseLimiter ? { ticketAbuseLimiter } : {}),
     })) return;
 
     // OAuth surface (discovery in P1; register/authorize/token follow). Like the

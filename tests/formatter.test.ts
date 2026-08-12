@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { formatNode, formatNodes, renderToText, renderToJson, resolveFacetCounts } from '../src/formatter.js';
+import { REGISTRY_SEARCH_MAX } from '../src/services/skill-registry.js';
 import { DISPLAY_PROPS } from '../src/wlo-api.js';
 import type { WloNode } from '../src/wlo-api.js';
 import { makeNode } from './fetchMock.js';
@@ -322,7 +323,7 @@ test('renderToText: a collection without a registry gains no lines', () => {
  * result should be. The decision now is that an approval list is shown in FULL:
  * a catalogue that names four of nine is the same shape this project rejects
  * everywhere else, and the entry a model needs may be the fifth. The service
- * already caps the catalogue itself at `REGISTRY_MAX` (30), so the listing
+ * already caps the catalogue itself at `REGISTRY_SEARCH_MAX` (30), so the listing
  * inherits a bound rather than adding a second, narrower one.
  */
 test('renderToText: every skill the catalogue carries is listed, not a sample', () => {
@@ -343,13 +344,31 @@ test('renderToText: every skill the catalogue carries is listed, not a sample', 
   assert.match(text, /Beschreibungen/, 'which is what get_skill_registry is for now');
 });
 
-test('renderToText: a full catalogue of 30 is still listed in full', () => {
-  // 30 is `REGISTRY_MAX`, the cap the service applies — so this is the largest
-  // catalogue that can reach the renderer at all.
-  const many = Array.from({ length: 30 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
+test('renderToText: a full search-tier catalogue is still listed in full', () => {
+  // THE PIN between the two caps, and the reason it takes the constant rather
+  // than the literal 30: `REGISTRY_SEARCH_MAX` (services/skill-registry.ts) is
+  // the most a listing's catalogue can carry, and `REGISTRY_LINES_MAX`
+  // (formatter.ts) is how many the renderer prints. They must be equal, or the
+  // renderer silently samples a list the service already considers complete —
+  // and the head line then says "alle hier gelistet" over a shortened one.
+  //
+  // The two cannot be one constant (formatter.ts is a leaf module, the service
+  // imports FROM it), so nothing structural held them together and the comments
+  // drifted: three of them named `REGISTRY_MAX` (100) as the partner, which is
+  // the TOOL's cap and not this one. A wrong name is how the next person
+  // "restores" the mirror by raising the wrong number. This test is the pin the
+  // comments were standing in for.
+  const many = Array.from(
+    { length: REGISTRY_SEARCH_MAX },
+    (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }),
+  );
   const text = renderToText([collectionWithRegistry(many)]);
   const shown = text.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
-  assert.equal(shown.length, 30);
+  assert.equal(
+    shown.length,
+    REGISTRY_SEARCH_MAX,
+    'the renderer must print every entry the search tier can hand it',
+  );
 });
 
 test('renderToText: what the SERVICE capped is still disclosed as missing', () => {

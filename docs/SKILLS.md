@@ -331,7 +331,11 @@ but carries its OWN content type. Nothing new has to be configured:
 2. Set its content type to **`ai_prompt`** ("KI-Prompt"). This is the one place
    the old term survives: since 2026-08-12 skills carry `ai_skill`, and a registry
    is a prompt document ABOUT skills, not a skill.
-3. **Name the file `SKILL_REGISTRY.md`**, or put `SKILL REGISTRY` in the title.
+3. **Name the file so it says what it is** — `SKILL_REGISTRY.md`, `skill_catalog.md`
+   or `skill_katalog.md` — or put the same word in the title (`Skillkatalog Physik
+   Optik` and `Skill Registry — Physik` both count). Upper and lower case, spaces,
+   hyphens and underscores make no difference; what the server looks for is
+   `skill` followed by `registry`, `catalog`, `catalogue` or `katalog`.
 4. List the approved skills as `::: ki-skill` blocks (below).
 
 Step 3 is not decoration. Measured on staging 2026-08-10: **all 28** skill

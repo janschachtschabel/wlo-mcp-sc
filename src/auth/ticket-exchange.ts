@@ -117,7 +117,24 @@ export async function exchangeTicket(
   );
   // Label = the verified authority, so revocation-by-account catches ticket
   // blocks together with the same person's password blocks.
-  await deps.support.registry.add({ jti, label: identity.authority, iat });
+  //
+  // Only when the id is not listed yet, and that guard is not cosmetic: `add`
+  // ALWAYS commits — it serialises the whole list, writes a temp file and
+  // renames it — while the registry is the one thing this server writes to disk
+  // at runtime. An embedded widget exchanges on every page load, so without the
+  // guard every page load rewrote the file, and the only difference between the
+  // old content and the new one was a refreshed `iat`. Keeping the first one is
+  // the more accurate record anyway: it is when this access began.
+  //
+  // `k: 'ticket'` is what keeps that guard from being the whole story. It marks
+  // the entry as one that appeared because someone opened a page, so the cap
+  // counts it apart from the blocks the same person pasted into their AI hosts
+  // (`MAX_BLOCKS_PER_LABEL`). The id is deterministic per TICKET, so a session's
+  // reloads are one entry — but each new session brings a new ticket and a new
+  // entry, and counted together those retired a pasted block after ten of them.
+  if (!deps.support.registry.has(jti)) {
+    await deps.support.registry.add({ jti, label: identity.authority, iat, k: 'ticket' });
+  }
   log.info('ticket exchanged for an access block', { label: sanitizeText(identity.authority) });
 
   return {

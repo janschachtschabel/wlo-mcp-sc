@@ -248,6 +248,24 @@ test('the skill-registry cache is started only by the transports', () => {
     `only the transports may start the cache — got ${JSON.stringify(files)}`);
 });
 
+test('the HTTP entry point wires the ticket limiter, not just the password one', () => {
+  // `ticketAbuseLimiter` is OPTIONAL on `HttpAppOptions`, and absence falls back
+  // to `authAbuseLimiter` — deliberately the tighter budget, so forgetting it
+  // over-refuses instead of running unbounded. That makes forgetting it SILENT:
+  // `/auth/ticket` quietly drops from 200 distinct tickets per address to 10,
+  // and the eleventh signed-in person behind a school's NAT is refused. Nothing
+  // else notices, because `http.ts` starts listening on import and no test can
+  // import it — the same structural blind spot that let raw `parseInt` survive
+  // the addition of `resolvePositiveInt` (see env-parsing-discipline.test.ts).
+  //
+  // So the wiring is checked in the SOURCE, the only place it is visible.
+  // Audited 2026-08-13: deleting the line left all 1853 tests green.
+  const found = offenders(/ticketAbuseLimiter/, ['http-app.ts', 'rest/auth-pages.ts']);
+  const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
+  assert.deepEqual(files, ['http.ts'],
+    `http.ts must hand the ticket limiter to the handler — got ${JSON.stringify(files)}`);
+});
+
 test('a page variant is projected onto its fields in exactly one place', () => {
   // `variantName` is set nowhere but the projection and declared nowhere but the
   // type, and both live in the owner — so any other occurrence is a second copy.

@@ -5689,3 +5689,215 @@ Adresse** und wird VOR der Berechtigung geprüft (`http-app.ts:177`), ein
 Relais-Client gibt diesen einen Topf also für alle seine Nutzer aus, anonyme
 eingeschlossen. Ein Agent-artiger Client mit ~15 Werkzeugaufrufen je Lauf ist
 bei ~8 Läufen/Minute am Anschlag. Betreiber-Entscheidung.
+
+---
+
+## Audit-Umsetzung, Doku-Abgleich und rohe Steuerzeichen (2026-08-12/13)
+
+Kein Plan-Paket, sondern die Umsetzung eines `/better-coding-audit` über den
+ganzen Baum plus die Nacharbeit daran. Hier festgehalten, weil ein frischer
+Kontext sonst weder das Lint-Gate noch den Live-Vertragstest kennt — und weil
+CLAUDE.md bis heute eine Aussage über den Ticket-Pfad machte, die nicht mehr
+stimmte.
+
+**Aus dem Audit gebaut.** Ein ESLint-Gate (`eslint.config.mjs`, bewusst nur
+Korrektheitsregeln, kein Formatierer) und damit vier CI-Tore statt zwei. Ein
+Live-Vertragstest gegen ein ECHTES Repository (`tests/live/write-contract.test.ts`
++ `scripts/run-live-tests.mjs`, `npm run test:live`, staging-only in der Datei
+erzwungen) — er schliesst die Lücke, die `wlo_create_collection` und
+`wlo_rename_collection` im August ihre Funktion kostete: gegen `fetchMock`
+beweist ein Test, dass wir senden, was wir zu senden beschlossen haben, nie dass
+das Repository es annimmt. Er ist absichtlich KEIN Gate (CI hat keine
+Zugangsdaten).
+
+**Ein echter Sicherheitsbefund, und er sass in der Regel, die das Schwestertool
+selbst dokumentiert.** `wlo_suggest_metadata` liess die Begründungen
+(`description`, `reason`) NEBEN dem Änderungssatz reisen, und der
+Bestätigungs-Token bindet einen Fingerabdruck genau dieses Satzes. Wer bestätigte,
+genehmigte damit Text, den niemand gesehen hatte — die Regel „alles, was der
+Aufruf senden wird, muss im Vorschau-Satz stehen", von innen verletzt. Behoben,
+indem die Begründungen in `action` wandern (das IST Teil des Fingerabdrucks);
+dazu eine Längengrenze auf `reason` und ein Filter, der nur Entwürfe für
+Eigenschaften behält, die sich überhaupt ändern. Rot-grün geführt (`not ok 2`,
+`not ok 3`, mit dem POST bis zum Upstream).
+
+**Nachgezogen am Ticket-Tausch** (den eine parallele Sitzung gebaut hat, siehe
+unten): die Registry wird nur noch geschrieben, wenn die Id noch nicht gelistet
+ist — ohne diese Wache schrieb JEDER Seitenaufruf einer Einbettung die einzige
+Datei neu, die dieser Server zur Laufzeit auf Platte schreibt, und der einzige
+Unterschied war ein frisches `iat`. Und `/auth/ticket` bekam einen EIGENEN
+Zähler (`TICKET_CREDENTIAL_LIMIT`, 200) statt einer grösseren gemeinsamen Zahl,
+damit ein betriebsames Widget nicht das Raterate-Budget von `/auth/issue`
+ausgibt; der Rückfall bei fehlender Verdrahtung ist bewusst das ENGERE Budget
+(10). Beides in `docs/AUTH.md` §5c beschrieben.
+
+**Registry-Erkennung vereinheitlicht.** Die zulässigen Schreibweisen einer
+Skill-Registry (`SKILL_REGISTRY.md`, `SKILL_CATALOG.md`, `Skillkatalog`, …)
+hingen an zwei Konstanten und liefen auseinander; jetzt eine Regel
+(`REGISTRY_MARK`, `services/skill-registry.ts`), und `docs/SKILLS.md:334` nennt
+sie.
+
+**Doku-Abgleich (2026-08-12).** Vier Lücken, eine davon sachlich falsch:
+`docs/PRIVACY.md` behauptete, jeder Eintrag der Erlaubnisliste trage eine
+ZUFÄLLIGE Zugangs-Id — für einen Ticket-Block ist das falsch, seine Id ist ein
+SHA-256 des Tickets; ausgerechnet die Datenschutzerklärung sagt Menschen, was
+über sie gespeichert wird. Dazu fehlte das Ticket selbst in der Tabelle der
+verarbeiteten Daten. `CONTRIBUTING.md`/`.de.md` nannten zwei Gates, wo CI vier
+fährt (wer sich daran hielt, bekam einen roten PR). Beide READMEs kannten
+`TICKET_CREDENTIAL_LIMIT` nicht. `docs/AUTH.md` §5c sagte „the
+distinct-credential limiter still applies", was nach der Trennung ungenau war.
+
+**Rohe Steuerzeichen im Quelltext (2026-08-13).** Fünf Bytes in zwei
+Testdateien: `tests/ticket-exchange.test.ts` (ein NUL) und
+`tests/widgets-followup.test.ts` (zwei NUL, `0x1b`, `0x1f`). Sie standen dort
+als DATEN — ein Test braucht ein Steuerzeichen, um zu prüfen, dass es abgelehnt
+wird, und der naheliegende Weg ist, es hinzuschreiben. Folge, gemessen: git
+nennt die Dateien BINÄR (`git diff --numstat` → `-  -`), also zeigen Review und
+GitHub „Binary files differ" statt eines Diffs, und ripgrep überspringt sie
+(„binary file matches", kein Inhalt) — womit die Dateien für genau die
+grep-gestützte Prüfung unsichtbar sind, auf der dieses Projekt sonst überall
+aufbaut. Kein Gate sah es: Lint grün, `tsc` grün, 1852 Tests grün, denn ein in
+einem String-Literal legales Byte ist für jedes Werkzeug legal, das die Datei
+als TEXT liest. Behoben durch Escapes (`\u0000` statt des Bytes — zur Laufzeit
+identisch, die 24 Tests der beiden Dateien laufen unverändert), abgesichert
+durch `tests/source-bytes-discipline.test.ts`, der den Baum als BYTES liest.
+Rot-grün: der Wächter meldete zuerst alle fünf Fundstellen, deckungsgleich mit
+einer unabhängigen Messung.
+
+Dass der Fehler nicht historisch ist, hat sich beim Schreiben DIESES Eintrags
+gezeigt: der Absatz oben sollte die Escape-Schreibweise nennen und enthielt
+stattdessen wieder das Byte selbst — bemerkt, weil ripgrep den Text nicht mehr
+fand. Genau derselbe Weg, auf dem die fünf im Testbaum entstanden. Das ist der
+Grund, warum die Regel einen Wächter braucht und nicht bloss einen Satz in
+einer Anleitung.
+
+**CLAUDE.md korrigiert.** Die Datei enthielt das Wort „ticket" NULL Mal und
+behauptete zugleich, das eingebettete Szenario sei „deliberately unbuilt: no
+concrete embedding exists yet". Beides war überholt. Jetzt trägt sie einen
+eigenen Block mit den vier Regeln, die den Pfad binden (Hash-Id statt Zufalls-Id,
+Registry-Schreibwache, eigenes Limiter-Budget, exakt passende CORS-Ausnahme),
+und der P2-Absatz sagt, was an ihm noch offen ist, ohne das Gebaute zu leugnen.
+
+**Nachweis:** `npm run typecheck` → 0 Fehler · `npx eslint .` → 0 Probleme ·
+`npm test` → **1853 Tests, 1853 pass, 0 fail** (1852 vorher + 1 neuer Wächter).
+
+**Angefasst:** `eslint.config.mjs`, `tests/live/write-contract.test.ts`,
+`scripts/run-live-tests.mjs`, `tests/source-bytes-discipline.test.ts` (neu) ·
+`src/tools/curation-suggestions.ts`, `src/services/skill-registry.ts`,
+`src/auth/ticket-exchange.ts`, `src/rest/auth-pages.ts`, `src/http.ts`,
+`src/http-app.ts` · `tests/ticket-exchange.test.ts`,
+`tests/widgets-followup.test.ts`, `tests/tools-curation-suggestions.test.ts`,
+`tests/tools-curation-prepare.test.ts`, `tests/skill-registry.test.ts`,
+`tests/auth-endpoints.test.ts` · `docs/PRIVACY.md`, `docs/AUTH.md`,
+`docs/SKILLS.md`, `CONTRIBUTING.md`, `CONTRIBUTING.de.md`, `README.md`,
+`README.de.md`, `CHANGELOG.md`, `CLAUDE.md`, `.env.example`,
+`docker-compose.yml`, `.github/workflows/ci.yml`, `package.json`, diese Datei.
+
+**Offen, bewusst nicht mitgenommen.** Der Ticket-Tausch selbst hat hier KEINEN
+eigenen Paket-Abschluss — er wurde in einer parallelen Sitzung gebaut, und deren
+Rot-Grün-Verlauf und verworfene Entwürfe sind nicht meine, um sie zu behaupten.
+Was gesichert ist, steht in `docs/AUTH.md` §5c und im neuen CLAUDE.md-Block;
+wer das Paket gebaut hat, sollte den Abschlusseintrag nachtragen. Ausserdem
+unverändert offen aus dem Eintrag davor: der engere Deckel für den Block-Eimer
+und `RATE_LIMIT_RPM` als Betreiber-Entscheidung.
+
+---
+
+## Audit der sieben ungeprüften Stellen (2026-08-13)
+
+Kein Plan-Paket, sondern ein gezieltes `/better-coding-audit` über genau die
+sieben Stellen, die der Eintrag davor als „von einer dritten Person nachzuprüfen"
+hinterlassen hat — plus die Behebung aller sieben. Zwei davon waren echte
+Defekte, einer eine falsche Tatsachenbehauptung in der Doku, und zwei Sorgen
+haben sich beim Nachmessen aufgelöst.
+
+**Ticket-Blöcke verdrängten die Blöcke, die derselbe Mensch bewusst angelegt
+hatte.** Der deterministische Zugangs-Id löst den SEITENAUFRUF: derselbe Tausch
+bleibt derselbe Eintrag. Die nächste Sitzung bringt aber ein neues Ticket, einen
+neuen Hash und damit einen neuen Eintrag — ein eingebettetes Widget legt also
+ungefähr einen pro Arbeitstag an, gegen einen Deckel, dessen eigene Begründung
+absichtliche Handlungen zählt („a laptop, a phone, two or three AI hosts"). Nach
+zehn Tagen Widget-Nutzung wich der älteste Eintrag des Kontos, und der älteste
+ist typischerweise der Block, den die Person Wochen zuvor in ihren KI-Host
+eingetragen hat: der Konnektor antwortete 401, dasselbe Blockstück nochmals
+einzufügen half nicht (es stand nicht mehr auf der Liste), und nichts sagte
+warum. Ein Registry-Eintrag trägt jetzt `k: 'ticket'` — gleicher Name, gleiche
+Werte, gleiche Bedeutung wie `AccessPayload.k` — und der Deckel gilt **pro Art**:
+eine Konstante über zwei Klassen, damit automatische Einträge nur noch
+automatische verdrängen. `removeByLabel` ist bewusst NICHT geteilt, denn ein
+Ticket-Block ist genauso viel Zugang wie ein eingefügter, und „alles widerrufen"
+über einem weiterlaufenden Widget wäre eine Lüge. Rot-grün geführt: der Test
+scheiterte zuerst mit „a deliberate block survives the widget".
+
+**Was ein totes Ticket auslöst, ist jetzt gemessen — und `docs/AUTH.md` behauptete
+das Falsche.** Dort stand, jeder Upstream-Aufruf scheitere mit `401`. Gegen
+Staging gemessen: der Identitäts-Endpunkt antwortet **404**, Suche, Knoten-
+Metadaten und Kinder-Auflistung antworten **500** `A valid SecureContext was not
+provided in the RequestContext`. Entscheidend ist die Antwort, die NICHT vorkommt
+— nie 200 als Gast. Das war die Sorge, die das Messen wert war, denn ein
+Zugangsdatum, das angenommen aussieht und es nicht ist, ist genau der Fehler, für
+den `auth/identity.ts` existiert. Da `ngsearch` bei non-OK wirft statt zu
+degradieren, erreicht der Fehler den Aufrufer als Fehler und nicht als „keine
+Treffer". Ein eigener Ablauf ist damit weder nötig noch gewollt; die Tabelle
+steht in §5c.
+
+**Drei Wächter für drei Dinge, die niemand beobachtet hat.** `http.ts` lauscht
+beim Import und ist deshalb aus keinem Test importierbar — dieselbe blinde
+Stelle, durch die seinerzeit das rohe `parseInt` überlebte. Folge: die Zeile
+`ticketAbuseLimiter` zu löschen liess alle 1853 Tests grün, während `/auth/ticket`
+still auf das engere Passwort-Budget zurückfiel und die elfte angemeldete Person
+hinter dem NAT einer Schule abwies. `shared-rule-discipline.test.ts` prüft die
+Verdrahtung jetzt im Quelltext (bewiesen: ohne die Zeile `got []`). Der
+Byte-Wächter von vorgestern schaute nur auf Endungen und übersah damit zehn
+Dateien, drei davon maschinell gelesen: `.env.example` (das
+`deploy-env-passthrough.test.ts` zeilenweise mit Regexen zerlegt und das jeder
+Betreiber nach `.env` kopiert), `public/llms.txt` und `public/robots.txt`, beide
+ausgeliefert. Seine Regel liegt jetzt in EINEM Prädikat statt in zwei Kopien;
+`.env` bleibt absichtlich draussen. Und `REGISTRY_LINES_MAX` muss gleich
+`REGISTRY_SEARCH_MAX` sein, sonst zeigt der Renderer eine Stichprobe aus einem
+Katalog, den der Dienst für vollständig hält, während die Kopfzeile weiter „alle
+hier gelistet" verspricht — die beiden können keine Konstante sein (Zyklus über
+ein Blattmodul), also hält ein Test sie zusammen (bewiesen: bei 31 gegen 30 rot).
+
+**Zwei Sorgen haben sich beim Nachmessen aufgelöst**, und das gehört genauso
+festgehalten. Die Kosten des Byte-Wächters sind **45–63 ms** über 431 Dateien und
+4,6 MB — bei 40,7 s Gesamtlaufzeit kein Thema. Und `REGISTRY_MARK` entscheidet
+wirklich nur einen Gleichstand (`pickRegistryNode`: `marked.length ? marked :
+candidates`), also wird ein „Skills-Katalog" gefunden, solange er das einzige
+`ai_prompt`-Markdown der Sammlung ist; erst ein zweites daneben macht daraus
+einen Münzwurf über die nodeId-Reihenfolge. Redaktionsfrage, kein Code-Defekt.
+
+Drei Kommentare — einer in `formatter.ts`, zwei in dessen Test — nannten
+`REGISTRY_MAX` (100) als Partner statt `REGISTRY_SEARCH_MAX` (30). Ein falscher
+Name ist der Weg, auf dem die nächste Person einen Spiegel „wiederherstellt",
+indem sie die Zahl hebt, die er nicht spiegelt. Dazu hat `renderToText` seine
+Zusammenfassungszeile zurückbekommen, die über einer fremden Konstante verwaist
+war.
+
+**Nachweis:** `npm test` → **1856 Tests, 1856 pass, 0 fail** (1853 + 3) ·
+`npm run typecheck` → 0 Fehler · `npx eslint .` → 0 Probleme · `npm run build` →
+exit 0.
+
+**Angefasst:** `src/auth/access-registry.ts`, `src/auth/ticket-exchange.ts`,
+`src/formatter.ts` · `tests/access-registry.test.ts`,
+`tests/shared-rule-discipline.test.ts`, `tests/source-bytes-discipline.test.ts`,
+`tests/formatter.test.ts` · `docs/AUTH.md`, `CLAUDE.md`, `CHANGELOG.md`,
+diese Datei.
+
+**Zum Ticket-Tausch als Paket.** Der Eintrag davor liess ihn bewusst ohne eigenen
+Abschluss, weil er in einer parallelen Sitzung gebaut wurde. Das bleibt richtig
+für seinen Rot-Grün-Verlauf — aber die Lage war schief: CLAUDE.md führte ihn als
+COMPLETE mit vier bindenden Regeln, während DIESE Datei, die CLAUDE.md selbst als
+„READ FIRST on resume" ausweist, ihn als Paket nicht kannte. Wer der Reihe nach
+las, fand ihn erst an zweiter Stelle. Was gesichert ist, steht jetzt an beiden
+Orten und ist gegen die Quelle geprüft: `docs/AUTH.md` §5c (inklusive der
+Messtabelle oben) und der CLAUDE.md-Block, dessen Regel (1) um die Hälfte
+ergänzt wurde, die der Hash nicht abdeckt.
+
+**Offen.** Der Live-Vertragstest (`npm run test:live`) ist weiterhin **nie
+gelaufen** — er braucht die Zugangsdaten und schreibt gegen Staging, und der
+Nutzer hat den Lauf nicht freigegeben. Statisch geprüft: Signaturen, Typecheck-
+Abdeckung, Staging-Ziel und Anmeldekette stimmen, es hindert ihn nichts. Das
+ersetzt den Lauf nicht — ein nie ausgeführter Test ist Gerüst, kein Nachweis.
+Ausserdem unverändert offen aus den Einträgen davor: der engere Deckel für den
+Block-Eimer und `RATE_LIMIT_RPM` als Betreiber-Entscheidung.

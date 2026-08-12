@@ -49,6 +49,14 @@ function installMock(o: MockOpts) {
 
 const LONG = 'Prozentrechnung: Grundwert, Prozentwert und Prozentsatz. '.repeat(20);
 
+/**
+ * The fallback path resolves the `ccm:wwwurl` host before handing it to the
+ * extraction service (SSRF, audit 2026-08-12 F-4), so every test that reaches
+ * that path injects its DNS answer. Neither DNS nor the network belongs in a
+ * unit test — the same reason `services/url-text.ts` has a `lookup` seam.
+ */
+const PUBLIC_DNS = { lookup: async () => [{ address: '93.184.216.34' }] };
+
 test('getContentText: repository text wins and the external service is not called', async () => {
   const mock = installMock({ repoText: LONG, wwwurl: 'https://tutory.de/dok/1' });
   try {
@@ -83,7 +91,7 @@ test('getContentText: metadata and text are fetched in parallel, not one after t
 test('getContentText: falls back to the extraction service when the repository is empty', async () => {
   const mock = installMock({ repoText: '', wwwurl: 'https://tutory.de/dok/1', extractionText: LONG });
   try {
-    const r = await getContentText('n1', 8000);
+    const r = await getContentText('n1', 8000, PUBLIC_DNS);
     assert.equal(r.source, 'external-extraction');
     assert.equal(r.sourceUrl, 'https://tutory.de/dok/1');
     assert.ok(r.text.length > 200);
@@ -98,7 +106,7 @@ test('getContentText: a too-short repository text does not count as content', as
   // real text the extraction service can still fetch.
   const mock = installMock({ repoText: 'Cookie-Hinweis', wwwurl: 'https://tutory.de/dok/1', extractionText: LONG });
   try {
-    const r = await getContentText('n1', 8000);
+    const r = await getContentText('n1', 8000, PUBLIC_DNS);
     assert.equal(r.source, 'external-extraction');
   } finally {
     mock.restore();
@@ -155,9 +163,65 @@ test('getContentText: an unknown node reports node_not_found', async () => {
 test('getContentText: a failing extraction service reports extraction_failed', async () => {
   const mock = installMock({ repoText: '', wwwurl: 'https://tutory.de/dok/1', extractionStatus: 424 });
   try {
-    const r = await getContentText('n1', 8000);
+    const r = await getContentText('n1', 8000, PUBLIC_DNS);
     assert.equal(r.source, 'none');
     assert.equal(r.reason, 'extraction_failed');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: refuses a wwwurl whose PUBLIC name resolves into a private network', async () => {
+  // Audit F-4. `isPrivateHost` inside the extraction client only judges the
+  // LITERAL host, so `http://name.example.org/` with an A record of 10.0.0.5
+  // walked straight through and turned the extraction service into a probe for
+  // its own network. `ccm:wwwurl` is a curated field, but WLO is an
+  // open-contribution platform and this tool answers anonymous callers —
+  // "curated" is not the same as "trusted address".
+  const mock = installMock({ repoText: '', wwwurl: 'http://name.example.org/doc', extractionText: LONG });
+  const befragt: string[] = [];
+  try {
+    const r = await getContentText('n1', 8000, {
+      lookup: async (h) => { befragt.push(h); return [{ address: '10.0.0.5' }]; },
+    });
+    // The resolver really ran — without this the assertions below would also
+    // hold for a build in which the guard silently does nothing.
+    assert.deepEqual(befragt, ['name.example.org']);
+    assert.equal(r.source, 'none');
+    assert.equal(r.reason, 'extraction_failed');
+    assert.equal(r.text, '');
+    assert.equal(
+      mock.calls.filter(c => c.url.includes(EXTRACTION_HOST)).length, 0,
+      'the extraction service must never be asked for a private-resolving host',
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: refuses a name that does not resolve rather than waving it through', async () => {
+  // The extraction service does its own lookup; a name we cannot resolve may
+  // well resolve for it, and not necessarily to what we would have seen.
+  const mock = installMock({ repoText: '', wwwurl: 'http://nx.example.org/doc', extractionText: LONG });
+  try {
+    const r = await getContentText('n1', 8000, {
+      lookup: async () => { throw new Error('NXDOMAIN'); },
+    });
+    assert.equal(r.reason, 'extraction_failed');
+    assert.equal(mock.calls.filter(c => c.url.includes(EXTRACTION_HOST)).length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: a literal private address is refused before any lookup', async () => {
+  const mock = installMock({ repoText: '', wwwurl: 'http://169.254.169.254/latest/meta-data/', extractionText: LONG });
+  try {
+    const r = await getContentText('n1', 8000, {
+      lookup: async () => { throw new Error('darf nicht gefragt werden'); },
+    });
+    assert.equal(r.reason, 'extraction_failed');
+    assert.equal(mock.calls.filter(c => c.url.includes(EXTRACTION_HOST)).length, 0);
   } finally {
     mock.restore();
   }

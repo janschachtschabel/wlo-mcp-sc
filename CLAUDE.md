@@ -611,13 +611,75 @@ The current rebuild/extension is designed in:
   `scope` and the address instead.
 
   P2 (a session credential for a chatbot embedded INSIDE the repository) is
-  designed in the same file and deliberately unbuilt: no concrete embedding
-  exists yet. The measurement it rests on is already in
+  designed in the same file and still unbuilt — but "no concrete embedding
+  exists yet", the reason it was parked, stopped being true on 2026-08-12: the
+  embedded case is served by the ticket block below, through a different
+  mechanism. What P2 alone would still add is a host that cannot hand over a
+  ticket either. The measurement it rests on is already in
   `2026-08-04-mcp-access-token-design.md` — a `JSESSIONID` DOES carry our
   endpoints; it was rejected as *block content* only because it has no lifetime,
   which is not a constraint for a host that has a live session per request. The
   invariant that must travel with it: the cookie branch belongs INSIDE
   `withCredential`'s repository-host check, not beside it.
+
+- **Ticket-Tausch für eingebettete Widgets (`POST /auth/ticket`) — COMPLETE
+  (2026-08-12); vollständig dokumentiert in `docs/AUTH.md` §5c:**
+
+  An edu-sharing page that already knows who is signed in hands its widget that
+  person's ticket (the `?ticket=…` convention the md-editor consumes in
+  production). `auth/ticket-exchange.ts` proves it against the repository and
+  wraps it in an ordinary `wlo2.` block carrying `k: 'ticket'`; from there
+  NOTHING is special — same header, same registry, same revocation, and
+  `credentialFromAccessBlock` rebuilds `EDU-TICKET <ticket>` upstream instead of
+  `Basic`. Wrapping rather than letting the widget hold the raw ticket is the
+  same reasoning that made blocks encrypt passwords: a block is useless anywhere
+  except against this server, a raw ticket is a live repository credential.
+
+  This is the THIRD mechanism tried for the embedded case and the first that
+  works — do not re-derive the other two, they are measured in
+  `2026-08-12-relay-credential-limiter.md`: the `JSESSIONID` relay of P2 above
+  is dead for a widget (`HttpOnly` ⇒ no JavaScript can read it, no `SameSite`
+  ⇒ a cross-site iframe carries nothing), and `appauth` is impersonation by
+  design — whoever may call it may become anyone.
+
+  Four rules bind any change here. (1) **The access id is a hash of the ticket**
+  (`sha256('wlo-ticket:' + ticket)`), never random: an embedded widget exchanges
+  on EVERY page load, so random ids would list a fresh entry each time until
+  `MAX_BLOCKS_PER_LABEL` started evicting the person's OTHER blocks — the ones
+  they pasted into their AI hosts. It stays a usable revocation secret because
+  its only preimage is the ticket, and whoever holds that holds the stronger
+  secret already. **That fixes the page load and not the session** (audit
+  2026-08-13): the next session brings a new ticket, a new hash and a new entry,
+  so a widget files about one per working day against a cap that counts
+  deliberate acts — and ten days of it retired a pasted block, leaving a 401 that
+  re-pasting could not cure. The entry therefore carries `k: 'ticket'`
+  (`RegistryEntry`, mirroring `AccessPayload.k`) and **the cap applies per KIND**,
+  one constant over two classes. `removeByLabel` is deliberately NOT split — a
+  ticket block is as much of an access as a pasted one, and "everything revoked"
+  over a widget that keeps working is a lie. (2) The registry is written **only when the id is not listed
+  yet**, and that guard is not cosmetic: `add` ALWAYS commits (serialise, temp
+  file, rename) and the registry is the one thing this server writes to disk at
+  runtime, so without it every page load rewrote the file — the sole difference
+  being a refreshed `iat`, while the first one is the more accurate record of
+  when the access began. (3) The endpoint spends its **own** limiter budget
+  (`TICKET_CREDENTIAL_LIMIT`, default 200) in its own buckets: a ticket is
+  server-generated and unguessable, so counting distinct ones bounds nothing a
+  password bucket bounds, and sharing `/auth/issue`'s budget would let one busy
+  embedding spend the password-guessing quota. Where it is not wired, the
+  fallback is the TIGHTER budget, deliberately. (4) `/auth/ticket` is the ONE
+  exact-match carve-out from the no-CORS rule on `/auth*` (`isCredentialSurface`,
+  `http-app.ts`) — it is called cross-origin by construction and no password is
+  typed there; the carve-out is exact-match so `/auth/ticket-anything` cannot
+  inherit it.
+
+  What happens when the ticket DIES is measured (2026-08-13, staging) and needs
+  no code of ours: `/iam/…/-me-` answers **404**, and search/node/children answer
+  **500** `A valid SecureContext was not provided`. Never 200-as-guest — the fear
+  worth testing, since a silently-guest credential is exactly what
+  `auth/identity.ts` exists for. `ngsearch` throws on non-OK rather than
+  degrading, so it reaches the caller as an error and not as "keine Treffer". Do
+  not add an expiry of ours; the repository enforces one, visibly, on every call.
+  The `401` `docs/AUTH.md` §5c claimed here was wrong and is corrected.
 
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context

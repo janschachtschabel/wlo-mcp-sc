@@ -9,14 +9,23 @@ readable changes that keep the project maintainable.
 
 1. Before coding: read the affected files, plan the smallest sensible change.
 2. For new logic or bug fixes: **test first** (`node:test`) — see it red, then green.
-3. Before "done": run `npm run build` **and** `npm test` — both green, read the output.
+3. Before "done": run all four gates below — green, and read the output. These are
+   exactly what CI runs, so a red one here is a red PR there.
 4. Keep docs (README, CHANGELOG, comments) in sync in the same change.
 
 ```bash
 npm install
-npm run build   # tsc (strict)
-npm test        # offline suite (node:test), no network required
+npm run build      # tsc (strict)
+npm run typecheck  # type gate over src + tests + widget entry points
+npm run lint       # ESLint, correctness rules only
+npm test           # offline suite (node:test), no network required
 ```
+
+`npm run test:live` exists too and is deliberately **not** one of the gates: it
+drives real writes against the staging repository and needs a service credential
+from `.env`, which CI has not got. Run it when you change the write pipeline —
+the offline suite fakes the upstream, so it proves what we send, never what the
+repository accepts.
 
 "No network required" is enforced, not just intended: `npm test` loads
 `tests/netguard.mjs`, which fails any fetch to a non-loopback host that no

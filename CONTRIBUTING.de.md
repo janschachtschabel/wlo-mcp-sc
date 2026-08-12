@@ -9,14 +9,23 @@ gut lesbare Änderungen, die das Projekt wartbar halten.
 
 1. Vor dem Coden: die betroffenen Dateien lesen, kleinste sinnvolle Änderung planen.
 2. Bei neuer Logik oder Bugfixes: **Test zuerst** (`node:test`), rot sehen, dann grün.
-3. Vor „fertig“: `npm run build` **und** `npm test` laufen lassen — beide grün, Output ansehen.
+3. Vor „fertig“: alle vier Prüfungen unten laufen lassen — grün, und den Output
+   ansehen. Genau diese laufen in CI; was hier rot ist, ist dort ein roter PR.
 4. Docs (README, CHANGELOG, Kommentare) in derselben Änderung mitziehen.
 
 ```bash
 npm install
-npm run build   # tsc (strict)
-npm test        # Offline-Suite (node:test), kein Netzwerk nötig
+npm run build      # tsc (strict)
+npm run typecheck  # Typ-Gate über src + tests + Widget-Einstiegspunkte
+npm run lint       # ESLint, nur Korrektheitsregeln
+npm test           # Offline-Suite (node:test), kein Netzwerk nötig
 ```
+
+`npm run test:live` gibt es ebenfalls und gehört bewusst **nicht** zu den
+Prüfungen: es schreibt wirklich gegen das Staging-Repositorium und braucht
+Dienst-Zugangsdaten aus `.env`, die CI nicht hat. Laufen lassen, wer die
+Schreib-Pipeline ändert — die Offline-Suite fälscht das Upstream und belegt
+damit, was wir senden, nie was das Repositorium annimmt.
 
 „Kein Netzwerk nötig" ist erzwungen, nicht bloß beabsichtigt: `npm test` lädt
 `tests/netguard.mjs`, das jeden Fetch an einen Nicht-Loopback-Host abbricht, den

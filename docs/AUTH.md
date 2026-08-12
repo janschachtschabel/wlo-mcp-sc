@@ -164,9 +164,9 @@ silent.
 
 ---
 
-## 5. Two ways in
+## 5. Three ways in
 
-Both end at the same place: a `wlo2.…` block the caller presents as
+All end at the same place: a `wlo2.…` block the caller presents as
 `Authorization: Bearer …`.
 
 ### 5a. Paste it once — `/auth`
@@ -276,6 +276,98 @@ failed PKCE proof must not leave it retryable. And every failure answers the sam
 `invalid_grant` text, because which check failed is exactly what the holder of a
 stolen code would like to learn.
 
+### 5c. A ticket from the host page — `POST /auth/ticket`
+
+For a chat widget embedded **inside an edu-sharing page**. The page already
+knows who is signed in and can hand the widget that person's ticket (the same
+`?ticket=…` convention the md-editor consumes in production); typing a WLO
+password a second time inside somebody else's page is exactly the shape §1
+refuses to normalise. The widget posts `{"ticket": "…"}`, this server proves it
+upstream — at the reported **authority**, never the status code, through the
+same `proveLogin` the password paths use — and answers with an ordinary block:
+
+```
+POST /auth/ticket          {"ticket": "TICKET_…"}
+  → 200 {"ok": true, "block": "wlo2.…", "authority": "…", "displayName": "…"}
+  → 400  ticket refused (invalid, expired, or the repository was unreachable — deliberately indistinguishable)
+  → 404  this deployment does not issue blocks (no WLO_AUTH_PRIVATE_KEY)
+  → 429  too many distinct credentials from this address
+```
+
+The block carries `k: 'ticket'` in its payload and decodes to
+`Authorization: EDU-TICKET <ticket>` upstream instead of `Basic` — the scheme
+edu-sharing accepts for tickets. Everything else is deliberately NOT special:
+same registry entry (labelled with the verified authority, so
+`/auth/revoke-all` ends ticket accesses together with the account's other
+blocks), same revocation, same abuse buckets.
+
+**When the ticket dies at the repository, access ends — loudly** (measured
+2026-08-13, against staging, and the earlier claim of `401` here was wrong):
+
+| presented                  | `/iam/…/-me-`      | search, node, children |
+|----------------------------|--------------------|------------------------|
+| nothing                    | 200, `esguest`     | 200, results           |
+| `Basic`, wrong password    | 401                | —                      |
+| **`EDU-TICKET`, dead**     | **404**            | **500** `A valid SecureContext was not provided` |
+| `Bearer`, anything         | 200, `esguest`     | — (ignored, P0 2026-07-30) |
+
+The row that matters is the one that is NOT there: a dead ticket never answers
+200 as a guest. That was the fear worth measuring, because it is the failure
+`auth/identity.ts` exists for — a credential that looks accepted and silently
+is not. Here the repository refuses outright, `ngsearch` throws on any non-OK
+rather than degrading (`wlo-search.ts`, and its comment says why: an empty
+result set would be read as "nothing matched"), and the tool reports an error.
+`wlo_auth_status` names it too, since `checkIdentity` reads 404 as
+not-authenticated.
+
+So there is no expiry of ours to enforce, and none is wanted: the repository
+enforces it, visibly, on every call. A well-formed but unknown ticket stands in
+for an expired one in that measurement — a ticket is a session key looked up in
+a table, and an expired session is simply absent from it.
+
+Three decisions worth naming:
+
+- **The access id is a hash of the ticket, not a random id — and that is only
+  half of what keeps the list honest.** An embedded widget exchanges on every
+  page load; with random ids each reload would list a fresh entry until
+  `MAX_BLOCKS_PER_LABEL` started evicting the person's OTHER blocks — the ones
+  pasted into their AI hosts. Same ticket, same id, same entry. The id stays a
+  usable revocation secret: its only preimage is the ticket.
+
+  What the hash cannot do is stop the NEXT session, which brings a new ticket
+  and therefore a new entry — so a widget files roughly one entry per working
+  day, against a cap whose own reasoning counts deliberate acts ("a laptop, a
+  phone, two or three AI hosts"). Ten days of use evicted the block that person
+  had pasted into ChatGPT weeks earlier; their connector answered 401, and
+  re-pasting the same block did not help, because it was off the allow-list.
+  Since 2026-08-13 the entry carries `k: 'ticket'` and **the cap applies per
+  kind**, so automatic entries are only ever retired by other automatic
+  entries. Revocation is untouched by the split: `/auth/revoke-all` still takes
+  both kinds, because a ticket block is exactly as much of an access as a
+  pasted one.
+- **This is the one `/auth*` path that carries CORS** (exact-match carve-out in
+  `isCredentialSurface`). Its only real client is a widget on a foreign
+  origin, and what a hostile page could make visitors present here is not a
+  human-chosen password with guessable neighbours but a repository-issued,
+  high-entropy ticket. The distinct-credential limiter still applies — on its
+  OWN budget (`TICKET_CREDENTIAL_LIMIT`, 200) and its own buckets, not the
+  password one beside it. Both halves of that matter: the same argument that
+  allows the carve-out says counting *different* tickets from one address proves
+  little, while the address here is routinely SHARED — an embedded widget on a
+  portal page puts a whole class behind one NAT, and on the password budget of
+  ten the eleventh signed-in person of the day was refused. Separate instance,
+  so a visitor's page reloads cannot spend that address's `/auth/issue` budget
+  either. An entry point that fails to wire it falls back to the tighter budget,
+  so forgetting over-refuses instead of running unbounded.
+- **Wrapping beats holding.** The widget could keep the raw ticket and send it
+  per request — but a raw ticket is a live repository credential, while a
+  block is useless anywhere except against this server and revocable here.
+  The ticket transits once and is never logged.
+
+Issuing the ticket is the host's business, not ours: browsers cannot fetch one
+(measured — no endpoint of the repository hands a forwardable credential to a
+browser), so the embedding page must template it server-side.
+
 ---
 
 ## 6. Why the write tools are visible to people who cannot use them
@@ -302,9 +394,9 @@ the build if a curation tool is ever registered past it.
 
 ## 7. Abuse limits
 
-`/auth/issue`, `/auth/revoke-all` and `POST /oauth/authorize` are the endpoints
-on this server that check a password, which makes each a guessing oracle with our
-address as the origin. All three pass two limiters:
+`/auth/issue`, `/auth/revoke-all`, `POST /oauth/authorize` and `POST /auth/ticket`
+are the endpoints on this server that check a credential, which makes each a
+guessing oracle with our address as the origin. All four pass two limiters:
 
 - **requests per address** (`RATE_LIMIT_RPM`), the ordinary public-surface bound;
 - **distinct logins per address** (`AUTH_CREDENTIAL_LIMIT`) — the guessing guard.

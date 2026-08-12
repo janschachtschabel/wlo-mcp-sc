@@ -207,6 +207,65 @@ test('a label keeps only its most recent blocks', async (t) => {
   assert.equal(reopened.has('other'), true);
 });
 
+/**
+ * Automatic entries must not push out the ones a person made on purpose.
+ *
+ * Found by audit 2026-08-13, and it is the ticket-exchange rule one level up.
+ * The deterministic `jti` collapses every PAGE LOAD of one edu-sharing session
+ * into a single entry — but the next session brings a new ticket, a new hash and
+ * therefore a new entry. So an embedded widget files roughly one entry per
+ * session, i.e. per working day, while the cap was calibrated for entries a
+ * person creates deliberately: `MAX_BLOCKS_PER_LABEL`'s own docstring reasons
+ * about "a laptop, a phone, two or three AI hosts".
+ *
+ * The consequence was silent and unrecoverable-in-place: after ten widget
+ * sessions the oldest entry of that label gave way, and the oldest is typically
+ * the block the person pasted into their AI host weeks earlier. Their connector
+ * then answers 401, re-pasting the same block does not help — it is off the
+ * allow-list — and nothing anywhere says why.
+ *
+ * The two kinds are therefore capped in SEPARATE classes. One constant, not a
+ * second number to justify: "ten is well above real use" holds per class, and
+ * for tickets it reads as roughly two working weeks before the oldest (long
+ * dead) entry is retired.
+ */
+test('ticket entries and deliberate blocks are capped apart, not against each other', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+
+  // What the person did on purpose: one block per AI host.
+  await registry.add({ jti: 'pasted-into-chatgpt', label: 'lehrerin', iat: 1_754_300_000 });
+  await registry.add({ jti: 'pasted-into-claude', label: 'lehrerin', iat: 1_754_300_001 });
+
+  // What merely visiting a page does, over more sessions than the cap allows.
+  for (let i = 1; i <= MAX_BLOCKS_PER_LABEL + 3; i++) {
+    await registry.add({ jti: `ticket-${i}`, label: 'lehrerin', iat: 1_754_400_000 + i, k: 'ticket' });
+  }
+
+  assert.equal(registry.has('pasted-into-chatgpt'), true, 'a deliberate block survives the widget');
+  assert.equal(registry.has('pasted-into-claude'), true);
+  assert.equal(registry.has('ticket-1'), false, 'ticket entries still give way — to each other');
+  assert.equal(registry.has('ticket-3'), false);
+  assert.equal(registry.has(`ticket-${MAX_BLOCKS_PER_LABEL + 3}`), true, 'the current session above all');
+
+  const reopened = await opened(path);
+  assert.equal(reopened.has('pasted-into-chatgpt'), true, 'the file agrees, not just the memory');
+  assert.equal(reopened.has('ticket-1'), false);
+});
+
+test('revocation-by-account still takes both kinds', async (t) => {
+  // The classes are separate for EVICTION only. `removeByLabel` is what someone
+  // reaches for when their account is compromised, and a ticket block is exactly
+  // as much of an access as a pasted one — leaving them behind would answer
+  // "everything revoked" over a widget that keeps working.
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  await registry.add({ jti: 'pasted', label: 'lehrerin', iat: 1_754_300_000 });
+  await registry.add({ jti: 'from-ticket', label: 'lehrerin', iat: 1_754_300_001, k: 'ticket' });
+
+  assert.equal(await registry.removeByLabel('lehrerin'), 2, 'both kinds went');
+  assert.equal(registry.has('from-ticket'), false);
+});
+
 // ── removing every block of one account ────────────────────────────────────
 
 /**

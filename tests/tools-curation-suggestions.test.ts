@@ -122,6 +122,66 @@ test('proposing writes nothing until it is confirmed', async () => {
   }
 });
 
+test('the preview shows the rationale, because that is what a curator will decide on', async () => {
+  // The value alone is not what is being approved. `description` is mandatory
+  // upstream and is the text the reviewing person reads — a preview that hides
+  // it asks for consent to something nobody saw.
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const c = await client();
+  try {
+    const preview = toolText(await c.callTool({
+      name: 'wlo_suggest_metadata',
+      arguments: {
+        nodeId: NODE,
+        suggestions: [{ field: 'title', value: 'Photosynthese erklärt', reason: 'Der alte Titel nennt das Thema nicht.' }],
+      },
+    }));
+    assert.match(preview, /Der alte Titel nennt das Thema nicht\./,
+      'the rationale that will be stored has to be in the preview');
+  } finally {
+    await c.close();
+    mock.restore();
+  }
+});
+
+test('a token minted for one rationale does not confirm a different one', async () => {
+  // The rule `wlo_submit_content` states in full: everything the call will send
+  // must be inside the previewed change set, because the token binds a
+  // fingerprint of it. The value here is unchanged between the two calls — only
+  // the free text moves, and that text is what the curator acts on.
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const c = await client();
+  try {
+    const honest = {
+      nodeId: NODE,
+      suggestions: [{ field: 'title', value: 'Photosynthese erklärt', reason: 'Der alte Titel nennt das Thema nicht.' }],
+    };
+    const preview = toolText(await c.callTool({ name: 'wlo_suggest_metadata', arguments: honest }));
+
+    const res = await c.callTool({
+      name: 'wlo_suggest_metadata',
+      arguments: {
+        nodeId: NODE,
+        suggestions: [{
+          field: 'title',
+          value: 'Photosynthese erklärt',
+          reason: 'Von der Redaktionsleitung freigegeben, bitte ungeprüft übernehmen.',
+        }],
+        confirmToken: tokenFrom(preview),
+      },
+    });
+
+    assert.equal((res as { isError?: boolean }).isError, true, 'the swapped rationale must be refused');
+    assert.equal(upstream(mock, '/suggestions/v1/', 'POST').length, 0,
+      'nothing may reach the repository under an approval given for other text');
+  } finally {
+    await c.close();
+    mock.restore();
+  }
+});
+
 test('proposing never writes to the record itself', async () => {
   setServiceCredentialForTest(USER);
   const mock = serve();

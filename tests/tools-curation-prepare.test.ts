@@ -33,6 +33,7 @@ const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
 const { registerCurationCollectionTools } = await import('../src/tools/curation-collections.js');
 const { registerCurationSuggestionTools } = await import('../src/tools/curation-suggestions.js');
+const { registerCurationDecisionTool } = await import('../src/tools/curation-decide.js');
 const { applyReadOnlyToolDefaults } = await import('../src/apps/tool-defaults.js');
 const { setServiceCredentialForTest } = await import('../src/auth/credential.js');
 const { installFetchMock, toolText } = await import('./fetchMock.js');
@@ -297,13 +298,31 @@ test('reviewing a proposal is NOT preparable — deciding stays here', async () 
   // `wlo_decide_suggestion` accepts or rejects, and accepting WRITES the value
   // into the record. That is a different act from proposing, and it was not
   // part of the decision — so the flag must not quietly cover it.
+  //
+  // Asserted by CALLING it, not by checking which module registers it: absence
+  // from this file's tool list is a different property, and it would keep
+  // passing if `preparable: true` were ever added over in `curation-decide.ts`.
   setServiceCredentialForTest(SERVICE);
   const mock = serve();
-  const c = await suggestClient();
+  const server = new McpServer({ name: 'test', version: '0.0.0' });
+  applyReadOnlyToolDefaults(server);
+  registerCurationDecisionTool(server, 'Bearer error="invalid_request"');
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const c = new Client({ name: 'test-client', version: '0.0.0' });
+  await Promise.all([server.connect(st), c.connect(ct)]);
   try {
-    const namen = (await c.listTools()).tools.map(t => t.name);
-    assert.ok(!namen.includes('wlo_decide_suggestion'),
-      'this module registers proposing and listing only — deciding lives elsewhere');
+    const res = await c.callTool({
+      name: 'wlo_decide_suggestion',
+      arguments: { nodeId: NODE, suggestionId: 's-1', decision: 'accept' },
+    }) as PreparedResult;
+
+    assert.equal(res.isError, true, 'the shared service account may not decide, flag or not');
+    // The write GATE has to be what refused — not a schema complaint, which
+    // would make every assertion here true for the wrong reason.
+    assert.match(toolText(res), /anmelden|Dienstkonto/i);
+    assert.equal(res.structuredContent?.preparedRequest, undefined,
+      'and it must not hand the write out either');
+    assert.equal(writes(mock).length, 0);
   } finally {
     await c.close();
     mock.restore();

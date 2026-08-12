@@ -17,6 +17,8 @@ import { WLO_TEXT_TIMEOUT_MS, getNodeMetadata, readNodeTextContent, stripStoreRe
 import { extractTextFromUrl } from '../text-extraction-api.js';
 import { nodeTitle } from '../node-match.js';
 import { capText } from '../text-cap.js';
+import { isPrivateHost, resolvesToPrivateAddress } from '../url-safety.js';
+import { log } from '../logger.js';
 
 /** Where the returned text came from. */
 export type ContentTextSource = 'repository' | 'external-extraction' | 'none';
@@ -61,7 +63,49 @@ export const MIN_USEFUL_CHARS = 200;
 /** Fields read off the node: its title and the external URL for the fallback. */
 const NODE_PROPS = ['ccm:wwwurl', 'cclom:title', 'cm:title', 'cm:name'];
 
-export async function getContentText(nodeId: string, maxChars: number): Promise<ContentText> {
+/** Injection point for tests — DNS does not belong in a unit test. */
+export interface ContentTextDeps {
+  lookup?: (hostname: string) => Promise<{ address: string }[]>;
+}
+
+/**
+ * Is this URL's host safe to hand to the fetching service?
+ *
+ * Literal check first, resolver second — the same order `services/url-text.ts`
+ * uses: a literal private address needs no DNS round trip. An unresolvable name
+ * counts as a refusal rather than as "public", because the extraction service
+ * does its own lookup and may get an answer we never saw.
+ *
+ * Only the host is ever logged, never the URL: it can carry a token in its
+ * query string, and a refusal must not be the thing that records it.
+ */
+async function hostIsPublic(
+  url: string,
+  lookup?: (hostname: string) => Promise<{ address: string }[]>,
+): Promise<boolean> {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  if (isPrivateHost(host)) {
+    log.warn('content text refused a private-network URL', { host });
+    return false;
+  }
+  const resolved = await resolvesToPrivateAddress(host, lookup);
+  if (resolved !== 'public') {
+    log.warn('content text refused a host by resolution', { host, resolved });
+    return false;
+  }
+  return true;
+}
+
+export async function getContentText(
+  nodeId: string,
+  maxChars: number,
+  deps: ContentTextDeps = {},
+): Promise<ContentText> {
   // In parallel: the text read is the slow one (median 4.6 s live), so pulling
   // the node's title and fallback URL alongside it costs no extra wall time.
   const [repo, node] = await Promise.all([
@@ -85,6 +129,16 @@ export async function getContentText(nodeId: string, maxChars: number): Promise<
 
   const wwwurl = stripStoreRef(node.properties?.['ccm:wwwurl']?.[0]);
   if (!wwwurl) return miss('no_text_no_url');
+
+  // SSRF (audit 2026-08-12, F-4): the check inside `extractTextFromUrl` judges
+  // only the LITERAL host, so a PUBLIC name with a private A record walked
+  // straight past it and turned the extraction service into a probe for its own
+  // network. `get_url_text` has resolved its host all along because its input is
+  // a tool argument; this input is a curated repository field — but WLO takes
+  // open contributions and `get_wlo_content_text` answers anonymous callers, so
+  // "curated" does not imply "trusted address". A refusal reports the existing
+  // `extraction_failed`: the tool's answer vocabulary stays unchanged.
+  if (!(await hostIsPublic(wwwurl, deps.lookup))) return miss('extraction_failed');
 
   const extracted = await extractTextFromUrl(wwwurl);
   if (!extracted || extracted.trim().length < MIN_USEFUL_CHARS) return miss('extraction_failed');

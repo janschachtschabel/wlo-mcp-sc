@@ -40,6 +40,27 @@ export interface AuthEndpointDeps {
   rateLimiter: RateLimiter;
   /** Distinct logins per address — the guessing guard. */
   authAbuseLimiter: DistinctValueLimiter;
+  /**
+   * Distinct TICKETS per address — the same guard, on its own budget and its own
+   * bucket space, because a ticket is a different kind of secret.
+   *
+   * The password budget is calibrated for a human-chosen secret with guessable
+   * neighbours, where ten tries from one address is already suspicious. A ticket
+   * is machine-issued and unguessable (the argument the CORS carve-out for this
+   * endpoint rests on, see `isCredentialSurface`), while the address it arrives
+   * from is routinely SHARED — an embedded widget on a school's portal page puts
+   * a whole class behind one NAT address. On the password budget the eleventh
+   * signed-in person of the day was refused: the relay-client failure this
+   * project already made once on `POST /mcp`, in the same shape.
+   *
+   * Separate INSTANCE, not merely a larger number: sharing one would let a
+   * visitor's page reloads eat the same address's `/auth/issue` budget.
+   *
+   * Optional, and absence falls back to `authAbuseLimiter` — the tighter of the
+   * two, so an entry point that forgets to wire it over-refuses instead of
+   * running the exchange unbounded.
+   */
+  ticketAbuseLimiter?: DistinctValueLimiter;
 }
 
 interface AuthReq extends AsyncIterable<Buffer | Uint8Array> {
@@ -176,7 +197,8 @@ async function route(
     if (!ticket) return send(res, 400, { error: 'Es wurde kein Ticket übermittelt.' });
     const outcome = await exchangeTicket(
       ticket,
-      { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
+      // The ticket budget, falling back to the password one — see the field.
+      { ip: deps.ip, authAbuseLimiter: deps.ticketAbuseLimiter ?? deps.authAbuseLimiter, support },
       Date.now(),
     );
     if (!outcome.ok) return sendFailure(res, outcome);

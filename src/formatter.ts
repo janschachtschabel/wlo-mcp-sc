@@ -312,7 +312,6 @@ function headingFor(title: string, url: string): string {
   return `## [${text}](<${target}>)`;
 }
 
-/** Render a list of FormattedNodes as a compact text format for LLM consumption. */
 /**
  * Skills shown per collection in a LISTING.
  *
@@ -322,11 +321,19 @@ function headingFor(title: string, url: string): string {
  * "a short list standing for a long one" shape this project refuses everywhere
  * else, and the entry a model needs may be the fifth.
  *
- * 30 mirrors `REGISTRY_MAX` in `services/skill-registry.ts`, which caps the
- * catalogue before it ever reaches a renderer — so this is not a second, narrower
- * bound but the same one, restated. It cannot be imported: `formatter.ts` is a
- * leaf module and the service imports FROM it, so the dependency would be a
- * cycle. `tests/formatter.test.ts` pins the number instead.
+ * 30 mirrors **`REGISTRY_SEARCH_MAX`** in `services/skill-registry.ts`, which
+ * caps the catalogue the SEARCH tier hands a renderer — so this is not a second,
+ * narrower bound but the same one, restated. Not `REGISTRY_MAX` (100): that is
+ * the cap `get_skill_registry` carries, and a listing never sees it. Three
+ * comments named it wrongly until 2026-08-13, which is how a mirror gets
+ * "restored" by raising the number it does not mirror.
+ *
+ * It cannot be imported: `formatter.ts` is a leaf module and the service imports
+ * FROM it, so the dependency would be a cycle. What holds the two together is
+ * therefore a test, not this sentence — `tests/formatter.test.ts` renders a
+ * catalogue of `REGISTRY_SEARCH_MAX` entries and requires every one of them to
+ * be printed. If this number falls behind, the renderer samples a catalogue the
+ * service considers complete while the head line still says "alle hier gelistet".
  */
 const REGISTRY_LINES_MAX = 30;
 
@@ -405,6 +412,8 @@ export function registryHintFor(nodes: FormattedNode[]): string[] {
 }
 
 /**
+ * Render a list of FormattedNodes as a compact text format for LLM consumption.
+ *
  * @param opts.registryHint `false` for one list of an answer composed of
  *   several — the caller then emits `registryHintFor` once over all of them, or
  *   omits it because it already looked the registries up.

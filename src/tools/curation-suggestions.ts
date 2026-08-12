@@ -22,7 +22,7 @@ import { z } from 'zod';
 
 import { toolError } from './shared.js';
 import { requireWrite, requireWriteRoute, type WriteRoute } from '../services/write/credential-gate.js';
-import { buildChangeSet } from '../services/write/change-set.js';
+import { buildChangeSet, type ChangeSet } from '../services/write/change-set.js';
 import { validateField } from '../services/write/fields.js';
 import {
   createSuggestions,
@@ -33,7 +33,7 @@ import {
   type SuggestionStatus,
 } from '../services/write/suggestions.js';
 import { getNodeMetadata } from '../wlo-node.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { flattenText, sanitizeText } from '../text-sanitize.js';
 import {
   registerCurationTool,
   type WriteAuthChallenge,
@@ -72,7 +72,10 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
       suggestions: z.array(z.object({
         field: z.enum(FIELD_NAMES).describe('Feld, z. B. "title", "description", "keywords", "discipline".'),
         value: z.string().describe('Der vorgeschlagene Wert. Labels werden wie beim Bearbeiten aufgelöst.'),
-        reason: z.string().describe(
+        // Bounded like the note in `wlo_submit_content`, and for the same
+        // reason: it is stored, and since it now travels in the preview an
+        // unbounded value would push the values it justifies out of view.
+        reason: z.string().max(1000).describe(
           'Warum dieser Wert besser ist. Wird mitgespeichert und ist das, worauf die prüfende Person entscheidet.',
         ),
         confidence: z.number().min(0).max(1).optional().describe('Wie sicher der Vorschlag ist (0–1).'),
@@ -149,6 +152,24 @@ interface RawSuggestion {
   confidence?: number;
 }
 
+/**
+ * One proposal's rationale, next to the value it justifies.
+ *
+ * The value is named again even though the change lines already carry it: ONE
+ * field can hold several proposals (`field: "keywords"` twice), and then the
+ * rationales are only checkable beside the value each one belongs to — which is
+ * the whole purpose of putting them in front of a person.
+ *
+ * The rationale is flattened and NOT capped: it is bounded by the schema, and it
+ * is exactly the text being approved. The value is capped, because here it only
+ * says which proposal is meant — the full value sits in the change line above
+ * and is fingerprinted from there.
+ */
+function reasonLine(d: SuggestionDraft): string {
+  const confidence = d.confidence !== undefined ? ` (Zuversicht ${d.confidence})` : '';
+  return `„${sanitizeText(d.value)}“${confidence}: ${flattenText(d.description)}`;
+}
+
 async function handleSuggest(params: Record<string, unknown>, route: WriteRoute) {
   const nodeId = String(params['nodeId'] ?? '');
   const raw = (Array.isArray(params['suggestions']) ? params['suggestions'] : []) as RawSuggestion[];
@@ -188,17 +209,28 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   if (!node) return errorText(`Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
   const before = node.properties ?? {};
 
-  const cs = buildChangeSet(nodeId, 'content', before, desired, {
-    action: `Schlägt für „${recordTitle(before)}“ (${nodeId}) die folgenden Werte zur Prüfung vor. ` +
-      'Der Datensatz selbst wird dabei NICHT verändert:',
-  });
+  const planned = buildChangeSet(nodeId, 'content', before, desired);
   // buildChangeSet drops values the record already carries — proposing those
   // would put a decision in front of someone that has nothing to decide.
-  const open = new Set(cs.changes.map(c => c.property));
+  const open = new Set(planned.changes.map(c => c.property));
   const kept = drafts.filter(d => open.has(d.propertyId));
   if (kept.length === 0) {
     return errorText('Die vorgeschlagenen Werte stehen bereits so im Datensatz — es gibt nichts vorzuschlagen.');
   }
+
+  // The rationales go INTO the action, which is what puts them in the preview
+  // AND in the token's fingerprint — the rule `wlo_submit_content` states for
+  // its note to the editorial team, applied to the same kind of text. Without
+  // it the token binds the values alone, so a second call could carry any
+  // justification at all: unseen by whoever approved, and stored as precisely
+  // the text the reviewing curator decides on. Built after `kept`, because a
+  // rationale for a value the record already holds is not part of what happens.
+  const cs: ChangeSet = {
+    ...planned,
+    action: `Schlägt für „${recordTitle(before)}“ (${nodeId}) die folgenden Werte zur Prüfung vor. `
+      + 'Der Datensatz selbst wird dabei NICHT verändert. '
+      + `Begründungen: ${kept.map(reasonLine).join('; ')}`,
+  };
 
   const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
   if (!token) return previewReply(cs, 'Zum Hinterlegen der Vorschläge bitte bestätigen.');

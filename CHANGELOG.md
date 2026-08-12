@@ -9,6 +9,149 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed — seven findings from auditing the seven places nobody had checked (2026-08-13)
+
+**Ticket blocks evicted the blocks people had made on purpose.** The
+deterministic access id collapses every page load of one edu-sharing session
+into a single registry entry — but the next session brings a new ticket, a new
+hash and a new entry, so an embedded widget files roughly one per working day.
+`MAX_BLOCKS_PER_LABEL` counts deliberate acts; its own reasoning is "a laptop, a
+phone, two or three AI hosts". Ten days of widget use therefore retired the block
+that person had pasted into their AI host weeks earlier: the connector answered
+401, re-pasting the same block did not help because it was off the allow-list,
+and nothing said why. A registry entry now records `k: 'ticket'` (mirroring
+`AccessPayload.k` in name, values and meaning) and **the cap applies per kind** —
+one constant over two classes, so automatic entries are only ever retired by
+other automatic ones. `removeByLabel` is deliberately not split: a ticket block
+is as much of an access as a pasted one, and revocation must take both.
+
+**What a dead ticket does was measured, and `docs/AUTH.md` had it wrong.** The
+document claimed every upstream call fails `401`. Against staging: the identity
+endpoint answers **404**, and search, node metadata and children listings answer
+**500** `A valid SecureContext was not provided in the RequestContext`. What
+matters is the answer that does NOT occur — a dead ticket never answers 200 as a
+guest, which is the silent failure `auth/identity.ts` exists to prevent. Because
+`ngsearch` throws on any non-OK rather than degrading, the failure reaches the
+caller as an error and not as "keine Treffer". No expiry of our own is needed or
+wanted; the table is in §5c.
+
+**Three guards, for three things nothing was watching.** `http.ts` cannot be
+imported by a test (it listens on import), so nothing noticed that deleting its
+`ticketAbuseLimiter` line left all tests green while `/auth/ticket` silently fell
+back to the tighter password budget and refused the eleventh signed-in person
+behind a school's NAT — `shared-rule-discipline.test.ts` now checks that wiring
+in the source, the way `env-parsing-discipline.test.ts` already does for `parseInt`.
+The byte guard added a fortnight ago scanned by extension only and so missed ten
+files, three of them read mechanically: `.env.example` (parsed line by line by
+`deploy-env-passthrough.test.ts`, and copied to `.env` by every operator),
+`public/llms.txt` and `public/robots.txt`, both served. Its scope rule now lives
+in one predicate instead of two copies. And `REGISTRY_LINES_MAX` must equal
+`REGISTRY_SEARCH_MAX` or the renderer samples a catalogue the service considers
+complete while the head line still promises "alle hier gelistet"; the two cannot
+be one constant (leaf-module cycle), so a test renders `REGISTRY_SEARCH_MAX`
+entries and requires every one to be printed.
+
+Three comments — one in `formatter.ts`, two in its test — named `REGISTRY_MAX`
+(100) as that partner instead of `REGISTRY_SEARCH_MAX` (30). A wrong name is how
+the next person "restores" a mirror by raising the number it does not mirror.
+`renderToText` also got its summary line back, which had been orphaned above an
+unrelated constant.
+
+### Fixed — raw control characters made two test files binary (2026-08-13)
+
+Five bytes across `tests/ticket-exchange.test.ts` and
+`tests/widgets-followup.test.ts` were control characters written as themselves
+rather than as escapes — a NUL, plus `0x1b` and `0x1f` inside a regex range.
+They were there as legitimate test DATA (does the ticket check refuse a control
+character? does the follow-up prompt strip one?), which is exactly why nobody
+looked twice.
+
+What it cost: **git classifies a file containing NUL as binary**, so
+`git diff --numstat` answered `-  -` and both a local review and GitHub showed
+"Binary files differ" instead of a diff. **ripgrep skips it** for the same
+reason, printing "binary file matches" and no content — leaving the file
+invisible to the grep-based checking used throughout this repository. No gate
+saw it: lint, `tsc` and all 1852 tests passed with the bytes in place, because a
+byte that is legal inside a string literal is legal to every tool reading the
+file as text.
+
+Each is now written as its `\uXXXX` escape — identical at runtime, and the 24
+tests in the two files pass unchanged. `tests/source-bytes-discipline.test.ts`
+reads the tree as BYTES and fails on any raw C0 character or DEL outside tab,
+LF and CR, so the next one is caught at authoring time rather than after it has
+already made a file unreviewable.
+
+### Fixed — three findings from reviewing the day's own changes (2026-08-12)
+
+**`wlo_suggest_metadata` did not bind its rationale to the confirmation.** The
+token binds a fingerprint of the change set, and the change set holds only
+`property/before/after` — so `reason` travelled beside it: not in the preview,
+not in the fingerprint, but in the POST body and from there into the repository.
+A token minted for one rationale confirmed a call carrying a different one, and
+that text is precisely what the reviewing curator decides on (`description` is
+mandatory upstream). This is the rule `wlo_submit_content` already states in full
+for its note to the editorial team — applied in one tool and not carried to its
+sibling. The rationales now go into the change set's `action`, which is what puts
+them in both the preview and the fingerprint, and `reason` gained the same
+`.max(1000)` bound the note has. Over the prepared-write route the unapproved
+text would additionally have been filed under a signed-in person's name.
+
+**A repeated ticket exchange rewrote the whole access registry.** `add` always
+commits — it serialises the list, writes a temp file and renames it — while the
+registry is the one thing this server writes to disk at runtime. An embedded
+widget exchanges on every page load, so every page load rewrote the file, and the
+only difference between old and new content was a refreshed `iat`. The exchange
+now skips `add` when the id is already listed; the entry keeps the timestamp of
+its first exchange, which is the more accurate record anyway.
+
+**`/auth/ticket` spent the password budget.** Ten distinct logins per address is
+right for a human-chosen secret with guessable neighbours. A ticket is
+machine-issued and unguessable — the argument the endpoint's own CORS carve-out
+rests on — while the address it arrives from is routinely SHARED, because an
+embedded widget on a portal page puts a whole class behind one NAT address. The
+eleventh signed-in person of the day was refused: the relay-client failure this
+project already made once on `POST /mcp`, in the same shape. The exchange now has
+its own limiter instance and its own budget (`TICKET_CREDENTIAL_LIMIT`, default
+**200**) — a separate instance rather than a bigger number, so page reloads
+cannot eat the same address's `/auth/issue` budget. Not unlimited: the bucket
+retains one digest per distinct ticket for the window, and this is what bounds
+that. It is the looser of the two bounds either way — `API_RATE_LIMIT_RPM` caps
+the same address at ~300 attempts in the same window. An entry point that does
+not wire it falls back to the tighter password budget, so forgetting over-refuses
+rather than running unbounded.
+
+Documentation moved with all three. `docs/PRIVACY.md` had gone factually wrong
+about the ticket path: it described every allow-list entry as carrying "a random
+access id", which a ticket block's is not — it is a SHA-256 of the ticket, and
+the privacy document is the one place that must not be approximate about what is
+stored. It now also lists the ticket itself among the data that transits, and
+names both limiter budgets. `CONTRIBUTING.md`/`.de.md` told contributors that
+`npm run build` and `npm test` were the gates before "done" — they have been four
+since the lint gate landed, so following the guide meant a red PR; the live
+write-contract run is named there too, with why it is deliberately not a gate.
+Both README env tables gained `TICKET_CREDENTIAL_LIMIT`, and `docs/AUTH.md` §5c
+no longer says the exchange shares the password limiter.
+
+### Changed — a registry may be called a catalogue (2026-08-12)
+
+The document that declares a collection's approved skills was recognised by one
+file name (`skill_registry.md`) and one title phrase (`skill registry`). The
+editorial team writes it three ways, and two of them were invisible to the
+tie-break: staging carries `skill_katalog.md` (measured, see
+`skill-catalogue.ts`) beside the English `skill_catalog.md`, and the live
+registry on the Optik collection is titled **"Skillkatalog Physik Optik"** —
+which the old phrase did not match at all, so it won only by being the sole
+candidate. Beside a second prompt document it would have been a coin flip on
+nodeId order.
+
+Both carriers now go through ONE pattern — `skill` followed by `registry`,
+`catalog`, `catalogue` or `katalog`, in any case and with spaces, hyphens or
+underscores between. Matching a little eagerly is the safe direction and is why
+this may be one loose rule rather than an exact-name list: it decides a TIE-BREAK
+among documents that are already `ai_prompt` Markdown in one collection, never
+whether a registry is recognised at all. `docs/SKILLS.md` names the accepted
+spellings instead of the single one.
+
 ### Added — a lint gate and a live write-contract test (2026-08-12)
 
 Two of the three actionable findings of the 2026-08-12 whole-codebase audit,

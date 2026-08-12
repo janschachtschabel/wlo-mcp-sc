@@ -27,6 +27,21 @@ export interface RegistryEntry {
   label: string;
   /** Issued-at, seconds. */
   iat: number;
+  /**
+   * How this entry came to be, mirroring `AccessPayload.k` in name, values and
+   * meaning — absent is the block a person fetched and pasted somewhere.
+   *
+   * It exists for ONE decision, `evictOldest`: an entry a person made
+   * deliberately and an entry that appeared because they loaded a web page are
+   * not interchangeable, and without this field the registry cannot tell them
+   * apart. See `MAX_BLOCKS_PER_LABEL` for what that cost.
+   *
+   * Entries written before 2026-08-13 carry no `k` and therefore read as
+   * deliberate. For the ticket entries among them that is wrong and it is also
+   * harmless: they age out of their own accord, and until they do they are
+   * counted in the stricter class.
+   */
+  k?: 'ticket';
 }
 
 export interface AccessRegistry {
@@ -73,12 +88,31 @@ const FORMAT_VERSION = 1;
  * single account push everyone else's access out. Ten is well above real use
  * (a laptop, a phone, two or three AI hosts) so the cap bounds abuse and neglect
  * without rationing anything.
+ *
+ * Applied per KIND since 2026-08-13, and the reasoning above is why. It counts
+ * things a person does on purpose, and a ticket entry is not one of those: an
+ * embedded widget files one per edu-sharing session simply because someone
+ * opened a page. Counted together, ten working days of widget use evicted the
+ * block that person had pasted into their AI host weeks earlier — their
+ * connector answered 401, re-pasting the same block did not help because it was
+ * off the allow-list, and nothing said why. The deterministic `jti` in
+ * `ticket-exchange.ts` prevents the same SESSION from filing twice; it cannot
+ * prevent the next session from filing at all.
+ *
+ * One constant rather than a second number to justify: "well above real use"
+ * holds in both classes. For tickets it reads as about two working weeks before
+ * the oldest — by then long expired, so granting nothing — is retired.
  */
 export const MAX_BLOCKS_PER_LABEL = 10;
 
 function isEntry(value: unknown): value is RegistryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
+  // `k` is optional and the only named value is 'ticket'. An unknown one fails
+  // the whole entry closed rather than being dropped: a kind we cannot name is a
+  // record written by something we do not understand, and admitting it in the
+  // deliberate class is the direction that loses someone their pasted block.
+  if (e['k'] !== undefined && e['k'] !== 'ticket') return false;
   return typeof e['jti'] === 'string' && !!e['jti']
     && typeof e['label'] === 'string'
     && typeof e['iat'] === 'number';
@@ -199,19 +233,23 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
   }
 
   /**
-   * Drop this label's oldest entries until it is back at the cap, and report
-   * what went so the caller can undo it. Oldest by INSERTION order: a `Map`
-   * preserves it and a reopened registry inherits the file's order, so the order
-   * entries were registered in is already there and needs no sort — and no
-   * tie-break for two blocks fetched in the same second.
+   * Drop the oldest entries of one label AND ONE KIND until that class is back
+   * at the cap, and report what went so the caller can undo it. Oldest by
+   * INSERTION order: a `Map` preserves it and a reopened registry inherits the
+   * file's order, so the order entries were registered in is already there and
+   * needs no sort — and no tie-break for two blocks fetched in the same second.
+   *
+   * Scoped to the kind because the two are not interchangeable — see
+   * `MAX_BLOCKS_PER_LABEL`. Only the class of the entry just added can have
+   * grown, so pruning that one is both sufficient and the whole job.
    *
    * Only ever called from `add`, so a file that already exceeds the cap (an
    * operator's edit, a lowered constant) is left alone until that account
    * fetches its next block. Pruning at load would mean opening the registry
    * could write, and `openRegistry` is also the read path.
    */
-  function evictOldest(label: string): [string, RegistryEntry][] {
-    const mine = [...entries.values()].filter((e) => e.label === label);
+  function evictOldest(label: string, kind: RegistryEntry['k']): [string, RegistryEntry][] {
+    const mine = [...entries.values()].filter((e) => e.label === label && e.k === kind);
     const excess = mine.length - MAX_BLOCKS_PER_LABEL;
     if (excess <= 0) return [];
     const dropped: [string, RegistryEntry][] = [];
@@ -228,7 +266,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
       await commit(() => {
         const previous = entries.get(entry.jti);
         entries.set(entry.jti, entry);
-        const evicted = evictOldest(entry.label);
+        const evicted = evictOldest(entry.label, entry.k);
         return () => {
           for (const [jti, e] of evicted) entries.set(jti, e);
           if (previous) entries.set(entry.jti, previous); else entries.delete(entry.jti);

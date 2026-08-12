@@ -51,11 +51,27 @@ const MARKDOWN_MIME = new Set(['text/x-web-markdown', 'text/markdown', 'text/x-m
 /** edu-sharing's coarse label, derived from the mimetype — the fallback when the raw value is unhelpful. */
 const MARKDOWN_MEDIATYPE = 'file-markdown';
 
-/** The filename that names a registry outright. */
-const REGISTRY_FILENAME = 'skill_registry.md';
-
-/** The phrase that marks a registry through its title, for a file the upload named otherwise. */
-const REGISTRY_TITLE_MARK = 'skill registry';
+/**
+ * How a document names itself the registry — in its file name or in its title.
+ *
+ * ONE rule for both carriers, because the editorial team writes the same word in
+ * both places and in whichever spelling is to hand. All four endings are in real
+ * use, not hypothetical: `docs/SKILLS.md` asks for `SKILL_REGISTRY.md`, staging
+ * carries `skill_katalog.md` (measured 2026-08-12, see `skill-catalogue.ts`)
+ * beside the English `skill_catalog.md`, and the live registry on the Optik
+ * collection is titled "Skillkatalog Physik Optik" — which the earlier
+ * `'skill registry'` phrase did not match at all. The separator class covers
+ * `skill_registry`, `Skill-Katalog`, `Skill Registry` and the run-together
+ * `Skillkatalog` alike.
+ *
+ * Matching a little too eagerly is the safe direction here and is why this may
+ * be one loose pattern rather than an exact-name list: it decides a TIE-BREAK
+ * among documents that are already `ai_prompt` Markdown in one collection, never
+ * whether a registry is recognised at all. Missing a real registry costs the
+ * collection its catalogue; over-matching costs at most the wrong pick between
+ * two documents that both look like one.
+ */
+const REGISTRY_MARK = /skill[\s_-]*(registry|catalogue|catalog|katalog)/i;
 
 export function isMarkdownSkillDoc(node: WloNode): boolean {
   return MARKDOWN_MIME.has((node.mimetype ?? '').toLowerCase()) || node.mediatype === MARKDOWN_MEDIATYPE;
@@ -78,11 +94,12 @@ function isAiPrompt(node: WloNode): boolean {
 /**
  * Whether this candidate names itself the registry.
  *
- * Both halves matter for a different reason. The filename rule is the one the
- * editorial guide asks for, but it distinguishes nothing today: all 28 skill
- * records on staging are named `SKILL.md` (measured 2026-08-10), because that is
- * what the upload produces. The TITLE is free text an editor sets, so it is the
- * rule that can work before the convention spreads.
+ * Both carriers are asked, and each covers what the other misses. The FILE NAME
+ * is what the editorial guide asks for, but it distinguishes nothing until the
+ * convention spreads: every skill record on staging is named `SKILL.md`
+ * (measured 2026-08-10), because that is what the upload produces. The TITLE is
+ * free text an editor sets, so it is the rule that works today — and the one the
+ * live Optik registry is actually found by.
  *
  * The title comes from `nodeTitle`, the canonical chain every other consumer
  * uses — NOT from `cclom:title` alone. `cm:title` is in the same projection and
@@ -92,8 +109,8 @@ function isAiPrompt(node: WloNode): boolean {
  * with the wrong document's catalogue.
  */
 function isMarked(node: WloNode): boolean {
-  const name = (node.properties?.['cm:name']?.[0] ?? '').toLowerCase();
-  return name === REGISTRY_FILENAME || nodeTitle(node).toLowerCase().includes(REGISTRY_TITLE_MARK);
+  const name = node.properties?.['cm:name']?.[0] ?? '';
+  return REGISTRY_MARK.test(name) || REGISTRY_MARK.test(nodeTitle(node));
 }
 
 /**

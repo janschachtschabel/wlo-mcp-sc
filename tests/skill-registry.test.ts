@@ -54,6 +54,37 @@ test('pickRegistryNode prefers a title carrying SKILL REGISTRY, case-insensitive
   assert.equal(chosen?.node.ref?.id, 'b');
 });
 
+/**
+ * The editorial team names the same document three ways. `skill_registry.md` is
+ * what the guide asks for; `skill_katalog.md` is what staging actually carries
+ * (measured 2026-08-12, see `skill-catalogue.ts`), and `skill_catalog.md` is the
+ * English spelling of that. All three have to win the tie-break, or a collection
+ * holding one alongside a second prompt document resolves alphabetically by
+ * nodeId — a coin flip over which catalogue a model is handed.
+ */
+for (const name of ['skill_registry.md', 'SKILL_CATALOG.md', 'skill_katalog.md']) {
+  test(`pickRegistryNode prefers the file named ${name}`, () => {
+    const chosen = pickRegistryNode([
+      promptNode('aaa-other', 'Irgendein Skill'),
+      promptNode('zzz-reg', 'Noch ein Skill', { name }),
+    ]);
+
+    assert.equal(chosen?.node.ref?.id, 'zzz-reg', `${name} must name the registry outright`);
+  });
+}
+
+test('pickRegistryNode prefers a title carrying Skillkatalog — the spelling staging uses', () => {
+  // The live registry on the Optik collection is titled "Skillkatalog Physik
+  // Optik" (2026-08-12). It wins today only because it is the sole candidate;
+  // beside a second prompt document it would not mark itself at all.
+  const chosen = pickRegistryNode([
+    promptNode('aaa', 'Rückmeldung formulieren'),
+    promptNode('zzz', 'Skillkatalog Physik Optik'),
+  ]);
+
+  assert.equal(chosen?.node.ref?.id, 'zzz');
+});
+
 test('pickRegistryNode is stable when nothing distinguishes the candidates', () => {
   const nodes = [promptNode('zzz', 'Zweiter'), promptNode('aaa', 'Erster')];
 

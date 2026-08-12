@@ -179,6 +179,11 @@ services:
       # (a personal login is forwarded upstream, so this caps using the server to
       # guess WLO logins). 0 disables; empty = the code's default of 10.
       AUTH_CREDENTIAL_LIMIT: "${AUTH_CREDENTIAL_LIMIT:-}"
+      # The same cap for /auth/ticket, on its own budget: a ticket is
+      # machine-issued and unguessable while its address is routinely shared (an
+      # embedded widget puts a school behind one NAT). 0 disables; empty = the
+      # code's default of 200.
+      TICKET_CREDENTIAL_LIMIT: "${TICKET_CREDENTIAL_LIMIT:-}"
       MAX_BODY_BYTES: "${MAX_BODY_BYTES:-}"
       WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-}"
       WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"

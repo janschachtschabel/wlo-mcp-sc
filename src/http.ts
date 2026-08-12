@@ -56,6 +56,24 @@ const API_RATE_LIMIT_RPM =
 const AUTH_CREDENTIAL_LIMIT =
   resolveNonNegativeInt(process.env['AUTH_CREDENTIAL_LIMIT'], 10, 'AUTH_CREDENTIAL_LIMIT');
 
+// The same guard for `/auth/ticket`, on its own budget and its own buckets.
+//
+// Twenty times the password budget, and the reason it may be that much higher is
+// what the endpoint's CORS carve-out already rests on: a ticket is machine-issued
+// and unguessable, so the number of DIFFERENT ones an address presents says
+// nothing about an attack — while the address is routinely shared, because an
+// embedded widget on a portal page puts a whole school behind one NAT address.
+// Ten refused the eleventh signed-in person of the day.
+//
+// 200 is deliberately not "unlimited": the bucket retains one digest per
+// distinct ticket for the whole ten-minute window, so this is what bounds that
+// state per address. Note it is the looser of the two bounds either way — the
+// per-address REQUEST limit (API_RATE_LIMIT_RPM, 30/min) already caps an address
+// at ~300 attempts in the same window, so this is a backstop, not the primary
+// guard. Set 0 to disable.
+const TICKET_CREDENTIAL_LIMIT =
+  resolveNonNegativeInt(process.env['TICKET_CREDENTIAL_LIMIT'], 200, 'TICKET_CREDENTIAL_LIMIT');
+
 // When true, derive the client IP from X-Forwarded-For (the rightmost,
 // proxy-appended hop — see clientKey) instead of the socket address — required
 // for correct per-client rate limiting behind a reverse proxy (nginx, …). Off by
@@ -82,6 +100,7 @@ const httpServer = http.createServer(createHttpRequestHandler({
   rateLimiter: createRateLimiter(RATE_LIMIT_RPM),
   apiRateLimiter: createRateLimiter(API_RATE_LIMIT_RPM),
   authAbuseLimiter: createDistinctValueLimiter(AUTH_CREDENTIAL_LIMIT),
+  ticketAbuseLimiter: createDistinctValueLimiter(TICKET_CREDENTIAL_LIMIT),
   maxBodyBytes: MAX_BODY_BYTES,
   trustProxy: TRUST_PROXY,
   streamOptions,
@@ -117,6 +136,7 @@ httpServer.listen(PORT, () => {
     rateLimitRpm: RATE_LIMIT_RPM,
     apiRateLimitRpm: API_RATE_LIMIT_RPM,
     authCredentialLimit: AUTH_CREDENTIAL_LIMIT,
+    ticketCredentialLimit: TICKET_CREDENTIAL_LIMIT,
     maxBodyBytes: MAX_BODY_BYTES,
     mcpSseStreaming: !streamOptions.enableJsonResponse,
   });

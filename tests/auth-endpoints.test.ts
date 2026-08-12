@@ -164,19 +164,59 @@ test('a missing or malformed ticket field is a 400, not an upstream call', async
   }
 });
 
-test('distinct tickets share the guessing budget and carry the long Retry-After', async (t) => {
+test('tickets do NOT spend the password budget — a shared address is the normal case', async (t) => {
+  // The password budget is ten distinct logins per address, which is right for a
+  // human-chosen secret with guessable neighbours. A ticket is machine-issued
+  // and unguessable, and the address it arrives from is routinely shared: a
+  // school behind one NAT puts a whole class in one bucket. Spending the
+  // password budget there refused legitimate, signed-in people from the
+  // eleventh onwards — the relay-client failure this project has already made
+  // once, on POST /mcp.
   await support(t);
   t.after(upstream('lehrerin'));
-  const shared = deps({ authAbuseLimiter: createDistinctValueLimiter(1, 600_000) });
+  const d = deps({
+    authAbuseLimiter: createDistinctValueLimiter(1, 600_000),
+    ticketAbuseLimiter: createDistinctValueLimiter(50, 600_000),
+  });
+
+  for (const suffix of ['aa', 'bb', 'cc']) {
+    const r = res();
+    await handleAuthEndpoint(postTicket(`${TICKET}${suffix}`), r, d);
+    assert.equal(r.out.status, 200, `ticket ${suffix} must not be refused by the password budget`);
+  }
+});
+
+test('the ticket budget still bounds, and carries the long Retry-After', async (t) => {
+  // Higher is not unlimited: the bucket retains one digest per distinct ticket
+  // for the whole window, so it stays bounded per address.
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({ ticketAbuseLimiter: createDistinctValueLimiter(1, 600_000) });
 
   const first = res();
-  await handleAuthEndpoint(postTicket(`${TICKET}aa`), first, shared);
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), first, d);
   assert.equal(first.out.status, 200);
 
   const second = res();
-  await handleAuthEndpoint(postTicket(`${TICKET}bb`), second, shared);
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), second, d);
   assert.equal(second.out.status, 429);
   assert.equal(second.headers['Retry-After'], '600', 'the distinct-login window, not the per-request one');
+});
+
+test('without its own limiter the ticket path falls back to the tighter budget', async (t) => {
+  // The fail-safe direction: an entry point that forgets to wire the ticket
+  // limiter over-refuses rather than letting the exchange run unbounded.
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({ authAbuseLimiter: createDistinctValueLimiter(1, 600_000) });
+
+  const first = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), first, d);
+  assert.equal(first.out.status, 200);
+
+  const second = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), second, d);
+  assert.equal(second.out.status, 429);
 });
 
 test('a path we do not own falls through', async (t) => {
