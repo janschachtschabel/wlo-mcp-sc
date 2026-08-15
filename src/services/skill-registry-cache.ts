@@ -332,6 +332,79 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<number> 
   return answered;
 }
 
+/**
+ * Catalogues the cache ALREADY holds for these ids, and a queue entry for the
+ * rest. Never goes upstream.
+ *
+ * For the broad overviews — `browse_collection_tree`, `get_subject_portals` —
+ * which render one line per collection over thirty or fifty of them. Even the
+ * bounded live fallback (`LIVE_FALLBACK_MAX`) is the wrong trade there: those
+ * tools exist to be fast and wide, and first contact would charge every one of
+ * them a children listing. Queued instead, so the tick answers it and the next
+ * call is complete.
+ *
+ * It keeps no "answered" count, unlike `attachCachedRegistries`, and that is not
+ * an oversight: these callers never print "geprüft, keine vorhanden". A marker
+ * appears only where a registry was actually found, so there is no claim of
+ * absence to qualify.
+ */
+export function cachedRegistriesFor(ids: string[]): Map<string, CachedRegistry> {
+  const found = new Map<string, CachedRegistry>();
+  if (!WLO_SKILL_CACHE) return found;
+  const cold: string[] = [];
+  for (const id of ids) {
+    const entry = entries.get(id);
+    if (!entry) { cold.push(id); continue; }
+    if (entry.registry) found.set(id, entry.registry);
+  }
+  if (cold.length) queueCollections(cold);
+  return found;
+}
+
+/**
+ * The catalogue of ONE collection — the one a tool was called about, rather than
+ * one it is returning.
+ *
+ * `ensureRegistries` answers for a list of RESULTS, which is the wrong half for
+ * `get_collection_contents`, `search_wlo_within_collection`, `get_node_details`
+ * on a collection or `get_topic_page_content`: there the collection whose
+ * approved skills the caller wants is named in the ARGUMENTS and never appears
+ * among the results. Same cache, same live fallback, same asymmetry — only the
+ * question is about one id.
+ *
+ * Three outcomes, not two, and the caller needs all three: a catalogue,
+ * `answered` with no registry ("this collection declares none"), and NOT
+ * answered — the listing failed, the id is unknown to us, or the cache is
+ * switched off. Collapsing the last two into one `null` made a failed lookup
+ * read as a collection that approves nothing, which is a different claim.
+ *
+ * A scan cut short at the file cap counts as unanswered for the same reason it
+ * does in `attachCachedRegistries`: 50 files read of 400 does not settle
+ * whether a registry is there.
+ *
+ * It never throws. This is an extra on an answer the caller already owes, so a
+ * registry lookup must not turn a listing into an error.
+ */
+export async function ensureRegistryFor(
+  collectionId: string,
+): Promise<{ registry: CachedRegistry | null; answered: boolean }> {
+  if (!WLO_SKILL_CACHE || !collectionId) return { registry: null, answered: false };
+  const known = entries.get(collectionId);
+  if (known) return { registry: known.registry, answered: !known.scanTruncated };
+
+  const result = await lookupOnce(collectionId).catch(() => null);
+  const entry = entryFrom(result, Date.now());
+  if (!entry) {
+    // Learned nothing — so it must be QUEUED, or the background tick never
+    // warms it and every following request repeats this live call. `remember`
+    // is what normally clears the queue entry; there is nothing to remember.
+    queueCollections([collectionId]);
+    return { registry: null, answered: false };
+  }
+  remember(collectionId, entry);
+  return { registry: entry.registry, answered: !entry.scanTruncated };
+}
+
 /** What one tick did. Logged in full — a background job nobody can see is a rumour. */
 export interface CacheTickReport {
   /** Collections the children listing actually SETTLED — registry or none. */

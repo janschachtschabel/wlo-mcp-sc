@@ -98,9 +98,14 @@ docker run --rm -v wlo-access-registry:/data -v "$PWD:/backup" alpine \
 `docker compose down` keeps the volume; `docker compose down -v` deletes it.
 
 The file is bounded on its own: each WLO account keeps its ten most recent
-blocks, so a lost block ages out once that person has fetched ten more. Deleting
-a line by hand revokes that block immediately — the list is read into memory at
-startup, so an edit needs a restart to take effect.
+entries **per kind**, so a lost block ages out once that person has fetched ten
+more. The two kinds are blocks someone fetched and pasted, and entries an
+embedded widget filed by exchanging a ticket — counted apart since 2026-08-13,
+because a widget files roughly one per session and would otherwise retire the
+blocks that person had deliberately pasted into their AI hosts. So budget for up
+to twenty entries per active account, not ten. Deleting a line by hand revokes
+that block immediately — the list is read into memory at startup, so an edit
+needs a restart to take effect.
 
 **Rotating the key.** Move the current value to `WLO_AUTH_PRIVATE_KEY_PREVIOUS`,
 put the new one in `WLO_AUTH_PRIVATE_KEY`, restart. Blocks issued under either

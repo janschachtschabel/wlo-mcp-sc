@@ -13,7 +13,8 @@ import {
   getChildCollectionsResult,
 } from '../wlo-api.js';
 import { sortByTitle } from '../reranker.js';
-import { formatNode, oneLine } from '../formatter.js';
+import { formatNode, oneLine, registrySummaryLines } from '../formatter.js';
+import { cachedRegistriesFor } from '../services/skill-registry-cache.js';
 import type { CollectionTreeNode } from '../services/collection-traversal.js';
 import { buildCollectionTree } from '../services/collection-traversal.js';
 import { resolveVocab } from '../vocabs.js';
@@ -120,6 +121,21 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
           };
         });
 
+        // ATTACHED to the node, and before the format branches — a catalogue
+        // that only a Markdown caller sees is the "switching output format
+        // silently dropped it" defect `get_node_details` already carries a
+        // comment about. `formattedNodeSchema` declares the field, so it
+        // survives zod on the way into structuredContent.
+        //
+        // Cache only: this listing covers every portal, and a children call per
+        // portal on first contact is the crawl the cache design exists to avoid.
+        // What it does not know is queued and appears on the next call.
+        const registries = cachedRegistriesFor(formatted.map(p => p.nodeId));
+        for (const p of formatted) {
+          const registry = registries.get(p.nodeId);
+          if (registry) p.skillRegistry = registry;
+        }
+
         if (params.outputFormat === 'json') {
           return {
             content: [{
@@ -140,6 +156,10 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
           if (p.educationalContexts.length) parts.push(`Bildungsstufe: ${p.educationalContexts.join(', ')}`);
           if (p.topicPageUrl) parts.push(`Themenseite: ${p.topicPageUrl}`);
           if (p.subCollectionCount !== undefined) parts.push(`Sub-Sammlungen: ${p.subCollectionCount}`);
+          // Head line only — a portal listing is a chooser, and the catalogue of
+          // thirty portals would bury it. The line names the count and the
+          // nodeId, so nothing is asserted that is not shown.
+          if (p.skillRegistry) parts.push(...registrySummaryLines(p.skillRegistry, { entries: false }));
           // Same record format and same reason as renderToText: every part is
           // one logical line, and a repository title carrying a newline would
           // otherwise open a second portal entry with a nodeId of its choosing.
@@ -230,6 +250,23 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
           includeContentCounts: params.includeContentCounts ?? false,
           contentPreview: params.includeContentPreview,
         });
+        // Before the format branches, and attached to the nodes — see
+        // `get_subject_portals` above for both reasons. `CollectionTreeNode` is
+        // a `FormattedNode`, so the field and its schema entry already exist.
+        const flat: CollectionTreeNode[] = [];
+        const collect = (nodes: CollectionTreeNode[]) => {
+          for (const n of nodes) {
+            flat.push(n);
+            if (n.children?.length) collect(n.children);
+          }
+        };
+        collect(tree);
+        const registries = cachedRegistriesFor(flat.map(n => n.nodeId));
+        for (const n of flat) {
+          const registry = registries.get(n.nodeId);
+          if (registry) n.skillRegistry = registry;
+        }
+
         const payload = { parent: parentId, depth, total: tree.length, results: tree, truncated };
 
         if (params.outputFormat === 'json') {
@@ -248,6 +285,10 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
             // title carrying a newline would add a branch with a nodeId that
             // exists nowhere in the tree (same rule as renderToText).
             lines.push(oneLine(`${pad}- **${n.title}** (${n.nodeId})${cnt}`));
+            for (const line of n.skillRegistry
+              ? registrySummaryLines(n.skillRegistry, { entries: false }) : []) {
+              lines.push(oneLine(`${pad}    ${line}`));
+            }
             for (const p of n.contentPreview ?? []) {
               lines.push(oneLine(`${pad}    · ${p.title}`));
             }

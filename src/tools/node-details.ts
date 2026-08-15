@@ -15,8 +15,9 @@ import {
   readNodeTextContent,
   type WloNode,
 } from '../wlo-api.js';
-import { formatNode, oneLine } from '../formatter.js';
+import { formatNode, oneLine, registrySummaryLines } from '../formatter.js';
 import { getParentCollections } from '../services/node-collections.js';
+import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { registerWloTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
@@ -65,7 +66,7 @@ export function registerNodeDetailTools(server: McpServer, searchResultsWidgetUr
     name: 'get_node_details',
     title: 'WLO Knoten-Details',
     widgetUri: searchResultsWidgetUri,
-    description: `Die DETAILANSICHT eines WLO-Datensatzes: Titel, Fach, Bildungsstufe, Lizenz, Anbieter, Link — die Metadaten, nicht der Inhalt. Schnell (~0,3 s).
+    description: `Die DETAILANSICHT eines WLO-Datensatzes: Titel, Fach, Bildungsstufe, Lizenz, Anbieter, Link — die Metadaten, nicht der Inhalt. Für ein Material schnell (~0,3 s); bei einer SAMMLUNG kommt einmalig der Abruf ihrer freigegebenen Skills dazu (~1 s), danach ist er gemerkt.
 Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung des Materials will, braucht get_wlo_content_text — nicht dieses Werkzeug. Dort kommt der Text notfalls auch von der verlinkten Seite und es wird gesagt, warum keiner da ist; \`includeTextContent\` hier ist nur die schnelle Variante ohne diesen Rückfall.
 Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: textContent, parents (in welcher Sammlung der Datensatz liegt) und raw — Letzteres genau fünf Vokabular-URIs plus den Lizenzschlüssel (ccm:taxonid, ccm:educationalcontext, ccm:educationalintendedenduserrole, ccm:oeh_lrt_aggregated, ccm:commonlicense_key), NICHT den ganzen Property-Bag.`,
     inputSchema: {
@@ -101,6 +102,12 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
 
         const props = node.properties ?? {};
         const formatted = formatNode(node);
+        // A collection's approved skills belong to the record being detailed, so
+        // they are attached to it rather than added beside it: both output
+        // formats and the widget then carry them without a second rule. A no-op
+        // for a material — `ensureRegistries` skips anything that is not a
+        // collection.
+        await ensureRegistries([formatted]);
         // One node is a list of one — the shape the results widget renders.
         const structuredContent = { total: 1, count: 1, results: [formatted] };
 
@@ -180,6 +187,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         if (formatted.previewUrl) lines.push(`Vorschaubild: ${formatted.previewUrl}`);
         lines.push(`WLO-URL: ${renderUrl}`);
         if (formatted.topicPageUrl) lines.push(`Themenseite: ${formatted.topicPageUrl}`);
+        // Hand-built format, so `renderToText`'s registry lines do not arrive on
+        // their own — same lines, same caps, from the one function that owns
+        // them.
+        if (formatted.skillRegistry) lines.push(...registrySummaryLines(formatted.skillRegistry));
         lines.push(`Typ: ${formatted.nodeType === 'collection' ? 'Sammlung' : 'Inhalt'}`);
 
         if (params.includeRaw) {

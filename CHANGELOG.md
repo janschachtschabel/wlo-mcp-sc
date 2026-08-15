@@ -9,6 +9,108 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Changed — the approval list reaches every collection tool, and is no longer cut at 30 (2026-08-15)
+
+**Up to 100 skills ride along, not 30.** The listing tier and the tool tier used
+to carry different numbers, so `search_wlo_collections` and `get_skill_registry`
+gave different answers to "which skills are approved here" — and the entry a
+model needed could be the 31st. `REGISTRY_SEARCH_MAX` is now `REGISTRY_MAX`.
+It costs no request: that tier takes title and nodeId out of the `:::` blocks, so
+the answer is two calls whatever the number.
+
+One sentence had to move with it. While the listing was the narrower tier it
+could honestly say "mehr mit `get_skill_registry`"; with both at 100 that is an
+offer the tool cannot keep, so a capped listing now points at the registry
+DOCUMENT, which `get_skill_registry` returns unchanged. The equality is pinned by
+a test, because raising one number without the other silently makes that
+sentence true or false again.
+
+**The collection a tool was CALLED ON now answers too.** The catalogue was
+attached to a tool's RESULTS, which answered for everything except the subject:
+`get_collection_contents` returns a collection's materials,
+`search_wlo_within_collection` a filtered slice, `get_node_details` its metadata
+— and the collection whose approved skills the caller wants is in the arguments,
+never in the result list. With `contentFilter="files"` the enrichment had nothing
+to attach to at all. `subjectRegistryText` (`tools/shared.ts`, over the new
+`ensureRegistryFor`) closes it for those three plus `get_topic_page_content`,
+where the id is the COLLECTION's — a variant is one rendering of a page, not a
+thing that can approve skills.
+
+The block names its collection in words. It arrives under the last listed record
+and without that line it reads as that record's registry — a material's, usually,
+which is a thing that cannot exist. Only running it showed that.
+
+**The browse tools mark, rather than list.** `browse_collection_tree`,
+`get_subject_portals` and `search_wlo_topic_pages` render one block per node, and
+a hundred skills under each destroys the shape they exist for. They carry the
+head line — title, count, nodeId — through `registrySummaryLines(…, {entries:
+false})`, the same function the full listing uses. And they read the cache ONLY
+(`cachedRegistriesFor`): a portal list covers thirty collections and a tree
+fifty, so first contact would charge a children listing for each, which is the
+crawl the cache exists to prevent. What it does not know is queued for the tick.
+
+**`get_related_content` answers for the collection it READ.** Its two result
+lists come from `FILES`-only queries and can hold no collection, which is why
+the `registryHintFor` call over their union was unreachable code — it could
+never fire. But the tool does touch a collection: with `includeSiblings` it
+reads the seed's parent to fill "Aus derselben Sammlung". That id is exposed as
+`registryCollectionId`, and which collection it names depends on the seed, since
+the tool takes "eine nodeId eines Inhalts ODER einer Sammlung": a collection seed
+IS the collection in play (its own parent is a level the caller never named),
+a material seed points at the parent the siblings came from, and without
+siblings there is no collection and nothing is said.
+
+**Review of the same change, eight findings, all fixed.** The one that mattered:
+both browse tools computed the registries *after* their `outputFormat === 'json'`
+early return, so a JSON caller got nothing while a Markdown caller got the head
+line — and the documentation written in the same change promised it to both.
+Fixed by attaching the catalogue to the NODE before either branch, which is also
+smaller: `CollectionTreeNode` is a `FormattedNode` and both browse schemas extend
+`formattedNodeSchema`, so the field and its zod entry already existed, and
+`renderThemePages` lost the lookup-map parameter it had grown.
+
+The rest: `ensureRegistryFor` now distinguishes **three** outcomes — a catalogue,
+"answered, none there", and "not answered" — instead of collapsing the last two
+into one `null` that read as a collection approving nothing; a lookup that
+learned nothing is now QUEUED, so the tick warms it rather than every request
+repeating the live call (the comment claimed this already happened); the subject
+block moved *below* the licence and empty-result notices, which say why a result
+may be short and must not sit under a hundred catalogue lines;
+`get_node_details` no longer advertises "~0,3 s" without saying that a collection
+adds one lookup; and one further defect the fixes themselves introduced, caught
+by re-reading the diff — an empty collection id produced "Ob die angefragte
+Sammlung  …", naming nothing and offering a call nobody can make.
+
+### Added — a loaded skill announces itself (2026-08-15)
+
+`get_skill` and `get_skill_for_task` now prefix the instructions with a line the
+model is asked to print verbatim into the chat:
+
+```
+[ edu-sharing Skill ] Unterrichtsstunde planen - aktiv
+```
+
+Until now a skill worked invisibly — the answer changed and nothing said why, or
+which uploaded document was steering it. The line closes that, and it is built
+**server-side from `cclom:title`**: nothing has to be written into a `SKILL.md`,
+so the editorial team maintains nothing and a document cannot choose its own
+announcement. It is also carried as its own `activation` field in the JSON
+output, so a client that renders the answer itself does not have to depend on
+the model complying.
+
+Two properties the implementation owes (`services/skill-activation.ts`): the
+line rests on the **content type**, not on which tool was called — `get_skill`
+also serves a skill's companion files, and announcing a template as an active
+skill asserts what the record denies — and the title passes through
+`sanitizeText`, not `oneLine`, because it lands inside an instruction reproduced
+verbatim to a person. That is the elevated-authority boundary, not the delimiter
+protection ordinary rendered values get. It sits ahead of the separator for the
+same reason the file manifest does; the block says so, since it has just taught
+the model to reproduce lines of that shape.
+
+Compliance cannot be enforced — it is a request to the model, exactly as with a
+host's own skill files.
+
 ### Fixed — seven findings from auditing the seven places nobody had checked (2026-08-13)
 
 **Ticket blocks evicted the blocks people had made on purpose.** The
@@ -24,6 +126,18 @@ and nothing said why. A registry entry now records `k: 'ticket'` (mirroring
 one constant over two classes, so automatic entries are only ever retired by
 other automatic ones. `removeByLabel` is deliberately not split: a ticket block
 is as much of an access as a pasted one, and revocation must take both.
+
+The on-disk format version is deliberately **not** bumped: a mismatch makes the
+registry answer null, which switches per-user access off entirely, so a bump
+would take every deployed block out of service the moment the new image starts.
+An optional field does not need one as long as both directions hold — a new
+build reads an old file and treats its entries as deliberate, an old build reads
+a new file, ignores the field and carries it through, because serialisation
+writes whole entry objects rather than rebuilding them. Both are pinned by
+tests; an entry naming a kind the build cannot interpret fails the file closed.
+`docs/PRIVACY.md` (which lists what is stored, and for how long),
+`docs/DEPLOYMENT.md` (budget for up to twenty entries per active account, not
+ten) and `docs/TOOLS.md` moved with it.
 
 **What a dead ticket does was measured, and `docs/AUTH.md` had it wrong.** The
 document claimed every upstream call fails `401`. Against staging: the identity

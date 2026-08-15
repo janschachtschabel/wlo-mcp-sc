@@ -5874,15 +5874,38 @@ indem sie die Zahl hebt, die er nicht spiegelt. Dazu hat `renderToText` seine
 Zusammenfassungszeile zurückbekommen, die über einer fremden Konstante verwaist
 war.
 
-**Nachweis:** `npm test` → **1856 Tests, 1856 pass, 0 fail** (1853 + 3) ·
+**Die Formatversion wurde bewusst NICHT erhöht**, und die Begründung gehört
+neben die Konstante, weil die nächste Person mit einem neuen Feld wieder davor
+steht: eine Abweichung lässt `parseEntries` `null` antworten, und `null` schaltet
+Personenzugänge **komplett ab** — ein Bump wäre also kein Migrationsvermerk,
+sondern ein Schalter, der beim Deploy jeden ausgegebenen Block außer Dienst
+setzt. Bei einem OPTIONALEN Feld ist er auch nicht nötig, solange beide
+Richtungen tragen, und für `k` tun sie das: ein neues Serverbild liest eine alte
+Datei und hält deren Einträge für absichtlich, ein zurückgerolltes liest eine
+neue Datei, ignoriert das Feld in `isEntry` und reicht es unverändert durch, weil
+die Serialisierung ganze Eintragsobjekte schreibt statt sie feldweise neu zu
+bauen. Zwei Tests halten beide Richtungen fest; ein Eintrag mit einer Art, die
+dieser Stand nicht kennt, lässt die Datei bewusst geschlossen scheitern.
+
+**Aus der Selbstprüfung nachgezogen**, und ohne sie wären es stille
+Falschaussagen geblieben: ein neues gespeichertes Feld ändert, was drei
+Dokumente über Aufbewahrung behaupten. `docs/PRIVACY.md` zählt die Felder eines
+Erlaubnislisten-Eintrags auf (an zwei Stellen) und nannte als Grenze „das elfte
+neuere Blockstück" — jetzt „das elfte neuere derselben Art".
+`docs/DEPLOYMENT.md` bezifferte die Dateigröße mit zehn Einträgen pro Konto; zu
+budgetieren sind jetzt bis zu zwanzig. `docs/TOOLS.md` sagt Nutzerinnen jetzt,
+dass ein automatisch erzeugter Zugang ihren selbst eingetragenen Block nicht
+verdrängen kann.
+
+**Nachweis:** `npm test` → **1858 Tests, 1858 pass, 0 fail** (1853 + 5) ·
 `npm run typecheck` → 0 Fehler · `npx eslint .` → 0 Probleme · `npm run build` →
 exit 0.
 
 **Angefasst:** `src/auth/access-registry.ts`, `src/auth/ticket-exchange.ts`,
 `src/formatter.ts` · `tests/access-registry.test.ts`,
 `tests/shared-rule-discipline.test.ts`, `tests/source-bytes-discipline.test.ts`,
-`tests/formatter.test.ts` · `docs/AUTH.md`, `CLAUDE.md`, `CHANGELOG.md`,
-diese Datei.
+`tests/formatter.test.ts` · `docs/AUTH.md`, `docs/PRIVACY.md`,
+`docs/DEPLOYMENT.md`, `docs/TOOLS.md`, `CLAUDE.md`, `CHANGELOG.md`, diese Datei.
 
 **Zum Ticket-Tausch als Paket.** Der Eintrag davor liess ihn bewusst ohne eigenen
 Abschluss, weil er in einer parallelen Sitzung gebaut wurde. Das bleibt richtig
@@ -5901,3 +5924,296 @@ Abdeckung, Staging-Ziel und Anmeldekette stimmen, es hindert ihn nichts. Das
 ersetzt den Lauf nicht — ein nie ausgeführter Test ist Gerüst, kein Nachweis.
 Ausserdem unverändert offen aus den Einträgen davor: der engere Deckel für den
 Block-Eimer und `RATE_LIMIT_RPM` als Betreiber-Entscheidung.
+
+---
+
+## 2026-08-15 — Aktivierungszeile beim Skill-Abruf (Paket abgeschlossen)
+
+**Was fehlte.** Ein Skill wirkte unsichtbar. `get_skill` liefert die Anleitung,
+das Modell arbeitet danach — und in der Antwort steht nichts darüber, dass ein
+hochgeladenes Dokument sie gerade mitsteuert, geschweige denn welches. Bei den
+Skills eines Hosts löst das die `SKILL.md` selbst, mit einer Zeile ganz oben.
+Für WLO-Skills wäre das dieselbe Zeile in 28 Dokumenten, von Hand gepflegt und
+vom Dokument bestimmt.
+
+**Gebaut.** `src/services/skill-activation.ts` (neu, 47 Zeilen) baut die Zeile
+server-seitig aus `cclom:title`:
+
+```
+[ edu-sharing Skill ] Unterrichtsstunde planen - aktiv
+```
+
+Sie hängt als Feld `activation` an `SkillDocument`, nicht im Renderer — deshalb
+tragen der Markdown-Kopf UND die JSON-Ausgabe dieselbe Zeile aus einer Quelle,
+und ein Client, der die Antwort selbst zeichnet, ist nicht auf das Wohlwollen
+des Modells angewiesen. `renderActivation` in `tools/skills.ts` bittet um die
+wörtliche Ausgabe; beide Abrufwerkzeuge gehen durch denselben Renderer, also
+gilt es auch für `get_skill_for_task`.
+
+**Drei Entscheidungen, die bindend sind.**
+
+*Die Zeile ruht auf der Inhaltsart, nicht auf dem Werkzeugaufruf.* `get_skill`
+liefert auch die Begleitdateien eines Skills aus — `getSkill` prüft die
+Inhaltsart bewusst nicht nach, damit ein Repository ohne gepflegtes Feld nicht
+„kein solcher Skill" auf einen sichtbar vorhandenen Datensatz antwortet. Eine
+bedingungslose Meldung hätte eine Vorlage zum aktiven Skill erklärt. Die
+Inhaltsart liegt in `SKILL_PROPS`, ist also ohne Zusatzabruf prüfbar.
+
+*Der Titel geht durch `sanitizeText`, nicht durch `oneLine`.* Der Unterschied
+steht im Quelltext von `formatter.ts` selbst: `oneLine` schützt die Trenner des
+Renderers, es sanitisiert nicht. Hier landet Repository-Text in einer Anweisung,
+die das Modell wörtlich an einen Menschen ausgibt — die Grenze, für die
+`text-sanitize.ts` existiert. Ein Titel mit Zeilenumbruch hätte sonst eine
+zweite, gefälschte Zeile geöffnet.
+
+*Sie steht vor der Trennlinie*, aus demselben Grund wie das Dateimanifest — und
+der Block sagt es ausdrücklich, weil er dem Modell gerade beigebracht hat, Zeilen
+genau dieser Form auszugeben.
+
+**Erzwingbar ist es nicht**, und das steht in allen drei Dokumenten. Es ist eine
+Bitte an das Modell, mit derselben Verbindlichkeit wie die Aktivierungszeile
+eines Host-Skills. Das Feld `activation` ist der Weg daran vorbei, wo ein Client
+die Darstellung selbst in der Hand hat.
+
+**Nachweis:** `npm test` → **1864 Tests, 1864 pass, 0 fail** (1858 + 6) ·
+`npm run typecheck` → 0 Fehler · `npx eslint .` → 0 Probleme · `npm run build` →
+exit 0. Fünf der sechs neuen Tests wurden vor der Umsetzung rot gesehen; der
+sechste („aktiviert nichts für einen nicht markierten Datensatz") ging vorher
+leer durch, weil es noch gar keine Zeile gab — er ist als Wächter geschrieben,
+nicht als Rot-Grün-Beleg, und wird erst mit der Umsetzung aussagekräftig.
+
+**Angefasst:** `src/services/skill-activation.ts` (neu), `src/services/skills.ts`,
+`src/tools/skills.ts` · `tests/tools-skills.test.ts` · `docs/SKILL-TRIGGER.md`,
+`docs/SKILLS.md`, `docs/TOOLS.md`, `CLAUDE.md`, `CHANGELOG.md`, diese Datei.
+
+**Offen / bewusst nicht gemacht.** Der Text nennt nur den Titel — die
+Beschreibung bleibt draussen (Entscheidung des Nutzers, „erstmal nur Titel").
+Ein Apps-SDK-Widget, das die Zeile in ChatGPT selbst zeichnet statt sie zu
+erbitten, ist der nächste Ausbauschritt und war hier ausdrücklich nicht im
+Auftrag; das Feld `activation` ist die Vorarbeit dafür. `src/tools/skills.ts`
+steht jetzt bei ~385 Zeilen und war schon vorher über der Schwelle — ein Schnitt
+gehört in eine eigene Änderung, nicht in diese.
+
+---
+
+## 2026-08-15 — Skill-Registry an allen Sammlungs-Werkzeugen, Deckel 100 (Paket abgeschlossen)
+
+**Der Bestand war zur Hälfte anders als angenommen.** Die Aufgabe nannte
+`get_collection_contents` als „liefert nichts mit"; tatsächlich rief es
+`ensureRegistries` — nur über die **Kinder**. Bei `contentFilter="files"` sind
+das Materialien, also passierte nichts. Das war das Muster hinter allem:
+Werkzeuge, die Sammlungen **zurückgeben**, hängten den Katalog an; Werkzeuge,
+die **auf einer** Sammlung arbeiten, meldeten deren eigene Registry nie — und
+genau die ist die gesuchte, weil sie in den Argumenten steht und nie im Ergebnis.
+
+**P1 — ein Deckel statt zweier.** `REGISTRY_SEARCH_MAX` ist jetzt
+`REGISTRY_MAX` (100), als Konstante geschrieben und nicht als wiederholte Zahl.
+Zwei Stufen bedeuteten, dass eine Suchliste und `get_skill_registry`
+Unterschiedliches über dieselbe Freigabeliste sagten. Es kostet keinen Abruf:
+die günstige Stufe liest Titel und nodeId aus dem `:::`-Block, die Antwort sind
+zwei Aufrufe, egal wie viele Skills.
+
+Damit wurde ein **Satz falsch**, und das ist der Teil, den nichts sonst gefunden
+hätte: „hier die ersten 30, mehr mit `get_skill_registry`" stimmte nur, solange
+das Werkzeug die höhere Stufe war. Bei Gleichstand ist es ein Angebot, das es
+nicht halten kann. Die gekappte Zeile zeigt jetzt auf das Registry-**Dokument**,
+das `get_skill_registry` unverändert mit ausgibt. Ein Test hält die Gleichheit
+fest, weil das Anheben einer der beiden Zahlen den Satz stillschweigend wieder
+wahr oder falsch macht.
+
+**P2 — die Sammlung, um die es geht.** `ensureRegistryFor` (eine Sammlung, ein
+Cache, dieselbe Asymmetrie) und `subjectRegistryText` in `tools/shared.ts` als
+die eine Stelle, die diese Frage beantwortet — festgehalten durch einen neuen
+Wächter-Test. Angeschlossen: `get_collection_contents`,
+`search_wlo_within_collection`, `get_topic_page_content` (dort die
+**Sammlungs-ID**, nie die Varianten-ID) und `get_node_details`, wo die Registry
+an den Datensatz selbst gehört statt daneben.
+
+Jedes Negative — keine Registry, unlesbar, unbekannte ID, Cache aus — rendert
+**nichts**. `ensureRegistryFor` kann die vier nicht unterscheiden, also wäre
+jeder Satz eine Behauptung über Daten, die niemand hat.
+
+**P3 — Übersichten markieren, statt zu listen.** `browse_collection_tree`,
+`get_subject_portals` und `search_wlo_topic_pages` rendern einen Block je Knoten;
+hundert Skills darunter zerstören die Form, für die es sie gibt. Sie tragen die
+Kopfzeile über `registrySummaryLines(…, {entries:false})` — dieselbe Funktion,
+kein zweites Format — und lesen **nur den Cache** (`cachedRegistriesFor`):
+dreißig Portale oder fünfzig Zweige mit je einer Kinderliste sind der Rundlauf,
+den dieser Cache verhindern soll.
+
+`get_related_content` bleibt bewusst draußen: beide Listen dort stammen aus
+`FILES`-Abfragen und können keine Sammlung enthalten. Nebenbefund, nicht
+geändert: die `registryHintFor`-Zeile dort kann aus demselben Grund nie feuern.
+
+**Zwei Dinge fand erst das Ausführen.** Der Registry-Block landete direkt unter
+dem letzten Datensatz und las sich als dessen Registry — bei einem Material
+etwas, das es nicht geben kann; er benennt seine Sammlung jetzt im Text, und ein
+Test hält das fest. Und der bestehende Themenseiten-Test
+(`tools-topic-pages.test.ts`) **prüft nichts**: seine Schleife läuft bei null
+Treffern leer durch, und genau das tut sie mit ihrem Mock. Mein Test nimmt
+deshalb den `collectionId`-Pfad, dessen Kette messbar ist.
+
+**Nachweis:** `npm test` → **1876 Tests, 1876 pass, 0 fail** (1864 + 12) ·
+`npm run typecheck` → 0 Fehler · `npx eslint .` → 0 Probleme · `npm run build` →
+exit 0.
+
+**Rot-Grün, genau:** 9 der 12 wurden vor der Umsetzung rot gesehen. Beim
+Themenseiten-Listen-Test, dessen Verdrahtung beim Schreiben schon stand, durch
+vorübergehendes Abklemmen der Übergabe nachgewiesen — sonst hätte er auch aus
+einer anderen Quelle grün sein können. Die restlichen drei sind **Wächter, die
+vorher leer durchgegangen wären** und das auch offen tun: „keine Registry → keine
+Zeile" und „kalte Sammlung wird nur vorgemerkt" behaupten eine Abwesenheit, die
+es vor der Änderung ohnehin gab, und die Zusicherung auf die benennende Zeile
+entstand nach dem Fehler — den ich an der echten Ausgabe gesehen und dann behoben
+habe, nicht an einem Test.
+
+**Angefasst:** `src/formatter.ts`, `src/services/skill-registry.ts`,
+`src/services/skill-registry-cache.ts`, `src/tools/shared.ts`,
+`src/tools/collections.ts`, `src/tools/node-details.ts`, `src/tools/browse.ts`,
+`src/tools/topic-page-content.ts`, `src/tools/topic-pages.ts`,
+`src/tools/topic-pages-present.ts` · `tests/tools-registry-cache.test.ts`,
+`tests/formatter.test.ts`, `tests/skill-registry.test.ts`,
+`tests/shared-rule-discipline.test.ts` · `docs/SKILL-TRIGGER.md`,
+`docs/SKILLS.md`, `docs/TOOLS.md`, `CLAUDE.md`, `CHANGELOG.md`, diese Datei.
+
+**Offen.** Der Nutzen von 100 statt 30 ist auf Staging nicht messbar: dort
+existiert genau **eine** Registry (Optik, 28 Einträge), also unter beiden
+Deckeln vollständig. Der Unterschied zeigt sich erst an einer Registry mit mehr
+als 30 Freigaben. Ebenfalls unverändert offen: `npm run test:live` ist nie
+gelaufen.
+
+### Nachtrag 2026-08-15 — Review desselben Pakets, 8 Befunde, alle behoben
+
+**Der schwere:** beide Browse-Werkzeuge berechneten die Registries **nach** ihrer
+`outputFormat === 'json'`-Weiche. JSON-Aufrufer bekamen nichts, Markdown-Aufrufer
+die Kopfzeile — und die Doku-Tabellen, in derselben Änderung geschrieben,
+versprachen es beiden. Behoben, indem der Katalog **an den Knoten** gehängt wird,
+vor jeder Formatweiche. Das ist zugleich weniger Code: `CollectionTreeNode` *ist*
+ein `FormattedNode`, beide Browse-Schemata erweitern `formattedNodeSchema` — Feld
+und zod-Eintrag existierten längst — und `renderThemePages` ist den Map-Parameter
+wieder los, den ich ihm angebaut hatte.
+
+**Drei Ausgänge statt zwei.** `ensureRegistryFor` unterscheidet jetzt Katalog /
+„geprüft, keine da" / „nicht geprüft". Die beiden letzten in ein `null` zu
+falten hieß, einen fehlgeschlagenen Abruf als Sammlung zu zeigen, die nichts
+freigibt — genau die Behauptung, für die es auf der Ergebnisseite
+`registryHintFor` gibt. Die Subjekt-Seite hat ihren eigenen Satz bekommen.
+
+**Die Warteschlangen-Lücke.** Ein Abruf, der nichts lernte, wurde weder gemerkt
+noch vorgemerkt: der Tick wärmte die Sammlung nie, jeder Folgeaufruf zahlte
+erneut live. Der Kommentar behauptete „stays queued" — das tat es nie. Jetzt tut
+es das, und der Kommentar stimmt.
+
+Dazu: Registry-Block **unter** Lizenz- und Leer-Hinweis (die sagen, warum ein
+Ergebnis kurz ist, und dürfen nicht unter hundert Katalogzeilen rutschen);
+`get_node_details` wirbt nicht mehr mit „~0,3 s", ohne den Sammlungs-Abruf zu
+nennen; ein Docstring, der Aufrufstellen zählte, zählt jetzt keine mehr; die
+verworfene `reach`-Berechnung im Kopfzeilen-Fall aufgelöst; und die bedingte
+Zusicherung aus der Schleife in einen eigenen `get_node_details`-Test gelöst,
+der zusätzlich `structuredContent` prüft.
+
+**Einen Fehler haben die Korrekturen selbst erzeugt**, gefunden beim erneuten
+Lesen des Diffs: bei leerer Sammlungs-ID — `get_topic_page_content` übergibt
+`collectionId ?? ''`, wenn eine Suche nichts traf — meldete der neue Satz „Ob die
+angefragte Sammlung  …", benannte nichts und bot einen Aufruf an, den niemand
+machen kann.
+
+**Testlücke geschlossen**, die Befund 1 durchgelassen hatte: alle 12 Tests des
+Pakets lasen `toolText`, also nur Markdown. Jetzt prüfen zwei Tests die
+JSON-Nutzlast **und** `structuredContent` — Letzteres ist der Teil, der beweist,
+dass das Feld deklariert ist, denn zod entfernt unbekannte Schlüssel lautlos.
+
+**Nachweis:** `npm test` → **1881 Tests, 1881 pass, 0 fail** (1876 + 5) ·
+`npm run typecheck` → 0 · `npx eslint .` → 0 · `npm run build` → exit 0. Alle
+fünf neuen Tests vor der Korrektur rot gesehen. Die Ausgabe beider geänderten
+Pfade zusätzlich einmal angesehen: JSON trägt `skillRegistry`, und die
+Blockreihenfolge stimmt.
+
+**Angefasst (nur Korrekturen):** `src/formatter.ts`,
+`src/services/skill-registry-cache.ts`, `src/tools/shared.ts`,
+`src/tools/browse.ts`, `src/tools/collections.ts`, `src/tools/node-details.ts`,
+`src/tools/topic-pages.ts`, `src/tools/topic-pages-present.ts` ·
+`tests/tools-registry-cache.test.ts` · `CHANGELOG.md`, diese Datei.
+
+### Nachtrag 2026-08-15 (2) — offene Punkte abgeräumt
+
+**`get_related_content` fragte etwas, das nie eine Antwort haben konnte.** Es
+rief `registryHintFor` über die Vereinigung seiner beiden Ergebnislisten — und
+beide stammen aus `FILES`-Abfragen, können also keine Sammlung enthalten. Die
+Zeile war unerreichbar. Statt sie zu löschen ist sie jetzt beantwortet: das
+Werkzeug LIEST eine Sammlung, nämlich den Primärelternteil des Ausgangsknotens,
+um „Aus derselben Sammlung" zu füllen. Der Dienst gibt sie als
+`siblingCollectionId` heraus, und nur wenn `includeSiblings` gefragt war — ohne
+Geschwister ist die Anfrage über EIN Material, und die Elternsammlung zu nennen
+beantwortete etwas, das niemand gefragt hat, auf Kosten eines Abrufs.
+
+Damit ist die Abdeckung vollständig: **jedes** Werkzeug, das eine Sammlung
+zurückgibt oder auf einer arbeitet, liefert ihren Katalog mit.
+
+**Zwei Stellen in CLAUDE.md waren durch die eigenen Änderungen falsch geworden**
+— die Regel „`get_related_content` ist bewusst ausgenommen" und die
+Aufzählung der zusammengesetzten Antworten, die es als zweiten Fall führte. Beide
+korrigiert, und die beiden Regeln des Reviews (Feld am KNOTEN vor jeder
+Formatweiche; drei Ausgänge statt zwei) sind jetzt dort festgehalten statt nur
+im CHANGELOG.
+
+**Nutzerdoku:** die Subjekt-Sammlung hat dieselben drei Zustände wie die
+Ergebnisseite (Katalog / geprüft, keiner / nicht geprüft) — jetzt als eigene
+Tabelle in `SKILL-TRIGGER.md`; und beide Tabellen sagen ausdrücklich, dass es in
+**beiden** Ausgabeformaten gilt, was vor dem Review nicht stimmte.
+
+**Nachweis:** `npm test` → **1883 Tests, 1883 pass, 0 fail** (1881 + 2) ·
+`npm run typecheck` → 0 · `npx eslint .` → 0 · `npm run build` → exit 0. Der
+Positivtest war vor der Änderung rot; der Negativtest („ohne Geschwister keine
+Sammlung") ging vorher leer durch und ist als Wächter geschrieben.
+
+**Angefasst:** `src/services/related.ts`, `src/tools/node-relations.ts` ·
+`tests/tools-registry-cache.test.ts` · `CLAUDE.md`, `docs/SKILL-TRIGGER.md`,
+`docs/TOOLS.md`, diese Datei.
+
+### Nachtrag 2026-08-15 (3) — zweites Review, 6 Befunde, alle behoben
+
+**Der schwere war ein Dokument, kein Code.** `CHANGELOG.md` behauptete im
+Abschnitt desselben Tages, `get_related_content` sei „deliberately left out" —
+das hatte ich eine Stunde später umgekehrt und nur in DIESER Datei nachgetragen.
+Ein Changelog, der das Gegenteil des Codes sagt, ist schlimmer als keiner, weil
+er begründet klingt.
+
+**Ein echter Zielfehler.** `siblingCollectionId` war korrekt benannt — es war der
+Ort, aus dem die Geschwister kamen — aber das ist nicht immer die Sammlung, um
+die es geht. Das Werkzeug nimmt laut eigener Beschreibung „eine nodeId eines
+Inhalts ODER einer Sammlung", und bei einer Sammlung ist
+`virtual:primaryparent_nodeid` die Ebene DARÜBER. `get_related_content` auf
+„Optik" meldete also die Registry von „Physik". Das Feld heißt jetzt
+`registryCollectionId` und trägt die Regel statt der Herkunft: Sammlung als
+Ausgangsknoten → sie selbst; Material → die Elternsammlung, und nur mit
+`includeSiblings`.
+
+**Zwei Beschreibungen, die Modelle in die Irre schicken.**
+`search_wlo_within_collection` verwies für die freigegebenen Skills auf
+`get_skill_registry` — die Antwort trägt sie inzwischen selbst; das ist genau der
+Rundlauf, den `registryLines` im Code schon vermeidet. Und
+`get_related_content` nannte seinen Parameter „`siblings`", er heißt
+`includeSiblings` — ein Modell, das der Beschreibung folgt, bekommt keine
+Geschwister. Letzteres war vorbestehend und ist mit erledigt.
+
+Dazu: JSON-Abdeckung von `get_related_content` in den vorhandenen Test gezogen
+(die Lücke, die eine Runde zuvor den schweren Befund durchgelassen hatte), und
+der Doppeldurchlauf über den Sammlungsbaum zu einem zusammengefasst.
+
+**Beim Gegenlesen zwei weitere veraltete Stellen gefunden**, beide aus dem
+Deckel-Umbau: `SKILL-TRIGGER.md` führte in der Redaktions-Checkliste weiterhin
+„(in der Suchliste 30)", und der CLAUDE.md-Block vom 2026-08-11 beschrieb die
+zwei Stufen als geltend. Beide korrigiert bzw. als abgelöst markiert — die
+Begründung von damals bleibt lesbar, weil sie erklärt, warum es die Stufen gab.
+
+**Nachweis:** `npm test` → **1884 Tests, 1884 pass, 0 fail** (1883 + 1) ·
+`npm run typecheck` → 0 · `npx eslint .` → 0 · `npm run build` → exit 0. Der
+Test zum Sammlungs-Ausgangsknoten war vor der Änderung rot; die JSON-Zusicherung
+ging sofort grün und belegt damit, was sie belegen soll — beide Zweige hängen
+denselben Block im selben Ausdruck an.
+
+**Angefasst:** `src/services/related.ts`, `src/tools/node-relations.ts`,
+`src/tools/collections.ts`, `src/tools/browse.ts` ·
+`tests/tools-registry-cache.test.ts` · `CHANGELOG.md`, `CLAUDE.md`,
+`docs/SKILL-TRIGGER.md`, `docs/TOOLS.md`, diese Datei.

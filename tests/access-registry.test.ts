@@ -253,6 +253,48 @@ test('ticket entries and deliberate blocks are capped apart, not against each ot
   assert.equal(reopened.has('ticket-1'), false);
 });
 
+/**
+ * The `k` field was added to an on-disk format that is already deployed, and the
+ * format version was deliberately NOT bumped — a mismatch makes `parseEntries`
+ * answer null, which switches per-user access OFF entirely, so a bump would take
+ * every existing block out of service on deploy with nothing but a log line.
+ *
+ * That is only defensible while both directions are safe, which is what these
+ * two pin. The rollback direction is not hypothetical: it is one `docker
+ * compose` away at any time.
+ */
+test('a registry file written before `k` existed still loads, and its entries are deliberate', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  writeFileSync(path, JSON.stringify({
+    v: 1,
+    entries: [{ jti: 'alt-1', label: 'lehrerin', iat: 1_754_300_000 }],
+  }), 'utf8');
+
+  const registry = await opened(path);
+  assert.equal(registry.has('alt-1'), true, 'an old entry is not discarded');
+
+  // No `k` reads as deliberate, so it is counted in that class: filling the
+  // TICKET class must not touch it.
+  for (let i = 1; i <= MAX_BLOCKS_PER_LABEL + 1; i++) {
+    await registry.add({ jti: `t-${i}`, label: 'lehrerin', iat: 1_754_400_000 + i, k: 'ticket' });
+  }
+  assert.equal(registry.has('alt-1'), true, 'and the widget cannot push it out');
+});
+
+test('an entry naming a kind we cannot interpret fails the whole file closed', async (t) => {
+  // Fail closed, not "drop the odd entry": a kind this build does not know is a
+  // record written by something it does not understand, and guessing which class
+  // it belongs to is how someone loses a pasted block. Losing the allow-list
+  // means everyone fetches a new one — the recoverable direction.
+  const path = join(tempDir(t), 'registry.json');
+  writeFileSync(path, JSON.stringify({
+    v: 1,
+    entries: [{ jti: 'a', label: 'lehrerin', iat: 1_754_300_000, k: 'aus-der-zukunft' }],
+  }), 'utf8');
+
+  assert.equal(await openRegistry(path), null, 'per-user access stays off rather than half-understood');
+});
+
 test('revocation-by-account still takes both kinds', async (t) => {
   // The classes are separate for EVICTION only. `removeByLabel` is what someone
   // reaches for when their account is compromised, and a ticket block is exactly

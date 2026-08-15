@@ -10,10 +10,10 @@ import { z } from 'zod';
 import { readNodeBreadcrumb } from '../wlo-api.js';
 import { getRelatedContent } from '../services/related.js';
 import { getNodeCollections } from '../services/node-collections.js';
-import { oneLine, registryHintFor, renderToText } from '../formatter.js';
+import { oneLine, renderToText } from '../formatter.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { sanitizeText } from '../text-sanitize.js';
-import { toolError } from './shared.js';
+import { subjectRegistryText, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
 
@@ -23,7 +23,7 @@ export function registerNodeRelationTools(server: McpServer, searchResultsWidget
     title: 'WLO Ähnliche Inhalte',
     widgetUri: searchResultsWidgetUri,
     description: `Finde ähnliche WLO-Materialien zu einem Inhalt — "mehr wie dieses" / "was passt noch dazu" nach einer Suche oder Detailansicht. Andere Materialien mit gleichem Fach und gleicher Bildungsstufe.
-Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/Stufen und sucht Material mit gleichem Profil (der Ausgangsknoten wird ausgeschlossen). Optional \`siblings\` — die weiteren Inhalte der Eltern-Sammlung.`,
+Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/Stufen und sucht Material mit gleichem Profil (der Ausgangsknoten wird ausgeschlossen). Optional \`includeSiblings\` — die weiteren Inhalte der Eltern-Sammlung.`,
     inputSchema: {
       nodeId: z.string().describe('Seed node ID (content item or collection) to find related material for.'),
       maxResults: z.number().int().min(1).max(30).optional().default(8).describe(
@@ -59,8 +59,19 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
           results: related.results,
         };
 
+        // The one collection this tool touches — the seed itself when that is a
+        // collection, otherwise the parent the siblings came from. It never
+        // appears in either result list; both come from `FILES` queries. Its own
+        // content block, in both formats, for the same reason the sibling tools
+        // use one: in json mode the first block IS the payload.
+        const registryText = await subjectRegistryText(related.registryCollectionId ?? '');
+        const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
+
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify(related) }], structuredContent };
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(related) }, ...registryBlock],
+            structuredContent,
+          };
         }
 
         // `oneLine` on the heading for the same reason `renderToText` flattens
@@ -75,8 +86,11 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
         ].filter(Boolean).join(' · ');
         if (basis) lines.push(`_Basis: ${basis}_`);
         lines.push('');
-        // Two lists, one answer — so the registry pointer is suppressed per list
-        // and emitted once over both (same rule as search_wlo_all).
+        // Two lists, one answer — so `renderToText`'s per-list registry pointer
+        // is suppressed (same rule as search_wlo_all). It is not re-emitted once
+        // over the union either, as it was until 2026-08-15: both lists come
+        // from `FILES` queries and can hold no collection, so that line was
+        // unreachable. The block above answers for the one collection there is.
         const noHint = { registryHint: false };
         lines.push(renderToText(related.results, undefined, noHint) || 'Keine verwandten Inhalte gefunden.');
         if (related.siblings) {
@@ -84,8 +98,10 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
           lines.push(`## Aus derselben Sammlung (${related.siblings.length})`);
           lines.push(renderToText(related.siblings, undefined, noHint) || 'Keine weiteren Inhalte in der Sammlung.');
         }
-        lines.push(...registryHintFor([...related.results, ...(related.siblings ?? [])]).map(oneLine));
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }], structuredContent };
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }, ...registryBlock],
+          structuredContent,
+        };
       } catch (err) {
         return toolError('Fehler beim Abruf verwandter Inhalte', err);
       }

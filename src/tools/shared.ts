@@ -9,7 +9,8 @@
  * label→URI filter builder (`../filter-criteria.ts`).
  */
 
-import { oneLine } from '../formatter.js';
+import { oneLine, registrySummaryLines } from '../formatter.js';
+import { ensureRegistryFor } from '../services/skill-registry-cache.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
 // The title rule moved to a leaf module (topic-page-api/-structure and the write
@@ -18,6 +19,51 @@ import { log } from '../logger.js';
 export { isPlaceholderTitle } from '../topic-page-title.js';
 export { pickThemePageTitle } from '../topic-page-variant.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
+
+/**
+ * The approved-skills catalogue of the collection a tool was CALLED ON, as a
+ * text block, or `''` when there is none to report.
+ *
+ * The tools that attach a registry to their RESULTS never answered for their
+ * subject: `get_collection_contents` returns a collection's materials,
+ * `search_wlo_within_collection` a filtered slice of them, and the collection
+ * itself — the one whose approved skills the caller is asking about — is in the
+ * arguments, not the result list.
+ *
+ * Three outcomes, three answers, and the middle one is why this is not just a
+ * null check: a catalogue; **silence** when the lookup answered and found no
+ * registry (nothing to say, and an empty block would read as a collection that
+ * approves nothing on purpose); and the **unchecked** sentence when it did not
+ * answer at all. Without the third, a failed listing is indistinguishable from
+ * "this collection declares none" — which is the claim `registryHintFor` exists
+ * to avoid making on the results side.
+ *
+ * The block opens by naming the collection it is about. Without that line it
+ * arrives directly under the last listed record and reads as that record's
+ * registry — a material's, in the common case, which is a thing that cannot
+ * exist. The tool result carries it as its own content block, but text blocks
+ * are concatenated on the way to a model, so the separation has to be in the
+ * words.
+ *
+ * Every line goes through `oneLine` for the same reason the listing does: the
+ * block is line-oriented and each entry carries a nodeId a model may call next.
+ */
+export async function subjectRegistryText(collectionId: string): Promise<string> {
+  // No id, nothing to say. `get_topic_page_content` passes `collectionId ?? ''`
+  // for a query that matched nothing, and the unchecked sentence below would
+  // then name no collection and offer a call nobody can make.
+  if (!collectionId) return '';
+  const { registry, answered } = await ensureRegistryFor(collectionId);
+  if (!registry) {
+    return answered ? '' : oneLine(
+      `Ob die angefragte Sammlung ${collectionId} eigene Arbeitsanleitungen („Skills") freigegeben hat, `
+      + 'ist hier nicht geprüft. `get_skill_registry` mit dieser nodeId beantwortet es.');
+  }
+  return [
+    `Für die angefragte Sammlung ${collectionId} sind diese Skills freigegeben:`,
+    ...registrySummaryLines(registry),
+  ].map(oneLine).join('\n');
+}
 
 // ── Query metadata for downstream consumers (backend → frontend) ────────────
 

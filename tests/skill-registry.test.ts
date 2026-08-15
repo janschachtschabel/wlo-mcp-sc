@@ -395,6 +395,18 @@ test('loadSkillRegistry with resolveHeads:false costs exactly two upstream calls
  * metadata record per skill. There a hundred is affordable, and a curated list
  * of sixty should not be cut to thirty.
  */
+test('the listing tier carries as many entries as the tool tier', () => {
+  // Decided 2026-08-15: a collection answer hands over the approval list in
+  // full, up to 100 — the listing no longer stops at 30 while the tool went on
+  // to 100. The equality is pinned because a SENTENCE hangs on it: while the
+  // listing was the narrower tier it could honestly say "mehr mit
+  // get_skill_registry", and `formatter.ts` had to stop saying that. Raise one
+  // without the other and that offer silently becomes true again — or, the
+  // other way round, stays retracted when it no longer needs to be.
+  assert.equal(REGISTRY_SEARCH_MAX, REGISTRY_MAX,
+    'the two tiers carry the same number of entries — see registryLines() in formatter.ts');
+});
+
 test('the search tier caps the catalogue at REGISTRY_SEARCH_MAX and says so', async () => {
   const blocks = Array.from({ length: REGISTRY_SEARCH_MAX + 1 }, (_, i) => kiSkillBlock(`Skill ${i}`, uuid(100 + i))).join('\n\n');
   const { mock } = registryMock(blocks);

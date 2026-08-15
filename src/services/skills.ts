@@ -34,6 +34,7 @@ import { nodeMatchesCriteria, queryTerms, termMatches } from '../node-match.js';
 import type { UnresolvedFilter } from '../filter-criteria.js';
 import { buildFilterCriteria } from '../filter-criteria.js';
 import { SKILL_CONTENT_TYPE_URI, SKILL_PROPS, collectSkillNodes } from './skill-catalogue.js';
+import { skillActivationLine } from './skill-activation.js';
 import type { SkillFile } from './skill-files.js';
 import { readSkillBundle } from './skill-files.js';
 import type { SkillReference } from './skill-references.js';
@@ -59,6 +60,13 @@ export interface SkillSummary {
 /** One skill including its instruction Markdown (null when no text could be read). */
 export interface SkillDocument extends SkillSummary {
   content: string | null;
+  /**
+   * The line announcing that this skill is now in effect, or `null` when the
+   * record is not marked as a skill (see `skill-activation.ts`). Carried as its
+   * own field rather than built by the renderer, so the JSON output and any
+   * client rendering it themselves get the same sentence.
+   */
+  activation: string | null;
   /** The other files of the skill's workspace folder (see `skill-files.ts`). */
   files?: SkillFile[];
   /** Set instead of `files` when the folder is too large to be one skill's bundle. */
@@ -245,9 +253,11 @@ export async function getSkill(
     readSkillText(nodeId),
     opts.includeFiles === false ? Promise.resolve(null) : readSkillBundle(node, nodeId),
   ]);
+  const summary = toSummary(formatNode(node), node);
   return {
-    ...toSummary(formatNode(node), node),
+    ...summary,
     content,
+    activation: skillActivationLine(summary.title, node.properties?.['ccm:oeh_extendedType'] ?? []),
     references: parseSkillReferences(content ?? ''),
     ...(bundle
       ? { files: bundle.files, ...(bundle.folderFileCount ? { folderFileCount: bundle.folderFileCount } : {}) }
@@ -272,9 +282,10 @@ export async function pickBestSkill(
   if (!best) return null;
   const skill = await getSkill(best.nodeId);
   // The record was listed a moment ago; if it cannot be read now, the summary
-  // still answers what was found — only the instructions are missing.
+  // still answers what was found — only the instructions are missing. Nothing
+  // took effect, so nothing is announced either.
   return {
-    skill: skill ?? { ...best, content: null, references: [] },
+    skill: skill ?? { ...best, content: null, activation: null, references: [] },
     alternatives: ranked.slice(1),
   };
 }

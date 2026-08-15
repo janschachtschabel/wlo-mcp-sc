@@ -49,6 +49,13 @@ Title, description and keywords are also what the ranking reads — title counts
 3, keywords 2, description 1. A skill whose trigger words appear only in the
 description will lose to one that puts them in `cclom:general_keyword`.
 
+**The title is shown to end users.** When `get_skill` hands the instructions
+over, the server prefixes a line it asks the model to print into the chat —
+`[ edu-sharing Skill ] Unterrichtsstunde planen - aktiv` — so the reader can see
+that an uploaded document is steering the answer, and which one. It is built
+from `cclom:title` alone; nothing goes into the `SKILL.md` for it. Write a title
+that reads as a name a person would recognise, not a filename.
+
 ## Why a skill is a record, not a collection
 
 The tempting alternative — one skill = one collection holding its files — costs
@@ -374,8 +381,10 @@ Rules the reader should know:
 - The link must carry a **node id** (`/components/render/<uuid>` or
   `?nodeId=<uuid>`). A block without one is reported as unresolvable rather than
   dropped — the same for a skill that was deleted or is not readable.
-- At most **30** entries per registry; more are reported as capped, not silently
-  cut.
+- At most **100** entries per registry; more are reported as capped, not
+  silently cut. Both the listing and `get_skill_registry` carry the same 100
+  (they were 30 and 100 until 2026-08-15) — past that only the document itself
+  names the rest, and that is returned unchanged.
 
 ### How a model finds out a registry exists
 

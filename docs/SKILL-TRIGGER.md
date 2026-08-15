@@ -18,6 +18,28 @@ Es gibt **keinen** automatischen Auslöser. Ein Skill wird ausgelöst, weil das
 Modell seinen Titel im Katalog liest und entscheidet, dass er zur Aufgabe passt.
 Der Server schlägt nichts vor und führt nichts aus.
 
+## Was die Nutzerin sieht
+
+Ein Skill wirkt sonst unsichtbar: die Antwort ändert sich, aber nichts sagt,
+warum. Deshalb stellt der Server der Anleitung eine Zeile voran und bittet das
+Modell, sie wörtlich auszugeben:
+
+```
+[ edu-sharing Skill ] Unterrichtsstunde planen - aktiv
+```
+
+Sie wird aus dem **Titel des Datensatzes** gebaut, nicht aus der `SKILL.md` — die
+Redaktion pflegt dafür nichts, und ein Dokument kann seine eigene Meldung nicht
+bestimmen. Aus demselben Grund steht sie **vor** der Trennlinie: alles danach
+ist Dokument, und dort wäre eine Zeile dieser Form gefälscht.
+
+Sie erscheint nur für Datensätze der Inhaltsart `ai_skill`. `get_skill` liefert
+auch die Begleitdateien eines Skills aus, und eine Vorlage als aktiven Skill zu
+melden wäre eine Behauptung, die der Datensatz nicht deckt.
+
+Erzwingen lässt sich die Ausgabe nicht — es ist eine Bitte an das Modell, genau
+wie bei den Skills eines Hosts.
+
 ## Was das Modell im Suchergebnis sieht
 
 Trägt die Sammlung eine Registry, steht der Katalog direkt am Ergebnis:
@@ -31,15 +53,44 @@ Skill-Registry: Skills für die Sammlung Optik (nodeId: 9d3f…) — 2 freigegeb
 Damit ist der Auslöser komplett: Titel zum Auswählen, nodeId zum Laden. Ein
 weiterer Abruf ist **nicht** nötig.
 
-**Es stehen alle freigegebenen Skills dort**, bis zu **30** — keine Stichprobe.
+**Es stehen alle freigegebenen Skills dort**, bis zu **100** — keine Stichprobe.
 Bis dahin liefert `get_skill_registry` nicht *mehr* Einträge, sondern *mehr zu
 jedem*: Beschreibungen, Keywords und die Prosa der Redaktion.
 
-Erklärt eine Registry mehr als 30, zeigt die Suche die ersten 30 und sagt es:
-„44 freigegebene Skills, hier die ersten 30, mehr mit `get_skill_registry`",
-gefolgt von „… und 14 weitere". Der Werkzeug-Aufruf trägt dann **bis zu 100** —
-zwei Stufen, weil eine Suchantwort fünf Sammlungen auf einmal zeigt und ein
-Werkzeug-Aufruf genau eine.
+Erklärt eine Registry mehr als 100, zeigt die Antwort die ersten 100 und sagt
+es. `get_skill_registry` trägt dieselben 100 — die übrigen nennt nur noch das
+Registry-Dokument selbst, das dieses Werkzeug unverändert mit ausgibt.
+
+> Bis 2026-08-15 waren es in der Suchliste 30 und im Werkzeug 100 — zwei Stufen,
+> weil eine Suchantwort fünf Sammlungen auf einmal zeigt. Die Stufen sind
+> zusammengelegt: eine Freigabeliste, über die zwei Werkzeuge Unterschiedliches
+> sagen, ist keine Freigabeliste. Abrufe kostet es nicht — Titel und nodeId
+> stehen im `:::`-Block, die Antwort sind zwei Aufrufe, egal wie viele Skills.
+
+## Welches Werkzeug wie viel mitliefert
+
+| Antwortform | Was mitkommt |
+|---|---|
+| Datensatz-Listen (`search_wlo_all`, `search_wlo_collections`, `get_collection_contents`, `get_node_collections`, `get_node_details`) | der **volle Katalog** je Sammlung |
+| Die Sammlung, auf der ein Werkzeug arbeitet (`get_collection_contents`, `search_wlo_within_collection`, `get_topic_page_content`, `get_related_content`) | der **volle Katalog**, mit der Sammlung benannt |
+| Übersichten mit einer Zeile je Knoten (`browse_collection_tree`, `get_subject_portals`, `search_wlo_topic_pages`) | nur die **Kopfzeile**: Titel, Anzahl, nodeId für `get_skill_registry` |
+
+Gilt in **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld
+`skillRegistry` am jeweiligen Knoten.
+
+Die Übersichten lesen dabei **nur den Cache** — eine Portalliste umfasst
+dreißig Sammlungen, ein Baum fünfzig, und je eine Kinderliste dafür wäre genau
+der Rundlauf, den der Cache verhindern soll. Was er noch nicht kennt, wird
+vorgemerkt und ist beim nächsten Aufruf da.
+
+Für die Sammlung, **auf der** ein Werkzeug arbeitet, gelten dieselben drei
+Zustände wie unten für Ergebnisse — nur an einer anderen Stelle abzulesen:
+
+| Was in der Antwort steht | Was es heißt |
+|---|---|
+| Der Katalog, mit „Für die angefragte Sammlung … freigegeben" | Sie führt eine Registry, hier ist sie. |
+| Gar nichts dazu | Geprüft — sie führt keine. |
+| „… ist hier nicht geprüft" | Der Abruf hat nicht geantwortet. `get_skill_registry` beantwortet es. |
 
 ## Drei Zustände, drei Bedeutungen
 
@@ -71,8 +122,8 @@ Der Kompendialtext-Skill gilt nur für die Oberstufe.
 
 - Nur `::: ki-skill` wird zum Katalogeintrag; `::: wlo-material` ist Lehrmaterial.
 - Der Link muss eine nodeId tragen (`/components/render/<uuid>` oder `?nodeId=<uuid>`).
-- Höchstens 100 Einträge (in der Suchliste 30); mehr wird als gekappt gemeldet,
-  nicht still gekürzt.
+- Höchstens 100 Einträge, in jeder Antwort gleich viele; mehr wird als gekappt
+  gemeldet, nicht still gekürzt.
 - Die Prosa drumherum bleibt erhalten — dort stehen die Anwendungshinweise.
 
 ## Aktualität

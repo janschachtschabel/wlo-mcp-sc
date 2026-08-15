@@ -17,6 +17,7 @@ import { nodeListSchema } from '../apps/outputSchemas.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, formatUnresolvedHint } from '../filter-criteria.js';
 import { queryMetaContent, toolError } from './shared.js';
+import { cachedRegistriesFor } from '../services/skill-registry-cache.js';
 import { mapPool } from '../concurrency.js';
 import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { collectThemePages } from '../services/topic-page-discovery.js';
@@ -197,6 +198,17 @@ Kein „discipline"-Parameter: über educationalContext und targetGroup eingrenz
         }
 
         const tpMeta = buildTopicPagesMeta(params, queryType, out.length, filters.educationalContext);
+        // Cache only, like the browse tools: this listing carries up to 20 pages
+        // and paying a children listing for each on first contact is the crawl
+        // the cache exists to prevent. What it does not know is queued.
+        //
+        // Attached to the page, not handed to the renderer, so the Markdown
+        // listing, the JSON payload and `structuredContent` read one field.
+        const registries = cachedRegistriesFor(out.map(p => p.collectionId));
+        for (const page of out) {
+          const registry = registries.get(page.collectionId);
+          if (registry) page.skillRegistry = registry;
+        }
         const rendered = renderThemePages(out, tpMeta, params.outputFormat);
         return {
           content: [...rendered.content, ...unresolvedBlock],

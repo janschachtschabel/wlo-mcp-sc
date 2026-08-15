@@ -238,11 +238,23 @@ The current rebuild/extension is designed in:
   reference. (4) The instruction TEXT reads fine through a reference id; only the
   companion-folder lookup has to resolve `ccm:original` first.
 
-  Two rules the tool layer holds: the server-derived sections (file manifest,
-  `:::` references) are rendered BEFORE the untrusted document, because after it
-  they are indistinguishable from sections the document forged; and a companion
-  is pointed at the tool that fits its MIME type — `get_skill` returns the file
-  VERBATIM, so anything that is not `text/*` goes to `get_wlo_content_text`.
+  Three rules the tool layer holds: the server-derived sections (activation
+  line, file manifest, `:::` references) are rendered BEFORE the untrusted
+  document, because after it they are indistinguishable from sections the
+  document forged; a companion is pointed at the tool that fits its MIME type —
+  `get_skill` returns the file VERBATIM, so anything that is not `text/*` goes
+  to `get_wlo_content_text`; and a loaded skill ANNOUNCES itself
+  (`services/skill-activation.ts`, 2026-08-15) with a line the model is asked to
+  print — `[ edu-sharing Skill ] <cclom:title> - aktiv`, also carried as the
+  `activation` field so a client rendering the answer itself does not depend on
+  the model complying. Two things bind any change to it. It rests on the CONTENT
+  TYPE, not on which tool was called: `get_skill` also serves a skill's
+  companion files, and announcing a template as an active skill asserts what the
+  record denies. And the title goes through `sanitizeText`, never `oneLine` —
+  it lands inside an instruction reproduced verbatim to a person, which is the
+  elevated-authority boundary, not the delimiter protection an ordinary rendered
+  value gets. Compliance cannot be enforced; that is the same standing a host's
+  own skill files have.
 
 - **Use-Case-Lücken (Lizenzfilter, Usage, Themenseiten-Variante) — COMPLETE
   (2026-08-09):** `docs/plans/2026-08-09-usecase-gap-tools.md` (design + tasks in
@@ -384,6 +396,59 @@ The current rebuild/extension is designed in:
   `reason: 'unreadable'`, because "there is no registry here" is a different and
   wrong claim.
 
+  **Reach and caps changed 2026-08-15 (the user's decision), and the two changes
+  interlock.** (a) `REGISTRY_SEARCH_MAX` IS `REGISTRY_MAX` (100): one number, so
+  a listing and `get_skill_registry` cannot disagree about what "the approved
+  skills" are. It costs no request — the cheap tier reads title and nodeId from
+  the `:::` block. The sentence moved with it: a capped listing may no longer
+  say "mehr mit get_skill_registry" (the tool caps at the same 100) and points
+  at the registry DOCUMENT instead, which that tool returns unchanged; the
+  equality is pinned in `tests/skill-registry.test.ts` because raising one
+  number alone makes that sentence quietly wrong. (b) The catalogue was attached
+  to a tool's RESULTS, which answered for every collection except **the one the
+  tool was called on** — `get_collection_contents`,
+  `search_wlo_within_collection`, `get_node_details`, `get_topic_page_content`
+  all take it as an argument and never return it (and with
+  `contentFilter="files"` the results are materials, so nothing was attached at
+  all). `subjectRegistryText` (`tools/shared.ts`, over `ensureRegistryFor`) is
+  the ONE place that answers for a single collection — enforced by
+  `tests/shared-rule-discipline.test.ts` — and for a Themenseite the id is the
+  COLLECTION's, never the variant's. Its block NAMES the collection in words:
+  it lands under the last listed record, and without that line it reads as that
+  record's registry, which for a material cannot exist. Three rendering tiers
+  now exist and the rule is the answer's SHAPE, not its subject: record lists
+  and the subject collection get the full catalogue; a tool that renders one
+  block per node (`browse_collection_tree`, `get_subject_portals`,
+  `search_wlo_topic_pages`) gets the head line via
+  `registrySummaryLines(…, {entries:false})` and reads the cache ONLY
+  (`cachedRegistriesFor`) — thirty portals or fifty branches paying a children
+  listing each is the crawl this cache exists to prevent. `get_related_content`
+  answers for the collection it TOUCHES, exposed as `registryCollectionId`, and
+  which one that is depends on the SEED — the tool takes a material or a
+  collection: a collection seed IS the collection in play (its own
+  `virtual:primaryparent_nodeid` is a level the caller never named, which is
+  what a `siblingCollectionId` named after the siblings got wrong), a material
+  seed points at the parent the siblings were read from, and with no siblings
+  requested there is no collection and nothing is said. Its two RESULT lists
+  come from `FILES` queries and can hold no collection at all, which is why the
+  `registryHintFor` call over their union was unreachable code and is gone.
+
+  Two rules the review of the same day added, and both are about a NEGATIVE.
+  (1) The catalogue is attached to the NODE, before any `outputFormat` branch —
+  both browse tools computed it after the JSON early-return, so a JSON caller
+  got nothing while the docs promised it to both. It costs no schema work:
+  `CollectionTreeNode` IS a `FormattedNode` and both browse schemas extend
+  `formattedNodeSchema`, so the field and its zod entry already exist — and zod
+  strips what is not declared, which is why `structuredContent` is asserted
+  separately from the text. (2) `ensureRegistryFor` reports THREE outcomes
+  (`{registry, answered}`), not two: a catalogue, "answered, none there", and
+  "not answered" — collapsing the last two into one `null` made a failed listing
+  read as a collection that approves nothing. A lookup that learned nothing is
+  QUEUED, or the tick never warms it and every request repeats the live call.
+  `subjectRegistryText` renders silence for the middle case and the "nicht
+  geprüft" sentence for the last, and nothing at all for an empty id — which
+  `get_topic_page_content` passes whenever a query matched no page.
+
   P3 adds the search-side enrichment (`enrichSkillRegistry` in
   `services/search.ts`), rendered once in `renderToText` (both tools go through
   it, every line via `oneLine`, the FULL catalogue listed per collection).
@@ -400,7 +465,10 @@ The current rebuild/extension is designed in:
   for what it ADDS (descriptions, keywords, prose), not for completeness it
   cannot improve; capped → "hier die ersten 30, mehr mit get_skill_registry",
   which is true only because the tool cap is higher — and never "alle", because
-  past 100 the tool caps too. It is **off by default** and the default is a MEASUREMENT: the
+  past 100 the tool caps too. **(b) was superseded on 2026-08-15** — the tiers
+  now carry the SAME 100 and the capped sentence had to stop offering the tool;
+  see the Skill-Registry-Cache block below. (a)'s reasoning is what survived and
+  was applied again. It is **off by default** and the default is a MEASUREMENT: the
   live run showed ~1.0–1.4 s added per search, paid through the `/children` call
   whether or not a registry exists — neither collection in that run had one and
   it still cost 1.4 s. What replaces it is FREE: a pointer line on every
@@ -436,8 +504,9 @@ The current rebuild/extension is designed in:
   detection test must set `cm:title`. (2) The registry pointer is an ANSWER-level
   line, not a list-level one — `registryHintFor` is exported and a composed
   answer (`search_wlo_all`: three lists, and topic pages are `ccm:map` so they
-  format as collections; `get_related_content`: two) suppresses `renderToText`'s
-  own hint and emits it once. (3) Whether the lookup RAN is reported as
+  format as collections) suppresses `renderToText`'s own hint and emits it once.
+  `get_related_content` was the second such caller until 2026-08-15, when its
+  union hint turned out to be unreachable (see above). (3) Whether the lookup RAN is reported as
   `collections.registryChecked`, the same shape and the same reason as
   `content.licenseFilter`: a collection without a registry carries no field, so
   the results cannot tell "not looked up" from "looked up, none there", and a

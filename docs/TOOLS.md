@@ -197,6 +197,21 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `wlo_auth_status` | Mit welchen Rechten der Server gerade liest — anonym, gemeinsames Dienstkonto oder persönliches Konto | *„Bin ich angemeldet?“* · *„Warum sehe ich diesen Inhalt nicht?“* |
 | `wlo_health_check` | Erreichbarkeit der WLO-API prüfen | *„Ist die WLO-Verbindung gerade erreichbar?“* |
 
+**Eine geladene Anleitung meldet sich.** `get_skill` und `get_skill_for_task`
+stellen der Anleitung eine vom Server erzeugte Zeile voran und bitten das Modell,
+sie wörtlich auszugeben:
+
+```
+[ edu-sharing Skill ] Unterrichtsstunde planen - aktiv
+```
+
+Damit sieht die Nutzerin, dass ein hochgeladenes Dokument die Antwort gerade
+mitsteuert, und welches. Der Titel kommt aus dem Datensatz, die Zeile aus dem
+Server — in der `SKILL.md` steht dafür nichts. Sie erscheint nur, wenn der
+Datensatz die Inhaltsart `ai_skill` trägt: `get_skill` lädt auch die
+Begleitdateien eines Skills, und eine Vorlage ist kein Skill. Im JSON-Ausgabe­
+format steht sie als Feld `activation`.
+
 **Welches der drei Skill-Tools?** Die Frage entscheidet, nicht der Zufall:
 
 | Frage | Tool |
@@ -210,10 +225,34 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 um das Vorgehen MIT einer Sammlung geht („wie arbeite ich damit", „was ist hier
 vorgesehen") statt um ihre Inhalte.
 
-**Der Katalog kommt meist von allein mit.** Ein Hintergrund-Cache
-(`WLO_SKILL_CACHE`, standardmäßig **an**) hält je Sammlung bereit, was ihre
-Kinderliste sagt, und erneuert es alle 5 Minuten. Drei Dinge, die die Antwort
-bedeuten kann:
+**Der Katalog kommt meist von allein mit** — und seit 2026-08-15 bei jedem
+Werkzeug, das mit Sammlungen zu tun hat, nicht nur bei der Suche:
+
+| Antwortform | Was mitkommt |
+|---|---|
+| Datensatz-Listen (`search_wlo_all`, `search_wlo_collections`, `get_collection_contents`, `get_node_collections`, `get_node_details`) | der **volle Katalog** je Sammlung, bis 100 Skills |
+| Die Sammlung, auf der ein Werkzeug arbeitet (`get_collection_contents`, `search_wlo_within_collection`, `get_topic_page_content`, `get_related_content`) | der **volle Katalog**, mit der Sammlung benannt |
+| Übersichten mit einer Zeile je Knoten (`browse_collection_tree`, `get_subject_portals`, `search_wlo_topic_pages`) | nur die **Kopfzeile**: Titel, Anzahl, nodeId für `get_skill_registry` |
+
+In **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld
+`skillRegistry` am jeweiligen Knoten. Antwortet der Abruf nicht, steht statt des
+Katalogs „… ist hier nicht geprüft" — das ist etwas anderes als eine Sammlung,
+die keine Skills freigegeben hat, und wird auch anders gesagt.
+
+Die zweite Zeile war die eigentliche Lücke: diese Werkzeuge geben die Sammlung,
+um die es geht, nie als Ergebnis zurück — sie steht in den Argumenten. Wer den
+Katalog an die Ergebnisse hängte, beantwortete alles außer der Frage. Bei einer
+Themenseite ist die **Sammlungs-nodeId** die richtige Kennung, nie die
+Varianten-ID.
+
+Die Übersichten lesen nur den Cache: eine Portalliste umfasst dreißig
+Sammlungen, ein Baum fünfzig, und je eine Kinderliste dafür wäre der Rundlauf,
+den der Cache verhindern soll. Was er nicht kennt, wird vorgemerkt und ist beim
+nächsten Aufruf da.
+
+Ein Hintergrund-Cache (`WLO_SKILL_CACHE`, standardmäßig **an**) hält je Sammlung
+bereit, was ihre Kinderliste sagt, und erneuert es alle 5 Minuten. Drei Dinge,
+die die Antwort bedeuten kann:
 
 - **Katalog vorhanden** → die Sammlung führt eine Registry.
 - **Kein Feld, aber geprüft** → sie führt keine. Das ruht immer auf einer
@@ -333,6 +372,8 @@ gerade keine Zugänge ausgibt.
 Pro WLO-Konto sind die **zehn zuletzt geholten** Blöcke gültig; wer einen elften
 holt, entwertet damit seinen ältesten. Das begrenzt zugleich, wie lange ein
 verlorener Block gilt — sperren lässt er sich nur, solange man ihn noch hat.
+Zugänge, die ein eingebettetes Widget automatisch erzeugt, zählen dabei getrennt
+und können einen selbst eingetragenen Block nicht verdrängen.
 
 **Fallback: Basic.** Wo der Zugangsblock nicht angeboten wird, geht weiterhin
 `Basic ` gefolgt von `nutzername:passwort` in Base64. Dann aber bitte **nicht**

@@ -63,7 +63,23 @@ export interface AccessRegistry {
   removeByLabel(label: string): Promise<number>;
 }
 
-/** Bumped only if the on-disk shape changes; an unknown value fails closed. */
+/**
+ * Bumped only if the on-disk shape changes INCOMPATIBLY; an unknown value fails
+ * closed.
+ *
+ * "Incompatibly" is doing real work in that sentence, and `k` (2026-08-13) is
+ * the case that shows it. A mismatch makes `parseEntries` answer null, and null
+ * switches per-user access off entirely — so a bump is not a migration marker,
+ * it is a switch that takes every deployed block out of service the moment the
+ * new image starts, with one log line to explain it.
+ *
+ * An OPTIONAL field is therefore not a reason to bump, as long as both
+ * directions hold, and for `k` they do: a new build reading an old file sees no
+ * `k` and treats those entries as deliberate, while an old build reading a new
+ * file ignores the field in `isEntry` and carries it through untouched, because
+ * serialisation writes whole entry objects rather than rebuilding them
+ * field by field. `tests/access-registry.test.ts` pins both.
+ */
 const FORMAT_VERSION = 1;
 
 /**

@@ -277,14 +277,22 @@ export const REGISTRY_MAX = 100;
  * Entries the SEARCH tier carries — the catalogue that rides along in a result
  * list, resolving nothing.
  *
- * A different bound because it answers a different question: five collections in
- * one answer, each with its list, is what has to stay readable. Deliberately
- * equal to `REGISTRY_LINES_MAX` in `formatter.ts`, so a search listing is always
- * COMPLETE for what it carries and never shows a sample of its own catalogue.
- * (The two constants cannot be shared: `formatter.ts` is a leaf module and this
- * one imports from it, so the dependency would be a cycle.)
+ * **Was 30, is `REGISTRY_MAX` since 2026-08-15** (the user's decision): a
+ * collection answer hands over the approval list in full, and the rest only on
+ * request. The old number rested on readability — five collections in one
+ * answer, each with its list — but it made the two tiers disagree about what
+ * "the approved skills" are, and the entry a model needs may be the 31st. It
+ * costs no extra request either way: this tier takes title and nodeId out of
+ * the `:::` blocks, so the whole answer is two calls whatever the number.
+ *
+ * Written as the other constant rather than repeating 100, because a SENTENCE
+ * hangs on the two being equal (see `registryLines` in `formatter.ts`: while
+ * this tier was the narrower one, a capped listing could point at
+ * `get_skill_registry` for more entries, and now it cannot). It stays a separate
+ * name because `formatter.ts` pins its own bound against THIS one, and the two
+ * may legitimately diverge again — at which point the sentence has to move back.
  */
-export const REGISTRY_SEARCH_MAX = 30;
+export const REGISTRY_SEARCH_MAX = REGISTRY_MAX;
 
 /**
  * Skill heads fetched at once.

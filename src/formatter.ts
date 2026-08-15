@@ -321,12 +321,13 @@ function headingFor(title: string, url: string): string {
  * "a short list standing for a long one" shape this project refuses everywhere
  * else, and the entry a model needs may be the fifth.
  *
- * 30 mirrors **`REGISTRY_SEARCH_MAX`** in `services/skill-registry.ts`, which
+ * It mirrors **`REGISTRY_SEARCH_MAX`** in `services/skill-registry.ts`, which
  * caps the catalogue the SEARCH tier hands a renderer — so this is not a second,
- * narrower bound but the same one, restated. Not `REGISTRY_MAX` (100): that is
- * the cap `get_skill_registry` carries, and a listing never sees it. Three
- * comments named it wrongly until 2026-08-13, which is how a mirror gets
- * "restored" by raising the number it does not mirror.
+ * narrower bound but the same one, restated. 30 until 2026-08-15, when that tier
+ * was raised to the tool's own `REGISTRY_MAX`; the number to mirror is still
+ * `REGISTRY_SEARCH_MAX` and not `REGISTRY_MAX`, even though they are equal
+ * today. Three comments named the wrong partner until 2026-08-13, which is how a
+ * mirror gets "restored" by raising the number it does not mirror.
  *
  * It cannot be imported: `formatter.ts` is a leaf module and the service imports
  * FROM it, so the dependency would be a cycle. What holds the two together is
@@ -335,7 +336,7 @@ function headingFor(title: string, url: string): string {
  * be printed. If this number falls behind, the renderer samples a catalogue the
  * service considers complete while the head line still says "alle hier gelistet".
  */
-const REGISTRY_LINES_MAX = 30;
+const REGISTRY_LINES_MAX = 100;
 
 /**
  * The registry a collection declares, as listing lines — one per part, so the
@@ -347,29 +348,60 @@ const REGISTRY_LINES_MAX = 30;
  * the whole approval list, which is the one thing it must not do.
  */
 function registryLines(n: FormattedNode): string[] {
-  const r = n.skillRegistry;
-  if (!r) return [];
+  return n.skillRegistry ? registrySummaryLines(n.skillRegistry) : [];
+}
+
+/**
+ * The same catalogue, for a registry `renderToText` will not render itself.
+ *
+ * Two kinds of caller need it, and no count is given here because one goes
+ * stale: tools that are ABOUT a collection they never return (via
+ * `subjectRegistryText`), and tools that render their own line-oriented format
+ * instead of `renderToText`. ONE rule for what a catalogue looks like and which
+ * caps it discloses; a copy per caller would drift on `truncated`, the
+ * disclosure a reader cannot notice missing.
+ *
+ * @param opts.entries `false` for the head line alone — where a tool renders one
+ *   block per node and a hundred skills under each would destroy the shape it
+ *   exists for. The head line still carries the count and the nodeId, so nothing
+ *   is claimed that is not shown.
+ */
+export function registrySummaryLines(
+  r: NonNullable<FormattedNode['skillRegistry']>,
+  opts: { entries?: boolean } = {},
+): string[] {
   const declared = r.truncated?.referenced ?? r.entries.length;
-  // Two different sentences, because the two cases are different offers.
+  // Three different offers, because the three cases really are different.
   //
-  // Nothing capped: the whole catalogue is listed below, so pointing at
+  // Head line only: nothing is listed here at all, so the tool IS the listing.
+  //
+  // Nothing capped: the whole catalogue is below, so pointing at
   // `get_skill_registry` for completeness would send a model on a round-trip for
   // something it was just handed. What that tool adds is depth per entry.
   //
-  // Capped: the listing carries `REGISTRY_SEARCH_MAX` (30) while the tool
-  // carries `REGISTRY_MAX` (100), so it really is the way to see more — but not
-  // necessarily all of them, and a promise of "alle" beside a declared 140 is
-  // one the tool cannot keep.
-  const reach = r.truncated
-    ? `hier die ersten ${r.truncated.listed}, mehr mit get_skill_registry`
-    : 'alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry';
-  const shown = r.entries.slice(0, REGISTRY_LINES_MAX);
+  // Capped: both tiers carry the same 100 (`REGISTRY_SEARCH_MAX` IS
+  // `REGISTRY_MAX` since 2026-08-15), so pointing at `get_skill_registry` for
+  // MORE ENTRIES is an offer it cannot keep — it caps at the same number. What
+  // still names the rest is the registry document itself, which that tool hands
+  // back verbatim beside its own catalogue.
+  let reach: string;
+  if (opts.entries === false) reach = 'auflisten mit get_skill_registry';
+  else if (r.truncated) {
+    reach = `hier die ersten ${r.truncated.listed}; die übrigen nennt nur das Registry-Dokument selbst `
+      + '(get_skill_registry gibt es unverändert aus)';
+  } else reach = 'alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry';
+  const shown = opts.entries === false ? [] : r.entries.slice(0, REGISTRY_LINES_MAX);
   const lines = [
     `Skill-Registry: ${r.title || '(ohne Titel)'} (nodeId: ${r.nodeId}) — `
     + `${declared} freigegebene Skills, ${reach}`,
   ];
   for (const e of shown) lines.push(`  Skill: ${e.title} (nodeId: ${e.nodeId}) — laden mit get_skill`);
-  if (declared > shown.length) lines.push(`  … und ${declared - shown.length} weitere`);
+  // Suppressed entries are not "left out": the head line already offers the
+  // listing, so counting them off again would read as a second, unreachable
+  // remainder.
+  if (opts.entries !== false && declared > shown.length) {
+    lines.push(`  … und ${declared - shown.length} weitere`);
+  }
   return lines;
 }
 

@@ -298,17 +298,32 @@ test('every path that renders collections attaches what the cache knows', () => 
   // reads to a model as "this collection has no approved skills". The expected
   // files are named so that adding one has to be a deliberate edit here.
   //
-  // `tools/browse.ts` is deliberately NOT on this list. It renders its own
-  // line-oriented formats — a compact two-level outline, and a portal list with
-  // its own field set — neither of which carries a registry line. Attaching
-  // there would put the field into `structuredContent` while the text dropped
-  // it, which is the "an envelope field is not a disclosure if the renderer
-  // discards it" failure this project has already paid for twice. Rendering it
-  // would mean a second copy of `registryLines`. Out until browse needs it.
+  // `tools/browse.ts` is still NOT on this list, and the reason has changed.
+  // It used to be "browse renders no registry line at all"; since 2026-08-15 it
+  // renders the head line, but through `cachedRegistriesFor` — cache only, no
+  // live fallback — because a portal list covers thirty collections and a tree
+  // fifty, and first contact would charge a children listing for each. That is
+  // the crawl the cache exists to prevent. `ensureRegistries` is the right call
+  // where the set is bounded by what a caller asked to see.
   const found = offenders(/ensureRegistries\s*\(/, ['services/skill-registry-cache.ts']);
   const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
-  assert.deepEqual(files, ['services/search.ts', 'tools/collections.ts', 'tools/node-relations.ts'],
+  assert.deepEqual(files,
+    ['services/search.ts', 'tools/collections.ts', 'tools/node-details.ts', 'tools/node-relations.ts'],
     `collection-rendering paths must attach the cache — got ${JSON.stringify(files)}`);
+});
+
+test('the collection a tool was CALLED ON is answered from one place', () => {
+  // Four tools are about a collection that never appears in their own results,
+  // and each renders its answer differently — a content block here, a record
+  // line there. What must not differ is the rule: which id is asked
+  // (`get_topic_page_content` must use the COLLECTION, not the variant), and
+  // that every negative — no registry, unreadable, unknown id, cache off —
+  // renders nothing rather than a claim. `subjectRegistryText` in
+  // `tools/shared.ts` holds both; a second copy would state one of them wrong.
+  const found = offenders(/ensureRegistryFor\s*\(/, ['services/skill-registry-cache.ts']);
+  const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
+  assert.deepEqual(files, ['tools/shared.ts'],
+    `only tools/shared.ts may ask for a single collection's registry — got ${JSON.stringify(files)}`);
 });
 
 test('a collection search asks BOTH backends, and only one module knows that', () => {

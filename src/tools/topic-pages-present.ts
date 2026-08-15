@@ -8,7 +8,7 @@
 
 import type { ThemePageInfo } from '../topic-page-variant.js';
 import type { FormattedNode } from '../formatter.js';
-import { oneLine } from '../formatter.js';
+import { oneLine, registrySummaryLines } from '../formatter.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
 import { labelFromUri } from '../vocabs.js';
 import { pickThemePageTitle } from './shared.js';
@@ -69,6 +69,16 @@ export interface PresentedThemePage {
   topicPageUrl: string;
   /** Resolved swimlane content, only when includeContent is requested. */
   content?: SwimlanePayload;
+  /**
+   * The approved-skills catalogue of the OWNING COLLECTION — a Themenseite is a
+   * collection with a page layout, so the registry hangs off `collectionId` and
+   * never off a variant, which is one rendering of it.
+   *
+   * Carried on the page rather than passed to the renderer, so the JSON payload,
+   * `structuredContent` and the Markdown listing all read the same field. The
+   * renderer used to take a lookup map, which left both JSON paths empty.
+   */
+  skillRegistry?: FormattedNode['skillRegistry'];
 }
 
 /**
@@ -185,6 +195,10 @@ export function themePagesAsNodeList(out: PresentedThemePage[]): {
     publisher: '',
     nodeType: 'collection',
     topicPageUrl: p.topicPageUrl,
+    // Same field the search tools carry, so a widget or REST caller reading
+    // `structuredContent` sees the catalogue here too rather than only in the
+    // Markdown listing.
+    ...(p.skillRegistry ? { skillRegistry: p.skillRegistry } : {}),
   }));
   return { total: results.length, count: results.length, results };
 }
@@ -215,6 +229,9 @@ export function renderThemePages(
       parts.push(`Bildungsstufe: ${r.educationalContexts.join(', ')}`);
     }
     if (r.topicPageUrl) parts.push(`Themenseite: ${r.topicPageUrl}`);
+    // Head line only: this listing is already a block per page carrying variant
+    // ids, and a hundred skills under each would bury what it exists to show.
+    if (r.skillRegistry) parts.push(...registrySummaryLines(r.skillRegistry, { entries: false }));
     if (r.variants.length === 1) {
       parts.push(`Zielgruppe: ${r.variants[0].targetGroupLabel}`);
       parts.push(`Variante-ID: ${r.variants[0].variantId}`);

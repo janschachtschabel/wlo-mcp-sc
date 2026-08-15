@@ -14,7 +14,7 @@ import type { SwimlanePayload } from '../services/topic-page.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { oneLine } from '../formatter.js';
 import { log } from '../logger.js';
-import { toolError } from './shared.js';
+import { subjectRegistryText, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { swimlanePayloadSchema } from '../apps/outputSchemas.js';
 
@@ -110,10 +110,12 @@ Gib EINES an:
           const text = params.outputFormat === 'json'
             ? JSON.stringify(empty)
             : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
-          return {
-            content: [{ type: 'text' as const, text }],
-            structuredContent: empty,
-          };
+          // Still worth answering: the caller named a collection, and whether it
+          // has approved skills does not depend on its page having swimlanes.
+          const emptyContent = [{ type: 'text' as const, text }];
+          const emptyRegistry = await subjectRegistryText(empty.collectionId ?? '');
+          if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
+          return { content: emptyContent, structuredContent: empty };
         }
 
         // RENDER-READY Themenseiten content: the swimlane resolver executes each
@@ -123,8 +125,17 @@ Gib EINES an:
         // is therefore resolved in BOTH formats; markdown keeps its lightweight
         // structure text below. topicPageUrl provides the jump-off point.
         const payload = await resolveTopicPageSwimlanes(struct, params.maxPerSwimlane ?? 3);
+        // A Themenseite IS a collection, so its approved skills hang off the
+        // COLLECTION id — never the variant, which is one rendering of it. Its
+        // own content block in both formats: `text` is the payload in json mode,
+        // and the swimlane schema has nowhere to put a catalogue.
+        const registryText = await subjectRegistryText(struct.collectionId ?? '');
+        const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
         if (params.outputFormat === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent: payload };
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(payload) }, ...registryBlock],
+            structuredContent: payload,
+          };
         }
 
         const lines: string[] = [];
@@ -151,7 +162,10 @@ Gib EINES an:
           lines.push('');
           lines.push(`Eingebettete nodeIds (${struct.referencedNodeIds.length}): ${struct.referencedNodeIds.join(', ')}`);
         }
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }], structuredContent: payload };
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }, ...registryBlock],
+          structuredContent: payload,
+        };
       } catch (err) {
         return toolError('Fehler beim Abruf des Themenseiten-Inhalts', err);
       }

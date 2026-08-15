@@ -371,6 +371,20 @@ test('renderToText: a full search-tier catalogue is still listed in full', () =>
   );
 });
 
+test('renderToText: a capped listing does not promise a tool that carries no more', () => {
+  // The listing tier and the tool tier now carry the SAME number (100), so
+  // "mehr mit get_skill_registry" — true while the listing stopped at 30 — has
+  // become an offer the tool cannot keep. What still names the entries past the
+  // cap is the registry DOCUMENT, which that tool returns verbatim.
+  const kept = Array.from({ length: 100 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
+  const text = renderToText([collectionWithRegistry(kept, { listed: 100, referenced: 140 })]);
+
+  assert.match(text, /140 freigegebene Skills/, 'the declared number is stated');
+  assert.doesNotMatch(text, /mehr mit get_skill_registry/,
+    'the tool caps at the same 100 — it cannot show more entries');
+  assert.match(text, /Registry-Dokument/, 'the document is what still names the rest');
+});
+
 test('renderToText: what the SERVICE capped is still disclosed as missing', () => {
   // The registry declared 45; the service kept 30. The listing shows those 30
   // and must still say that 15 exist which nobody here can see — the bound

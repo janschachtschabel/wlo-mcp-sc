@@ -29,6 +29,26 @@ export interface RelatedContentResult {
   results: FormattedNode[];
   /** Only present when includeSiblings was requested. */
   siblings?: FormattedNode[];
+  /**
+   * The collection whose approved skills apply to this answer — the only place
+   * an approved-skills registry could hang for a "more like this" query.
+   *
+   * Which one that is depends on the SEED, and naming it after the siblings got
+   * it wrong for half the callers: this tool takes "eine nodeId eines Inhalts
+   * ODER einer Sammlung".
+   *
+   *   - seed is a collection → the SEED. It is what the caller named, and its
+   *     `virtual:primaryparent_nodeid` is the collection above it, which the
+   *     caller never mentioned.
+   *   - seed is a material → the parent the siblings were read from, and only
+   *     when siblings were asked for. Without them this is a question about one
+   *     material and no collection is in play.
+   *
+   * For the material case it is set even if the sibling listing then failed:
+   * whether that collection declares skills is a separate question from whether
+   * its contents could be read.
+   */
+  registryCollectionId?: string;
 }
 
 /** Returns null when the seed node cannot be resolved. */
@@ -62,6 +82,9 @@ export async function getRelatedContent(
     disciplines: seedFmt.disciplines,
     educationalContexts: seedFmt.educationalContexts,
     results,
+    // A collection seed IS the collection in play, whether or not siblings were
+    // asked for — see `registryCollectionId`.
+    ...(seedFmt.nodeType === 'collection' ? { registryCollectionId: opts.nodeId } : {}),
   };
 
   if (opts.includeSiblings) {
@@ -70,6 +93,10 @@ export async function getRelatedContent(
     const parentId = props['virtual:primaryparent_nodeid']?.[0];
     result.siblings = [];
     if (parentId) {
+      // Only for a MATERIAL seed: a collection seed already claimed the field
+      // above, and overwriting it here would answer about the level above the
+      // one the caller named.
+      result.registryCollectionId ??= parentId;
       // Degrade, never fail: the parent collection can be unreadable for the
       // anonymous user (live-found: 403 Forbidden) and getCollectionContents
       // throws. Siblings are an OPTIONAL enrichment — losing them must not

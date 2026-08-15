@@ -22,7 +22,7 @@ import { enrichSkillRegistry } from '../services/skill-registry.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, formatUnresolvedHint, licenseFilterNotice } from '../filter-criteria.js';
-import { queryMetaContent, toolError } from './shared.js';
+import { queryMetaContent, subjectRegistryText, toolError } from './shared.js';
 import { searchWithinCollection } from '../services/search.js';
 import {
   RECURSIVE_SKIP_MAX,
@@ -243,6 +243,11 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
           allNodes = formatNodes(nodes.slice(0, maxResults));
         }
         await ensureRegistries(allNodes);
+        // The listing above answers for the CHILDREN; this answers for the
+        // collection the caller named, which never appears among them — and
+        // with `contentFilter="files"` the children are materials, so the
+        // enrichment had nothing to attach to at all.
+        const subjectRegistry = await subjectRegistryText(params.nodeId);
 
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(allNodes, totalHits)
@@ -256,8 +261,14 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
           pagination: { maxItems: maxResults, skipCount: effectiveSkip, totalResults: totalHits },
           repositoryUrl: WLO_REPOSITORY_URL,
         });
+        // Its own content block, never appended to `text`: in json mode `text`
+        // IS the payload, and German prose glued to it makes JSON.parse throw
+        // (the same rule the sibling tools follow for their hints).
+        const content = [{ type: 'text' as const, text }];
+        if (subjectRegistry) content.push({ type: 'text' as const, text: subjectRegistry });
+        content.push(meta);
         return {
-          content: [{ type: 'text' as const, text }, meta],
+          content,
           structuredContent: { total: totalHits, count: allNodes.length, results: allNodes },
         };
       } catch (err) {
@@ -273,7 +284,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
     description: `Durchsuche/filtere die Inhalte INNERHALB einer bestimmten WLO-Sammlung — z.B. "welche Videos zu Zellteilung gibt es in dieser Sammlung?". Nutze dies, wenn du bereits eine Sammlung (nodeId) hast und sie per Volltext und Filtern (Fach/Stufe/Typ) eingrenzen willst.
 Für eine ungebundene Suche über ganz WLO nutze search_wlo_content; um Inhalte ungefiltert zu listen get_collection_contents.
 NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.
-Welche Skills für diese Sammlung freigegeben sind, sagt get_skill_registry mit derselben nodeId.`,
+Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort. get_skill_registry mit derselben nodeId liefert zusätzlich Beschreibungen, Keywords und die Verwendungshinweise der Redaktion.`,
     inputSchema: {
       nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),
@@ -357,8 +368,14 @@ Welche Skills für diese Sammlung freigegeben sind, sagt get_skill_registry mit 
         // to it makes JSON.parse throw for every client that reads it (the same
         // rule search_wlo_content follows for the unresolved-filter hint).
         const hint = formatUnresolvedHint(res.unresolved);
+        // Which skills this collection has approved — the collection is the
+        // subject of the call and never appears in its own result list.
+        const subjectRegistry = await subjectRegistryText(params.nodeId);
         const content = [{ type: 'text' as const, text }];
-        for (const extra of [sampleHint, licenceNotice, emptyHint, hint]) {
+        // The registry goes LAST. `licenceNotice` and `emptyHint` say why this
+        // result may be empty or short — the reader has to see those next to the
+        // result, not below a catalogue that can run to a hundred lines.
+        for (const extra of [sampleHint, licenceNotice, emptyHint, hint, subjectRegistry]) {
           if (extra.trim()) content.push({ type: 'text' as const, text: extra.trim() });
         }
         content.push(meta);
