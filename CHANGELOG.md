@@ -9,6 +9,99 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed — `get_skill` is registered in every skill-tool mode (2026-08-16)
+
+`WLO_SKILL_TOOL_MODE=one-tool` replaced `search_skill` **and** `get_skill` with
+`get_skill_for_task`, which takes a task description and no nodeId. That left the
+mode with no tool that accepts one — while `get_skill_registry` is registered
+unconditionally and IS a list of nodeIds, every collection result carries that
+list, and a skill's own answer names its references and companion files by id.
+The approval list was therefore unusable in that mode: it named skills nobody
+could load. `get_skill` is now registered in both modes; what the switch replaces
+is the SEARCH, never the loader.
+
+Two consequences. The tool count in one-tool mode is unchanged at 42 (the swap is
+1:1), and `docs/TOOLS.md` and `docs/INTEGRATION.md` said 41 — the count test
+derived the expectation from a comment about the code rather than from the code,
+so it agreed with the stale number. It now measures both modes through
+`registerSkillTools`. And a Markdown companion file is pointed at `get_skill`
+again instead of `get_wlo_content_text`: the fallback returned the repository's
+text EXTRACT where a skill needs the file verbatim. `readerFor` no longer takes a
+mode, and the parameter is gone from the three functions that only threaded it.
+
+### Changed — a skill catalogue now says it is not the instruction (2026-08-16)
+
+Every surface that lists skills by name closes with one fixed sentence:
+
+> Das ist nur die Übersicht — die Anleitungen selbst stehen nicht darin. Die
+> Anleitung (SKILL.md) lädt `get_skill` mit der nodeId des gewünschten Skills,
+> nicht mit der einer Registry oder Sammlung.
+
+The failure it closes is a model answering FROM a catalogue. An entry carries a
+title and a nodeId and nothing else, so "Fragen generieren" reads like a step
+that has been handed over when it is the name of one nobody fetched — and what
+follows is an invention of what the SKILL.md would have said. The sentence names
+the tool *and* what it needs, because a pointer without the nodeId is a step a
+model cannot take.
+
+Naming the tool is not enough where THREE nodeIds are in view. A rendered
+collection carries its own on the record line, the registry document's on the
+head line and the skill's on its entry — and the one nearest the note is the
+registry's. Both wrong picks fail usefully (`get_skill` on a registry hands back
+the approval list, on a collection nothing), but a model that reads an approval
+list as an instruction has been handed a document that looks like the thing it
+asked for. The clause uses the indefinite "einer Registry oder Sammlung" rather
+than "der": `search_skill`'s catalogue holds neither, so the definite article
+would point at things its answer does not show.
+
+It reaches a collection's catalogue in search results and in every tool that
+reports the collection it was called on (via `registrySummaryLines`), plus
+`search_skill` and `get_skill_registry` — in both output formats, as the field
+`hint` in JSON, on the same grounds the registry's untrusted-content warning is
+carried in both: a disclosure that exists in one rendering only is no disclosure
+for whoever asked for the other. In `get_skill_registry` it stays ahead of the
+`---` separator with every other server-derived section; past it, an instruction
+to call `get_skill` would be indistinguishable from one the uploaded document
+wrote for itself.
+
+It is withheld wherever no skill nodeId is printed, and that rule holds **per
+format**: the head-line tier (`browse_collection_tree`, `get_subject_portals`,
+`search_wlo_topic_pages`) renders one line per node, a registry with no
+resolvable entries lists nothing, and an empty `search_skill` answers "keine
+Skills gefunden" — in the JSON of the last two the `hint` field is then absent
+rather than empty. A listing that promises a step its own content cannot support
+is worse than one that promises none. `get_skill_for_task` is excluded too —
+under `WLO_SKILL_TOOL_MODE=one-tool` the tool named in the sentence is not
+registered at all.
+
+Both JSON sites shipped the field unconditionally in the first cut, which is the
+inverse of the disclosure rule and was caught in review: `get_skill_registry`
+answers its JSON branch BEFORE the `!registry` check, so `hint` arrived beside
+`registry: null` — "das ist nur die Übersicht" over an answer stating there is
+none. The positive tests covered both formats and the negative ones only
+markdown, which is exactly how it stayed invisible; there are now negatives for
+both.
+
+Note the split this does *not* cross. Prose hints belong to the markdown path
+and their machine-readable equivalent to the envelope — `registryHintFor` is
+markdown-only, `renderToJson` carries no prose at all, and the JSON says the
+same things through `registryChecked`, `licenseFilter` and `skillRegistry`. The
+two skill tools build their payload by hand rather than through `renderToJson`,
+which is why `hint` belongs there and nowhere else.
+
+The sentence lives in exactly one module (`DESCRIPTIONS_ONLY_NOTE`,
+`formatter.ts`), pinned by `tests/shared-rule-discipline.test.ts`: two of the
+three surfaces already carried their own closing pointer, identical by luck
+rather than construction, and the third had none.
+
+Wording found by rendering the output rather than by a test. A first draft named
+the fields — "nur Titel und Beschreibungen" — which is false on the surface that
+shows the most of them: a node's catalogue carries title and nodeId only, while
+`get_skill_registry` adds descriptions and keywords. It now says what the listing
+is NOT and never what it holds. It is also indented with the entries it closes;
+flush left it landed between the last skill and the node's own `Typ:` line, where
+"das ist nur die Übersicht" reads as a claim about the record.
+
 ### Changed — the approval list reaches every collection tool, and is no longer cut at 30 (2026-08-15)
 
 **Up to 100 skills ride along, not 30.** The listing tier and the tool tier used

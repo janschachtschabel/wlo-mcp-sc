@@ -22,6 +22,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { connectedClient } from './fetchMock.js';
+import { registerSkillTools } from '../src/tools/skills.js';
 
 const root = new URL('../', import.meta.url);
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
@@ -181,17 +182,40 @@ const COUNTED_DOCS = [
   'docs/INTEGRATION.md', 'CLAUDE.md',
 ];
 
+/**
+ * How many tools each skill mode registers, MEASURED rather than assumed.
+ *
+ * This used to be `names.length - 1` with a comment saying one-tool swaps two
+ * tools for one. On 2026-08-16 `get_skill` became unconditional — the swap is
+ * now 1:1 and the count is unchanged — and the arithmetic went on producing the
+ * old number, so every document kept its stale "41" with the suite green. A
+ * count derived from a sentence about the code checks the sentence, not the
+ * code; `createMcpServer` reads the mode from the environment at import time,
+ * so the delta is taken from the one function the mode actually reaches.
+ */
+function skillToolsPerMode(): { 'two-tool': number; 'one-tool': number } {
+  const count = (mode: 'two-tool' | 'one-tool'): number => {
+    const names: string[] = [];
+    const probe = {
+      tool: (name: string) => { names.push(name); },
+    } as unknown as Parameters<typeof registerSkillTools>[0];
+    registerSkillTools(probe, { collectionId: '', mode });
+    return names.length;
+  };
+  return { 'two-tool': count('two-tool'), 'one-tool': count('one-tool') };
+}
+
 async function realCounts(): Promise<{ total: number; readTools: number; curation: number; oneTool: number }> {
   const client = await connectedClient();
   try {
     const names = (await client.listTools()).tools.map(t => t.name);
     const curation = curationToolNames();
+    const perMode = skillToolsPerMode();
     return {
       total: names.length,
       readTools: names.filter(n => !curation.includes(n)).length,
       curation: curation.length,
-      // one-tool mode swaps `search_skill` + `get_skill` for a single tool.
-      oneTool: names.length - 1,
+      oneTool: names.length - perMode['two-tool'] + perMode['one-tool'],
     };
   } finally {
     await client.close();

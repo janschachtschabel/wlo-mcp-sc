@@ -23,7 +23,7 @@ import {
   type ScanTruncation,
   type SkillRegistry,
 } from '../services/skill-registry.js';
-import { oneLine } from '../formatter.js';
+import { DESCRIPTIONS_ONLY_NOTE, oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
 
 const UNTRUSTED_NOTE =
@@ -71,7 +71,7 @@ function renderCatalogue(registry: SkillRegistry): string[] {
     if (e.keywords?.length) lines.push(oneLine(`Keywords: ${e.keywords.join(', ')}`));
     lines.push('');
   }
-  lines.push('Lade die passende Anleitung mit `get_skill` und der nodeId.');
+  lines.push(DESCRIPTIONS_ONLY_NOTE);
   return lines;
 }
 
@@ -143,10 +143,20 @@ diese eine Sammlung vorgesehen ist.`,
           // The same framing the markdown view puts in front of the document:
           // this hands over the very same repository text, so it carries the
           // same warning rather than relying on the field name to imply it.
+          // `hint` stays a SECOND field rather than being folded into `note` —
+          // one is about trusting the text, the other about it being incomplete,
+          // and a reader acting on either should not have to split a sentence.
+          //
+          // And it is CONDITIONAL where `note` is not, on the same rule the
+          // markdown branch follows: the note is about a catalogue, so without
+          // entries there is nothing for it to be about. This branch runs ahead
+          // of the `!registry` check below, so an unconditional field shipped
+          // "das ist nur die Übersicht" beside `registry: null`.
           const payload = {
             registry, reason: reason ?? null,
             ...(scanTruncated ? { scanTruncated } : {}),
             note: UNTRUSTED_NOTE.replace(/^>\s*Hinweis:\s*/, ''),
+            ...(registry?.entries.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
           };
           return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
         }

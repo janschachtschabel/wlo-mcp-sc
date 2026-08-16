@@ -18,7 +18,7 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 | | Sichtbar |
 |---|---|
 | **Standard** | 42 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 41 Tools — beide ersetzt durch `get_skill_for_task` |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 42 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -238,6 +238,23 @@ In **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld
 `skillRegistry` am jeweiligen Knoten. Antwortet der Abruf nicht, steht statt des
 Katalogs „… ist hier nicht geprüft" — das ist etwas anderes als eine Sammlung,
 die keine Skills freigegeben hat, und wird auch anders gesagt.
+
+**Jede aufgelistete Übersicht sagt, dass sie nicht die Anleitung ist.** Die
+ersten beiden Zeilen der Tabelle schließen mit einem festen Satz, ebenso
+`search_skill` und `get_skill_registry` (im JSON als Feld `hint`):
+
+> Das ist nur die Übersicht — die Anleitungen selbst stehen nicht darin. Die
+> Anleitung (SKILL.md) lädt `get_skill` mit der nodeId des gewünschten Skills,
+> nicht mit der einer Registry oder Sammlung.
+
+Ohne ihn liest sich ein Katalogeintrag wie ein bereits übergebener Arbeitsschritt:
+„Fragen generieren" ist aber nur der Name eines Ablaufs, den niemand geholt hat.
+Der zweite Halbsatz grenzt gegen die Nachbarn ab: eine gerenderte Sammlung führt
+**drei** nodeIds — ihre eigene, die des Registry-Dokuments und die des Skills —
+und die dem Satz nächste ist die falsche.
+
+Die dritte Zeile der Tabelle trägt den Satz **nicht** — dort steht keine
+Skill-nodeId, mit der man ihm folgen könnte.
 
 Die zweite Zeile war die eigentliche Lücke: diese Werkzeuge geben die Sammlung,
 um die es geht, nie als Ergebnis zurück — sie steht in den Argumenten. Wer den

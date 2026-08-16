@@ -48,10 +48,30 @@ Trägt die Sammlung eine Registry, steht der Katalog direkt am Ergebnis:
 Skill-Registry: Skills für die Sammlung Optik (nodeId: 9d3f…) — 2 freigegebene Skills, alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry
   Skill: Fragen generieren (nodeId: 12c04f9c-…) — laden mit get_skill
   Skill: Kompendialtext schreiben (nodeId: ccdcae49-…) — laden mit get_skill
+  Das ist nur die Übersicht — die Anleitungen selbst stehen nicht darin. Die Anleitung (SKILL.md) lädt `get_skill` mit der nodeId des gewünschten Skills, nicht mit der einer Registry oder Sammlung.
 ```
 
 Damit ist der Auslöser komplett: Titel zum Auswählen, nodeId zum Laden. Ein
 weiterer Abruf ist **nicht** nötig.
+
+Die Schlusszeile steht in **jeder** Übersicht, die Skills namentlich auflistet —
+auch in `search_skill` und `get_skill_registry`, und in beiden Ausgabeformaten
+(im JSON als Feld `hint`). Sie sagt, was die Liste *nicht* ist, und nie, was sie
+enthält: ein Katalog am Suchtreffer trägt nur Titel und nodeId, der von
+`get_skill_registry` zusätzlich Beschreibungen und Keywords. Ein Satz, der die
+Felder benennt, wäre auf einer der beiden Oberflächen falsch.
+
+Sie fehlt dort, wo **keine** Skill-nodeId ausgegeben wird — in den Kopfzeilen der
+Übersichten (siehe Tabelle unten), bei einer Registry ohne auflösbare Einträge
+und bei einer Skill-Suche ohne Treffer. „Lade sie mit `get_skill` und der nodeId"
+verweist dort auf Kennungen, die in der Antwort gar nicht stehen. Das gilt in
+**beiden** Formaten: im JSON fehlt dann das Feld `hint`, statt leer dazustehen.
+
+Der zweite Halbsatz grenzt gegen die Nachbarn ab: im Block oben stehen **drei**
+nodeIds — die der Sammlung (`coll-…`), die des Registry-Dokuments (`reg-…`) und
+die des Skills — und nur die letzte nimmt `get_skill`. Die dem Satz nächste ist
+die falsche. Mit der Registry-Kennung aufgerufen liefert `get_skill` die
+Freigabeliste zurück: ein Dokument, das aussieht wie das gesuchte.
 
 **Es stehen alle freigegebenen Skills dort**, bis zu **100** — keine Stichprobe.
 Bis dahin liefert `get_skill_registry` nicht *mehr* Einträge, sondern *mehr zu

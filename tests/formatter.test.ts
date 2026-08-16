@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatNode, formatNodes, renderToText, renderToJson, resolveFacetCounts } from '../src/formatter.js';
+import {
+  DESCRIPTIONS_ONLY_NOTE, formatNode, formatNodes, registrySummaryLines,
+  renderToText, renderToJson, resolveFacetCounts,
+} from '../src/formatter.js';
 import { REGISTRY_SEARCH_MAX } from '../src/services/skill-registry.js';
 import { DISPLAY_PROPS } from '../src/wlo-api.js';
 import type { WloNode } from '../src/wlo-api.js';
@@ -342,6 +345,54 @@ test('renderToText: every skill the catalogue carries is listed, not a sample', 
   assert.doesNotMatch(text, /vollständig mit get_skill_registry/,
     'the listing IS complete — the pointer must name what the tool adds instead');
   assert.match(text, /Beschreibungen/, 'which is what get_skill_registry is for now');
+});
+
+test('renderToText: a listed catalogue says it is an overview, not the instructions', () => {
+  // The failure this closes is a model reading a catalogue and answering FROM
+  // it: the entries carry a title and a nodeId and nothing else, so "Fragen
+  // generieren" looks like a step that has been handed over when it is a name
+  // for one nobody fetched. The line names the tool AND what it needs.
+  const text = renderToText([collectionWithRegistry([{ nodeId: 'skill-a', title: 'Fragen generieren' }])]);
+  assert.ok(text.includes(DESCRIPTIONS_ONLY_NOTE), 'the catalogue must close with the shared note');
+  assert.match(DESCRIPTIONS_ONLY_NOTE, /get_skill\b/, 'and that note must name the loading tool');
+
+  // Indentation is what scopes it. Flush left the note sits between the last
+  // `  Skill: …` line and the node's own `Typ:` field, and "das ist nur die
+  // Übersicht" then reads as a claim about the RECORD. Found by rendering the
+  // output, not by an assertion — which is why there is one now.
+  const lines = text.split('\n');
+  const noteAt = lines.findIndex(l => l.includes(DESCRIPTIONS_ONLY_NOTE));
+  assert.ok(lines[noteAt]!.startsWith('  '), 'the note is indented with the entries it closes');
+  assert.ok(lines[noteAt - 1]!.trimStart().startsWith('Skill:'), 'and follows the last of them');
+});
+
+test('the catalogue note rules out the two ids standing next to the right one', () => {
+  // A rendered collection puts THREE nodeIds in view at once, and only the last
+  // is what `get_skill` takes. "mit dessen nodeId" was grammatically
+  // unambiguous and positionally not: the nearest id above the note is the
+  // registry document's, and the collection's sits three lines up.
+  const text = renderToText([collectionWithRegistry([{ nodeId: 'skill-a', title: 'Fragen generieren' }])]);
+  assert.match(text, /nodeId: coll-1/, 'the collection id is in the same block');
+  assert.match(text, /nodeId: reg-1/, 'and so is the registry document id');
+  assert.match(DESCRIPTIONS_ONLY_NOTE, /Registry/, 'so the note must rule the registry id out by name');
+  assert.match(DESCRIPTIONS_ONLY_NOTE, /Sammlung/, 'and the collection id too');
+});
+
+test('registrySummaryLines: the head-line tier offers no nodeId, so it promises no load', () => {
+  // `entries: false` is the tier for tools rendering one block per node
+  // (browse tree, subject portals, topic-page listings). No skill nodeId is
+  // printed there at all, so "load it with get_skill and the nodeId" would
+  // point at ids the answer does not carry — a step a model cannot take.
+  const lines = registrySummaryLines(
+    { nodeId: 'reg-1', title: 'Skill Registry Optik', entries: [{ nodeId: 'skill-a', title: 'Fragen generieren' }] },
+    { entries: false },
+  );
+  assert.ok(!lines.join('\n').includes(DESCRIPTIONS_ONLY_NOTE), 'nothing is listed, so nothing is loadable yet');
+});
+
+test('registrySummaryLines: an empty catalogue promises no load either', () => {
+  const lines = registrySummaryLines({ nodeId: 'reg-1', title: 'Skill Registry Optik', entries: [] });
+  assert.ok(!lines.join('\n').includes(DESCRIPTIONS_ONLY_NOTE), 'no entry, no nodeId to load one with');
 });
 
 test('renderToText: a full search-tier catalogue is still listed in full', () => {

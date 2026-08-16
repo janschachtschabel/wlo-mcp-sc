@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { registerSkillTools } from '../src/tools/skills.js';
+import { DESCRIPTIONS_ONLY_NOTE } from '../src/formatter.js';
 import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
@@ -73,13 +74,39 @@ test('two-tool mode offers search_skill and get_skill', async () => {
   }
 });
 
-test('one-tool mode offers get_skill_for_task alone', async () => {
+test('one-tool mode replaces the SEARCH, not the loader', async () => {
+  // CONTRACT CHANGED 2026-08-16: this used to pin `['get_skill_for_task']`
+  // alone. `get_skill` is the loader for any nodeId the surface hands out —
+  // `get_skill_registry`'s approval list above all — and that list is
+  // registered in every mode.
   const client = await skillClient({ mode: 'one-tool' });
   try {
     const names = (await client.listTools()).tools.map(t => t.name);
-    assert.deepEqual(names.filter(n => n.includes('skill')).sort(), ['get_skill_for_task']);
+    assert.deepEqual(names.filter(n => n.includes('skill')).sort(), ['get_skill', 'get_skill_for_task']);
   } finally {
     await client.close();
+  }
+});
+
+test('a markdown companion is pointed at get_skill in BOTH modes', async () => {
+  // `get_skill` returns the attached file verbatim; `get_wlo_content_text`
+  // returns the repository's extract. For a companion SKILL.md the first is
+  // right, and one-tool mode was sent to the second only because the first was
+  // not registered there.
+  for (const mode of ['two-tool', 'one-tool'] as const) {
+    const mock = bundleAndRefMock();
+    const client = await skillClient({ mode });
+    try {
+      const text = toolText(await client.callTool(mode === 'one-tool'
+        ? { name: 'get_skill_for_task', arguments: { task: 'Stunde planen' } }
+        : { name: 'get_skill', arguments: { nodeId: 's-plan' } }));
+      const line = text.split('\n').find(l => l.includes('checkliste.md'));
+      assert.ok(line, `${mode}: the companion must be listed`);
+      assert.match(line, /`get_skill`/, `${mode}: and read with the tool that returns it verbatim`);
+    } finally {
+      await client.close();
+      mock.restore();
+    }
   }
 });
 
@@ -111,6 +138,58 @@ test('search_skill json output carries the summaries', async () => {
     })));
     assert.equal(parsed.skills.length, 2);
     assert.ok(parsed.skills.every((s: { nodeId: string }) => typeof s.nodeId === 'string'));
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('search_skill closes with the note that this is not yet the instruction', async () => {
+  const mock = skillsMock();
+  const client = await skillClient();
+  try {
+    const text = toolText(await client.callTool({ name: 'search_skill', arguments: { query: 'Stunde' } }));
+    assert.ok(text.trimEnd().endsWith(DESCRIPTIONS_ONLY_NOTE), 'the note closes the catalogue');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('search_skill json carries the same note as its markdown', async () => {
+  // Same rule as the untrusted-content warning this tool's sibling already
+  // carries in both formats: a disclosure that only exists in one rendering is
+  // no disclosure for whoever asked for the other.
+  const mock = skillsMock();
+  const client = await skillClient();
+  try {
+    const parsed = JSON.parse(toolText(await client.callTool({
+      name: 'search_skill', arguments: { query: 'Stunde', outputFormat: 'json' },
+    })));
+    assert.equal(parsed.hint, DESCRIPTIONS_ONLY_NOTE);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('an empty catalogue promises no load — there is no nodeId to load with', async () => {
+  // BOTH formats, and that is the point: the markdown suppressed the note
+  // through `renderCatalogue`'s early return while the JSON added `hint`
+  // unconditionally, so one output format of one tool told a caller to load a
+  // skill from a list that has none. The positive tests covered both formats
+  // and the negative only one, which is how it stayed invisible.
+  const mock = installFetchMock((): MockResult => ({ json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } }));
+  const client = await skillClient();
+  try {
+    const text = toolText(await client.callTool({ name: 'search_skill', arguments: { query: 'nichts' } }));
+    assert.ok(!text.includes(DESCRIPTIONS_ONLY_NOTE), 'no entries, nothing to fetch');
+
+    const parsed = JSON.parse(toolText(await client.callTool({
+      name: 'search_skill', arguments: { query: 'nichts', outputFormat: 'json' },
+    })));
+    assert.equal(parsed.skills.length, 0);
+    assert.equal(parsed.hint, undefined, 'the json must not offer what the markdown withholds');
   } finally {
     await client.close();
     mock.restore();
@@ -532,17 +611,31 @@ test('get_skill discloses that the loaded record is a reference, like the catalo
   }
 });
 
-test('get_skill_for_task never points at get_skill, which that mode does not register', async () => {
+/**
+ * CONTRACT CHANGED 2026-08-16. This used to pin the opposite — that one-tool
+ * mode never names `get_skill`, because it did not register it.
+ *
+ * What forced the change is the registry: `get_skill_registry` is registered
+ * unconditionally and hands out skill nodeIds, and one-tool mode registered no
+ * tool that takes one. The approval list was therefore unusable in that mode —
+ * it named skills nobody could load. The same held for a referenced skill and
+ * for a Markdown companion, which fell back to `get_wlo_content_text` and the
+ * repository's text EXTRACT where the verbatim file is what a skill needs.
+ */
+test('one-tool mode registers get_skill too, so a nodeId it hands out can be used', async () => {
   const mock = bundleAndRefMock();
   const client = await skillClient({ mode: 'one-tool' });
   try {
     const names = (await client.listTools()).tools.map(t => t.name);
-    assert.ok(!names.includes('get_skill'));
+    assert.ok(names.includes('get_skill'), 'the registry\'s nodeIds need a consumer');
+    assert.ok(names.includes('get_skill_for_task'));
+    assert.ok(!names.includes('search_skill'), 'the repository-wide search is still the one it replaces');
+
     const text = toolText(await client.callTool({
       name: 'get_skill_for_task', arguments: { task: 'Stunde planen' },
     }));
     assert.match(text, /Folge-Skill/, 'the reference is still named');
-    assert.doesNotMatch(text, /`get_skill`/, 'but not as a tool to call — it is not registered here');
+    assert.match(text, /`get_skill`/, 'and now as a tool to call, because it exists here');
   } finally {
     await client.close();
     mock.restore();

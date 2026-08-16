@@ -103,9 +103,10 @@ immer anonym.
 > Skills unabhängig von einer Sammlung, `get_skill_registry` beantwortet, was
 > für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
 >
-> `WLO_SKILL_TOOL_MODE=one-tool` ersetzt die ersten **beiden** durch ein
-> einziges `get_skill_for_task` (dann 41 Werkzeuge statt 42);
-> `get_skill_registry` bleibt.
+> `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **nur die Suche** durch
+> `get_skill_for_task` (die Zahl bleibt bei 42). `get_skill` und
+> `get_skill_registry` bleiben — die Freigabeliste besteht aus nodeIds, und
+> `get_skill` ist das einzige Werkzeug, das eine annimmt.
 >
 > `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 41), wenn
 > Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.

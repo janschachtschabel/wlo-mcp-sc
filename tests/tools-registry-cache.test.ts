@@ -18,6 +18,7 @@ import {
   runCacheTick,
   stopSkillRegistryCache,
 } from '../src/services/skill-registry-cache.js';
+import { DESCRIPTIONS_ONLY_NOTE } from '../src/formatter.js';
 import { subjectRegistryText } from '../src/tools/shared.js';
 import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { connectedClient, installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
@@ -110,6 +111,8 @@ for (const { tool, args } of CASES) {
 
       assert.match(text, /Skill-Registry: Skill Registry Optik/, `${tool} must carry the catalogue`);
       assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
+      assert.ok(text.includes(DESCRIPTIONS_ONLY_NOTE),
+        `${tool} lists skill titles, so it must say the instructions are not among them`);
       assert.equal(counts.children, afterWarm, 'and must not spend a request on it');
     } finally {
       await client.close();
@@ -151,6 +154,8 @@ for (const { tool, args } of SUBJECT_CASES) {
       // record's registry, which is a thing that cannot exist.
       assert.match(text, /angefragte Sammlung coll-1/,
         'the block must name the collection it belongs to');
+      assert.ok(text.includes(DESCRIPTIONS_ONLY_NOTE),
+        `${tool} lists skill titles, so it must say the instructions are not among them`);
     } finally {
       await client.close();
       mock.restore();
@@ -232,6 +237,8 @@ for (const { tool, args } of BROWSE_CASES) {
       assert.match(text, /get_skill_registry/, 'and say how to read the catalogue');
       assert.ok(!text.includes(SKILL_A),
         'the entries stay out — one node is one line here');
+      assert.ok(!text.includes(DESCRIPTIONS_ONLY_NOTE),
+        'and with no skill nodeId printed, "load it with get_skill" would name ids this answer lacks');
       assert.equal(counts.children, afterWarm, 'and a broad listing spends no request on registries');
     } finally {
       await client.close();

@@ -237,6 +237,28 @@ test('the catalogue a node carries is built in exactly one place', () => {
   );
 });
 
+/**
+ * A hand-written "these are only descriptions" sentence. Matches the distinctive
+ * clause rather than the whole note, so a copy that shortened or re-punctuated it
+ * is still caught.
+ */
+const INLINE_DESCRIPTIONS_ONLY = /die Anleitungen selbst stehen nicht darin/;
+
+test('the "catalogue is not the instruction" note is written in exactly one module', () => {
+  // Three surfaces hand out a skill catalogue — a collection's registry lines in
+  // a search result, `get_skill_registry`, `search_skill` — and two of them
+  // already carried their own closing pointer ("Lade die passende Anleitung mit
+  // get_skill und der nodeId"), written twice and identical by luck rather than
+  // by construction, while the third had none at all. That is the drift shape:
+  // the copies agree until one is improved.
+  assert.deepEqual(
+    offenders(INLINE_DESCRIPTIONS_ONLY, ['formatter.ts']),
+    [],
+    'use DESCRIPTIONS_ONLY_NOTE from formatter.ts — it sits beside registrySummaryLines, which decides '
+      + 'the tier the note is true for (a head line shows no skill nodeId, so it promises no load)',
+  );
+});
+
 test('the skill-registry cache is started only by the transports', () => {
   // A background timer that fires on module load would hit the network in every
   // test — `tests/netguard.mjs` would (rightly) fail the run — and would start

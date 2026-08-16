@@ -339,6 +339,47 @@ function headingFor(title: string, url: string): string {
 const REGISTRY_LINES_MAX = 100;
 
 /**
+ * What a skill catalogue is NOT: the instructions.
+ *
+ * Every listing surface hands over titles and nodeIds — a name for a procedure,
+ * never the procedure. The failure that costs is a model answering FROM the
+ * catalogue: "Fragen generieren" reads like a step that arrived when it is the
+ * label of one nobody fetched, and the answer then invents what the SKILL.md
+ * would have said. So the sentence names both halves, the tool and what it needs,
+ * because a pointer without the nodeId is a step a model cannot take.
+ *
+ * Shared rather than written per surface: three of them list a catalogue, two
+ * already carried near-identical closing pointers of their own and the third had
+ * none. Which surfaces may use it is a property of the TIER, not of the caller —
+ * see `registrySummaryLines`, where a head-line-only listing prints no skill
+ * nodeId and therefore promises no load. Pinned by
+ * `tests/shared-rule-discipline.test.ts`.
+ *
+ * It says what the listing is NOT and never what it holds, because the two
+ * surfaces hold different things: a node's catalogue carries title and nodeId
+ * only (descriptions cost a read per skill and stay with `get_skill_registry`),
+ * that tool's carries descriptions and keywords too. A first draft named the
+ * fields — "nur Titel und Beschreibungen" — and was therefore false on the
+ * surface that shows the most of them, which is the one a search answer renders.
+ *
+ * And it rules out the two ids standing beside the right one. Naming the tool is
+ * not enough where THREE nodeIds are in view: a rendered collection carries its
+ * own on the record line, the registry document's on the head line and the
+ * skill's on its entry — and the one nearest the note is the registry's. Both
+ * wrong picks fail usefully (`get_skill` on a registry hands back the approval
+ * list, on a collection nothing), but a model that reads an approval list as an
+ * instruction has been handed a document that looks like the thing it asked for.
+ *
+ * "einer Registry oder Sammlung", not "der": `search_skill`'s catalogue holds
+ * neither, so the definite article would point at things its answer does not
+ * show. The indefinite one states a rule instead, which is true on all three.
+ */
+export const DESCRIPTIONS_ONLY_NOTE =
+  'Das ist nur die Übersicht — die Anleitungen selbst stehen nicht darin. '
+  + 'Die Anleitung (SKILL.md) lädt `get_skill` mit der nodeId des gewünschten Skills, '
+  + 'nicht mit der einer Registry oder Sammlung.';
+
+/**
  * The registry a collection declares, as listing lines — one per part, so the
  * caller's `oneLine` pass covers each of them.
  *
@@ -402,6 +443,15 @@ export function registrySummaryLines(
   if (opts.entries !== false && declared > shown.length) {
     lines.push(`  … und ${declared - shown.length} weitere`);
   }
+  // Only where a skill nodeId was actually printed. The head-line tier lists
+  // nothing (and an empty catalogue has nothing to list), so the note would
+  // point at ids the answer does not carry — and a listing that promises a step
+  // its own content cannot support is worse than one that promises none.
+  //
+  // Indented with the entries it closes. Flush left it lands between the last
+  // skill and the node's own `Typ:` line, where "das ist nur die Übersicht"
+  // reads as a statement about the RECORD rather than about the catalogue.
+  if (shown.length) lines.push(`  ${DESCRIPTIONS_ONLY_NOTE}`);
   return lines;
 }
 

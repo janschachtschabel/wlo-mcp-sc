@@ -8,6 +8,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { registerSkillTools } from '../src/tools/skills.js';
 import { registerSkillRegistryTool } from '../src/tools/skill-registry.js';
 import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { DESCRIPTIONS_ONLY_NOTE } from '../src/formatter.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
 
@@ -78,6 +79,65 @@ test('get_skill_registry puts the server-built catalogue BEFORE the untrusted do
     assert.match(text, /Erzeugt Aufgaben zu einem Material\./, 'the head carries the description');
     assert.match(text, /Aufgaben/, 'and the keywords');
     assert.match(text, /get_skill/, 'the next step is named');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('get_skill_registry says its catalogue is descriptions, not the instructions', async () => {
+  // The tool's own description already says the instructions do not come with
+  // it. That is read once at tool-list time and by a different reader than the
+  // one holding the answer — a model that has a catalogue in front of it needs
+  // the sentence IN the catalogue.
+  const mock = registryMock(`${BLOCK}\n\nDiese Skills gelten nur für Klasse 7.`);
+  try {
+    const client = await registryClient();
+    const text = toolText(await client.callTool({ name: 'get_skill_registry', arguments: { collectionId: 'coll-1' } }));
+
+    assert.ok(text.includes(DESCRIPTIONS_ONLY_NOTE), 'the catalogue must carry the shared note');
+    // Ahead of the separator with every other server-derived section: past it,
+    // an instruction to call get_skill would be indistinguishable from one the
+    // uploaded document wrote for itself.
+    assert.ok(text.indexOf(DESCRIPTIONS_ONLY_NOTE) < text.indexOf('---'), 'and stay in the server-built zone');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('get_skill_registry json carries the same note as its markdown', async () => {
+  const mock = registryMock(BLOCK);
+  try {
+    const client = await registryClient();
+    const parsed = JSON.parse(toolText(await client.callTool({
+      name: 'get_skill_registry', arguments: { collectionId: 'coll-1', outputFormat: 'json' },
+    })));
+    assert.equal(parsed.hint, DESCRIPTIONS_ONLY_NOTE);
+    assert.ok(parsed.note, 'the untrusted-content warning stays its own field — two disclosures, two fields');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('get_skill_registry json withholds the note when there is no catalogue', async () => {
+  // The json branch runs BEFORE the `!registry` check, so `hint` shipped beside
+  // `registry: null` — "das ist nur die Übersicht" over an answer that says
+  // there is none, and a nodeId to load with that nobody was given. The
+  // markdown branch gets this right through `missText`; the formats disagreed.
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/children')) {
+      return { json: { nodes: [makeNode('pdf', 'Arbeitsblatt')], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    const client = await registryClient();
+    const parsed = JSON.parse(toolText(await client.callTool({
+      name: 'get_skill_registry', arguments: { collectionId: 'coll-1', outputFormat: 'json' },
+    })));
+    assert.equal(parsed.registry, null, 'this collection declares none');
+    assert.equal(parsed.reason, 'no_registry');
+    assert.equal(parsed.hint, undefined, 'so there is no catalogue the note could be about');
+    assert.ok(parsed.note, 'the untrusted-content warning is unconditional and stays');
   } finally {
     mock.restore();
   }

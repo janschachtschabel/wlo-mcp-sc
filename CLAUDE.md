@@ -223,7 +223,16 @@ The current rebuild/extension is designed in:
   (`ccm:oeh_extendedType = …/contentTypes/ai_skill`, full URI — the slug matches
   nothing; it was `ai_prompt` until the vocabulary split on 2026-08-12) and whose attached file is the `SKILL.md`. Both tools are registered
   unconditionally; `WLO_SKILLS_COLLECTION_ID` only NARROWS the search, and
-  `WLO_SKILL_TOOL_MODE=one-tool` swaps both for `get_skill_for_task`.
+  `WLO_SKILL_TOOL_MODE=one-tool` swaps **the search alone** for
+  `get_skill_for_task` — `get_skill` is registered in EVERY mode (2026-08-16),
+  because it is the only tool that takes a nodeId and the surfaces handing them
+  out are not governed by that switch: `get_skill_registry` is unconditional and
+  IS a list of them, every collection result carries that list, and a skill names
+  its references and companions by id. Leaving it out made the approval list
+  unusable in that mode. The swap is therefore 1:1 and the tool count does NOT
+  change — two docs said 41 because `tests/docs-claims.test.ts` derived the
+  expectation from a COMMENT about the code (`names.length - 1`) instead of the
+  code; it now measures both modes through `registerSkillTools`.
 
   Four measurements bind any change here (2026-08-08, re-measure before
   contradicting): (1) `ngsearch` returns **no collections at all**
@@ -255,6 +264,44 @@ The current rebuild/extension is designed in:
   elevated-authority boundary, not the delimiter protection an ordinary rendered
   value gets. Compliance cannot be enforced; that is the same standing a host's
   own skill files have.
+
+  **A catalogue says it is not the instruction (2026-08-16).** Every surface
+  that lists skills BY NAME closes with `DESCRIPTIONS_ONLY_NOTE` — one constant
+  in `formatter.ts`, beside `registrySummaryLines`, pinned by
+  `tests/shared-rule-discipline.test.ts`; two of the three surfaces already
+  carried their own closing pointer, identical by luck, and the third had none.
+  It reaches `registrySummaryLines` (so: search results, `subjectRegistryText`,
+  `get_node_details`, topic pages), `search_skill` and `get_skill_registry`,
+  each in BOTH formats (`hint` in JSON, same rule as that tool's untrusted
+  warning), and in `get_skill_registry` it stays ahead of the `---`. Three rules
+  bind any change. (1) It is emitted only where a skill nodeId was PRINTED —
+  not on the head-line tier and not for an empty catalogue: naming `get_skill`
+  "mit dessen nodeId" over an answer that carries none promises a step the
+  content cannot support. `get_skill_for_task`'s alternatives are excluded for
+  the neighbouring reason — under `one-tool` the named tool is not registered.
+  That rule is PER FORMAT, and both JSON sites broke it in the first cut:
+  `get_skill_registry` answers its JSON branch BEFORE the `!registry` check, so
+  an unconditional `hint` shipped beside `registry: null`. What made it
+  invisible is worth more than the fix — the positive tests covered both
+  formats and the negative ones only markdown. The `hint` field itself belongs
+  to those two tools ALONE: prose hints are markdown-only everywhere else
+  (`registryHintFor`; `renderToJson` carries none), and the envelope says the
+  same thing through `registryChecked`/`licenseFilter`/`skillRegistry`. These
+  two build their payload by hand, which is the whole reason they need it.
+  (2) It says what the listing is NOT and never what it HOLDS: the two surfaces
+  hold different things (a node's catalogue is title+nodeId only, the tool's
+  adds descriptions and keywords), so a first draft naming the fields — "nur
+  Titel und Beschreibungen" — was false on the surface that shows the most of
+  them. (3) It is INDENTED with the entries it closes; flush left it lands
+  between the last skill and the node's own `Typ:` line and reads as a claim
+  about the record. Both (2) and (3) were found by rendering the output, not by
+  a test — which is why each now has an assertion. (4) It RULES OUT the two ids
+  standing beside the right one, because naming the tool is not enough where
+  THREE nodeIds are in view — the collection's on the record line, the registry
+  document's on the head line, the skill's on its entry, and the one nearest
+  the note is the registry's. Indefinite ("einer Registry oder Sammlung"), not
+  definite: `search_skill`'s catalogue holds neither, so "der" would point at
+  things its answer does not show.
 
 - **Use-Case-Lücken (Lizenzfilter, Usage, Themenseiten-Variante) — COMPLETE
   (2026-08-09):** `docs/plans/2026-08-09-usecase-gap-tools.md` (design + tasks in
@@ -840,8 +887,8 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   connector tolerates keys beside the required ones is unmeasured; the
   convention shape therefore stays first and untouched in both modes, pinned by
   `tests/tools-knowledge-rich.test.ts`;
-  `search_skill`+`get_skill` become a single `get_skill_for_task` under
-  `WLO_SKILL_TOOL_MODE=one-tool`) plus the 14 curation tools (`curation-*.ts`,
+  `search_skill` becomes `get_skill_for_task` under
+  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 14 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm/report they share, `curation-fields.ts` the 13-field

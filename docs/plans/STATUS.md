@@ -4558,7 +4558,8 @@ ueber die Folgeaufrufe wanderte, wo er ohnehin hingehoert; die Messklammer
 
 **Ein Schreibvorgang stellte `.env.example` von LF auf CRLF um** — und
 `deploy-env-passthrough.test.ts` parst diese Datei mit `/^([A-Z_]+)=(.*)$/`.
-JavaScripts `.` matcht kein ``, also fand die Regex **gar nichts**, und zwei
+JavaScripts `.` matcht kein `
+`, also fand die Regex **gar nichts**, und zwei
 Tests meldeten "die Einstellung fehlt" statt "die Zeilenenden haben sich
 geaendert". Datei zurueckgestellt und die Regex auf `[^
 ]*` gehaertet: der
@@ -6217,3 +6218,130 @@ denselben Block im selben Ausdruck an.
 `src/tools/collections.ts`, `src/tools/browse.ts` ·
 `tests/tools-registry-cache.test.ts` · `CHANGELOG.md`, `CLAUDE.md`,
 `docs/SKILL-TRIGGER.md`, `docs/TOOLS.md`, diese Datei.
+
+### Nachtrag 2026-08-16 — Ein Katalog sagt, dass er nicht die Anleitung ist
+
+**Auftrag (Nutzer):** Jede ausgelieferte Skill-Übersicht bzw. Registry soll am
+Schluss hartkodiert sagen, dass dies nur die Beschreibungen sind und die
+Anweisungen mit `get_skill` über die nodeId geholt werden müssen — „prüfe wo dies
+überall rein gearbeitet werden muss".
+
+**Ein Satz, ein Ort.** `DESCRIPTIONS_ONLY_NOTE` in `formatter.ts`, neben
+`registrySummaryLines` — dem Ort, der entscheidet, für welche Stufe er überhaupt
+wahr ist. Zwei der drei Oberflächen trugen bereits einen eigenen Schlusszeiger
+(„Lade die passende Anleitung mit get_skill und der nodeId"), zweimal geschrieben
+und nur zufällig gleich; die dritte trug gar keinen. Gepinnt durch
+`tests/shared-rule-discipline.test.ts`.
+
+**Wo er landet (5 Stellen):** `registrySummaryLines` — damit Suchergebnisse,
+`subjectRegistryText` (die Sammlung, auf der ein Werkzeug arbeitet),
+`get_node_details`, Themenseiten; `get_skill_registry` Markdown und JSON;
+`search_skill` Markdown und JSON. Im JSON als Feld `hint`, aus demselben Grund,
+aus dem die Registry ihre Untrusted-Warnung in beiden Formaten führt.
+
+**Wo er bewusst NICHT landet, und es ist dreimal derselbe Grund — dort steht
+keine Skill-nodeId:** die Kopfzeilen-Stufe (`browse_collection_tree`,
+`get_subject_portals`, `search_wlo_topic_pages`), eine Registry ohne auflösbare
+Einträge, ein leerer `search_skill`-Katalog. Eine Liste, die einen Schritt
+verspricht, den ihr eigener Inhalt nicht trägt, ist schlechter als eine, die
+nichts verspricht. Dazu die Alternativen-Liste von `get_skill_for_task`: unter
+`WLO_SKILL_TOOL_MODE=one-tool` ist `get_skill` nicht registriert, ein Zeiger
+darauf ginge ins Leere. Und die HTML-Suchseite — ein Mensch im Browser ruft kein
+Tool auf.
+
+**Zwei Defekte fand erst das Rendern der echten Ausgabe, kein Test.** (1) Der
+erste Entwurf nannte die Felder — „nur Titel und Beschreibungen" — und war damit
+auf der Oberfläche falsch, die am meisten davon zeigt: der Katalog am Knoten
+trägt absichtlich nur Titel und nodeId (Beschreibungen kosten einen Abruf pro
+Skill), `get_skill_registry` trägt beides. Der Satz sagt jetzt, was die Liste
+NICHT ist, und nie, was sie enthält. (2) Bündig links landete er zwischen der
+letzten `  Skill:`-Zeile und dem `Typ:`-Feld des Datensatzes und las sich als
+Aussage über den DATENSATZ; er ist jetzt mit den Einträgen eingerückt, die er
+abschließt. Beides ist mit einer Zusicherung festgehalten.
+
+**Nachweis:** `npm test` → **1893 Tests, 1893 pass, 0 fail** (1884 + 9) ·
+typecheck → exit 0 · `npx eslint .` → exit 0 · `npm run build` → exit 0.
+Fünf Zusicherungen vor der Umsetzung rot gesehen. Die drei Negativ-Tests
+(Kopfzeilen-Stufe, leerer Katalog, `browse`) waren von Anfang an grün — sie
+wurden per Mutation als tragend nachgewiesen: ohne die `if (shown.length)`-Bedingung
+werden vier davon rot. Der Wächter in `shared-rule-discipline.test.ts` ist
+ebenfalls vakuum-grün und wird es erst durch eine künftige Kopie rot.
+
+**Nachtrag am selben Tag (Nutzer):** Der Satz nannte das Werkzeug, aber nicht,
+WELCHE der sichtbaren Kennungen es nimmt. Im gerenderten Block stehen drei —
+die der Sammlung, die des Registry-Dokuments, die des Skills — und die dem Satz
+nächstgelegene ist die falsche. Er schließt jetzt mit „nicht mit der einer
+Registry oder Sammlung". Unbestimmter Artikel, weil der Katalog von
+`search_skill` weder das eine noch das andere führt: „der" zeigte dort auf
+Dinge, die seine Antwort nicht enthält. Test vorher rot gesehen; er belegt
+zuerst, dass alle drei Kennungen im Block stehen, und pinnt dann den Satz.
+
+**Review desselben Pakets (2026-08-16), 3 Befunde, alle behoben.** Es war ein
+Befund an zwei Stellen — und ausgerechnet die Regel, die diese Änderung selbst
+aufstellt. Beide JSON-Zweige legten `hint` bedingungslos in die Antwort, während
+das Markdown ihn korrekt zurückhielt. Bei `get_skill_registry` läuft der
+JSON-Zweig sogar **vor** der `!registry`-Prüfung, also stand „das ist nur die
+Übersicht" neben `registry: null`: eine Anleitung zum Laden aus einem Katalog,
+den dieselbe Antwort verneint. Der dritte Befund erklärt die beiden — die
+Positiv-Tests deckten beide Formate ab, die Negativ-Tests nur Markdown. Genau
+diese Schieflage in der Abdeckung hat es unsichtbar gehalten; jetzt gibt es für
+beide Werkzeuge einen JSON-Leerfall, beide vorher rot gesehen.
+
+Beim Beheben geprüft und **kein** vierter Fix: die JSON-Ausgabe der Suchwerkzeuge
+trägt den Satz nicht — das ist Konvention, kein Versehen. Prosa-Hinweise laufen
+im Markdown-Zweig (`registryHintFor`), `renderToJson` trägt gar keine, und der
+Umschlag sagt dasselbe über `registryChecked`, `licenseFilter`, `skillRegistry`.
+Die zwei Skill-Werkzeuge bauen ihre Nutzlast von Hand — deshalb gehört `hint`
+dorthin und sonst nirgends.
+
+**Angefasst:** `src/formatter.ts`, `src/tools/skills.ts`,
+`src/tools/skill-registry.ts` · `tests/formatter.test.ts`,
+`tests/tools-skills.test.ts`, `tests/tools-skill-registry.test.ts`,
+`tests/tools-registry-cache.test.ts`, `tests/shared-rule-discipline.test.ts` ·
+`CHANGELOG.md`, `CLAUDE.md`, `docs/SKILL-TRIGGER.md`, `docs/TOOLS.md`, diese Datei.
+
+### Nachtrag 2026-08-16 (2) — `get_skill` in JEDEM Modus registriert
+
+**Auftrag (Nutzer):** den offenen Befund aus dem Review wie empfohlen beheben.
+
+`WLO_SKILL_TOOL_MODE=one-tool` ersetzte `search_skill` UND `get_skill` durch
+`get_skill_for_task`, das eine Aufgabenbeschreibung nimmt und keine nodeId.
+Damit gab es in dem Modus kein Werkzeug mehr, das eine nodeId annimmt — während
+`get_skill_registry` unbedingt registriert ist und GENAU eine Liste von nodeIds
+ist, jedes Sammlungs-Ergebnis diese Liste mitträgt und die Antwort eines Skills
+seine Verweise und Begleitdateien per id nennt. Die Freigabeliste war dort also
+unbenutzbar. Der Schalter ersetzt jetzt die SUCHE, nie den Lader.
+
+**Zwei Folgen, die der Fix mitnimmt.** (1) Die Werkzeugzahl bleibt bei 42, der
+Tausch ist 1:1 — `docs/TOOLS.md` und `docs/INTEGRATION.md` sagten 41, und der
+Zähltest konnte es nicht merken, weil er die Erwartung aus einem KOMMENTAR über
+den Code ableitete (`names.length - 1`) statt aus dem Code. Er misst jetzt beide
+Modi über `registerSkillTools`. (2) Eine Markdown-Begleitdatei wird wieder auf
+`get_skill` gezeigt statt auf `get_wlo_content_text`: der Ausweichpfad lieferte
+den Text-EXTRAKT des Repositories, während ein Skill die Datei wörtlich braucht.
+`readerFor` nimmt keinen Modus mehr; das Argument ist aus den drei Funktionen
+verschwunden, die es nur durchgereicht haben.
+
+**Selbst verursachter Fehler, und er hat etwas Älteres freigelegt.** Ein
+Python-Schreibvorgang stellte `.env.example` von LF auf CRLF um; der Parser in
+`deploy-env-passthrough.test.ts` splittet auf `
+` und prüft `[^
+]*$`, also
+matchte keine Zeile mehr und zwei Tests meldeten „die Einstellung fehlt". Der
+Kommentar dort dokumentiert genau diese Falle als am 2026-08-10 behoben — die
+Behebung wirkte nie: die Zeichenklasse kann das abschließende `` nicht
+schlucken, `$` matcht trotzdem nicht. Gemessen mit `node -e` (Muster → `null`).
+Jetzt `split(/?
+/)`; belegt, indem die Datei absichtlich auf CRLF gesetzt
+wurde — 8/8 grün — und danach auf LF zurück. Betrifft jede Windows-Bearbeitung
+dieser Datei, nicht nur mein Versehen.
+
+**Nachweis:** `npm test` → **1896 Tests, 1896 pass, 0 fail** · typecheck 0 ·
+eslint 0 · build 0. Drei Zusicherungen vorher rot; zwei bestehende ändern
+ausdrücklich ihren Vertrag (One-Tool nennt `get_skill` jetzt, statt es zu
+verschweigen) und sind als CONTRACT CHANGED markiert.
+
+**Angefasst:** `src/tools/skills.ts` · `tests/tools-skills.test.ts`,
+`tests/docs-claims.test.ts`, `tests/deploy-env-passthrough.test.ts` ·
+`.env.example`, `docs/TOOLS.md`, `docs/INTEGRATION.md`, `CHANGELOG.md`,
+`CLAUDE.md`, diese Datei.
