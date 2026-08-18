@@ -32,7 +32,7 @@
  */
 
 import type { SearchCriterion, SearchResponse } from '../wlo-api.js';
-import { FACET_LIMIT, ngsearch } from '../wlo-api.js';
+import { FACET_BUCKET_MAX, ngsearch } from '../wlo-api.js';
 import { resolveLicenseSelection } from '../filter-criteria.js';
 import { resolveVocab } from '../vocabs.js';
 import { mapPool } from '../concurrency.js';
@@ -99,11 +99,17 @@ async function exactLicenseTotal(
     .catch(() => null);
   const buckets = resp?.facets?.find(f => f.property === LICENSE_PROPERTY)?.values;
   if (!buckets?.length) return null;
-  // A full bucket list may have been cut at the limit, and a sum over a
-  // truncated list understates the corpus while looking exact. We cannot tell
-  // "exactly 20 distinct licences exist" from "there were more", so the honest
-  // answer is the fallback. Staging holds 16, so this does not fire there.
-  if (buckets.length >= FACET_LIMIT) return null;
+  // A full bucket list may have been cut, and a sum over a truncated list
+  // understates the corpus while looking exact. We cannot tell "that is every
+  // distinct licence there is" from "there were more", so the honest answer is
+  // the fallback.
+  //
+  // The threshold is `FACET_BUCKET_MAX`, NOT the limit we asked for: measured
+  // 2026-08-17, the server answers with up to five times the requested limit, and
+  // staging holds 23 distinct keys against a request for 20. Testing against
+  // `FACET_LIMIT` therefore discarded a complete, correct count on every broad
+  // licence search and fell back to the family total this module exists to avoid.
+  if (buckets.length >= FACET_BUCKET_MAX) return null;
   const allowed = new Set(keys);
   return buckets.reduce((sum, b) => {
     const key = resolveVocab(b.value, 'license');

@@ -563,3 +563,224 @@ test('search_wlo_collections: only the collections actually shown are looked up'
     stopSkillRegistryCache();
   }
 });
+
+// ── skillContext an den Sammlungs-Werkzeugen ─────────────────────────────────
+
+/**
+ * `skillContext` costs ONE live lookup (2 upstream calls, ~1.0–1.4 s), because
+ * the cache holds the summary and not the editors' prose. That is opt-in and
+ * bounded, and it is still cheaper than the round trip it replaces — the
+ * alternative, `get_skill_registry`, pays the same two calls plus one metadata
+ * read per skill.
+ */
+
+const OUTLINED_MD = [
+  '# Skillkatalog Optik',
+  '',
+  'Allgemeine Vorrede der Redaktion.',
+  '',
+  '::: ki-skill',
+  '[Lehrprofil](https://repo.example/edu-sharing/components/render/00000009-0000-4000-8000-000000000000)',
+  ':::',
+  '',
+  '## Browserplugin',
+  '',
+  'Anweisung fuer das Browserplugin.',
+  '',
+  '## Redaktionsumgebung',
+  '',
+  'Zuerst den Bestand sichten, dann kuratieren.',
+  '',
+  '::: ki-skill',
+  '[Vertretungsstunde](https://repo.example/edu-sharing/components/render/00000008-0000-4000-8000-000000000000)',
+  ':::',
+].join('\n');
+
+function outlinedCollectionMock(markdown = OUTLINED_MD) {
+  return installFetchMock((url): MockResult => {
+    if (url.includes('/eduservlet/download')) return { text: markdown };
+    if (url.includes('/coll-1/children')) {
+      return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+}
+
+test('subjectRegistryText: a matched context narrows the block and carries the instruction', async () => {
+  const mock = outlinedCollectionMock();
+  try {
+    const text = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+
+    assert.match(text, /Redaktionsumgebung/, 'the block names the context it is about');
+    assert.match(text, /Vertretungsstunde/, 'its skill');
+    assert.match(text, /Lehrprofil/, 'plus the ones that apply always');
+    assert.match(text, /Zuerst den Bestand sichten/, 'and the editors instruction for that context');
+    assert.match(text, /Allgemeine Vorrede/, 'together with the general one, which governs everywhere');
+    assert.ok(!text.includes('Anweisung fuer das Browserplugin'), 'and nothing from the other context');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: the instruction is marked as repository content, not as an order', async () => {
+  const mock = outlinedCollectionMock();
+  try {
+    const text = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+    assert.match(text, /kuratierter Inhalt|keine System-Anweisung/i,
+      'an instruction is meant to be followed — so it must say whose it is');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a long instruction is capped rather than pasted whole', async () => {
+  const long = OUTLINED_MD.replace('Zuerst den Bestand sichten, dann kuratieren.',
+    'Wort '.repeat(600).trim());
+  const mock = outlinedCollectionMock(long);
+  try {
+    const text = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+    assert.ok(text.length < 2500, `a collection hit must not carry 3 kB of prose, got ${text.length}`);
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: an unknown context still answers in full and names the ones that exist', async () => {
+  const mock = outlinedCollectionMock();
+  try {
+    const text = await subjectRegistryText('coll-1', 'Klassenfahrt');
+
+    assert.match(text, /Klassenfahrt/, 'it says which name did not match');
+    assert.match(text, /Browserplugin/);
+    assert.match(text, /Redaktionsumgebung/);
+    assert.match(text, /Vertretungsstunde/, 'and the catalogue is complete');
+    assert.match(text, /Lehrprofil/);
+    assert.ok(!/Zuerst den Bestand sichten/.test(text),
+      'but no instruction — a mistyped name must not trigger the most expensive answer');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: without a context nothing changes and nothing is fetched live', async () => {
+  // The cheap path stays the cheap path: the cache answers, and the block looks
+  // exactly as it did before this parameter existed.
+  const mock = outlinedCollectionMock();
+  try {
+    await warm();
+    const text = await subjectRegistryText('coll-1');
+    assert.match(text, /Für die angefragte Sammlung coll-1/);
+    assert.ok(!/Zuerst den Bestand sichten/.test(text), 'no instruction without an explicit ask');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a collection without a registry stays silent, context or not', async () => {
+  const mock = installFetchMock((): MockResult =>
+    ({ json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } }));
+  try {
+    assert.equal(await subjectRegistryText('coll-9', 'Planung'), '');
+  } finally { mock.restore(); }
+});
+
+test('the five collection tools take skillContext, and the search tools deliberately do not', async () => {
+  // Per registry, context names are a different vocabulary. One parameter over
+  // five collections at once would hit in one and miss in another, meaning
+  // something different per row — so the search tools hand over the INDEX from
+  // which a model learns the names, and the targeted call follows.
+  const mock = outlinedCollectionMock();
+  try {
+    const client = await connectedClient();
+    const tools = new Map((await client.listTools()).tools.map(t => [t.name, t]));
+    const has = (n: string) => Object.keys(
+      (tools.get(n)?.inputSchema as { properties?: Record<string, unknown> })?.properties ?? {},
+    ).includes('skillContext');
+
+    for (const n of ['get_collection_contents', 'search_wlo_within_collection', 'get_node_details',
+      'get_topic_page_content', 'get_related_content']) {
+      assert.ok(has(n), `${n} must accept skillContext`);
+    }
+    for (const n of ['search_wlo_collections', 'search_wlo_all', 'browse_collection_tree',
+      'get_subject_portals', 'search_wlo_topic_pages']) {
+      assert.ok(!has(n), `${n} must NOT accept skillContext`);
+    }
+  } finally { mock.restore(); }
+});
+
+test('get_collection_contents passes skillContext through to the block', async () => {
+  const mock = outlinedCollectionMock();
+  try {
+    const client = await connectedClient();
+    const text = toolText(await client.callTool({
+      name: 'get_collection_contents',
+      arguments: { nodeId: 'coll-1', skillContext: 'Redaktionsumgebung' },
+    }));
+    assert.match(text, /Zuerst den Bestand sichten/, 'the instruction reached the answer');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a matched context drops the outline, a miss keeps it', async () => {
+  // Grouping by the full outline in a narrowed answer prints a context name with
+  // the DOCUMENT's count and none of its skills beneath it — "Material (3)" over
+  // an empty group. A caller who named one context does not need the others; a
+  // caller who got the name wrong needs exactly them.
+  const mock = outlinedCollectionMock();
+  try {
+    const hit = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+    assert.ok(!hit.includes('Kontext: Browserplugin'), 'the other context is not grouped in');
+
+    const miss = await subjectRegistryText('coll-1', 'Klassenfahrt');
+    assert.match(miss, /Browserplugin/, 'but a miss shows every name there is');
+  } finally { mock.restore(); }
+});
+
+/** A SEPARATE collection whose registry has no headings at all. */
+const FLAT_MD = [
+  '# Skillkatalog',
+  '',
+  'Allgemeine Vorrede.',
+  '',
+  '::: ki-skill',
+  '[Stunde planen](https://repo.example/edu-sharing/components/render/00000001-0000-4000-8000-000000000000)',
+  ':::',
+].join('\n');
+
+function flatCollectionMock() {
+  return installFetchMock((url): MockResult => {
+    if (url.includes('/eduservlet/download')) return { text: FLAT_MD };
+    if (url.includes('/coll-flat/children')) {
+      return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+}
+
+test('subjectRegistryText: "all" is an ask that lands, not a context that missed', async () => {
+  // `all` is the documented way to say "everything", so an answer claiming it
+  // "konnte nicht greifen" is false about a correct call — and teaches a model
+  // to distrust the one value that always works. `get_skill_registry` excused
+  // the reserved word; this surface re-derived the same rule and forgot to.
+  const mock = flatCollectionMock();
+  try {
+    for (const wanted of ['all', 'All', ' ALL ']) {
+      const text = await subjectRegistryText('coll-flat', wanted);
+      assert.ok(!/konnte nicht greifen|gliedert sich nicht in Kontexte/.test(text),
+        `${JSON.stringify(wanted)} must not be reported as a failed context`);
+      assert.match(text, /Stunde planen/, 'and it still answers with the whole catalogue');
+    }
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a name that cannot land on a flat registry still says so', async () => {
+  const mock = flatCollectionMock();
+  try {
+    const text = await subjectRegistryText('coll-flat', 'Planung');
+    assert.match(text, /gliedert sich nicht in Kontexte/, 'the caller learns why the name did nothing');
+    assert.match(text, /Stunde planen/, 'and gets everything, as always on a miss');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: "all" costs no live lookup — the cache already answers it', async () => {
+  // The live path exists because the cache holds the SUMMARY and not the
+  // editors' prose. `all` needs no prose, so paying 2 upstream calls (~1.0-1.4 s)
+  // for it is the cost this whole package exists to avoid.
+  const { mock } = toolMock();
+  try {
+    await warm();
+    const before = mock.calls.length;
+    const text = await subjectRegistryText('coll-1', 'all');
+    assert.equal(mock.calls.length, before, 'the cached catalogue answers it');
+    assert.match(text, /Für die angefragte Sammlung coll-1/);
+  } finally { mock.restore(); }
+});

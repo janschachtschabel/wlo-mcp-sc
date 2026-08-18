@@ -92,3 +92,27 @@ test('tokens are unguessable and unique per mint', () => {
   assert.equal(tokens.size, 50, 'two mints never collide');
   for (const t of tokens) assert.ok(t.length >= 24, 'enough entropy to be unguessable');
 });
+
+test('a token from a preview that named no redirection does not authorise one', () => {
+  // The redirection changes WHICH record is edited. A preview that did not
+  // mention it approved an edit to the node the user named, so carrying that
+  // approval over to the original is a write to a record nobody saw — the same
+  // shape as approving a title change and sending a description change.
+  const plain = buildChangeSet('original-1', 'content', BEFORE, { 'cclom:title': ['Neu'] });
+  const redirected = buildChangeSet('original-1', 'content', BEFORE, { 'cclom:title': ['Neu'] }, {
+    redirectedFrom: 'reference-1',
+  });
+
+  assert.equal(consumeToken(mintToken(plain), redirected), 'mismatch');
+  assert.equal(consumeToken(mintToken(redirected), plain), 'mismatch', 'und in beide Richtungen');
+});
+
+test('a redirection from a different reference is a mismatch', () => {
+  // Two collections can reference the same record. Which one the user was
+  // looking at is part of what they confirmed.
+  const from = (reference: string) =>
+    buildChangeSet('original-1', 'content', BEFORE, { 'cclom:title': ['Neu'] }, {
+      redirectedFrom: reference,
+    });
+  assert.equal(consumeToken(mintToken(from('reference-1')), from('reference-2')), 'mismatch');
+});

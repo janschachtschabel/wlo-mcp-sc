@@ -184,6 +184,13 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
     description: `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections, aus dem Themenbaum oder aus einer früheren Antwort) und zeigen willst, was konkret drinsteckt.
 contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen (Unter-Themenseiten), "both" = alles. includeSubcollections=true durchläuft den gesamten Unterbaum rekursiv.`,
     inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
       nodeId: z.string().describe('Collection node ID from search_wlo_collections results'),
       query: z.string().optional().describe(
         'Optional search/filter query to rerank results within the collection'
@@ -247,7 +254,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
         // collection the caller named, which never appears among them — and
         // with `contentFilter="files"` the children are materials, so the
         // enrichment had nothing to attach to at all.
-        const subjectRegistry = await subjectRegistryText(params.nodeId);
+        const subjectRegistry = await subjectRegistryText(params.nodeId, params.skillContext);
 
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(allNodes, totalHits)
@@ -286,6 +293,13 @@ Für eine ungebundene Suche über ganz WLO nutze search_wlo_content; um Inhalte 
 NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.
 Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort. get_skill_registry mit derselben nodeId liefert zusätzlich Beschreibungen, Keywords und die Verwendungshinweise der Redaktion.`,
     inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
       nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),
       educationalContext: z.string().optional().describe('Bildungsstufe: "Primarstufe", "Sekundarstufe I", … or URI'),
@@ -370,7 +384,7 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
         const hint = formatUnresolvedHint(res.unresolved);
         // Which skills this collection has approved — the collection is the
         // subject of the call and never appears in its own result list.
-        const subjectRegistry = await subjectRegistryText(params.nodeId);
+        const subjectRegistry = await subjectRegistryText(params.nodeId, params.skillContext);
         const content = [{ type: 'text' as const, text }];
         // The registry goes LAST. `licenceNotice` and `emptyHint` say why this
         // result may be empty or short — the reader has to see those next to the

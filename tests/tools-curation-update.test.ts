@@ -388,3 +388,59 @@ test('the tool declares itself as writing, not read-only', async () => {
     await client.close();
   }
 });
+
+test('a reference id is redirected to the original, and the preview says so first', async () => {
+  // A collection listing hands out reference ids, so this is the ordinary way
+  // the tool is called. Measured against staging (F1/F2): writing to the
+  // reference stores the value there, never reaches the record, and stops the
+  // reference inheriting for good.
+  //
+  // The two nodes carry DIFFERENT titles on purpose: that is what an overridden
+  // reference looks like, and it is the only shape in which the baseline
+  // question has an answer that can be wrong. (This fixture used to give the
+  // original the very title the caller sets, which under the corrected rule is
+  // a no-op — the old assertions passed only because the diff was taken against
+  // the reference.)
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock((url, init) => {
+    if ((init?.method ?? 'GET') === 'GET') {
+      return url.includes('reference-1')
+        ? { json: { node: { ref: { id: 'reference-1' }, originalId: 'original-1', properties: STORED } } }
+        : { json: { node: { ref: { id: 'original-1' }, properties: { ...STORED, 'cclom:title': ['Bruchrechnung (Original)'] } } } };
+    }
+    return { json: {} };
+  });
+  const client = await curationClient();
+  try {
+    const preview = toolText(await client.callTool({
+      name: 'wlo_update_content',
+      arguments: { nodeId: 'reference-1', title: 'Brüche verstehen' },
+    }));
+    const firstLine = preview.split('\n').find(l => l.includes('reference-1')) ?? '';
+    assert.match(firstLine, /Verknüpfung/, 'die Vorschau sagt, was die genannte id ist');
+    assert.match(firstLine, /original-1/, 'und welche id tatsächlich geändert wird');
+
+    // The "before" the user approves has to be the ORIGINAL's value. Showing the
+    // reference's would describe a different record than the one being changed —
+    // and where the reference already holds the wanted value, the field would
+    // drop out of the change set entirely and the original would never get it.
+    assert.match(preview, /Bruchrechnung \(Original\)/, 'der Vorher-Wert stammt vom Original');
+    assert.ok(!preview.includes('Bruchrechnung Klasse 6'), 'nicht der Stand der Verknüpfung');
+
+    await client.callTool({
+      name: 'wlo_update_content',
+      arguments: { nodeId: 'reference-1', title: 'Brüche verstehen', confirmToken: tokenFrom(preview) },
+    });
+
+    const writes = writeCalls(mock.calls);
+    assert.ok(writes.length > 0, 'es wurde überhaupt geschrieben');
+    for (const call of writes) {
+      assert.ok(call.url.includes('original-1'), `Schreibvorgang ging an: ${call.url}`);
+      assert.ok(!call.url.includes('reference-1'), 'die Verknüpfung wird nicht beschrieben');
+    }
+  } finally {
+    await client.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});

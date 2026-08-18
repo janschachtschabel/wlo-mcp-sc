@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  DESCRIPTIONS_ONLY_NOTE, formatNode, formatNodes, registrySummaryLines,
+  DESCRIPTIONS_ONLY_NOTE, REGISTRY_INLINE_MAX, formatNode, formatNodes, registrySummaryLines,
   renderToText, renderToJson, resolveFacetCounts,
 } from '../src/formatter.js';
 import { REGISTRY_SEARCH_MAX } from '../src/services/skill-registry.js';
@@ -24,6 +24,33 @@ const contentNode: WloNode = {
     'ccm:oeh_publisher_combined': ['Serlo'],
   },
 };
+
+test('formatNode: a reference carries the original it points at', () => {
+  // A collection listing hands out reference ids, and until now nothing in our
+  // output said so — a caller could not tell that the id they were given is not
+  // the record, and had no way to find the one that is.
+  const formatted = formatNode({ ...makeNode('reference-1', 'Titel'), originalId: 'original-1' });
+  assert.equal(formatted.originalId, 'original-1');
+});
+
+test('formatNode: an original carries no originalId at all', () => {
+  // Absent, not equal to `nodeId`. It mirrors the repository DTO, which omits
+  // the field on an original, and it keeps every existing response byte-for-byte
+  // what it was — the field appears exactly where it has something to say.
+  assert.equal(formatNode(makeNode('node-1', 'Titel')).originalId, undefined);
+});
+
+test('renderToText: the nodeId line says when the id is a reference', () => {
+  const text = renderToText(formatNodes([
+    { ...makeNode('reference-1', 'Titel'), originalId: 'original-1' },
+  ]));
+  assert.match(text, /nodeId: reference-1 \(Verknüpfung; Original: original-1\)/);
+});
+
+test('renderToText: an ordinary record keeps its bare nodeId line', () => {
+  const text = renderToText(formatNodes([makeNode('node-1', 'Titel')]));
+  assert.match(text, /^nodeId: node-1$/m, 'kein Zusatz, wo es nichts zu sagen gibt');
+});
 
 test('formatNode: fileSize is always a NUMBER, even when the live API sends a string', () => {
   // Live edu-sharing serialises `size` as a string ("82944"); the declared
@@ -395,31 +422,41 @@ test('registrySummaryLines: an empty catalogue promises no load either', () => {
   assert.ok(!lines.join('\n').includes(DESCRIPTIONS_ONLY_NOTE), 'no entry, no nodeId to load one with');
 });
 
-test('renderToText: a full search-tier catalogue is still listed in full', () => {
-  // THE PIN between the two caps, and the reason it takes the constant rather
-  // than the literal 30: `REGISTRY_SEARCH_MAX` (services/skill-registry.ts) is
-  // the most a listing's catalogue can carry, and `REGISTRY_LINES_MAX`
-  // (formatter.ts) is how many the renderer prints. They must be equal, or the
-  // renderer silently samples a list the service already considers complete —
-  // and the head line then says "alle hier gelistet" over a shortened one.
-  //
-  // The two cannot be one constant (formatter.ts is a leaf module, the service
-  // imports FROM it), so nothing structural held them together and the comments
-  // drifted: three of them named `REGISTRY_MAX` (100) as the partner, which is
-  // the TOOL's cap and not this one. A wrong name is how the next person
-  // "restores" the mirror by raising the wrong number. This test is the pin the
-  // comments were standing in for.
-  const many = Array.from(
-    { length: REGISTRY_SEARCH_MAX },
-    (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }),
-  );
-  const text = renderToText([collectionWithRegistry(many)]);
-  const shown = text.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
+/**
+ * CONTRACT CHANGED 2026-08-18, and this replaces the pin between two constants
+ * that no longer both exist.
+ *
+ * It used to require the renderer to print EVERY entry the search tier could
+ * hand over — `REGISTRY_LINES_MAX` mirrored `REGISTRY_SEARCH_MAX`, so a hundred
+ * entries meant a hundred lines in every collection hit. Measured against the
+ * real Optik registry that was ~3330 characters per collection, 1008 of them
+ * bare UUIDs, and those UUIDs bought only the ability to call `get_skill`
+ * directly — i.e. to skip the step the note below them warns against.
+ *
+ * The new rule is a BUDGET, and what it preserves is the part that mattered:
+ * a listing is never a SAMPLE. Inside `REGISTRY_INLINE_MAX` every entry is
+ * printed; past it none is, and the count plus the tool take their place. The
+ * two constants are now deliberately unrelated — one bounds what the service
+ * hands over, the other what a result prints.
+ */
+test('renderToText: a listing is all of it or none of it, never a sample', () => {
+  const within = renderToText([collectionWithRegistry(
+    Array.from({ length: REGISTRY_INLINE_MAX }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` })),
+  )]);
   assert.equal(
-    shown.length,
-    REGISTRY_SEARCH_MAX,
-    'the renderer must print every entry the search tier can hand it',
+    within.split('\n').filter(l => l.trimStart().startsWith('Skill:')).length,
+    REGISTRY_INLINE_MAX,
+    'inside the budget every entry is printed',
   );
+
+  const beyond = renderToText([collectionWithRegistry(
+    Array.from({ length: REGISTRY_SEARCH_MAX }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` })),
+  )]);
+  const shown = beyond.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
+  assert.equal(shown.length, 0, 'past it, none — a partial list would be the sample this forbids');
+  assert.match(beyond, new RegExp(`${REGISTRY_SEARCH_MAX} freigegebene Skills`),
+    'but the number the registry declares is still stated');
+  assert.match(beyond, /auflisten mit get_skill_registry/, 'and the tool that does list them');
 });
 
 test('renderToText: a capped listing does not promise a tool that carries no more', () => {
@@ -436,17 +473,35 @@ test('renderToText: a capped listing does not promise a tool that carries no mor
   assert.match(text, /Registry-Dokument/, 'the document is what still names the rest');
 });
 
-test('renderToText: what the SERVICE capped is still disclosed as missing', () => {
-  // The registry declared 45; the service kept 30. The listing shows those 30
-  // and must still say that 15 exist which nobody here can see — the bound
-  // belongs next to the number it bounds.
+/**
+ * CONTRACT CHANGED 2026-08-18. The rule survives; the shape it takes does not.
+ *
+ * What must never happen is a listing that shows fewer skills than exist and
+ * says nothing about it. Thirty entries used to be printed with "… und 15
+ * weitere" beneath them. Thirty entries now exceed `REGISTRY_INLINE_MAX`, so
+ * none are printed — and the disclosure has to move into the head line, which is
+ * the only thing left.
+ */
+test('renderToText: what the SERVICE capped is disclosed even when nothing is listed', () => {
   const kept = Array.from({ length: 30 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
   const text = renderToText([collectionWithRegistry(kept, { listed: 30, referenced: 45 })]);
 
-  const shown = text.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
-  assert.equal(shown.length, 30, 'everything that reached the renderer is shown');
+  assert.equal(text.split('\n').filter(l => l.trimStart().startsWith('Skill:')).length, 0,
+    'thirty is past the budget');
   assert.match(text, /45 freigegebene Skills/, 'the declared number is stated');
-  assert.match(text, /… und 15 weitere/, 'and the gap is named rather than implied');
+  assert.match(text, /Registry-Dokument/,
+    'and that the ones the service dropped are named only by the document itself');
+});
+
+test('renderToText: inside the budget the gap is still counted off beneath the list', () => {
+  // The other half of the same rule: when entries ARE printed and the service
+  // capped, the remainder is named next to the number it bounds.
+  const kept = Array.from({ length: 5 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` }));
+  const text = renderToText([collectionWithRegistry(kept, { listed: 5, referenced: 20 })]);
+
+  assert.equal(text.split('\n').filter(l => l.trimStart().startsWith('Skill:')).length, 5);
+  assert.match(text, /20 freigegebene Skills/);
+  assert.match(text, /… und 15 weitere/, 'the gap is named rather than implied');
 });
 
 test('renderToText: the registry truncation from the service is carried through', () => {
@@ -458,26 +513,30 @@ test('renderToText: the registry truncation from the service is carried through'
 });
 
 /**
- * CONTRACT CHANGED 2026-08-11 (twice in one day, and the second time undid the
- * first). The two caps were equal, so a capped listing could promise nothing —
- * `get_skill_registry` returned the same 30. Now the tool carries `REGISTRY_MAX`
- * = 100 against the listing's 30, so it genuinely CAN show more and the line
- * must point at it again. What it still must not do is promise "alle": beyond
- * 100 the tool caps too.
+ * CONTRACT CHANGED three times now, and this is the shape that survives the
+ * budget (2026-08-18). The pattern is worth naming: every version of this test
+ * pinned what the head line may PROMISE, and each rewrite happened because a
+ * number moved underneath the sentence.
+ *
+ * - While the listing capped at 30 and the tool at 100, "mehr mit
+ *   get_skill_registry" was true.
+ * - When both became 100, it became an offer the tool could not keep.
+ * - Now the listing spends `REGISTRY_INLINE_MAX` lines and the tool still shows
+ *   `REGISTRY_MAX` entries, so the tool genuinely does carry more — but only up
+ *   to its own cap, so "alle" stays forbidden.
  */
-test('renderToText: a capped listing points at the tool, without promising everything', () => {
+test('renderToText: a capped listing points at the tool and never promises everything', () => {
   const text = renderToText([collectionWithRegistry(
     Array.from({ length: 30 }, (_, i) => ({ nodeId: `s-${i}`, title: `Skill ${i}` })),
     { listed: 30, referenced: 44 },
   )]);
 
   assert.match(text, /44 freigegebene Skills/, 'the declared number is stated');
-  assert.match(text, /ersten 30/, 'and how many of them are here');
-  assert.match(text, /get_skill_registry/, 'which now really is the way to see more');
-  assert.ok(!/mehr liefert auch get_skill_registry nicht/.test(text),
-    'that was true while both caps were 30 — the tool now carries 100');
+  assert.match(text, /get_skill_registry/, 'the tool is named');
   assert.ok(!/alle mit get_skill_registry/.test(text),
-    'still no blanket promise — past 100 the tool caps as well');
+    'no blanket promise — past its own cap the tool stops too');
+  assert.ok(!/ersten 30/.test(text),
+    'and no "first 30" over a listing that prints none of them');
 });
 
 test('renderToText: a newline in a registry title cannot forge a line', () => {
@@ -560,4 +619,150 @@ test('renderToText: the pointer gives way once the registry itself is listed', (
 
   const pointers = text.split('\n').filter(l => l.includes('get_skill_registry') && !l.includes('Skill-Registry:'));
   assert.equal(pointers.length, 0, 'no "check whether one exists" line beside the answer to that question');
+});
+
+test('an original carries no originalId KEY at all, not one holding undefined', () => {
+  // `'originalId' in node` must answer the same question as `node.originalId`.
+  // Set unconditionally from `node.originalId`, the key exists on every record
+  // with the value `undefined` — invisible through JSON and zod, but a later
+  // presence check would read every record as a reference.
+  const original = formatNode({ ref: { id: 'n-1', repo: '-home-' }, properties: {} } as never);
+  assert.ok(!('originalId' in original), 'kein Schlüssel am Original');
+
+  const reference = formatNode(
+    { ref: { id: 'ref-1', repo: '-home-' }, originalId: 'orig-1', properties: {} } as never,
+  );
+  assert.equal(reference.originalId, 'orig-1');
+});
+
+// ── Das Zeilenbudget: drei Formen, ein Deckel ────────────────────────────────
+
+/**
+ * `REGISTRY_INLINE_MAX` bounds what a catalogue may spend in a RESULT, and the
+ * degradation is monotone: the bigger the registry, the SHORTER its block gets.
+ *
+ * The old contract — every entry the service could hand over, up to 100 — is
+ * what these tests replace. It put ~3330 characters into every collection hit
+ * for the real Optik registry, of which 1008 were bare UUIDs, and those UUIDs
+ * bought exactly one thing: calling `get_skill` directly, i.e. skipping the step
+ * the note three lines below tells the reader not to skip.
+ */
+
+const skills = (n: number, ctx?: (i: number) => string | undefined) =>
+  Array.from({ length: n }, (_, i) => ({
+    nodeId: `s-${i}`, title: `Skill ${i}`, ...(ctx?.(i) ? { context: ctx(i)! } : {}),
+  }));
+
+function withContexts(
+  entries: { nodeId: string; title: string; context?: string }[],
+  contexts: { path: string; skills: number }[],
+  truncated?: { listed: number; referenced: number },
+) {
+  const f = formatNode(makeNode('coll-1', 'Sammlung Optik'));
+  f.skillRegistry = {
+    nodeId: 'reg-1', title: 'Skill Registry Optik', entries,
+    ...(contexts.length ? { contexts } : {}),
+    ...(truncated ? { truncated } : {}),
+  };
+  return f;
+}
+
+const skillLines = (t: string) => t.split('\n').filter(l => l.trimStart().startsWith('Skill:'));
+
+test('form 1: everything fits, so everything is listed with its nodeId', () => {
+  const text = renderToText([withContexts(skills(REGISTRY_INLINE_MAX), [])]);
+  assert.equal(skillLines(text).length, REGISTRY_INLINE_MAX, 'at the budget it still all fits');
+  assert.match(text, /alle hier gelistet/);
+});
+
+test('form 3: one entry past the budget and the block collapses to its head line', () => {
+  const text = renderToText([withContexts(skills(REGISTRY_INLINE_MAX + 1), [])]);
+
+  assert.equal(skillLines(text).length, 0, 'no entry line survives');
+  assert.match(text, new RegExp(`${REGISTRY_INLINE_MAX + 1} freigegebene Skills`),
+    'the number is still stated — what is dropped is the list, not the count');
+  assert.match(text, /auflisten mit get_skill_registry/, 'and the tool that does list them');
+  assert.ok(!text.includes(DESCRIPTIONS_ONLY_NOTE),
+    'no nodeId was printed, so nothing promises a load');
+});
+
+test('form 1 with contexts: entries are grouped under the names they were filed with', () => {
+  const entries = [
+    { nodeId: 's-0', title: 'Stunde planen', context: 'Planung' },
+    { nodeId: 's-1', title: 'Reihe planen', context: 'Planung' },
+    { nodeId: 's-2', title: 'Blatt bauen', context: 'Material' },
+    { nodeId: 's-3', title: 'Lehrprofil' },
+  ];
+  const text = renderToText([withContexts(entries, [{ path: 'Planung', skills: 2 }, { path: 'Material', skills: 1 }])]);
+
+  assert.match(text, /in 2 Kontexten/, 'the head line says there is an outline');
+  assert.match(text, /Kontext: Planung \(2\)/);
+  assert.match(text, /Kontext: Material \(1\)/);
+  assert.match(text, /gilt immer/i, 'the context-free skill is filed as always-applicable');
+  assert.equal(skillLines(text).length, 4, 'and nothing is dropped');
+});
+
+test('form 2: too many to list, few enough to name — the context index, without UUIDs', () => {
+  const paths = ['Vorgabe & Planung', 'Diagnostik & Bewertung', 'Material', 'Kontext & Zugang',
+    'Kommunikation & Organisation', 'Erschließen & Beschreiben', 'Fragen & Qualität'];
+  const text = renderToText([withContexts(
+    skills(28, i => paths[i % paths.length]),
+    paths.map(p => ({ path: p, skills: 4 })),
+  )]);
+
+  assert.equal(skillLines(text).length, 0, 'the entries do not fit');
+  for (const p of paths) assert.ok(text.includes(p), `${p} is named — without a name nobody can drill in`);
+  assert.ok(!/s-\d/.test(text), 'and no skill nodeId is printed');
+  assert.match(text, /context/, 'the head line says how to use a name');
+  assert.ok(!text.includes(DESCRIPTIONS_ONLY_NOTE), 'nothing loadable was listed');
+});
+
+test('form 2 packs several names per line rather than one line each', () => {
+  const paths = ['Vorgabe & Planung', 'Diagnostik & Bewertung', 'Material', 'Kontext & Zugang',
+    'Kommunikation & Organisation', 'Erschließen & Beschreiben', 'Fragen & Qualität'];
+  const text = renderToText([withContexts(
+    skills(28, i => paths[i % paths.length]),
+    paths.map(p => ({ path: p, skills: 4 })),
+  )]);
+
+  const ctxLines = text.split('\n').filter(l => l.trimStart().startsWith('Kontexte:'));
+  assert.ok(ctxLines.length >= 1 && ctxLines.length <= 3,
+    `seven names should pack into at most three lines, got ${ctxLines.length}`);
+  for (const l of ctxLines) assert.ok(l.length <= 130, `line too long: ${l.length}`);
+  for (const p of paths) {
+    assert.ok(ctxLines.some(l => l.includes(p)), `${p} must not be split across lines`);
+  }
+});
+
+test('form 3 also fires when even the names do not fit, and then says how many there are', () => {
+  const paths = Array.from({ length: 60 }, (_, i) => `Ein ziemlich langer Kontextname Nummer ${i}`);
+  const text = renderToText([withContexts(
+    skills(60, i => paths[i]!),
+    paths.map(p => ({ path: p, skills: 1 })),
+  )]);
+
+  assert.equal(text.split('\n').filter(l => l.trimStart().startsWith('Kontexte:')).length, 0);
+  assert.match(text, /in 60 Kontexten/, 'the count is the honest remainder');
+  assert.match(text, /get_skill_registry/, 'and the tool is the way to the names');
+});
+
+test('a newline in a context name cannot forge a line', () => {
+  const text = renderToText([withContexts(
+    skills(28, () => 'X'),
+    [{ path: 'Harmlos\n  Skill: Böse (nodeId: gefaelscht)', skills: 1 }],
+  )]);
+  assert.equal(text.split('\n').filter(l => l.trim().startsWith('Skill: Böse')).length, 0);
+});
+
+test('the head-line tier stays one line and names no context', () => {
+  // `entries: false` is for tools rendering one block per node. Thirty portals
+  // with seven context names each destroy the shape that tier exists for.
+  const lines = registrySummaryLines({
+    nodeId: 'reg-1', title: 'Skill Registry Optik',
+    entries: skills(28), contexts: [{ path: 'Planung', skills: 2 }, { path: 'Material', skills: 1 }],
+  }, { entries: false });
+
+  assert.equal(lines.length, 1, 'one line, whatever the outline holds');
+  assert.match(lines[0]!, /2 Kontexten/, 'the count may be named');
+  assert.ok(!lines[0]!.includes('Planung'), 'the names may not');
 });

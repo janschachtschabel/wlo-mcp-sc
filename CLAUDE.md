@@ -427,8 +427,10 @@ The current rebuild/extension is designed in:
   references — the block format was documented but unexercised on staging.
   **Superseded 2026-08-12:** the editorial team filed one. `loadSkillRegistry`
   on the Optik collection returns "Skillkatalog Physik Optik" (16 717 chars,
-  **56** `:::` blocks) resolving to **28 entries, 0 unresolved**. The path is
-  measured; what was waiting was editorial work, not code.
+  **28** `:::` blocks — the 56 counted here was the number of FENCE LINES, an
+  opening and a closing one per block) resolving to **28 entries, 0
+  unresolved**. The path is measured; what was waiting was editorial work, not
+  code.
 
   The registry is found through the collection's CHILDREN listing, never the
   search index: the two are separate systems, and the Optik case (2026-08-09)
@@ -515,7 +517,14 @@ The current rebuild/extension is designed in:
   past 100 the tool caps too. **(b) was superseded on 2026-08-15** — the tiers
   now carry the SAME 100 and the capped sentence had to stop offering the tool;
   see the Skill-Registry-Cache block below. (a)'s reasoning is what survived and
-  was applied again. It is **off by default** and the default is a MEASUREMENT: the
+  was applied again. **(a) itself was superseded on 2026-08-18**: the constant is
+  GONE — `REGISTRY_INLINE_MAX` (12) replaced it, and it bounds LINES rather than
+  entries, so the catalogue answers with a shorter FORM instead of a truncated
+  list. What survives is the objection (a) was raised against, and it is the
+  reason the middle form names every context rather than the first few: a short
+  list standing for a long one is what this project refuses; a differently shaped
+  complete answer is not that. See the Kontexte block below.
+  It is **off by default** and the default is a MEASUREMENT: the
   live run showed ~1.0–1.4 s added per search, paid through the `/children` call
   whether or not a registry exists — neither collection in that run had one and
   it still cost 1.4 s. What replaces it is FREE: a pointer line on every
@@ -796,6 +805,338 @@ The current rebuild/extension is designed in:
   degrading, so it reaches the caller as an error and not as "keine Treffer". Do
   not add an expiry of ours; the repository enforces one, visibly, on every call.
   The `401` `docs/AUTH.md` §5c claimed here was wrong and is corrected.
+
+- **Schreibziel Original + erweiterte Metadatenfläche — VOLLSTÄNDIG (P0–P5,
+  2026-08-17):** `docs/plans/2026-08-17-original-id-und-metadatenflaeche.md`
+  · Messung: `docs/plans/2026-08-17-metadatenfelder-erhebung.md`
+
+  Zwei Befunde, ein Modul. (a) Ein Metadaten-Schreibvorgang auf eine Sammlungs-
+  VERKNÜPFUNG wird dort gespeichert, erreicht das Original nicht, und die
+  Verknüpfung erbt danach nicht mehr — ein stiller, dauerhafter Override.
+  `verifyWrite` fängt es nicht ab, weil es denselben Knoten zurückliest.
+  Gemessen in `tests/live/reference-write.test.ts` (4 Tests, grün gegen Staging
+  2026-08-16); Inhalts-Uploads treffen dagegen ohnehin das Original, und
+  `cm:name` bleibt beim Ersetzen erhalten. **Das widerlegte die Messung im Skill
+  `wlo-collections-references`** („verpufft stillschweigend, 200 OK ohne
+  Effekt“); das Skill ist am 2026-08-17 korrigiert (P5) — an **zwei** Stellen,
+  denn dieselbe Falschaussage stand auch in seiner Fallen-Liste. Nicht ohne neue
+  Messung dorthin zurückdrehen. (b) Die Feldfläche
+  (17 schreibbar, 24 lesbar) war eine Kontextfenster-Entscheidung, keine
+  fachliche; Qualität, Recht und Zugänglichkeit fehlen. Neue Felder sind opt-in
+  je Aufruf, damit keine bestehende Antwort länger wird.
+
+  **P3 hat (b) gemessen, und das Ergebnis streicht P4 zusammen (2026-08-17).**
+  `npm run survey:metadata` (`scripts/survey-metadata.mjs`, meldet und schreibt
+  nie) fragt eine Instanz über zwei Beine, weil keines die Frage des anderen
+  beantwortet: der volle Metadatensatz (17,3 MB, 1,0 s — die Warnung im Skill
+  gilt der Größe, nicht der Latenz) sagt, welche Felder es GIBT und welches ein
+  Vokabular hat; eine Facette je Feld sagt, ob jemand sie PFLEGT. Vier
+  Messungen binden jede Änderung hier (2026-08-17, Staging, 590 186 Datensätze —
+  neu messen, bevor man ihnen widerspricht):
+
+  1. **`ccm:oeh_quality_*` gibt es — 14 Felder.** Die Annahme aus F9 ist damit
+     erledigt und F9 bleibt trotzdem richtig: die vier Rechtsprüfungs-Felder
+     tragen 80–86 Belegungen, und ein Feld, das fast niemand pflegt, fehlt auf
+     einem beliebigen Datensatz.
+  2. **Bei 11 der 14 liegen die gespeicherten Werte außerhalb des Vokabulars,
+     das dasselbe Feld deklariert** — dieselbe Sterne-Skala einmal als URI
+     (`…/vocabs/quality_didactics/4`) und einmal als nackte Ziffer (`"4"`),
+     beides nebeneinander im selben Feld; `ccm:oeh_quality_currentness`
+     deklariert die Ziffern und ist deshalb als einziges „konform".
+     `ccm:oeh_quality_correctness` deklariert das Befund-Vokabular und speichert
+     zu 100 % Sternebewertungen. Das ist ein **zweiter, vom Prüfsiegel-Argument
+     unabhängiger** Grund gegen das Schreiben — und er trifft zusätzlich das
+     Lesen: ein Feld, dessen Inhalt wir nicht beschriften können, reicht `"0"`
+     an ein Modell weiter.
+  3. **Übrig bleiben drei Felder statt dreier Feldgruppen**, alle vokabular-rein
+     und alle nur LESEND: `ccm:conditionsOfAccess` (198 699 Belegungen),
+     `ccm:accessibilitySummary` (3 475), `ccm:license_oer` (1 121). `QUALITY_PROPS`
+     entfällt, **T4.3 (Schreibfläche) entfällt**. `ccm:oeh_quality_login` ist das
+     einzige saubere Qualitätsfeld und wird trotzdem nicht gelesen:
+     `ccm:conditionsOfAccess` sagt dieselbe Sache dreiwertig statt zweiwertig
+     und auf mehr als der doppelten Datenmenge — beide zu lesen hieße, dieselbe
+     Tatsache zweimal auszugeben, mit der Möglichkeit zu widersprechen.
+  4. **`facetLimit` ist KEINE Bucket-Obergrenze** — der Server liefert bis zu
+     **5 × Limit** (`FACET_BUCKET_MAX`, `wlo-search.ts`). An `ccm:taxonid` über
+     sechs Punkte exakt bestätigt: 1→5, 2→10, 10→50, 50→250, 80→376 (= alle 376
+     Werte, danach Sättigung). Vermutlich ein Shard-Limit, also eine Eigenschaft
+     dieses Deployments — auf einer Instanz mit WENIGER Shards ist die Schranke
+     zu hoch, um eine echte Kürzung zu fangen. `facetMinCount` ist dagegen
+     **erforderlich**: ohne ihn kommen null Buckets, unabhängig vom Limit.
+     `FACET_LIMIT` bleibt 20, weil es die nutzersichtbare Facettenausgabe
+     bemisst (auf 100 gehoben wüchse die `ccm:taxonid`-Facette von 100 auf 376).
+     Wer Buckets SUMMIERT, prüft gegen `FACET_BUCKET_MAX`, nie gegen das Limit.
+
+  **P4 ist gebaut (2026-08-17) — und der Plan hat sich beim Messen halbiert.**
+  `includeAccessInfo` an `get_node_details`/`get_nodes_details` liefert die drei
+  Felder in beiden Ausgabeformaten; `src/node-access.ts` hält, was sie SIND.
+  Drei Regeln binden jede Änderung hier:
+
+  - **Keine Vokabular-Tabelle** — mit **einer** gemessenen Ausnahme, siehe den
+    Nachtrag vom 2026-08-18 unten. Das Repository beschriftet vier der fünf Felder
+    selbst (`<property>_DISPLAYNAME`, an echten Datensätzen belegt) — dieselbe
+    Quelle, die `formatter.ts` für die Vokabularfelder bevorzugt. Das geplante
+    `vocabs-quality.ts` ist ersatzlos gestrichen; eine eigene Tabelle wäre eine
+    dritte, die mit einer Instanz Schritt halten muss.
+  - **Keine Property-Gruppen.** Die Detail-Werkzeuge lesen `-all-`, die Felder
+    sind also schon da: `includeAccessInfo` kostet **keinen** zusätzlichen
+    Abruf, und `QUALITY_/RIGHTS_/ACCESSIBILITY_PROPS` hätten nichts verengt.
+  - **Ablesbar, nicht suchbar.** Alle antworten als ngsearch-Kriterium mit
+    **HTTP 400** — 2026-08-18 auch für die zwei neu dazugekommenen bestätigt. Deshalb ließ sich auch nicht messen, ob `ccm:license_oer`
+    etwas sagt, das `ccm:commonlicense_key` nicht schon sagt — das Feld ist
+    dabei, weil opt-in nichts kostet, und die Unmessbarkeit steht im Code.
+
+  **Eine handgebaute `nodeId:`-Zeile ist ab jetzt ein Testfehler**
+  (`tests/shared-rule-discipline.test.ts`). P2 hatte zwei übersehen —
+  `get_node_details` und die Fachportal-Liste —, und die erste ist ausgerechnet
+  das Werkzeug, dem eine Verknüpfungs-id am ehesten übergeben wird: der Text
+  schwieg, während `structuredContent` `originalId` trug. Einzige erlaubte
+  Ausnahme ist `tools/skill-registry.ts` — ein Registry-Eintrag stammt aus einem
+  `:::`-Block, nicht aus einem Knoten-Abruf, und hat keine `originalId`.
+
+  **P1 ist gebaut (2026-08-17), und drei Regeln binden jede Änderung daran.**
+  (a) Die Auflösung entscheidet sich am **DTO-Feld `originalId`**
+  (`resolveWriteTarget`, `services/write/nodes.ts`), niemals an der Property
+  `ccm:original` — die zeigt beim Original auf sich selbst, und eine zweite
+  Implementierung ohne Selbstvergleich meldet jeden Datensatz als Verknüpfung auf
+  sich. (b) Sie sitzt an den drei Werkzeug-Einstiegen und **nicht** in
+  `updateNodeMetadata`: der Bestätigungsschlüssel bindet an die VORSCHAU, also
+  muss das Ziel feststehen, bevor geschrieben wird — eine Auflösung im
+  Schreibaufruf fände ein zweites Mal statt und könnte vom bestätigten Ziel
+  abweichen. Die Umleitung ist deshalb Teil der Änderungsmenge
+  (`ChangeSet.redirectedFrom`), steht als erste Zeile der Vorschau und ist im
+  Fingerabdruck. (c) `verifyWrite` nimmt **nur** den ChangeSet und liest
+  `cs.nodeId`; der frühere `nodeId`-Parameter war die Stelle, an der still gegen
+  den genannten statt den geschriebenen Knoten geprüft würde. Zwei Wächter in
+  `tests/shared-rule-discipline.test.ts` halten (a) und die Regel „ein
+  Kuratier-Werkzeug übergibt `updateNodeMetadata` ausschließlich `cs.nodeId`".
+  Nicht einbezogen, weil über andere Endpunkte und dort ungemessen:
+  `wlo_rename_collection` (Collections-REST) und `wlo_submit_content` (Workflow).
+
+  **(d) kam aus dem Review derselben Sitzung und ist die vierte Regel: mit dem
+  Ziel muss der VERGLEICHSSTAND mitkommen.** Die Werkzeuge rufen deshalb
+  `readWriteBaseline`, nicht `resolveWriteTarget` — Letzteres liefert ein Ziel
+  ohne Baseline, und die einzige in Reichweite ist dann die des angefragten
+  Knotens. Solange eine Verknüpfung erbt, sind beide Stände gleich und der Fehler
+  ist unsichtbar; sie laufen genau dann auseinander, wenn die Verknüpfung schon
+  einmal direkt beschrieben wurde (F2 — der Zustand, den ältere Fassungen dieser
+  Werkzeuge erzeugt haben). Dann kostet ein Diff gegen die Verknüpfung dreifach:
+  ein Feld gilt als unverändert, weil die VERKNÜPFUNG den Wunschwert schon zeigt
+  (das Original bekommt ihn nie, gemeldet wird Erfolg — bei
+  `wlo_decide_suggestion` samt `ACCEPTED` über einen Datensatz, der den Wert nie
+  erhalten hat); die Vorschau zeigt den Wert der Verknüpfung als „vorher"; und
+  `cclom:general_keyword` merged in die Liste der VERKNÜPFUNG und schreibt sie
+  ÜBER die des Originals, was dessen Schlagworte verliert. Ein nicht lesbares
+  Original **verweigert**, statt auf die Verknüpfung zurückzufallen. Der
+  Zusatzabruf fällt nur bei Umleitung an. Dritter Wächter in
+  `tests/shared-rule-discipline.test.ts`.
+
+  Aus demselben Review, weil es zeigt, wie lange so etwas grün bleiben kann: der
+  Test, der die Umleitung prüfte, gab dem Original im Fixture **genau den Titel,
+  den der Aufruf setzt**. Damit war der Vorgang unter der korrigierten Regel ein
+  No-op — die alten Zusicherungen gingen nur durch, weil gegen die Verknüpfung
+  verglichen wurde. Ein Fixture kann die Prämisse des Fehlers enthalten.
+
+  **Das Zeitbudget hängt an `ccm:wwwurl`, nicht am Anlegen (2026-08-17).**
+  `WWWURL_WRITE_TIMEOUT_MS = 60_000` über `writeTimeoutMs(properties)` in
+  `services/write/nodes.ts`, angewandt an BEIDEN Schreibstellen — Anlegen und
+  Metadaten-PUT. Denn die Arbeit wandert mit der Eigenschaft: gleiche Adresse,
+  gleicher Lauf, anlegen MIT URL 8,8 s gegen anlegen ohne URL 0,5 s + URL
+  nachsetzen 7,8 s. Sie entsteht, weil das Repository die Seite RENDERT — der
+  Datensatz trägt danach ein echtes JPEG (~50 kB, `preview.isIcon=false`) statt
+  des SVG-Platzhalters; das Ergebnis ist je Adresse zwischengespeichert, was die
+  enorme Streuung erklärt (`planet-schule.de` kalt **46,5 s**, warm 8,8 s).
+  Deshalb 60 s. Schneller geht es nur im Repository, wo der Platzhalter für
+  genau diesen Fall schon existiert. Betroffen ist auch `wlo_update_content`,
+  wenn jemand die Quell-URL ändert — der Metadaten-Pfad hatte kein Budget. Gemessen je Anfrage: Dublettenprüfung
+  1,2 s · **Anlegen 18,6 s** · Metadaten 0,5 s, über vier Läufe 12,2–18,6 s — das
+  Repository lädt dabei NICHT die Adresse (widerlegt, siehe unten). Gegen das 20-s-Budget für
+  gewöhnliche Aufrufe (Suche, Knotenlesen: unter einer Sekunde) waren das 93 %,
+  und ein Abbruch meldet **Fehlschlag für Arbeit, die das Repository zu Ende
+  bringt** — ein Wiederholungsversuch legt dann einen zweiten Datensatz an. Nach
+  unten hält `Math.max` die Einstellung des Betreibers. Ein Wächter liest die
+  QUELLE, weil `wloFetch` selbst ein Signal anhängt, wenn keins mitkommt — im
+  Mock sehen beide Pfade gleich aus.
+
+  **`httpServer.requestTimeout` ist KEINE Obergrenze für die Arbeit an einer
+  Anfrage — gemessen 2026-08-17, und der Irrtum saß schon länger im Code.** Ein
+  node:http-Server mit `requestTimeout = 30_000` und einem Handler, der nach
+  **35 s** antwortet, liefert die Antwort aus (HTTP 200). Die Einstellung
+  begrenzt das EMPFANGEN der Anfrage (Slow-Body/Slow-Header), wie der Kommentar
+  an ihr auch sagt und wie die langlebigen SSE-Antworten dieses Servers belegen.
+  Drei Kommentare hatten daraus eine Antwort-Frist gemacht und damit Entwürfe
+  begründet (`tools/node-details.ts`, `services/collection-traversal.ts`,
+  `tests/collections-recursive.test.ts`) — der vierte war das 25-s-Budget oben,
+  das dieser erfundenen Decke wegen zu niedrig gewählt war. Die Deckel selbst
+  (`TEXT_ENRICH_MAX`, `RECURSIVE_VISIT_MAX`) bleiben richtig, aber aus dem
+  messbaren Grund: was sie kosten, nicht eine Frist, die es nicht gibt. **Was das
+  Warten wirklich begrenzt, sitzt beim Client und ist von hier aus unsichtbar.**
+
+  **P2 macht die Unterscheidung sichtbar (2026-08-17).** `FormattedNode.originalId`
+  steht **genau dann**, wenn der Knoten eine Verknüpfung ist — abwesend am
+  Original, wie im Repository-DTO, damit jede bestehende Antwort unverändert
+  bleibt. Zwei Regeln: das Feld MUSS in `formattedNodeSchema` deklariert sein
+  (zod verwirft Unbekanntes, sonst erreicht es den Text und verschwindet aus
+  `structuredContent`, ohne dass etwas fehlschlägt — deshalb sind Text- und
+  JSON-Zusicherung getrennte Aufgaben), und die Zeile entsteht in **`nodeIdLine`**
+  (`formatter.ts`), geteilt mit den Skill-Werkzeugen: eine Formulierung für eine
+  Tatsache. Ebenfalls hier: `wlo_delete_content` versprach „zerstört das Material
+  für alle Sammlungen" — über eine Verknüpfungs-id falsch; Beschreibung
+  korrigiert, und die VORSCHAU sagt jetzt, welcher der beiden Fälle vorliegt
+  (`whatItMeansForReference`, gespeist aus `resolveWriteTarget` — dieselbe
+  Funktion wie im Schreibpfad, hier nur zum Beschreiben).
+
+  **P0 ist erledigt und hat die Sperre aufgehoben (F10, 2026-08-17):** ein
+  Löschvorgang auf eine Sammlungs-Verknüpfung trifft **nur die Verknüpfung** —
+  sie antwortet danach 404, das Original 200 (`tests/live/reference-delete.test.ts`).
+  Kein Datenverlust. Zwei Regeln folgen daraus und binden jede Änderung hier.
+  **Die Auflösung aufs Original gehört ausschließlich in den Metadatenpfad**: ein
+  umgeleitetes `wlo_delete_content` würde aus dem heute harmlosen Verhalten genau
+  den Datenverlust machen, nach dem die Messung gesucht hat. Und die Meldung des
+  Werkzeugs ist wahr über den Knoten und falsch über das Material — es meldet
+  Erfolg, während der Datensatz unter eigener id und in jeder anderen Sammlung
+  weiterlebt; faktisch ein `remove_from_collection` mit dem Wort „gelöscht".
+
+- **Kontexte in der Skill-Registry — VOLLSTÄNDIG (P0–P6, 2026-08-18):**
+  - Entwurf:  `docs/plans/2026-08-18-registry-kontexte-design.md`
+  - Aufgaben: `docs/plans/2026-08-18-registry-kontexte-tasks.md` (17 Aufgaben, 6 Phasen)
+  - Redaktionsanleitung: `docs/SKILLS.md` („Contexts"), Ablauf: `docs/SKILL-TRIGGER.md`
+
+  Ein Registry-Dokument gliedert seine Skills über Markdown-Überschriften
+  (H1 = Dokumententitel, H2 = Kontext, H3 = Unterkontext) und trägt je Kontext
+  eine Nutzungsanleitung der Redaktion. `services/markdown-sections.ts` liest die
+  Überschriften (rein, kein I/O), `services/registry-contexts.ts` legt Blöcke und
+  Prosa darauf, `narrowRegistry`/`contextInstructions` (`skill-registry.ts`)
+  verengen. `get_skill_registry` nimmt `context`, die fünf Sammlungs-Werkzeuge
+  `skillContext`.
+
+  **Was es kostet, und was nicht.** Kontexte kosten **null** zusätzliche Abrufe —
+  der billige Tarif bleibt bei exakt 1 × `/children` + 1 × Download + 0 ×
+  Metadaten, und ein Test ZÄHLT das, weil die Kosten Teil des Vertrags sind.
+  Ein **benannter** `skillContext` kostet dagegen **einen Live-Abruf (2 Anfragen,
+  ~1,0–1,4 s)**: der Cache hält die ZUSAMMENFASSUNG (Titel, nodeId, Kontextnamen,
+  Anzahlen) und nicht die Prosa der Redaktion, die je Sammlung Kilobytes wäre und
+  dann in JEDEM Treffer läge. Der Entwurf hatte „null" auch dafür zugesagt; das ist
+  beim Bauen gefallen und im Entwurf korrigiert, nicht stillschweigend anders
+  gebaut. `all` verlangt keine Prosa und wird deshalb aus dem Cache beantwortet —
+  es in den Live-Pfad zu schicken war ein Review-Befund (2026-08-18).
+
+  **Das Budget: `REGISTRY_INLINE_MAX` (12 Zeilen) ersetzt `REGISTRY_LINES_MAX`
+  (100)** und entscheidet zwischen drei Formen — gruppiert mit nodeIds,
+  Kontext-Index ohne UUIDs, Kopfzeile allein. Gedeckelt ist die OBERGRENZE, nicht
+  jede Größe: innerhalb des Budgets kostet die Gruppierung eine Zeile je Kontext,
+  eine kleine Registry wird dadurch etwas länger als ihre flache Liste (gemessen
+  am echten Optik-Dokument 2026-08-18, 3 Skills in 2 Kontexten: 818 gegen 659
+  Zeichen). „Je größer, desto kürzer“ stand zwischenzeitlich in vier Dokumenten
+  und ist falsch — gefunden hat es der Live-Lauf, kein Test. Kontextnamen werden **gepackt** (mehrere je
+  Zeile, `·`-getrennt, Umbruch bei 100 Zeichen, nie mitten im Namen), weil ohne
+  Namen niemand gezielt nachfragen kann. Der `reach`-Satz der Kopfzeile hängt an
+  der FORM, ebenso `DESCRIPTIONS_ONLY_NOTE`: Formen 2 und 3 drucken keine
+  Skill-nodeId und dürfen deshalb keinen `get_skill`-Schritt versprechen.
+
+  **Vier Regeln über die Struktur, und jede ist eine Entscheidung, auf die sich
+  die Redaktion verlässt.** (1) Ein Abschnitt OHNE Titel ist durchsichtig: sein
+  Inhalt gehört dem nächsten benannten Abschnitt darüber, sonst dem allgemeinen
+  Teil — eine Regel mit zwei richtigen Ergebnissen (leeres `##` als Trenner →
+  allgemein; leeres `###` in einem benannten Kontext → dieser Kontext). (2) Ein
+  benannter Abschnitt IST ein Kontext, **auch ohne Skill**. Der erste Entwurf
+  verlangte einen Block; ein Live-Lauf am echten Optik-Dokument (2026-08-18)
+  widerlegte ihn — die Redaktion hatte `## Browserplugin` mit Anleitung und noch
+  ohne Skills geschrieben, und die alte Regel machte diese Überschrift unsichtbar
+  UND antwortete „unbekannter Kontext" auf einen Namen, den jeder im Dokument
+  liest. (3) `skills` bleibt **innerst** zugeordnet, damit Elternkontext und
+  Unterkontext denselben Skill nie doppelt zählen; ein rein gruppierender Eltern
+  steht mit `(0)` da, was (2) zusätzlich bestätigt. (4) Die Anleitung ist die
+  Prosa von der Überschrift bis zum ERSTEN `:::`-Block — Text danach gehört dem
+  Skill davor. Deshalb steht in der Redaktionsanleitung „Anweisung VOR die
+  Blöcke".
+
+  **`resolveContext` meldet DREI Nicht-Treffer, nicht zwei** — `unknown`,
+  `ambiguous` und `no_contexts` (ein Name über einem Dokument ohne Gliederung).
+  Der dritte fehlte bis zum Review 2026-08-18: die Funktion antwortete `all`, und
+  BEIDE Aufrufer leiteten den Unterschied selbst her — mit verschiedenen
+  Bedingungen. `get_skill_registry` nahm das reservierte `all` aus,
+  `subjectRegistryText` nicht, also meldete `skillContext: "all"` auf einer flachen
+  Registry, „all" habe nicht gegriffen. Der Wächter konnte das nicht sehen: er
+  prüft, dass die FUNKTION einmal definiert ist, nicht dass die ENTSCHEIDUNG einmal
+  getroffen wird. Wer hier einen Ausgang hinzufügt, gibt ihm einen eigenen `kind` —
+  eine Lage, die zwei Aufrufer rekonstruieren müssen, rekonstruieren sie
+  verschieden.
+
+  **Ein Fehlgriff liefert alles, nie nichts.** Ein unbekannter oder mehrdeutiger
+  Name fällt auf die vollständige Antwort zurück (bei `get_skill_registry` auf das
+  ganze Dokument) und nennt die vorhandenen Namen — ein Modell lernt den richtigen
+  Namen aus genau der Antwort, in der es danebengriff. Nie `isError`, und nie eine
+  kurze Liste, die wie ein Ergebnis aussieht. Bei einem Fehlgriff kommt allerdings
+  **keine** Anleitung mit: ein Tippfehler darf nicht die teuerste Antwort auslösen.
+  Umgekehrt legt ein TREFFER die Gliederung ab und ein Fehlgriff behält sie —
+  gefunden im Live-Lauf, weil sonst „Material (3)" über einer leeren Gruppe steht:
+  die Zahl ist die des Dokuments, die Einträge sind die des Kontexts.
+
+  **Drei Regeln aus den Review-Runden, und alle drei über Aussagen, nicht über
+  Code.** (a) Eine Aussage, die von einem FELD in PROSA wandert, geht für jeden
+  Aufrufer verloren, der keine Prosa rendert: die Kappungs-Offenlegung
+  `truncated` wurde beim Verengen aus der Sicht herausdestrukturiert und durch
+  einen Satz ersetzt — im JSON stand danach gar nichts mehr. Das Feld bleibt,
+  `renderDisclosures` kennt die Verengung. (b) Jeder Leere-Satz muss sagen, WESSEN
+  Leere er meint: „Die Registry nennt keine abrufbaren Skills" wurde über den
+  VERENGTEN Einträgen gefällt und war damit eine falsche Aussage über die Registry.
+  (c) Der Wächter (`resolveContext` und `narrowRegistry` je genau einmal
+  definiert) blieb bei eingespielter Verletzung **grün** — zu viele Backslashes im
+  Regex-Literal, geprüft wurde auf ein literales `\b`. Ein Wächter, der nicht rot
+  war, ist kein Wächter; die Verletzung einspielen ist Pflicht, nicht Kür.
+
+  Die zweite Hälfte von (c) ist der Grund für den Ort: `narrowRegistry` sitzt im
+  DIENST, nicht im Werkzeug. Eine Kopie, die die immer geltenden Skills vergisst,
+  antwortet mit einer KÜRZEREN Freigabeliste und sieht dabei völlig plausibel aus.
+  Die Prosa bleibt je Oberfläche eigen, die Regel nicht.
+
+  **Deckel:** `REGISTRY_CONTEXT_MAX` = 50 über H2 und H3 zusammen, offengelegt als
+  `contextsTruncated`. Gemessen 2026-08-18: die Skills eines gekappten Kontexts
+  bleiben im Katalog (der ungefilterte Zweig listet `registry.entries` flach), nur
+  ihr Name ist nicht mehr aufrufbar.
+
+- **Vokabular-Abgleich: was eine Beschriftung trägt — VOLLSTÄNDIG (2026-08-18):**
+  `docs/plans/2026-08-18-vokabular-abgleich.md`
+
+  Die Messung, die P3/P4 oben an zwei Stellen korrigiert. **`_DISPLAYNAME` löst
+  genau das auf, was das WIDGET im Metadatensatz deklariert** — nicht die
+  URI-Form, nicht das veröffentlichte Vokabular. Belegt an EINEM Datensatz
+  (`7affb314…`) mit sieben Qualitätsfeldern: nur `ccm:oeh_quality_login` kam
+  beschriftet zurück, weil sein Widget als einziges die nackten Ziffern
+  deklariert, die es speichert. Die Trennlinie ist also **deklariert oder nicht**,
+  niemals „Ziffer oder URI" — die Gegenprobe ist `containsAdvertisement/yes`, eine
+  saubere URI aus einem veröffentlichten Vokabular, die unbeschriftet bleibt.
+  Damit steht die Entscheidung vom 17.8. (Qualitätsfelder nicht lesen) auf einer
+  Messung statt auf einem Schluss.
+
+  **Die Feldfläche ist fünf Felder groß, nicht drei.** Die drei Suchmuster der
+  Erhebung vom 17.8. verfehlten `ccm:price` (339 687 Belegungen, **58 %** des
+  Korpus) und `ccm:containsAdvertisement` (69 688) — beide standen die ganze Zeit
+  in der Liste der übrigen Felder, die dasselbe Skript ausgibt. `survey-metadata.mjs`
+  hat dafür eine vierte Gruppe bekommen. Merksatz: die Auffangliste eines
+  Erhebungsskripts ist kein Anhang, sie ist der Teil, der die Muster prüft.
+
+  Zwei Regeln binden jede Änderung hier. (1) **`VOCAB_FALLBACK` ist eine
+  Rückfallebene, kein Vorrang**, und hat genau einen Eintrag
+  (`ccm:containsAdvertisement`: `yes`/`no`). Sein Widget deklariert die
+  Sterne-Skala `quality_advertisement/0…5`, während 69 628 von 69 688 Werten
+  `containsAdvertisement/yes|no` lauten — das Repository schweigt also. Das
+  schränkt die Regel „keine Vokabular-Tabelle" ein, ohne sie aufzuheben: sie
+  schützt vor einer dritten Quelle, die einer Instanz hinterherhängt, und hier
+  gibt es nichts, wovon sie abweichen könnte. Liegt ein `_DISPLAYNAME` vor,
+  gewinnt es, ohne dass jemand die Tabelle anfasst. (2) `ccm:oeh_quality_login`
+  ist sauber beschriftet und auf 72 787 Datensätzen gesetzt und wird trotzdem
+  **nicht** gelesen — unverändert aus dem gleichen Grund wie am 17.8.:
+  `ccm:conditionsOfAccess` sagt dasselbe dreiwertig auf 198 699 Datensätzen.
+
+  Drei Messfallen, teuer bezahlt: **`skipCount` jenseits von ~10 000 antwortet
+  HTTP 500** (eine frühere Sonde schien mit 550 000 durchzukommen — sie hatte die
+  Schleife vorher verlassen); der **Kopf einer leeren Anfrage ist keine
+  Stichprobe** (300 Datensätze ohne einen einzigen Träger eines Feldes, das auf
+  12 % des Korpus liegt — wer streuen will, streut über SUCHWÖRTER); und ein
+  Datensatz kann **im Suchindex stehen und beim Knotenlesen 404 antworten**, also
+  braucht eine Trägersuche mehrere Kandidaten je Feld.
 
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context

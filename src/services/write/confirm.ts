@@ -51,6 +51,10 @@ function fingerprint(cs: ChangeSet): string {
     destructive: cs.destructive,
     title: cs.title,
     action: cs.action ?? null,
+    // Which reference the caller was looking at is part of what they approved:
+    // the same record can be referenced from several collections, and a preview
+    // that named no redirection at all approved an edit to the node as named.
+    redirectedFrom: cs.redirectedFrom ?? null,
     changes: [...cs.changes]
       .sort((a, b) => a.property.localeCompare(b.property))
       .map(c => [c.property, c.before, c.after, c.route]),

@@ -610,14 +610,26 @@ anderen `method`: der Dienst rendert mit Playwright und hat bekannte Lücken
 ist die **normalisierte** — die tatsächlich angefragte, die nicht immer die
 übergebene Zeichenkette ist.
 
-**28. `get_skill_registry`** — `collectionId`, `outputFormat?`. Welche Skills
-**eine Sammlung freigegeben** hat — die Umkehrung dessen, was 22 beantwortet:
-nicht „welche Skills gibt es", sondern „welche gelten *hier*". Eine Redaktion
-legt dazu ein Registry-Dokument in die Sammlung — ein `ai_prompt`-Datensatz
-mit angehängtem Markdown —, dessen `:::`-Blöcke die freigegebenen Skills nennen.
-Zurück kommt der Katalog (je Skill Titel, nodeId, Beschreibung, Keywords) plus
-die Prosa der Redaktion, in der die Anwendungshinweise stehen. Die Anleitungen
-selbst kommen nicht mit: aus dem Katalog wählen, dann 23 aufrufen.
+**28. `get_skill_registry`** — `collectionId`, `context?`, `outputFormat?`.
+Welche Skills **eine Sammlung freigegeben** hat — die Umkehrung dessen, was 22
+beantwortet: nicht „welche Skills gibt es", sondern „welche gelten *hier*". Eine
+Redaktion legt dazu ein Registry-Dokument in die Sammlung — ein
+`ai_prompt`-Datensatz mit angehängtem Markdown —, dessen `:::`-Blöcke die
+freigegebenen Skills nennen. Zurück kommt der Katalog (je Skill Titel, nodeId,
+Beschreibung, Keywords) plus die Prosa der Redaktion, in der die
+Anwendungshinweise stehen. Die Anleitungen selbst kommen nicht mit: aus dem
+Katalog wählen, dann 23 aufrufen.
+
+`context` verengt auf einen **Arbeitszusammenhang**. Das Dokument gliedert seine
+Skills über Überschriften — `##` ist ein Kontext, `###` ein Unterkontext
+(angesprochen als `Kontext/Unterkontext`), und die Prosa über dem ersten Block
+ist die Anleitung der Redaktion dazu. Ein Kontext-Aufruf liefert dessen Skills
+plus die immer geltenden, die Anleitung, und wortgetreu nur diesen Abschnitt
+statt des ganzen Dokuments. Groß-/Kleinschreibung und Leerzeichen sind egal;
+ohne Angabe oder mit `all` kommt alles. **Ein Name, der nicht trifft, verengt
+nie** — unbekannt oder mehrdeutig liefert den vollständigen Katalog und nennt
+die vorhandenen Kontexte, statt zu scheitern oder eine kurze Liste
+zurückzugeben, die wie ein Ergebnis aussieht.
 
 Was sich nicht klar sagen lässt, wird offengelegt statt geglättet: eine
 mehrdeutige Auswahl, wenn eine Sammlung mehrere Prompt-Dokumente führt;
@@ -671,6 +683,21 @@ aufgelöst, einmal, und dann ebenfalls gemerkt. Der Katalog ist damit in
 Sammlungs-Ergebnissen einfach vorhanden, und die Kosten fallen höchstens einmal
 je Sammlung an statt bei jeder Suche.
 
+**Wie viel davon mitreist, ist gedeckelt: 12 Zeilen je Sammlung** — unabhängig
+davon, wie groß die Registry ist. Drei Formen. Alles passt → der gruppierte Katalog mit einer nodeId je
+Skill, wie bisher. Zu viele zum Auflisten, wenige genug zum Benennen → der
+**Kontext-Index**: die Kontextnamen mit Anzahl, mehrere je Zeile, ohne nodeIds.
+Auch das nicht → die Kopfzeile allein, mit `get_skill_registry` als Weg weiter.
+Gemessen an der Form der Optik-Registry (28 Skills, 7 Kontexte): **3 Zeilen statt
+30, 407 statt 3436 Zeichen**; ein flaches Dokument mit 50 Skills schrumpft auf
+eine Zeile mit 147.
+
+Die Ersparnis entsteht ausschließlich **oberhalb** des Budgets. *Innerhalb*
+kostet die Gruppierung eine Zeile je Kontext, eine kleine Registry wird also
+etwas länger als ihre flache Liste — gemessen am echten Optik-Dokument
+(3 Skills, 2 Kontexte): 818 gegen 659 Zeichen. Das Budget garantiert die
+Obergrenze, nicht eine Ersparnis bei jeder Größe.
+
 Drei Eigenschaften entscheiden, was eine Antwort bedeutet:
 
 - **Ein „hier ist keine Registry" ruht immer auf einer Kinderliste, die
@@ -691,6 +718,18 @@ gerade angelegte Registry kann also nachhinken. `includeSkillRegistry: true` an
 `search_wlo_all` / `search_wlo_collections` erzwingt einen frischen Abruf, und
 `get_skill_registry` liest immer live — nach dem Anlegen oder Ändern einer
 Registry zu einem von beiden greifen.
+
+**`skillContext`** an `get_collection_contents`,
+`search_wlo_within_collection`, `get_node_details`, `get_topic_page_content` und
+`get_related_content` fragt einen Kontext beim Namen und liefert dessen Skills
+*und* die Anleitung der Redaktion gleich mit der Sammlungs-Antwort — der zweite
+Aufruf entfällt. Ein **benannter** Kontext ist der einzige Weg, der das Dokument
+live neu liest (2 Anfragen, ~1,0–1,4 s): der Cache hält die Zusammenfassung,
+nicht die Prosa. `all` verlangt keine Prosa und kommt aus dem Cache.
+Bei `search_wlo_all` / `search_wlo_collections` bewusst nicht — Kontextnamen sind
+je Registry vergeben, ein Parameter über fünf Sammlungen träfe in der einen und
+ginge in der nächsten ins Leere. Diese Werkzeuge liefern den Index, aus dem ein
+Modell die Namen lernt.
 
 ### Wikipedia-Auflösung
 

@@ -374,6 +374,8 @@ notes belong ("only for the upper grades", "run this one first"). The server
 renders its own catalogue **before** the document, because after it a
 server-built section could not be told apart from one the document forged.
 
+Headings give that prose a structure a tool can address: see **Contexts** below.
+
 Rules the reader should know:
 
 - Only `::: ki-skill` blocks become catalogue entries. A `::: wlo-material`
@@ -385,6 +387,120 @@ Rules the reader should know:
   silently cut. Both the listing and `get_skill_registry` carry the same 100
   (they were 30 and 100 until 2026-08-15) — past that only the document itself
   names the rest, and that is returned unchanged.
+- At most **50** contexts per registry, counted over H2 and H3 together. A
+  document past that is listed up to the cap and says so; the skills of a
+  dropped context stay in the catalogue, they are simply no longer addressable
+  by name.
+
+### Contexts: grouping the catalogue by working situation
+
+A registry with thirty skills answers "which are approved here" and leaves the
+harder question open: *which of them do I want right now?* The document answers
+it with its own headings — no extra field, no second file.
+
+```markdown
+# Skills für die Sammlung Optik
+
+Für die Arbeit mit dieser Sammlung freigegeben. Bitte immer erst den Bestand
+sichten, bevor etwas Neues entsteht.
+
+::: ki-skill
+[Lehrprofil auswerten](https://repository.staging.openeduhub.net/edu-sharing/components/render/12c04f9c-20b5-4461-804f-9c20b5346128)
+:::
+
+## Unterricht vorbereiten
+
+Für die Sekundarstufe I zuerst den Fragen-Skill, für die Oberstufe den
+Kompendialtext. Beide setzen voraus, dass die Klassenstufe genannt ist.
+
+::: ki-skill
+[Fragen generieren](https://repository.staging.openeduhub.net/edu-sharing/components/render/ccdcae49-d4db-4e4a-9cae-49d4db6e4a25)
+:::
+
+### Wochenplanung
+
+Nur für ganze Unterrichtsreihen — für eine Einzelstunde ist das zu grob.
+
+::: ki-skill
+[Reihenplan entwerfen](https://repository.staging.openeduhub.net/edu-sharing/components/render/aa11bb22-cc33-4d44-8e55-ff6677889900)
+:::
+
+## Material erschließen
+
+Beim Beschreiben die Fachsystematik der Sammlung verwenden, nicht die
+allgemeine.
+
+::: ki-skill
+[Metadaten vorschlagen](https://repository.staging.openeduhub.net/edu-sharing/components/render/bb22cc33-dd44-4e55-9f66-001122334455)
+:::
+```
+
+That document has **two contexts** (`Unterricht vorbereiten`, `Material
+erschließen`), one sub-context (`Unterricht vorbereiten/Wochenplanung`), and one
+skill that belongs to none of them.
+
+| Level | Meaning |
+|---|---|
+| `#` H1 | the document's title — never a context |
+| `##` H2 | a context |
+| `###` H3 | a sub-context, addressed as `Kontext/Unterkontext` |
+| `####` and deeper | not a context; the text belongs to the section above |
+
+**The instruction is the prose from the heading down to the first `:::` block.**
+Everything after a block belongs to the skill before it — so a note that governs
+the whole context has to stand **above** the blocks. A section with no blocks at
+all is instruction end to end.
+
+Four rules follow from the structure, and each one is a decision the editorial
+team can rely on:
+
+- **A skill before the first `##` applies everywhere.** It rides along with every
+  context call, marked "Gilt immer" — the general preamble travels with it.
+- **A sub-context inherits its context's instruction.** `Wochenplanung` is
+  answered with the H2's note as well as its own; a sub-context sits inside its
+  context, and delivering it without that note would be half an answer.
+- **A section without a title is transparent.** A bare `##` does not open a
+  context; its content joins the nearest named section above, or the general
+  part if there is none. That is one rule with two right outcomes — an untitled
+  `##` used as a separator falls to the general part, an untitled `###` inside a
+  named context stays in that context.
+- **A named section is a context even with no skills in it.** A heading that
+  carries only an instruction ("Browserplugin: hier bitte nichts erzeugen") is
+  listed and can be asked for. It is visible in the document, so a tool that
+  answered "unknown context" for it would be contradicting what the curator can
+  see.
+
+**How it is called.** `get_skill_registry` takes a `context`, the five
+collection tools a `skillContext`:
+
+```
+get_skill_registry(collectionId, context: "Unterricht vorbereiten")
+get_skill_registry(collectionId, context: "Unterricht vorbereiten/Wochenplanung")
+get_collection_contents(collectionId, skillContext: "Material erschließen")
+```
+
+Case and surrounding spaces do not matter. Nothing, or `all`, means the whole
+catalogue. An H3 title that is unique in the document can be given on its own;
+if the same H3 title appears under two H2, the qualified path is required —
+and the answer says which paths exist rather than guessing one.
+
+**A name that does not land never narrows the answer.** An unknown or ambiguous
+context returns the FULL catalogue plus a sentence naming the contexts that do
+exist — never an error, and never a short list that looks like a real result. A
+model learns the right name from the very answer that got it wrong.
+
+**What contexts cost: nothing.** They are read out of the document text that the
+cheap tier downloads anyway — 1 children listing + 1 download, unchanged, and no
+metadata call per skill. A **named** `skillContext` on a collection tool is
+the one exception and it is opt-in: it re-reads the one document live
+(~1.0–1.4 s), because the cache holds the summary and not the editors' prose.
+`all` needs no prose and is answered from the cache.
+
+**One H2 per skill is an outline that does not group.** It parses correctly and
+produces one single-skill context per heading — the catalogue is then too long
+to list and its context names are too many to name, so a collection hit falls
+back to the head line alone. Group by working situation ("Unterricht
+vorbereiten"), not by skill name.
 
 ### How a model finds out a registry exists
 

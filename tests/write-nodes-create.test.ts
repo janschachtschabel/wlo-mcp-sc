@@ -173,3 +173,68 @@ test('an unparseable create response is reported as "created, but no id" — not
     assert.match(String(out.detail), /keine verwertbare Antwort/);
   } finally { mock.restore(); }
 });
+
+/**
+ * ── Wie lange das Anlegen dauern darf ───────────────────────────────────────
+ *
+ * Gemessen 2026-08-17 gegen Staging, je Anfrage getrennt: das Anlegen selbst
+ * (`POST …/children`) braucht **18,6 s**, die beiden anderen Aufrufe der Folge
+ * zusammen 1,7 s. Über vier Läufe lag das Anlegen bei 12,2 / 15,7 / 16,6 / 18,6 s.
+ *
+ * Die Ursache: das Repository RENDERT die Seite und speichert eine Vorschau am
+ * Datensatz (echtes JPEG ~50 kB statt SVG-Platzhalter, `preview.isIcon=false`).
+ * Das Ergebnis ist je Adresse zwischengespeichert — `planet-schule.de` kostete
+ * kalt 46,5 s und danach 8,8 s —, weshalb Messungen mit jeweils neuer Einweg-URL
+ * einen falschen, gleichmäßigen Sockel von 13–22 s erzeugen. Eine Domain, die es
+ * nicht gibt, kostet trotzdem ~15 s: der Renderer läuft in seine eigene Frist.
+ *
+ * Und die Kosten hängen an der EIGENSCHAFT, nicht am Endpunkt — gleiche Adresse,
+ * gleicher Lauf: anlegen mit URL 8,8 s gegen anlegen ohne URL 0,5 s + URL
+ * nachsetzen 7,8 s. `ccm:wwwurl` aus dem Anlege-Body zu nehmen verschöbe die
+ * Wartezeit also nur um einen Aufruf; die Reihenfolge bleibt, wie sie ist.
+ */
+
+/**
+ * ── Die Grenze hängt an ccm:wwwurl, nicht am Anlegen ────────────────────────
+ *
+ * Gemessen 2026-08-17, gleiche URL im selben Lauf: anlegen MIT URL 8,8 s gegen
+ * anlegen ohne URL 0,5 s + URL nachträglich setzen 7,8 s. Die Arbeit wandert mit
+ * der Eigenschaft, sie verschwindet nicht. Sie entsteht, weil das Repository für
+ * die Adresse eine Vorschau rendert: der Knoten trägt danach ein echtes JPEG
+ * (~50 kB, `preview.isIcon=false`) statt des SVG-Platzhalters.
+ *
+ * Das Ergebnis wird je URL zwischengespeichert — derselbe Abruf für einen
+ * ANDEREN Knoten mit derselben Adresse liefert dieselben Bytes, und ein zweiter
+ * Aufruf kostet 0,3 s. Deshalb streuen die Messungen so stark: `planet-schule.de`
+ * kalt 46,5 s, danach 8,8 s.
+ *
+ * Folge für uns: das größere Budget gehört überall dorthin, wo `ccm:wwwurl`
+ * geschrieben wird — auch in den Metadaten-Pfad, den `wlo_update_content`
+ * benutzt, wenn jemand die Quell-URL ändert.
+ */
+
+import { writeTimeoutMs, WWWURL_WRITE_TIMEOUT_MS } from '../src/services/write/nodes.js';
+import { WLO_FETCH_TIMEOUT_MS } from '../src/wlo-config.js';
+
+test('ein Schreibvorgang mit ccm:wwwurl bekommt das größere Budget', () => {
+  assert.equal(writeTimeoutMs({ 'ccm:wwwurl': ['https://example.org/'] }), WWWURL_WRITE_TIMEOUT_MS);
+});
+
+test('ohne ccm:wwwurl bleibt es beim gewöhnlichen Budget', () => {
+  // Gemessen 0,5-1,2 s ohne die URL — das gewöhnliche Limit ist dafür großzügig,
+  // und ein hängender Socket soll nicht länger blockieren als nötig.
+  assert.equal(writeTimeoutMs({ 'cclom:title': ['Titel'] }), WLO_FETCH_TIMEOUT_MS);
+  assert.equal(writeTimeoutMs({}), WLO_FETCH_TIMEOUT_MS);
+});
+
+test('das größere Budget deckt den gemessenen kalten Lauf', () => {
+  // 46,5 s für eine kalt gerenderte, echte Seite. Ein Abbruch davor meldet
+  // Fehlschlag für Arbeit, die zu Ende läuft.
+  assert.ok(WWWURL_WRITE_TIMEOUT_MS >= 46_500, `${WWWURL_WRITE_TIMEOUT_MS} ms deckt 46,5 s nicht`);
+});
+
+test('eine größere Einstellung des Betreibers wird auch hier nicht heruntergesetzt', () => {
+  const higher = WWWURL_WRITE_TIMEOUT_MS + 5_000;
+  assert.equal(writeTimeoutMs({ 'cclom:title': ['x'] }, higher), higher);
+  assert.equal(writeTimeoutMs({ 'ccm:wwwurl': ['https://example.org/'] }, higher), higher);
+});

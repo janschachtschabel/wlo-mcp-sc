@@ -45,14 +45,29 @@ function safeHttpHref(v: unknown): string {
  * floor. An envelope field is not a disclosure if the renderer discards it.
  */
 function registry(node: Record<string, unknown>): string {
-  const r = node['skillRegistry'] as
-    { title?: unknown; nodeId?: unknown; entries?: { title?: unknown }[] } | undefined;
+  const r = node['skillRegistry'] as {
+    title?: unknown; nodeId?: unknown;
+    entries?: { title?: unknown }[];
+    contexts?: { path?: unknown }[];
+  } | undefined;
   if (!r || typeof r !== 'object') return '';
   const name = escapeHtml(str(r.title) || str(r.nodeId) || 'Skill-Registry');
-  const skills = (Array.isArray(r.entries) ? r.entries : [])
-    .map(e => str(e?.title)).filter(Boolean).slice(0, 4);
-  const list = skills.length ? `: ${escapeHtml(skills.join(', '))}` : '';
-  return `<br /><small>Skills der Sammlung (${name})${list}</small>`;
+  const total = Array.isArray(r.entries) ? r.entries.length : 0;
+  // Where the registry has an outline, the CONTEXT names are the useful short
+  // form: they say what kinds of work are covered and are what a reader would
+  // ask for next. Four skill titles out of twenty-eight said neither.
+  const contexts = (Array.isArray(r.contexts) ? r.contexts : [])
+    .map(c => str(c?.path)).filter(Boolean);
+  const detail = contexts.length
+    ? `, ${total} Skills in: ${escapeHtml(contexts.join(' · '))}`
+    : (() => {
+      const skills = (Array.isArray(r.entries) ? r.entries : [])
+        .map(e => str(e?.title)).filter(Boolean).slice(0, 4);
+      return skills.length
+        ? `: ${escapeHtml(skills.join(', '))}${total > skills.length ? ` … (${total})` : ''}`
+        : '';
+    })();
+  return `<br /><small>Skills der Sammlung (${name})${detail}</small>`;
 }
 
 function item(node: Record<string, unknown>): string {

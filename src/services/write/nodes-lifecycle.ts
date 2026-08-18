@@ -26,7 +26,7 @@ import { readJson } from '../../read-json.js';
 import { getNodeMetadata } from '../../wlo-node.js';
 import { log } from '../../logger.js';
 import type { WriteMode } from './credential-gate.js';
-import { updateNodeMetadata, failureDetail, type FieldWriteStatus } from './nodes.js';
+import { updateNodeMetadata, failureDetail, writeTimeoutMs, type FieldWriteStatus } from './nodes.js';
 import { confirmDeleted, type MutationOutcome } from './verify.js';
 import { findByUrl, type ExistingRecord } from './duplicates.js';
 import { uploadContent, type UploadOutcome } from './content-upload.js';
@@ -142,7 +142,14 @@ export async function createContentNode(
   });
   const res = await wloFetch(
     `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(parent)}/children?${params}`,
-    { method: 'POST', headers: HEADERS, body: JSON.stringify(body) },
+    {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify(body),
+      // Larger only when the body carries `ccm:wwwurl` — that property is the
+      // slow one, wherever it is written (see `writeTimeoutMs`).
+      signal: AbortSignal.timeout(writeTimeoutMs(body)),
+    },
   );
   if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
 

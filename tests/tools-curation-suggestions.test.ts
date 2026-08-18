@@ -419,3 +419,53 @@ test('an unknown suggestion id is named rather than silently doing nothing', asy
     mock.restore();
   }
 });
+
+/**
+ * ── Vorschlag auf eine Sammlungs-Verknüpfung ────────────────────────────────
+ *
+ * Zwei Knoten, absichtlich: der WERT gehört auf den Datensatz und folgt dem
+ * Schreibziel, der VORSCHLAG bleibt auf dem Knoten, auf dem er gefunden wurde.
+ * Der Satz, den eine Person bestätigt, muss beides zusammen richtig benennen —
+ * Titel und id gehören demselben Knoten.
+ */
+test('ein angenommener Vorschlag wird am Original geschrieben, und der Satz nennt dessen Titel', async () => {
+  setServiceCredentialForTest(USER);
+  const writes: string[] = [];
+  const mock = installFetchMock((url, init) => {
+    const method = init?.method ?? 'GET';
+    if (url.includes('/suggestions/v1/')) {
+      return {
+        json: {
+          nodeId: 'ref-1',
+          suggestions: {
+            'cclom:general_description': [
+              { id: 's-1', propertyId: 'cclom:general_description', value: 'Neue Beschreibung', status: 'PENDING' },
+            ],
+          },
+        },
+      };
+    }
+    if (method === 'GET') {
+      return url.includes('original-1')
+        ? { json: { node: { ref: { id: 'original-1' }, properties: { 'cclom:title': ['Titel des Originals'] } } } }
+        : { json: { node: { ref: { id: 'ref-1' }, originalId: 'original-1', properties: { 'cclom:title': ['Titel der Verknüpfung'] } } } };
+    }
+    writes.push(url);
+    return { json: {} };
+  });
+  const c = await client();
+  try {
+    const preview = toolText(await c.callTool({
+      name: 'wlo_decide_suggestion',
+      arguments: { nodeId: 'ref-1', suggestionId: 's-1', decision: 'accept' },
+    }));
+    assert.match(preview, /original-1/, 'die Vorschau nennt die id, die geändert wird');
+    assert.match(preview, /Titel des Originals/, 'und den Titel, der zu dieser id gehört');
+    assert.ok(!preview.includes('Titel der Verknüpfung'),
+      'nicht den Titel der Verknüpfung neben der id des Originals');
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});

@@ -66,8 +66,10 @@ function installWideEmptySubtree(subCount: number) {
 
 test('get_collection_contents: recursive mode stops at the visit cap instead of crawling the whole subtree', async () => {
   // Without a cap the walk runs until the queue empties — two sequential
-  // upstream calls per collection, continuing long after the client's own
-  // 30 s request timeout has closed the socket.
+  // upstream calls per collection, continuing long after the caller has given
+  // up. (This used to name "the client's own 30 s request timeout"; that number
+  // came from `httpServer.requestTimeout`, which measured 2026-08-17 bounds
+  // RECEIVING a request, not the work on it.)
   const mock = installWideEmptySubtree(200);
   const client = await connectedClient();
   try {

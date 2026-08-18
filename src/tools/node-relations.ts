@@ -25,6 +25,13 @@ export function registerNodeRelationTools(server: McpServer, searchResultsWidget
     description: `Finde ähnliche WLO-Materialien zu einem Inhalt — "mehr wie dieses" / "was passt noch dazu" nach einer Suche oder Detailansicht. Andere Materialien mit gleichem Fach und gleicher Bildungsstufe.
 Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/Stufen und sucht Material mit gleichem Profil (der Ausgangsknoten wird ausgeschlossen). Optional \`includeSiblings\` — die weiteren Inhalte der Eltern-Sammlung.`,
     inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
       nodeId: z.string().describe('Seed node ID (content item or collection) to find related material for.'),
       maxResults: z.number().int().min(1).max(30).optional().default(8).describe(
         'Maximum number of related items (1–30, default 8).'
@@ -64,7 +71,7 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
         // appears in either result list; both come from `FILES` queries. Its own
         // content block, in both formats, for the same reason the sibling tools
         // use one: in json mode the first block IS the payload.
-        const registryText = await subjectRegistryText(related.registryCollectionId ?? '');
+        const registryText = await subjectRegistryText(related.registryCollectionId ?? '', params.skillContext);
         const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
 
         if ((params.outputFormat ?? 'markdown') === 'json') {

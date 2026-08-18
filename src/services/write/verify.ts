@@ -89,10 +89,19 @@ function sameValues(a: string[], b: string[]): boolean {
  * Throws when the node cannot be read: a write whose result is unknown must not
  * be reported as either success or failure, and a caller that gets a value back
  * would have no way to tell the difference.
+ *
+ * The node comes from the change set and is not a parameter of its own. It used
+ * to be one, and every caller passed exactly what `cs.nodeId` already held — a
+ * second way to name the node with no second thing to say. Once writes can be
+ * redirected from a reference to the original (`resolveWriteTarget`), that
+ * parameter is the place where a check would silently be run against the node
+ * the caller NAMED rather than the one that was written, which is precisely the
+ * false success this whole step exists to prevent.
  */
-export async function verifyWrite(nodeId: string, cs: ChangeSet): Promise<VerifyResult> {
+export async function verifyWrite(cs: ChangeSet): Promise<VerifyResult> {
   if (cs.changes.length === 0) return { outcomes: {}, allStored: true };
 
+  const nodeId = cs.nodeId;
   const node = await getNodeMetadata(nodeId);
   if (!node) {
     throw new Error(

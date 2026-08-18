@@ -238,3 +238,41 @@ test('an anonymous caller is refused before anything is read', async () => {
     mock.restore();
   }
 });
+
+/**
+ * ── Sammlungs-Verknüpfung ────────────────────────────────────────────────────
+ *
+ * Eine Sammlung kann selbst in einer Sammlung liegen, die id hier also eine
+ * Verknüpfung sein. Dann gilt dasselbe wie überall: geschrieben wird am
+ * Original, die Vorschau nennt beide ids, und verglichen wird gegen den Stand
+ * des ORIGINALS — sonst beschriebe der Diff einen anderen Datensatz.
+ */
+test('eine Verknüpfung wird aufs Original umgeleitet, und die Vorschau sagt es', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock((url, init) => {
+    if ((init?.method ?? 'GET') === 'GET') {
+      return url.includes('original-1')
+        ? { json: { node: { ref: { id: 'original-1' }, properties: {
+            'cm:title': ['Bruchrechnung (Original)'], [PROPERTY]: ['Alter Text vom Original'],
+          } } } }
+        : { json: { node: { ref: { id: 'ref-1' }, originalId: 'original-1', properties: {
+            'cm:title': ['Bruchrechnung (Verknüpfung)'], [PROPERTY]: ['Alter Text der Verknüpfung'],
+          } } } };
+    }
+    return { json: {} };
+  });
+  const c = await client();
+  try {
+    const preview = toolText(await c.callTool({
+      name: 'wlo_update_compendium', arguments: { nodeId: 'ref-1', text: 'Neuer Text' },
+    }));
+    assert.match(preview, /Verkn(ü|ue)pfung/, 'die Vorschau benennt, was die genannte id ist');
+    assert.match(preview, /original-1/, 'und welche id geändert wird');
+    assert.match(preview, /Alter Text vom Original/, 'der Vorher-Wert stammt vom Original');
+    assert.ok(!preview.includes('Alter Text der Verknüpfung'), 'nicht der Stand der Verknüpfung');
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});

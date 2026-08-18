@@ -9,6 +9,23 @@ import { nodeTitle } from './node-match.js';
 
 export interface FormattedNode {
   nodeId: string;
+  /**
+   * The record this node points at, when `nodeId` names a collection REFERENCE
+   * rather than the record itself.
+   *
+   * Absent on an original — not set equal to `nodeId`. That mirrors the
+   * repository DTO, which omits the field exactly there, and it keeps every
+   * existing response unchanged: the field appears where it has something to
+   * say and nowhere else.
+   *
+   * It matters because collection listings hand out reference ids and nothing
+   * else, so this is the id a caller naturally passes on. Measured 2026-08-16:
+   * a metadata write aimed at a reference is stored ON the reference and never
+   * reaches the record. Our write tools resolve it themselves
+   * (`resolveWriteTarget`); this field is how a caller can see the difference
+   * at all.
+   */
+  originalId?: string;
   title: string;
   description: string;
   keywords: string[];
@@ -79,7 +96,27 @@ export interface FormattedNode {
   skillRegistry?: {
     nodeId: string;
     title: string;
-    entries: { nodeId: string; title: string }[];
+    /**
+     * `context` is the group the registry document filed the skill under —
+     * absent for one that belongs to none and therefore applies everywhere.
+     * Needed here because the listing GROUPS by it; without it the renderer
+     * would have the context names and no way to say which skill is whose.
+     */
+    entries: { nodeId: string; title: string; context?: string }[];
+    /**
+     * The named groups the registry document declares, with how many skills each
+     * holds ITSELF — a group that only groups reports zero, because what it
+     * holds is listed under its sub-contexts and must not be counted twice.
+     *
+     * Absent for a flat document, which is every registry written before
+     * 2026-08-18: an empty array would appear in `structuredContent` where
+     * nothing was before.
+     *
+     * Names and counts only. The editorial instruction belongs to the targeted
+     * call — seven groups of up to 1200 characters in EVERY collection hit is
+     * the cost this whole package exists to remove.
+     */
+    contexts?: { path: string; skills: number }[];
     /** Set when the registry declares more skills than the catalogue lists. */
     truncated?: { listed: number; referenced: number };
   };
@@ -183,6 +220,11 @@ export function formatNode(node: WloNode): FormattedNode {
 
   return {
     nodeId,
+    // Spread, not `originalId: node.originalId`: that sets the KEY on every
+    // record with the value `undefined`, so `'originalId' in node` answers yes
+    // for an original. JSON and zod both drop it, which is exactly why the
+    // discrepancy would sit unnoticed until someone tests for presence.
+    ...(node.originalId ? { originalId: node.originalId } : {}),
     // Shared canonical chain (node-match.ts) — no PAGE_VARIANT placeholder
     // leaks through get_node_details / get_collection_contents / browse.
     title:                nodeTitle(node),
@@ -305,6 +347,29 @@ export function oneLine(value: string): string {
  * second (a `<…>` target may contain parentheses), and `<`/`>` inside the URL
  * are percent-encoded so they cannot close it.
  */
+/**
+ * The `nodeId:` line, saying when the id names a REFERENCE rather than a record.
+ *
+ * Both ids are stated, because both are needed and for different things: either
+ * one loads the material, only the original may be written to, and only the
+ * original resolves a skill's companion files without a second lookup.
+ *
+ * Shared rather than repeated: the skill tools have rendered this sentence since
+ * before ordinary results could, and one wording for one fact is the point — a
+ * caller should not have to learn that "(Verknüpfung; Original: …)" and some
+ * second phrasing mean the same thing.
+ *
+ * `originalId` equal to `nodeId` is treated as no reference at all. Search
+ * results carry the DTO field, which is simply absent on an original, while the
+ * skill catalogue derives its own from `ccm:original`, which points at the
+ * record itself. One rule absorbs both.
+ */
+export function nodeIdLine(nodeId: string, originalId?: string): string {
+  return originalId && originalId !== nodeId
+    ? `nodeId: ${nodeId} (Verknüpfung; Original: ${originalId})`
+    : `nodeId: ${nodeId}`;
+}
+
 function headingFor(title: string, url: string): string {
   const text = title.replace(/[[\]]/g, '\\$&');
   if (!url) return `## ${text}`;
@@ -312,31 +377,6 @@ function headingFor(title: string, url: string): string {
   return `## [${text}](<${target}>)`;
 }
 
-/**
- * Skills shown per collection in a LISTING.
- *
- * Was 4 until 2026-08-11, on the grounds that five collections carrying thirty
- * skills each is a wall of text where a search result should be. That traded the
- * wrong thing away: an approval list showing four of nine is exactly the
- * "a short list standing for a long one" shape this project refuses everywhere
- * else, and the entry a model needs may be the fifth.
- *
- * It mirrors **`REGISTRY_SEARCH_MAX`** in `services/skill-registry.ts`, which
- * caps the catalogue the SEARCH tier hands a renderer — so this is not a second,
- * narrower bound but the same one, restated. 30 until 2026-08-15, when that tier
- * was raised to the tool's own `REGISTRY_MAX`; the number to mirror is still
- * `REGISTRY_SEARCH_MAX` and not `REGISTRY_MAX`, even though they are equal
- * today. Three comments named the wrong partner until 2026-08-13, which is how a
- * mirror gets "restored" by raising the number it does not mirror.
- *
- * It cannot be imported: `formatter.ts` is a leaf module and the service imports
- * FROM it, so the dependency would be a cycle. What holds the two together is
- * therefore a test, not this sentence — `tests/formatter.test.ts` renders a
- * catalogue of `REGISTRY_SEARCH_MAX` entries and requires every one of them to
- * be printed. If this number falls behind, the renderer samples a catalogue the
- * service considers complete while the head line still says "alle hier gelistet".
- */
-const REGISTRY_LINES_MAX = 100;
 
 /**
  * What a skill catalogue is NOT: the instructions.
@@ -393,6 +433,45 @@ function registryLines(n: FormattedNode): string[] {
 }
 
 /**
+ * Lines a catalogue may spend inside a RESULT.
+ *
+ * Replaces `REGISTRY_LINES_MAX` (100), which was not a budget at all: a registry
+ * of sixty skills wrote sixty lines into EVERY collection hit. Measured against
+ * the real Optik registry on 2026-08-18, that was ~3330 characters per
+ * collection, of which 1008 were bare UUIDs — and those UUIDs bought exactly one
+ * thing, calling `get_skill` directly, i.e. skipping the step the note three
+ * lines below tells the reader not to skip.
+ *
+ * One number, three forms, and the degradation is MONOTONE: the bigger the
+ * registry, the shorter its block gets — never longer. Twelve is where a list
+ * stops being scannable and still sits under the cost of one extra round trip.
+ *
+ * Not shared with `REGISTRY_SEARCH_MAX`: that bounds what the SERVICE hands over
+ * (and `get_skill_registry` still shows all of it), this bounds what a search
+ * result prints. They answer different questions and may move apart.
+ */
+export const REGISTRY_INLINE_MAX = 12;
+
+/**
+ * Names, several per line, `·`-separated.
+ *
+ * One line each would make the context index cost as much as the list it
+ * replaces. A name longer than the width gets its own line rather than being
+ * split — half a context name is a name nobody can pass back.
+ */
+function packNames(names: string[], width = 100): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const name of names) {
+    const next = cur ? `${cur} · ${name}` : name;
+    if (cur && next.length > width) { out.push(cur); cur = name; }
+    else cur = next;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
  * The same catalogue, for a registry `renderToText` will not render itself.
  *
  * Two kinds of caller need it, and no count is given here because one goes
@@ -402,56 +481,113 @@ function registryLines(n: FormattedNode): string[] {
  * caps it discloses; a copy per caller would drift on `truncated`, the
  * disclosure a reader cannot notice missing.
  *
+ * Three forms, chosen by `REGISTRY_INLINE_MAX`:
+ *
+ * 1. **grouped/flat with nodeIds** — the whole thing fits.
+ * 2. **context index** — too many to list, few enough to NAME. No skill nodeId
+ *    is printed, so nothing here promises a load. Names, not just a count,
+ *    because without a name nobody can ask for one context.
+ * 3. **head line alone** — not even the names fit. Then the count and the tool
+ *    are the honest answer.
+ *
  * @param opts.entries `false` for the head line alone — where a tool renders one
  *   block per node and a hundred skills under each would destroy the shape it
- *   exists for. The head line still carries the count and the nodeId, so nothing
- *   is claimed that is not shown.
+ *   exists for. It may name the context COUNT, never the names: thirty portals
+ *   with seven names each is the same wall by another route.
  */
 export function registrySummaryLines(
   r: NonNullable<FormattedNode['skillRegistry']>,
   opts: { entries?: boolean } = {},
 ): string[] {
   const declared = r.truncated?.referenced ?? r.entries.length;
-  // Three different offers, because the three cases really are different.
+  const contexts = r.contexts ?? [];
+  const general = r.entries.filter(e => !e.context);
+  const packed = contexts.length
+    ? packNames(contexts.map(c => oneLine(`${c.path} (${c.skills})`)))
+    : [];
+
+  // Grouped costs one line per context, one per entry, one for the always-block.
+  const groupedCost = contexts.length + r.entries.length + (contexts.length && general.length ? 1 : 0);
+  const form: 'full' | 'index' | 'head' =
+    opts.entries === false ? 'head'
+      : groupedCost <= REGISTRY_INLINE_MAX ? 'full'
+        : contexts.length && packed.length <= REGISTRY_INLINE_MAX ? 'index'
+          : 'head';
+
+  // What the head line offers, and it must be true of the form BELOW it.
   //
-  // Head line only: nothing is listed here at all, so the tool IS the listing.
-  //
-  // Nothing capped: the whole catalogue is below, so pointing at
-  // `get_skill_registry` for completeness would send a model on a round-trip for
-  // something it was just handed. What that tool adds is depth per entry.
-  //
-  // Capped: both tiers carry the same 100 (`REGISTRY_SEARCH_MAX` IS
-  // `REGISTRY_MAX` since 2026-08-15), so pointing at `get_skill_registry` for
-  // MORE ENTRIES is an offer it cannot keep — it caps at the same number. What
-  // still names the rest is the registry document itself, which that tool hands
-  // back verbatim beside its own catalogue.
+  // full/uncapped: the whole catalogue is here, so pointing at the tool for
+  //   completeness sends a model on a round-trip for what it was just handed —
+  //   what that tool adds is depth per entry.
+  // full/capped: both tiers carry the same 100, so the tool cannot show MORE
+  //   entries. What still names the rest is the document, returned verbatim.
+  // index: the names are here, the skills are one targeted call away.
+  // head: nothing is listed, so the tool IS the listing.
   let reach: string;
-  if (opts.entries === false) reach = 'auflisten mit get_skill_registry';
-  else if (r.truncated) {
+  if (form === 'index') {
+    reach = 'Skills und Anleitung je Kontext mit get_skill_registry und context:"<Name>"';
+  } else if (form === 'head') {
+    reach = 'auflisten mit get_skill_registry';
+  } else if (r.truncated) {
     reach = `hier die ersten ${r.truncated.listed}; die übrigen nennt nur das Registry-Dokument selbst `
       + '(get_skill_registry gibt es unverändert aus)';
-  } else reach = 'alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry';
-  const shown = opts.entries === false ? [] : r.entries.slice(0, REGISTRY_LINES_MAX);
+  } else {
+    reach = 'alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry';
+  }
+  // A short form still owes the capped disclosure — it is the only sign that the
+  // service dropped entries, and the tool cannot make them up either.
+  if (form !== 'full' && r.truncated) {
+    reach += '; die übrigen nennt nur das Registry-Dokument selbst';
+  }
+
+  const outline = contexts.length ? ` in ${contexts.length} Kontexten` : '';
   const lines = [
     `Skill-Registry: ${r.title || '(ohne Titel)'} (nodeId: ${r.nodeId}) — `
-    + `${declared} freigegebene Skills, ${reach}`,
+    + `${declared} freigegebene Skills${outline}, ${reach}`,
   ];
-  for (const e of shown) lines.push(`  Skill: ${e.title} (nodeId: ${e.nodeId}) — laden mit get_skill`);
+
+  const entryLine = (e: { nodeId: string; title: string }, indent: string) =>
+    `${indent}Skill: ${e.title} (nodeId: ${e.nodeId}) — laden mit get_skill`;
+
+  if (form === 'index') {
+    for (const line of packed) lines.push(`  Kontexte: ${line}`);
+    return lines;
+  }
+  if (form === 'head') return lines;
+
+  if (!contexts.length) {
+    for (const e of r.entries) lines.push(entryLine(e, '  '));
+  } else {
+    const shown = new Set<string>();
+    for (const c of contexts) {
+      lines.push(oneLine(`  Kontext: ${c.path} (${c.skills})`));
+      for (const e of r.entries.filter(x => x.context === c.path)) {
+        lines.push(entryLine(e, '    '));
+        shown.add(e.nodeId);
+      }
+    }
+    // Everything the groups did not take. In this form that is exactly the
+    // context-free skills — a context past `REGISTRY_CONTEXT_MAX` would leave
+    // orphans, but fifty contexts never reach the grouped form.
+    const rest = r.entries.filter(e => !shown.has(e.nodeId));
+    if (rest.length) {
+      lines.push(`  Ohne Kontext — gilt immer (${rest.length})`);
+      for (const e of rest) lines.push(entryLine(e, '    '));
+    }
+  }
   // Suppressed entries are not "left out": the head line already offers the
   // listing, so counting them off again would read as a second, unreachable
   // remainder.
-  if (opts.entries !== false && declared > shown.length) {
-    lines.push(`  … und ${declared - shown.length} weitere`);
-  }
-  // Only where a skill nodeId was actually printed. The head-line tier lists
-  // nothing (and an empty catalogue has nothing to list), so the note would
-  // point at ids the answer does not carry — and a listing that promises a step
-  // its own content cannot support is worse than one that promises none.
+  if (declared > r.entries.length) lines.push(`  … und ${declared - r.entries.length} weitere`);
+  // Only where a skill nodeId was actually printed. Forms 2 and 3 list none (and
+  // an empty catalogue has nothing to list), so the note would point at ids the
+  // answer does not carry — a listing that promises a step its own content
+  // cannot support is worse than one that promises none.
   //
   // Indented with the entries it closes. Flush left it lands between the last
   // skill and the node's own `Typ:` line, where "das ist nur die Übersicht"
   // reads as a statement about the RECORD rather than about the catalogue.
-  if (shown.length) lines.push(`  ${DESCRIPTIONS_ONLY_NOTE}`);
+  if (r.entries.length) lines.push(`  ${DESCRIPTIONS_ONLY_NOTE}`);
   return lines;
 }
 
@@ -512,7 +648,7 @@ export function renderToText(
   for (const n of nodes) {
     const parts: string[] = [];
     parts.push(headingFor(n.title || '(kein Titel)', n.url || n.contentUrl || ''));
-    parts.push(`nodeId: ${n.nodeId}`);
+    parts.push(nodeIdLine(n.nodeId, n.originalId));
     if (n.description) parts.push(`Beschreibung: ${n.description.slice(0, 400)}${n.description.length > 400 ? '…' : ''}`);
     if (n.keywords.length)             parts.push(`Schlagworte: ${n.keywords.slice(0, 10).join(', ')}`);
     if (n.disciplines.length)          parts.push(`Fach: ${n.disciplines.join(', ')}`);

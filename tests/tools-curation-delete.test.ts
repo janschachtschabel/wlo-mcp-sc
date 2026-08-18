@@ -384,6 +384,54 @@ test('an anonymous caller cannot delete anything', async () => {
   }
 });
 
+test('over a reference id the preview says the record survives', async () => {
+  // Measured 2026-08-17 (F10): deleting a collection reference removes the
+  // reference and leaves the record alone. The preview used to promise "der
+  // Datensatz verschwindet aus allen Sammlungen" here — the one sentence a
+  // person reads before an irreversible act, and false in this case.
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock(() => ({
+    json: {
+      node: {
+        ref: { id: 'reference-1', repo: '-home-' },
+        originalId: 'original-1',
+        properties: { 'cclom:title': ['Bruchrechnung Klasse 6'] },
+      },
+    },
+  }));
+  const c = await client();
+  try {
+    const text = toolText(await c.callTool({
+      name: 'wlo_delete_content',
+      arguments: { nodeId: 'reference-1' },
+    }));
+    assert.match(text, /VERKNÜPFUNG/, 'die Vorschau benennt den Fall');
+    assert.match(text, /original-1/, 'und nennt den Datensatz, der bleibt');
+    assert.doesNotMatch(text, /Der Datensatz verschwindet damit aus allen Sammlungen/,
+      'die unbedingte Zusage darf hier nicht stehen');
+    assert.equal(mock.calls.filter(x => x.init?.method === 'DELETE').length, 0, 'nichts gelöscht');
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('over an ordinary record the preview keeps the full-loss sentence', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const c = await client();
+  try {
+    const text = toolText(await c.callTool({ name: 'wlo_delete_content', arguments: { nodeId: NODE } }));
+    assert.match(text, /verschwindet damit aus allen Sammlungen/);
+    assert.doesNotMatch(text, /VERKNÜPFUNG/, 'kein Verknüpfungssatz, wo es keine ist');
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
 test('both delete tools declare themselves destructive', async () => {
   const c = await client();
   try {

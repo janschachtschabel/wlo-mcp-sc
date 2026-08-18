@@ -22,7 +22,7 @@ import { z } from 'zod';
 
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
-import { updateNodeMetadata } from '../services/write/nodes.js';
+import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
 import { verifyWrite } from '../services/write/verify.js';
 import { validateField } from '../services/write/fields.js';
 import { listSuggestions, setSuggestionStatus } from '../services/write/suggestions.js';
@@ -61,7 +61,7 @@ export function registerCurationDecisionTool(server: McpServer, challenge: Write
       decision: z.enum(['accept', 'decline']).describe('accept übernimmt den Wert, decline lehnt ihn ab.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -122,9 +122,26 @@ async function handleDecide(params: Record<string, unknown>) {
     );
   }
 
-  const cs = buildChangeSet(nodeId, 'content', before, { [found.propertyId]: checked.values }, {
-    action: `Nimmt den Vorschlag ${id} für „${label}“ an: der Wert wird in „${title}“ (${nodeId}) ` +
+  // Two nodes, deliberately. The VALUE belongs on the record, so it follows the
+  // write target; the PROPOSAL is filed on the node it was found on
+  // (`listSuggestions(nodeId)` above), so its status stays there. Marking it
+  // accepted on a node that never carried it would lose the proposal.
+  //
+  // The comparison state follows the VALUE, not the proposal: diffing against an
+  // overridden reference would find the wanted value already present, skip the
+  // write, and mark the proposal accepted over a record that never received it.
+  const baseline = await readWriteBaseline(node, nodeId);
+  if (!baseline.ok) return errorText(baseline.reason);
+  const { target, before: writeBefore } = baseline;
+  // Title and id in one sentence have to belong to the SAME node. `title` above
+  // is the requested node's, which is the right one for the decline path — here
+  // the id is the target's, so the title has to come from the target too, or a
+  // person confirms a sentence naming a title that record does not carry.
+  const targetTitle = recordTitle(writeBefore);
+  const cs = buildChangeSet(target.targetId, 'content', writeBefore, { [found.propertyId]: checked.values }, {
+    action: `Nimmt den Vorschlag ${id} für „${label}“ an: der Wert wird in „${targetTitle}“ (${target.targetId}) ` +
       'geschrieben und der Vorschlag anschließend als angenommen vermerkt.',
+    ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
   });
   if (!token) return previewReply(cs, 'Zum Annehmen bitte bestätigen.');
   const refusal = confirmOrExplain(token, cs);
@@ -140,10 +157,10 @@ async function handleDecide(params: Record<string, unknown>) {
     return plainText(`Der Wert stand bereits so im Datensatz. Vorschlag ${id} ist jetzt als angenommen vermerkt.`);
   }
 
-  const { statuses } = await updateNodeMetadata(nodeId, desiredFromChangeSet(cs), { commit: false });
+  const { statuses } = await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), { commit: false });
   let verified;
   try {
-    verified = await verifyWrite(nodeId, cs);
+    verified = await verifyWrite(cs);
   } catch (err) {
     // Unknown outcome. Marking the proposal accepted here would turn "we do not
     // know" into "it is done".

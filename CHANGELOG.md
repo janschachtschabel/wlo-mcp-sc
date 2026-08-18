@@ -9,6 +9,245 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — a skill registry can group its skills by working situation (2026-08-18)
+
+A registry document now structures its catalogue with its own Markdown
+headings: `##` opens a context, `###` a sub-context, and the prose above the
+first `::: ki-skill` block is the editorial team's **instruction** for it. That
+answers a question the flat list could not: not "which skills are approved
+here", but "which of them do I want *right now*".
+
+`get_skill_registry` takes a **`context`**; the five tools that answer about one
+collection — `get_collection_contents`, `search_wlo_within_collection`,
+`get_node_details`, `get_topic_page_content`, `get_related_content` — take a
+**`skillContext`** and deliver the narrowed catalogue *and* the instruction with
+the collection answer, so the second call is not needed. Case and spacing do not
+matter; nothing, or `all`, means everything.
+
+**A name that does not land never narrows.** An unknown or ambiguous context
+returns the full catalogue plus the names that do exist — never an error, and
+never a short list that looks like a result. A model learns the right name from
+the answer that got it wrong. It gets no instruction in that case: a typo must
+not trigger the most expensive answer the surface can give.
+
+Three structural rules, each a decision editors can rely on: a section **without
+a title** is transparent (its content joins the nearest named section above,
+else the general part); a named section **is** a context even with no skills in
+it yet — filling a group after creating it is how editorial work proceeds; and a
+skill declared before the first `##` applies in **every** context.
+
+Contexts cost **no** extra requests — they are read from the document text the
+cheap tier downloads anyway (1 children listing + 1 download, unchanged).
+A **named** `skillContext` is the one exception and is opt-in: it re-reads that
+one document live (2 requests, ~1.0–1.4 s), because the cache holds the summary
+and not the editors' prose. `all` needs no prose and is served from the cache.
+
+Editorial guide: `docs/SKILLS.md`. Flow and output: `docs/SKILL-TRIGGER.md`.
+
+### Changed — a collection result carries a catalogue that gets *shorter* as the registry grows (2026-08-18)
+
+The catalogue attached to every collection result was unbounded in practice: a
+registry with 28 skills wrote 30 lines into **each** hit (3436 characters), and
+a search returning five collections spent over 17 000 on approval lists — 1008
+of them bare UUIDs.
+
+It is now bounded to **12 lines per collection** (`REGISTRY_INLINE_MAX`, which
+replaces `REGISTRY_LINES_MAX`), whatever the registry's size, in three forms:
+
+1. everything fits → the grouped catalogue with a nodeId per skill, as before;
+2. too many to list, few enough to name → the **context index**: names with
+   counts, several per line, no nodeIds;
+3. not even that → the head line alone, with `get_skill_registry` as the way on.
+
+Measured on the shape of the Optik registry (28 skills, 7 contexts): **3 lines
+instead of 30, 407 characters instead of 3436**. A flat 50-skill document — no
+contexts involved — collapses to a single line of 147, which is the larger share
+of the saving.
+
+Forms 2 and 3 print no skill nodeId and therefore drop the "this is only the
+overview" closing note as well: it would promise a `get_skill` call the answer
+carries no identifier for.
+
+Nothing about this costs a request, and no tool lost an ability — the head line
+names the count and the tool that lists them.
+
+### Fixed — creating a record no longer times out while the repository is still working (2026-08-17)
+
+Creating a record with a source URL is one upstream call that takes 12–19 s on
+staging (measured per request: duplicate check 1.2 s, **create 18.6 s**,
+metadata 0.5 s). It ran
+against the 20 s budget meant for calls that answer in well under a second, at
+93 % of it, so a slower moment aborted it. That reported a failure for work the
+repository goes on to finish, and a retry can create a *second* record.
+
+That one call now has its own 30 s budget — 1.6× the slowest measured run. An
+operator who raised `WLO_FETCH_TIMEOUT_MS` above that keeps their setting.
+
+The budget was briefly 25 s, held down by a ceiling that turned out not to
+exist. `httpServer.requestTimeout = 30_000` reads like a cap on the whole
+request and is not one: measured, a node:http server with that setting and a
+handler answering after 35 s delivers its response. It bounds *receiving* a
+request — which is also why this server's SSE streams survive. Three older
+comments had made a response deadline out of it and used it to justify design
+decisions; those caps stand on what the work costs instead, and what really
+bounds the wait sits with the client.
+
+### Fixed — a redirected write is now diffed against the record it writes (2026-08-17)
+
+Found by review after the plan was complete. The three metadata tools resolved a
+collection reference to the record correctly, but kept diffing against the
+**reference's** properties. While a reference still inherits, the two are
+identical and nothing looks wrong; they diverge exactly once the reference has
+been written to directly — the state older versions of these same tools created.
+
+Three consequences, all silent: a field counted as unchanged because the
+reference already showed the wanted value, so the record never received it while
+the tool reported success (for `wlo_decide_suggestion`, complete with marking the
+proposal ACCEPTED); the preview showed the reference's value as "before", so the
+approved diff described a different record; and keywords — a merged field —
+merged into the reference's list and wrote that over the record's, dropping any
+keyword only the record had.
+
+`readWriteBaseline` now returns the target and its baseline together, and the
+extra read happens only when a redirection is in play. An unreadable record
+refuses rather than falling back to the reference.
+
+### Added — cost and advertising, and what a label actually depends on (2026-08-18)
+
+`includeAccessInfo` now reports five fields instead of three. The two new ones
+were never surveyed: the 2026-08-17 run's three patterns matched neither
+`ccm:price` (339 687 records, 58 % of the corpus) nor `ccm:containsAdvertisement`
+(69 688). Both had been sitting in that report's own "remaining fields" list the
+whole time. The survey script gained a fourth group so the next run cannot miss
+them the same way.
+
+The measurement behind it corrects how the previous one explained itself:
+`<property>_DISPLAYNAME` resolves exactly what a field's WIDGET declares — not
+the URI, not the published vocabulary. One record carried seven quality fields
+and only `ccm:oeh_quality_login` came back labelled, because its widget is the
+one declaring the bare digits it stores. So the quality fields stay out, but for
+a measured reason rather than an inferred one.
+
+`ccm:containsAdvertisement` is the single field with a local vocabulary table
+behind it (`yes` → "Ja", `no` → "Nein"). Its widget declares the star scale
+`quality_advertisement/0…5` while 69 628 of its stored values are
+`containsAdvertisement/yes|no`, so the repository answers with no label at all.
+The table is a fallback and never an override: if the metadata set is ever
+pointed at the right vocabulary, it stops being consulted. That qualifies the
+"no vocabulary table" rule rather than dropping it — the rule guards against a
+third source drifting from an instance, and here there is nothing to drift from.
+
+Details, including the full declared-vs-stored table for eighteen fields:
+`docs/plans/2026-08-18-vokabular-abgleich.md`.
+
+### Added — `includeAccessInfo` on the detail tools (2026-08-17)
+
+`get_node_details` and `get_nodes_details` can now report three fields that
+appeared nowhere before: access conditions (does it need a login?),
+accessibility conformance (A/AA/AAA, BITV 2.0, WCAG) and OER status. Off by
+default, and it costs no extra request — the detail tools already read every
+property, so this is a projection of data in hand.
+
+No vocabulary table came with it: the repository labels all three itself through
+`<property>_DISPLAYNAME`, which is the source the formatter already prefers for
+vocabulary fields. The quality fields are deliberately absent; the measurement
+behind that is in `docs/plans/2026-08-17-metadatenfelder-erhebung.md`.
+
+All three are readable but not searchable — as an ngsearch criterion each
+answers HTTP 400, so "find me material without a login" is not available.
+
+### Fixed — a complete licence count is no longer discarded as truncated (2026-08-17)
+
+`facetLimit` is not a cap on how many facet buckets come back: measured on
+staging, the server answers with up to five times the requested limit
+(`ccm:taxonid` at limit 1/2/10/50/80 → 5/10/50/250/376 buckets, the last being
+every distinct value there is). The exact licence count tested `buckets.length
+>= FACET_LIMIT` and so treated a complete 23-bucket answer as possibly
+truncated, falling back to the family total that the same module documents as
+overstating by 98–164 %. The threshold is now `FACET_BUCKET_MAX`; `FACET_LIMIT`
+stays at 20 because it sizes the user-facing facet output.
+
+The corpus licence keys pinned in the tests were re-measured too — 23, not 16.
+Seven are new since 2026-08-12 and most are free text somebody wrote into the
+licence field (a company name, a copyright notice, a whole sentence of German
+copyright law). They are pinned as values that must stay UNRESOLVED: inventing a
+licence where the record names none tells a reader they may reuse the material.
+
+### Fixed — the detail view says when a nodeId is a reference (2026-08-17)
+
+`get_node_details` and the Fachportal listing build their `nodeId:` line by
+hand, so both missed the shared rule introduced with `originalId` — the rendered
+text said nothing while `structuredContent` carried the field. A guard now fails
+any hand-built `nodeId:` line outside the one place that legitimately has no
+`originalId` to state.
+
+### Added — `npm run survey:metadata`, a metadata-field survey (2026-08-17)
+
+Asks a live repository which fields it offers for quality, rights and
+accessibility, and how the corpus actually fills them. Reports and never writes,
+like `npm run sync:vocabs`. Two legs: the full metadata set (17.3 MB, ~1 s) for
+what EXISTS and what carries a vocabulary, one facet per field for whether
+anyone maintains it — neither question answers the other. Its output is the
+input to a human decision, and the result is written up in
+`docs/plans/2026-08-17-metadatenfelder-erhebung.md`.
+
+The finding that matters: 11 of the 14 `ccm:oeh_quality_*` fields store values
+their own declared vocabulary does not contain — the same rating scale spelled
+once as a concept URI and once as a bare digit, both present in the same field.
+One field declares a findings vocabulary and stores star ratings exclusively. No
+runtime behaviour changed here; three fields survive the measurement as
+read-only candidates, and the planned write surface for quality fields is
+dropped.
+
+### Added — results say when a nodeId is a collection reference (2026-08-17)
+
+A collection listing hands out reference ids and nothing else, and until now no
+output said so: a caller could not tell that the id they were given is not the
+record, and had no way to find the one that is. Every result node now carries
+`originalId` when — and only when — it is a reference, in the rendered text as
+`nodeId: … (Verknüpfung; Original: …)` and as a field in `structuredContent`.
+Absent on an original rather than set equal to `nodeId`, mirroring the
+repository DTO and leaving every existing response unchanged.
+
+The wording is shared with the skill tools, which have rendered this sentence
+since before ordinary results could — one phrasing for one fact.
+
+`wlo_delete_content` also stops promising something a reference id will not
+cause. Its description said the tool "zerstört das Material für alle
+Sammlungen, in denen es vorkommt" — true of a record id, false of a reference
+id, which is the id a collection listing gives you. The preview now states
+which of the two cases applies, using the record it has already read, and names
+the record that will survive.
+
+### Fixed — a metadata write aimed at a collection reference now reaches the record (2026-08-17)
+
+Collection listings hand out REFERENCE ids, so the id a caller naturally passes
+to `wlo_update_content` is usually not the record. Measured against staging: such
+a write is **stored on the reference**, never reaches the original, and the
+reference stops inheriting from then on — a silent, permanent local override that
+the read-back step could not catch, because it re-read the same node and found
+the value it had just written. The documented behaviour ("200 OK ohne Effekt")
+was wrong, and wrong in the more damaging direction.
+
+`wlo_update_content`, `wlo_update_compendium` and `wlo_decide_suggestion` now
+resolve the record before building the change set, and the redirection is the
+FIRST line of the preview — naming both ids — because which record is edited
+outranks what changes in it. The confirmation token binds to it: a token minted
+from a preview that named no redirection does not authorise one, in either
+direction, and a redirection from a different reference is a mismatch too.
+
+Two things deliberately unchanged. Deletion is **not** redirected: measured the
+same day, deleting a reference removes the reference and leaves the record alone,
+so following the original there would turn a harmless tidy-up into data loss.
+And `wlo_rename_collection` / `wlo_submit_content` write through other endpoints
+whose behaviour on a reference is unmeasured — they are named in the plan rather
+than changed on a guess.
+
+`verifyWrite` lost its `nodeId` parameter and reads the change set's. Every
+caller passed the same value anyway, and once writes can be redirected that
+parameter is precisely where a check would silently run against the node the
+caller named rather than the one that was written.
+
 ### Fixed — `get_skill` is registered in every skill-tool mode (2026-08-16)
 
 `WLO_SKILL_TOOL_MODE=one-tool` replaced `search_skill` **and** `get_skill` with

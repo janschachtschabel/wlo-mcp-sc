@@ -34,6 +34,10 @@ import { nodeTitle } from '../node-match.js';
 import { log } from '../logger.js';
 import { REGISTRY_CONTENT_TYPE_URI, SKILL_PROPS } from './skill-catalogue.js';
 import { parseSkillReferences } from './skill-references.js';
+import {
+  layoutContexts, resolveContext,
+  type ContextResolution, type RegistryContext, type RegistryGeneral,
+} from './registry-contexts.js';
 import { readSkillText } from './skills.js';
 
 /**
@@ -233,6 +237,11 @@ export interface RegistryEntry {
   title: string;
   description?: string;
   keywords?: string[];
+  /**
+   * The context this skill was declared under (`RegistryContext.path`), absent
+   * when it belongs to none — then it sits in `general` and applies always.
+   */
+  context?: string;
 }
 
 export interface SkillRegistry {
@@ -246,11 +255,25 @@ export interface SkillRegistry {
   entries: RegistryEntry[];
   /** References that name no readable record — stated rather than swallowed. */
   unresolved: { title: string; nodeId: string }[];
+  /**
+   * The named groups the document's headings declare, in document order. Empty
+   * for a flat document — which is every registry written before 2026-08-18, so
+   * an empty list has to keep behaving exactly as it did.
+   */
+  contexts: RegistryContext[];
+  /** Skills and prose that belong to no context and therefore apply always. */
+  general: RegistryGeneral;
+  /** Set when the document outlines more contexts than this answer lists. */
+  contextsTruncated?: { listed: number; found: number };
   /** Set when more than one candidate could have been the registry. */
   ambiguous?: { candidates: number; chosen: string };
   /** Set when the document declares more skills than one answer carries. */
   truncated?: { listed: number; referenced: number };
 }
+
+export { REGISTRY_CONTEXT_MAX } from './registry-contexts.js';
+export { resolveContext };
+export type { ContextResolution, RegistryContext, RegistryGeneral } from './registry-contexts.js';
 
 export type RegistryMiss =
   | 'collection_not_found'
@@ -359,6 +382,8 @@ export async function buildRegistryFrom(
     markdown: null,
     entries: [],
     unresolved: [],
+    contexts: [],
+    general: { skills: [] },
     ...(picked.candidates > 1 ? { ambiguous: { candidates: picked.candidates, chosen: registryNodeId } } : {}),
   };
 
@@ -367,7 +392,8 @@ export async function buildRegistryFrom(
   // claim, so it comes back named, with the reason attached.
   if (markdown === null) return { registry: base, reason: 'unreadable' };
 
-  const referenced = parseSkillReferences(markdown).filter(r => r.kind === 'ki-skill');
+  const blocks = parseSkillReferences(markdown);
+  const referenced = blocks.filter(r => r.kind === 'ki-skill');
   // The tier decides how many, not just what: `resolveHeads: false` is the
   // listing's cheap pass and carries the narrower bound, everything else is the
   // tool answering about one collection.
@@ -378,9 +404,22 @@ export async function buildRegistryFrom(
   const unresolved = capped.filter(r => !r.nodeId).map(r => ({ title: r.title, nodeId: '' }));
   const withId = capped.filter(r => r.nodeId);
 
+  // The outline costs nothing: the document is already in hand, and both tiers
+  // get the same contexts — the `:::` block carries the offset, the headings
+  // carry the grouping, and neither needs a request.
+  // Boundaries come from EVERY block, entries only from the capped skills: a
+  // `::: wlo-material` block is no catalogue entry but it does end an
+  // instruction, and so does a skill past the cap.
+  const layout = layoutContexts(markdown, capped, blocks.map(r => r.offset));
+  const contextOf = new Map(capped.map((r, i) => [r, layout.paths[i]]));
+
   let entries: RegistryEntry[];
   if (opts.resolveHeads === false) {
-    entries = withId.map(r => ({ nodeId: r.nodeId, title: r.title }));
+    entries = withId.map(r => ({
+      nodeId: r.nodeId,
+      title: r.title,
+      ...(contextOf.get(r) ? { context: contextOf.get(r)! } : {}),
+    }));
   } else {
     const heads = await mapPool(withId, REGISTRY_POOL, r => getNodeMetadata(r.nodeId, SKILL_PROPS));
     entries = [];
@@ -395,6 +434,9 @@ export async function buildRegistryFrom(
         title: formatted.title || ref.title,
         description: formatted.description,
         keywords: formatted.keywords,
+        // The CONTEXT is the document's word, not the record's — it says where
+        // the editors filed the skill, which no metadata field carries.
+        ...(contextOf.get(ref) ? { context: contextOf.get(ref)! } : {}),
       });
     });
   }
@@ -411,11 +453,69 @@ export async function buildRegistryFrom(
       markdown,
       entries,
       unresolved,
+      contexts: layout.contexts,
+      general: layout.general,
+      ...(layout.truncated ? { contextsTruncated: layout.truncated } : {}),
       ...(referenced.length > capped.length
         ? { truncated: { listed: capped.length, referenced: referenced.length } }
         : {}),
     },
   };
+}
+
+/**
+ * A registry as ONE call reports it: everything, or one context of it.
+ *
+ * Lives here rather than in the tool that first needed it, because two surfaces
+ * narrow the same way and must not drift on what "narrowed" means — which
+ * entries come along (the context's own PLUS the ones that apply always) and
+ * which slice of the document does. `get_skill_registry` renders it as a full
+ * answer, `subjectRegistryText` as a block inside a collection answer; the
+ * prose differs, the rule may not.
+ *
+ * A miss is not handled here at all: it comes back as the `resolution`, and each
+ * caller falls back to the full answer in its own words. The rule that both
+ * hold is that a miss NEVER narrows — never a shorter answer for a name that did
+ * not land.
+ */
+export interface NarrowedRegistry {
+  view: SkillRegistry;
+  resolution: ContextResolution;
+}
+
+export function narrowRegistry(registry: SkillRegistry, wanted: string | undefined): NarrowedRegistry {
+  const resolution = resolveContext(registry.contexts, (wanted ?? '').trim());
+  if (resolution.kind !== 'found') return { view: registry, resolution };
+
+  const ctx = resolution.context;
+  const own = registry.entries.filter(e => e.context === ctx.path);
+  const always = registry.entries.filter(e => !e.context);
+  // Verbatim, but only what applies: the general preamble, the parent's
+  // instruction (it governs a sub-context too), and this section's slice.
+  const excerpt = [
+    registry.general.instruction ?? '',
+    resolution.parent?.instruction ?? '',
+    (registry.markdown ?? '').slice(ctx.range.start, ctx.range.end),
+  ].map(part => part.trim()).filter(Boolean).join('\n\n');
+
+  return { view: { ...registry, entries: [...own, ...always], markdown: excerpt }, resolution };
+}
+
+/**
+ * The instructions that govern a matched context, in the order they apply:
+ * the general part first, then the parent's, then the context's own.
+ *
+ * Structured fields rather than the document slice — a caller that only wants
+ * "what am I supposed to do here" has no use for the `:::` blocks and the
+ * per-skill prose that sit in the same section.
+ */
+export function contextInstructions(registry: SkillRegistry, resolution: ContextResolution): string[] {
+  if (resolution.kind !== 'found') return [];
+  return [
+    registry.general.instruction,
+    resolution.parent?.instruction,
+    resolution.context.instruction,
+  ].filter((s): s is string => Boolean(s));
 }
 
 /**
@@ -435,7 +535,15 @@ export function toRegistrySummary(registry: SkillRegistry): NonNullable<Formatte
   return {
     nodeId: registry.registryNodeId,
     title: registry.registryTitle,
-    entries: registry.entries.map(e => ({ nodeId: e.nodeId, title: e.title })),
+    entries: registry.entries.map(e => ({
+      nodeId: e.nodeId,
+      title: e.title,
+      ...(e.context ? { context: e.context } : {}),
+    })),
+    // Names and counts, never the instruction — see the field's own comment.
+    ...(registry.contexts.length
+      ? { contexts: registry.contexts.map(c => ({ path: c.path, skills: c.skills.length })) }
+      : {}),
     ...(registry.truncated ? { truncated: registry.truncated } : {}),
   };
 }

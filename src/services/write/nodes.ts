@@ -17,12 +17,155 @@
  * the API said; `verify.ts` reads the record back and reports what is true.
  */
 
-import { BASE_URL } from '../../wlo-config.js';
+import { BASE_URL, WLO_FETCH_TIMEOUT_MS } from '../../wlo-config.js';
 import { wloFetch, HEADERS } from '../../wlo-fetch.js';
 import { log } from '../../logger.js';
 import { sanitizeText } from '../../text-sanitize.js';
+import type { WloNode } from '../../wlo-types.js';
+import { getNodeMetadata } from '../../wlo-node.js';
 import { WRITABLE_FIELDS } from './fields.js';
 
+
+/**
+ * How long a write carrying `ccm:wwwurl` may take, in milliseconds.
+ *
+ * Setting that one property is the slow act in this whole server, and it is slow
+ * wherever it happens — measured 2026-08-17 with the same address in the same
+ * run: creating WITH the URL took 8.8 s, while creating without it took 0.5 s
+ * and setting the URL afterwards took 7.8 s. The cost travels with the property;
+ * it cannot be moved off the caller's wait by reordering.
+ *
+ * What it buys is visible: the record afterwards carries a real preview image
+ * (~50 kB JPEG, `preview.isIcon = false`) instead of the SVG placeholder, so the
+ * repository renders the page while the write is in flight. The render is cached
+ * per address — a second record for the same URL returns the identical bytes and
+ * a preview fetch costs 0.3 s — which is why the numbers scatter so widely:
+ * `planet-schule.de` cost **46.5 s** cold and 8.8 s once cached.
+ *
+ * 60 s therefore, covering the cold case with margin. That is a long time to
+ * hold a tool call, and it is still the better end of the trade: an abort
+ * reports failure for work the repository finishes, and a retry then creates a
+ * SECOND record. Making this fast is not something this server can do — the
+ * render would have to become asynchronous in the repository, where the
+ * placeholder preview already exists for exactly that shape.
+ */
+export const WWWURL_WRITE_TIMEOUT_MS = 60_000;
+
+/**
+ * The budget for one metadata write: larger when it carries `ccm:wwwurl`.
+ *
+ * Never below what the operator configured — `WLO_FETCH_TIMEOUT_MS` is raised
+ * for an instance that is slow everywhere, and a fixed value here would quietly
+ * undercut that.
+ *
+ * @param properties the properties about to be written.
+ * @param configured the operator's per-request budget; defaults to the live one.
+ */
+export function writeTimeoutMs(
+  properties: Record<string, string[]>,
+  configured: number = WLO_FETCH_TIMEOUT_MS,
+): number {
+  const slow = 'ccm:wwwurl' in properties;
+  return Math.max(configured, slow ? WWWURL_WRITE_TIMEOUT_MS : 0);
+}
+
+/** Which node a metadata write is aimed at, and which one the caller named. */
+export interface WriteTarget {
+  /** Where the write goes — the original. */
+  targetId: string;
+  /** What the caller named. Kept because the preview has to say both. */
+  requestedId: string;
+  /** True when the two differ, i.e. the caller named a reference. */
+  redirected: boolean;
+}
+
+/**
+ * Point a metadata write at the record rather than at a reference to it.
+ *
+ * A collection listing hands out reference ids, so this is the ordinary case,
+ * not an exotic one. Measured against staging (plan 2026-08-17, F1/F2): a write
+ * aimed at a reference is STORED on the reference, never reaches the original,
+ * and the reference stops inheriting from then on. `verifyWrite` cannot catch
+ * it — it re-reads the same node and finds exactly the value it wrote.
+ *
+ * Reads the DTO's `originalId`, never the `ccm:original` property: the property
+ * points at the record itself on an original (measured, F6), so a rule built on
+ * it needs a self-comparison and quietly reports every record as a reference to
+ * itself when that comparison is forgotten. The DTO field is simply absent on an
+ * original. The self-pointing case is still handled here, because the cost of
+ * being wrong is a preview announcing a redirection nobody can check.
+ *
+ * Takes the node the caller has ALREADY read rather than an id of its own: every
+ * write path reads the record first (to diff against it), so a second read would
+ * add a round trip and, worse, could disagree with the first — and the change
+ * set the user approves is built from the first. A node that cannot be read
+ * never gets here; each tool refuses before a change set exists.
+ *
+ * Deliberately NOT applied to deletion. Measured 2026-08-17 (F10): deleting a
+ * reference removes only the reference and leaves the record alone, so
+ * redirecting a deletion would convert today's harmless behaviour into the
+ * data loss this function exists to prevent.
+ */
+export function resolveWriteTarget(node: WloNode, requestedId: string): WriteTarget {
+  const original = node.originalId;
+  const redirected = original !== undefined && original !== requestedId;
+  return {
+    targetId: redirected ? original : requestedId,
+    requestedId,
+    redirected,
+  };
+}
+
+/**
+ * The target of a write plus the properties a change set must diff against.
+ * `ok: false` when the target exists but could not be read — never a baseline
+ * taken from somewhere else.
+ */
+export type WriteBaseline =
+  | { ok: true; target: WriteTarget; before: Record<string, string[]> }
+  | { ok: false; target: WriteTarget; reason: string };
+
+/**
+ * Resolve the write target AND fetch the state to compare against.
+ *
+ * `resolveWriteTarget` answers WHERE to write; this answers what is there now,
+ * and the two are not the same question once a redirection is in play. A change
+ * set diffed against the REFERENCE while writing to the ORIGINAL describes a
+ * different record than the one being changed — and while a reference still
+ * inherits, the two are identical and nothing looks wrong. They diverge exactly
+ * when the reference was written to directly before (measured, F2 — the state
+ * older versions of these tools produced), and then three things go wrong at
+ * once: a field counts as unchanged because the REFERENCE already shows the
+ * wanted value (so the original never receives it, and the tool reports
+ * success), the preview shows the reference's value as "before", and a merged
+ * field — keywords — merges into the reference's list and writes that over the
+ * original's, dropping whatever only the original had.
+ *
+ * The extra read happens ONLY when redirected. In the ordinary case the node the
+ * caller already has IS the target, and paying a round trip to confirm what is
+ * in hand would be waste.
+ *
+ * An unreadable target refuses. Falling back to the reference's properties is
+ * the one thing this function must not do: it would look like an ordinary diff
+ * and silently describe the wrong record.
+ */
+export async function readWriteBaseline(node: WloNode, requestedId: string): Promise<WriteBaseline> {
+  const target = resolveWriteTarget(node, requestedId);
+  if (!target.redirected) return { ok: true, target, before: node.properties ?? {} };
+
+  const original = await getNodeMetadata(target.targetId);
+  if (!original) {
+    return {
+      ok: false,
+      target,
+      reason:
+        `„${sanitizeText(requestedId)}“ ist eine Verknüpfung; geändert würde das Original `
+        + `${sanitizeText(target.targetId)}, das aber nicht lesbar ist. Es wurde nichts geändert — `
+        + 'ohne den aktuellen Stand des Originals wäre die Vorschau eine Aussage über den falschen Datensatz.',
+    };
+  }
+  return { ok: true, target, before: original.properties ?? {} };
+}
 
 export interface FieldWriteStatus {
   property: string;
@@ -86,6 +229,8 @@ async function writeMetadata(
     method: opts.commit ? 'POST' : 'PUT',
     headers: HEADERS,
     body: JSON.stringify(properties),
+    // A write carrying `ccm:wwwurl` waits for the repository's page render.
+    signal: AbortSignal.timeout(writeTimeoutMs(properties)),
   });
   return res.ok ? null : await failureDetail(res);
 }

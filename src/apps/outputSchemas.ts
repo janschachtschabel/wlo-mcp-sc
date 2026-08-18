@@ -14,6 +14,13 @@ import { z } from 'zod';
 /** Mirrors `FormattedNode` (formatter.ts). Optional fields stay optional. */
 export const formattedNodeSchema = z.object({
   nodeId: z.string(),
+  /**
+   * Present only when `nodeId` names a collection reference — declared here for
+   * the same reason as `skillRegistry` below: zod strips unknown keys, so a
+   * field missing from this object reaches the rendered text and vanishes from
+   * structuredContent with nothing failing anywhere.
+   */
+  originalId: z.string().optional(),
   title: z.string(),
   description: z.string(),
   keywords: z.array(z.string()),
@@ -39,7 +46,8 @@ export const formattedNodeSchema = z.object({
   skillRegistry: z.object({
     nodeId: z.string(),
     title: z.string(),
-    entries: z.array(z.object({ nodeId: z.string(), title: z.string() })),
+    entries: z.array(z.object({ nodeId: z.string(), title: z.string(), context: z.string().optional() })),
+    contexts: z.array(z.object({ path: z.string(), skills: z.number() })).optional(),
     truncated: z.object({ listed: z.number(), referenced: z.number() }).optional(),
   }).optional(),
 });

@@ -355,6 +355,12 @@ resolve to. That is deterministic, needs no network, and states the thing that
 actually matters — every key the corpus holds resolves to a known licence. The
 live comparison is the script's job, on demand.
 
+> **Neu gemessen 2026-08-17:** es sind 23, und die sieben neuen sind zu großen
+> Teilen Freitext im Lizenzfeld (ein Firmenname, ein Copyright-Vermerk, ein
+> ganzer UrhG-Satz). Die Datei führt deshalb jetzt **zwei** Listen: was auflösen
+> MUSS und was unaufgelöst bleiben muss — eine Lizenz zu erfinden, wo der
+> Datensatz keine nennt, ist der teurere Fehler.
+
 **The script reports and never writes.** Labels need judgement: ours are
 sometimes better than the repository's and sometimes wrong in a way no diff can
 see — defect (1) above was a *label that existed and looked fine*.

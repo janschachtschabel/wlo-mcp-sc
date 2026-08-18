@@ -21,16 +21,36 @@ import type { SearchCriterion, SearchResponse, WloNode } from './wlo-types.js';
 export type NgsearchContentType = 'FILES' | 'FILES_AND_FOLDERS';
 
 /**
- * How many buckets a facet aggregation may return.
+ * The bucket limit sent with a facet aggregation.
  *
- * Exported because a caller that SUMS buckets has to know it: a response holding
- * exactly this many is possibly truncated, and a sum over a truncated list looks
- * authoritative while understating the answer. Staging carries 16 distinct
- * `ccm:commonlicense_key` values over the whole index (measured 2026-08-09), so
- * 20 is complete there — but that is a property of one instance, not of the
- * format.
+ * NOT the number of buckets that come back — measured 2026-08-17, the server
+ * answers with up to FIVE times this (see `FACET_BUCKET_MAX`). It is the knob
+ * that sizes the aggregation, and 20 is what the facet output of
+ * `services/search.ts` is tuned to: raising it to 100 grows the corpus-wide
+ * `ccm:taxonid` facet from 100 buckets to 376.
  */
 export const FACET_LIMIT = 20;
+
+/**
+ * The most buckets a facet response can carry — a list this long may have been
+ * cut, and a sum over a cut list looks authoritative while understating the
+ * answer. Exported for callers that SUM buckets; they must test against this,
+ * never against `FACET_LIMIT`.
+ *
+ * The factor of five is measured, not derived (2026-08-17, staging). Asking for
+ * N buckets of `ccm:taxonid` answered with exactly 5N every time — 1→5, 2→10,
+ * 10→50, 50→250 — until 80→376, which is every distinct value that property has.
+ * It is presumably a per-shard limit merged across shards, so it is a property
+ * of the deployment: an instance with FEWER shards returns fewer buckets, and
+ * this bound would then be too high to catch a real truncation. Re-measure
+ * before trusting it elsewhere.
+ *
+ * Using `FACET_LIMIT` here instead was live until 2026-08-17 and wrong in the
+ * expensive direction: staging holds 23 distinct `ccm:commonlicense_key` values
+ * corpus-wide, so every broad licence count was discarded as "possibly
+ * truncated" and fell back to the family total.
+ */
+export const FACET_BUCKET_MAX = FACET_LIMIT * 5;
 
 export async function ngsearch(
   criteria: SearchCriterion[],

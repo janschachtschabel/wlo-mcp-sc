@@ -34,6 +34,17 @@ export interface SkillReference {
   url: string;
   /** Empty when the block carries no repository URL (an external link without a preview). */
   nodeId: string;
+  /**
+   * Character offset of the opening `:::` fence in the document it was parsed
+   * from.
+   *
+   * The one coordinate this parser shares with `markdown-sections.ts`, which is
+   * how `skill-registry.ts` decides which section — and therefore which context
+   * — a block belongs to. Without it that assignment would need its own block
+   * parser, and a second copy of the grammar is the drift this module exists to
+   * prevent.
+   */
+  offset: number;
 }
 
 /** `::: <kind>` … `:::`, both fences on their own line. An unclosed block does not match. */
@@ -49,9 +60,28 @@ const NODE_ID = /(?:[?&]nodeId=|\/components\/render\/)([0-9a-fA-F]{8}-[0-9a-fA-
 /** A Markdown link that is NOT an image — the first one is the title link. */
 const TITLE_LINK = /(^|[^!])\[([^\]]+)\]\(([^)\s]+)/;
 
-/** `**Titel**` → `Titel`; the editor bolds a material's title but not a skill's. */
-function unwrapEmphasis(text: string): string {
-  return text.replace(/^\*{1,2}(.*?)\*{1,2}$/s, '$1').trim();
+/**
+ * A Markdown backslash escape: a backslash before ASCII punctuation means that
+ * character literally. Everywhere else the backslash IS the text — `C:\pfad`
+ * keeps its slash, `50\%` loses the backslash.
+ */
+const ESCAPED = /\\([!-/:-@[-`{-~])/g;
+
+/**
+ * `**Titel**` → `Titel`, then `Skill\_X` → `Skill_X`.
+ *
+ * The order is load-bearing. Resolving escapes first turns `\*kein Stern\*` into
+ * `*kein Stern*`, and the emphasis pass then strips the very asterisks the
+ * author marked as text.
+ *
+ * The unescape pass was added 2026-08-18 after a live run: the real Optik
+ * registry names a skill `Skill\_Qualitätscheck\_Sachrichtigkeit` — the editor
+ * escapes the underscores because `_so_` would be italic — and the backslashes
+ * reached the output. It matters most in the CHEAP tier, where no record title
+ * overrides the block's, which is exactly the tier every collection hit uses.
+ */
+function plainTitle(text: string): string {
+  return text.replace(/^\*{1,2}(.*?)\*{1,2}$/s, '$1').trim().replace(ESCAPED, '$1');
 }
 
 export function parseSkillReferences(markdown: string): SkillReference[] {
@@ -66,9 +96,10 @@ export function parseSkillReferences(markdown: string): SkillReference[] {
     if (!link) continue;                       // a block with no link references nothing
     refs.push({
       kind,
-      title: unwrapEmphasis(link[2] ?? ''),
+      title: plainTitle(link[2] ?? ''),
       url: link[3] ?? '',
       nodeId: NODE_ID.exec(body)?.[1] ?? '',
+      offset: m.index,
     });
   }
   return refs;

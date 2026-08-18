@@ -21,7 +21,8 @@
     "test:live": "node scripts/run-live-tests.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "lint": "eslint .",
-    "sync:vocabs": "node --import tsx --env-file-if-exists=.env scripts/sync-vocabs.mjs"
+    "sync:vocabs": "node --import tsx --env-file-if-exists=.env scripts/sync-vocabs.mjs",
+    "survey:metadata": "node --import tsx --env-file-if-exists=.env scripts/survey-metadata.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

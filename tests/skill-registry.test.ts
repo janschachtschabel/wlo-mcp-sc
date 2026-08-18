@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { REGISTRY_MAX, REGISTRY_SEARCH_MAX, loadSkillRegistry, pickRegistryNode } from '../src/services/skill-registry.js';
+import { REGISTRY_CONTEXT_MAX, REGISTRY_MAX, REGISTRY_SEARCH_MAX, loadSkillRegistry, pickRegistryNode, toRegistrySummary } from '../src/services/skill-registry.js';
+import { formattedNodeSchema } from '../src/apps/outputSchemas.js';
+import { formatNode } from '../src/formatter.js';
 import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { installFetchMock, makeNode, type MockResult } from './fetchMock.js';
 import type { WloNode } from '../src/wlo-api.js';
@@ -388,8 +390,14 @@ test('loadSkillRegistry with resolveHeads:false costs exactly two upstream calls
  *
  * The SEARCH tier rides along in a result list and resolves nothing; its bound
  * is what a listing can carry without becoming a wall of text — five collections
- * at once — and it is deliberately equal to `REGISTRY_LINES_MAX`, so a search
- * listing is always COMPLETE for what it holds.
+ * at once.
+ *
+ * SUPERSEDED IN PART 2026-08-18: it used to be deliberately equal to
+ * `REGISTRY_LINES_MAX` in `formatter.ts`, so that a listing always printed
+ * everything it held. That constant is gone; what a RESULT prints is now bounded
+ * by `REGISTRY_INLINE_MAX` (12 lines), independently of what the service hands
+ * over. The equality below is still pinned — the two TIERS must agree on what
+ * "the approved skills" are — but it no longer says anything about rendering.
  *
  * The TOOL tier is one explicit call about one collection, and it fetches one
  * metadata record per skill. There a hundred is affordable, and a curated list
@@ -523,4 +531,354 @@ test('loadSkillRegistry discloses that several candidates were in play', async (
   } finally {
     mock.restore();
   }
+});
+
+// ── Kontexte: Überschriften gliedern den Katalog ─────────────────────────────
+
+/**
+ * A context is a section of level 2 or 3 WITH A NON-EMPTY TITLE. Everything else
+ * is transparent: a block inside it belongs to the nearest NAMED context above
+ * it, and if there is none, to the general part.
+ *
+ * One rule, two right answers — an untitled `##` at top level lands in the
+ * general part, an untitled `###` inside a named H2 lands in that H2. Both match
+ * where the editor actually wrote it. Dropping untitled sections instead would
+ * have swallowed their skills.
+ */
+
+const cheap = { resolveHeads: false } as const;
+
+test('two H2 sections yield two contexts, and every entry carries its path', async () => {
+  const md = `# Katalog\n\n## Planung\n\n${kiSkillBlock('Stunde planen', uuid(1))}\n\n`
+    + `${kiSkillBlock('Reihe planen', uuid(2))}\n\n## Material\n\n${kiSkillBlock('Blatt bauen', uuid(3))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung', 'Material']);
+    assert.deepEqual(registry?.contexts.map(c => c.level), [2, 2]);
+    assert.deepEqual(registry?.contexts.map(c => c.skills.length), [2, 1]);
+    assert.deepEqual(registry?.entries.map(e => e.context), ['Planung', 'Planung', 'Material']);
+    assert.deepEqual(registry?.general.skills, [], 'every skill sits in a context here');
+  } finally { mock.restore(); }
+});
+
+test('an H3 becomes a sub-context whose path names its H2', async () => {
+  const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n### Wochenplanung\n\n${kiSkillBlock('Woche', uuid(2))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung', 'Planung/Wochenplanung']);
+    assert.deepEqual(registry?.contexts.map(c => c.level), [2, 3]);
+    assert.deepEqual(registry?.entries.map(e => e.context), ['Planung', 'Planung/Wochenplanung'],
+      'the innermost named context wins, not the enclosing H2');
+    assert.deepEqual(registry?.contexts[0]?.skills, [uuid(1)], 'the H2 keeps only its own skill');
+  } finally { mock.restore(); }
+});
+
+test('a skill before the first H2 belongs to no context and lands in the general part', async () => {
+  const md = `# Katalog\n\n${kiSkillBlock('Lehrprofil', uuid(1))}\n\n## Planung\n\n${kiSkillBlock('Stunde', uuid(2))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.equal(registry?.entries[0]?.context, undefined);
+    assert.equal(registry?.entries[1]?.context, 'Planung');
+    assert.deepEqual(registry?.general.skills, [uuid(1)]);
+  } finally { mock.restore(); }
+});
+
+test('a flat document declares no contexts at all — the state of every registry today', async () => {
+  const md = `# Katalog\n\n${kiSkillBlock('Eins', uuid(1))}\n\n${kiSkillBlock('Zwei', uuid(2))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts, [], 'no contexts — the rendering must stay as it is today');
+    assert.deepEqual(registry?.entries.map(e => e.context), [undefined, undefined]);
+    assert.deepEqual(registry?.general.skills, [uuid(1), uuid(2)]);
+  } finally { mock.restore(); }
+});
+
+test('a named section with no skill yet is still a context', async () => {
+  // Measured 2026-08-18 against the real Optik document: the editors had written
+  // `## Browserplugin` with its instruction and no skills yet — a group is
+  // created before it is filled. Hiding it made the catalogue disagree with a
+  // document anyone can read, and made `resolveContext` answer "unknown" for a
+  // heading that is plainly there.
+  const md = `## Browserplugin
+
+Anweisungen fuer den Kontext Browserplugin.
+
+`
+    + `## Planung
+
+${kiSkillBlock('Stunde', uuid(1))}
+`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => [c.path, c.skills.length]),
+      [['Browserplugin', 0], ['Planung', 1]]);
+    assert.equal(registry?.contexts[0]?.instruction, 'Anweisungen fuer den Kontext Browserplugin.',
+      'an empty group still has something to say');
+  } finally { mock.restore(); }
+});
+
+test('an untitled H2 is no context, and its skills stay general', async () => {
+  const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n##\n\n${kiSkillBlock('Frei', uuid(2))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung'],
+      'a section nobody can name by title is not addressable, so it is not offered');
+    assert.deepEqual(registry?.general.skills, [uuid(2)], 'but its skill is kept, not dropped');
+    assert.equal(registry?.entries[1]?.context, undefined);
+  } finally { mock.restore(); }
+});
+
+test('an untitled H3 inside a named H2 hands its skills to that H2', async () => {
+  // Same rule as above, opposite outcome — and both are right: what decides is
+  // the nearest NAMED context above the block.
+  const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n###\n\n${kiSkillBlock('Woche', uuid(2))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung']);
+    assert.deepEqual(registry?.entries.map(e => e.context), ['Planung', 'Planung']);
+    assert.deepEqual(registry?.general.skills, []);
+  } finally { mock.restore(); }
+});
+
+test('a general skill does not migrate into the context that follows it', async () => {
+  const md = `##\n\n${kiSkillBlock('Frei', uuid(1))}\n\n## Planung\n\n${kiSkillBlock('Stunde', uuid(2))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    assert.deepEqual(registry?.general.skills, [uuid(1)]);
+    assert.deepEqual(registry?.contexts[0]?.skills, [uuid(2)]);
+  } finally { mock.restore(); }
+});
+
+test('more contexts than the cap are reported as capped, not silently cut', async () => {
+  const sections = Array.from({ length: REGISTRY_CONTEXT_MAX + 5 },
+    (_, i) => `## Kontext ${i}\n\n${kiSkillBlock(`Skill ${i}`, uuid(i + 1))}`).join('\n\n');
+  const { mock } = registryMock(`# Katalog\n\n${sections}\n`);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.equal(registry?.contexts.length, REGISTRY_CONTEXT_MAX);
+    assert.deepEqual(registry?.contextsTruncated, { listed: REGISTRY_CONTEXT_MAX, found: REGISTRY_CONTEXT_MAX + 5 });
+  } finally { mock.restore(); }
+});
+
+// ── Die Anweisung der Redaktion ──────────────────────────────────────────────
+
+test('the lead prose is the instruction; what follows a block belongs to that skill', async () => {
+  const md = `## Planung\n\nZuerst /lehrprofil aufrufen.\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n`
+    + 'Plant eine Einzelstunde als Verlaufsplan.\n';
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    assert.equal(registry?.contexts[0]?.instruction, 'Zuerst /lehrprofil aufrufen.');
+  } finally { mock.restore(); }
+});
+
+test('a section with no block at all does not lend its prose to the next context', async () => {
+  const md = `## Planung\n\nZeile eins.\n\nZeile zwei.\n\n## Material\n\n${kiSkillBlock('Blatt', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    // Both are contexts now; what this pins is that "Material" did not absorb
+    // the prose of its predecessor.
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung', 'Material']);
+    assert.equal(registry?.contexts[0]?.instruction, `Zeile eins.
+
+Zeile zwei.`,
+      'a section with no block contributes all of its prose');
+    assert.equal(registry?.contexts[1]?.instruction, undefined);
+  } finally { mock.restore(); }
+});
+
+test('a context whose block follows immediately carries no instruction — not an empty one', async () => {
+  const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    assert.equal(registry?.contexts[0]?.instruction, undefined,
+      'an empty string would render as an instruction that says nothing');
+  } finally { mock.restore(); }
+});
+
+test('an H2 instruction ends at its first H3, not at its first block', async () => {
+  // Without this the H2 — which has no block of its own — would pull the H3
+  // heading and the H3's prose into its own instruction.
+  const md = `## Planung\n\nGilt für alles darunter.\n\n### Woche\n\nNur für die Woche.\n\n${kiSkillBlock('Woche', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    const h2 = registry?.contexts.find(c => c.path === 'Planung');
+    const h3 = registry?.contexts.find(c => c.path === 'Planung/Woche');
+    assert.equal(h2?.instruction, 'Gilt für alles darunter.');
+    assert.equal(h3?.instruction, 'Nur für die Woche.');
+  } finally { mock.restore(); }
+});
+
+test('the prose before the first H2 becomes the general instruction', async () => {
+  // The real document opens exactly like this: what the catalogue is, where it
+  // comes from, under which licence.
+  const md = '# Skillkatalog\n\nKatalog der KI-Skills für diese Sammlung.\n\n'
+    + `Bezugsquelle: WLO · Lizenz: CC BY 4.0\n\n## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.match(registry?.general.instruction ?? '', /Katalog der KI-Skills/);
+    assert.match(registry?.general.instruction ?? '', /CC BY 4\.0/);
+    assert.ok(!/Planung/.test(registry?.general.instruction ?? ''), 'it stops at the first context');
+  } finally { mock.restore(); }
+});
+
+test('the prose of an untitled section is appended to the general instruction', async () => {
+  const md = `# Katalog\n\nOben.\n\n## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n##\n\nAuch allgemein.\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.match(registry?.general.instruction ?? '', /Oben\./);
+    assert.match(registry?.general.instruction ?? '', /Auch allgemein\./,
+      'an unnameable section still has something to say');
+  } finally { mock.restore(); }
+});
+
+test('a context that only groups is listed, and its count stays with the sub-context', async () => {
+  // "Planung" holds no skill of its own — its one skill sits in "Woche". It is
+  // listed all the same, because otherwise "Planung/Woche" would name a parent
+  // the catalogue does not carry. But it counts zero: a parent and its child
+  // must not report the same skill twice, and what "Planung" holds is on the
+  // very next line.
+  const md = `## Planung\n\nGilt für alles darunter.\n\n### Woche\n\n${kiSkillBlock('Woche', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => [c.path, c.skills.length]),
+      [['Planung', 0], ['Planung/Woche', 1]]);
+    assert.equal(registry?.contexts[0]?.instruction, 'Gilt für alles darunter.',
+      'a grouping context is exactly where a shared instruction belongs');
+  } finally { mock.restore(); }
+});
+
+test('a block whose reference names no record still shapes the outline', async () => {
+  // A `::: ki-skill` block without a repository URL is `unresolved`, never an
+  // entry — but it is what makes its section a context. Ignoring it would drop
+  // the heading, and with it the editors' instruction for a group they filled.
+  const md = '## Planung\n\nZuerst /lehrprofil.\n\n::: ki-skill\n[Noch ohne Ziel](https://extern.example)\n:::\n';
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung']);
+    assert.deepEqual(registry?.contexts[0]?.skills, [], 'no nodeId, so nothing to list');
+    assert.equal(registry?.contexts[0]?.instruction, 'Zuerst /lehrprofil.');
+    assert.equal(registry?.unresolved.length, 1);
+  } finally { mock.restore(); }
+});
+
+// ── Was ein Trefferknoten von den Kontexten trägt ────────────────────────────
+
+test('the node summary carries the context names and counts — and no instruction', async () => {
+  // The instruction is the token bomb: seven groups of up to 1200 characters in
+  // EVERY collection hit. It stays behind the targeted call.
+  const md = `## Planung\n\nZuerst /lehrprofil aufrufen.\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n`
+    + `## Material\n\n${kiSkillBlock('Blatt', uuid(2))}\n\n${kiSkillBlock('Video', uuid(3))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    const summary = toRegistrySummary(registry!);
+
+    assert.deepEqual(summary.contexts, [{ path: 'Planung', skills: 1 }, { path: 'Material', skills: 2 }]);
+    assert.ok(!JSON.stringify(summary).includes('lehrprofil'),
+      'no instruction text may ride along on a search result');
+  } finally { mock.restore(); }
+});
+
+test('a registry without contexts carries no contexts field at all', async () => {
+  // Absent, not `[]`: every registry written before 2026-08-18 is flat, and an
+  // empty array would show up in structuredContent where nothing was before.
+  const md = `# Katalog\n\n${kiSkillBlock('Eins', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    const summary = toRegistrySummary(registry!);
+    assert.ok(!('contexts' in summary), 'a flat registry must render exactly as it does today');
+  } finally { mock.restore(); }
+});
+
+test('the contexts field survives the output schema', async () => {
+  // A separate assertion on purpose: zod strips what is not declared, so a field
+  // can be right in the text and gone from structuredContent with nothing
+  // failing. Asserting the summary object alone would not notice.
+  const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n`;
+  const { mock } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+    // Through `formatNode`, not a hand-built literal: the schema has twenty
+    // required fields, and a fixture that lists them itself would go stale
+    // against the very shape it is meant to check.
+    const parsed = formattedNodeSchema.parse({
+      ...formatNode(makeNode('n-1', 'Sammlung')),
+      nodeType: 'collection',
+      skillRegistry: toRegistrySummary(registry!),
+    });
+    assert.deepEqual(parsed.skillRegistry?.contexts, [{ path: 'Planung', skills: 1 }]);
+  } finally { mock.restore(); }
+});
+
+test('an outline costs nothing: the cheap tier still runs on exactly two calls', async () => {
+  // THE promise of this whole package. Contexts, their instructions and the
+  // per-entry grouping are all read out of a document the cheap tier already
+  // downloads — so a registry with seven groups costs a collection search
+  // exactly what a flat one costs, and that is two requests.
+  const md = `# Katalog\n\nAllgemeine Vorrede.\n\n## Planung\n\nZuerst /lehrprofil.\n\n`
+    + `${kiSkillBlock('Stunde', uuid(1))}\n\n### Woche\n\n${kiSkillBlock('Woche', uuid(2))}\n\n`
+    + `## Material\n\n${kiSkillBlock('Blatt', uuid(3))}\n`;
+  const { mock, counts } = registryMock(md);
+  try {
+    const { registry } = await loadSkillRegistry('coll-1', cheap);
+
+    assert.equal(counts.children, 1, 'one children listing');
+    assert.equal(counts.download, 1, 'one document read');
+    assert.equal(counts.metadata, 0, 'no skill head is fetched — not even to learn its group');
+
+    // And the cheap tier is not a lesser tier for contexts: it carries the whole
+    // outline. Only description and keywords stay behind with the tool.
+    assert.deepEqual(registry?.contexts.map(c => c.path), ['Planung', 'Planung/Woche', 'Material']);
+    assert.deepEqual(registry?.entries.map(e => e.context), ['Planung', 'Planung/Woche', 'Material']);
+    assert.equal(registry?.contexts[0]?.instruction, 'Zuerst /lehrprofil.');
+    assert.match(registry?.general.instruction ?? '', /Allgemeine Vorrede/);
+    assert.equal(registry?.entries[0]?.description, undefined, 'the cheap tier still carries no head');
+  } finally { mock.restore(); }
+});
+
+test('the tool tier stamps the same contexts onto its richer entries', async () => {
+  // Two code paths build entries — cheap from the block, tool from the record.
+  // The context is the DOCUMENT's word in both, so it must not go missing on the
+  // path that fetches more.
+  const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n\n## Material\n\n${kiSkillBlock('Blatt', uuid(2))}\n`;
+  const { mock } = registryMock(md, {
+    [uuid(1)]: { title: 'Stunde planen', desc: 'Plant eine Stunde.', keywords: ['Planung'] },
+    [uuid(2)]: { title: 'Blatt bauen', desc: 'Baut ein Blatt.', keywords: ['Material'] },
+  });
+  try {
+    const { registry } = await loadSkillRegistry('coll-1');
+
+    assert.deepEqual(registry?.entries.map(e => e.context), ['Planung', 'Material']);
+    assert.equal(registry?.entries[0]?.description, 'Plant eine Stunde.', 'and the head is there too');
+  } finally { mock.restore(); }
 });

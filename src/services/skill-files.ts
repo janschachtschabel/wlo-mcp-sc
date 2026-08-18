@@ -53,7 +53,20 @@ const SKILL_BUNDLE_MAX = 25;
 /** Only what the manifest shows; mimetype/size/downloadUrl are node fields, not properties. */
 const BUNDLE_PROPS = ['cm:name', 'cclom:title'];
 
-/** The record a skill's folder hangs off: itself, or the original it references. */
+/**
+ * The record a skill's folder hangs off: itself, or the original it references.
+ *
+ * Reads the PROPERTY, which is safe only because of the self-comparison at the
+ * call site: on an original `ccm:original` points at the record itself (measured
+ * 2026-08-17, 3/3 staging records), so without that comparison every record
+ * would look like a reference to itself. `services/write/nodes.ts` uses the DTO
+ * field instead and is the one place that decides a WRITE target; this read path
+ * deliberately does not import from the write path.
+ *
+ * The strip is a no-op on staging — `ccm:original` is a bare uuid on 6/6 records
+ * measured, references and originals alike — and stays because the repository
+ * does use store refs for node pointers elsewhere (`ccm:page_config`).
+ */
 function originalIdOf(node: WloNode, nodeId: string): string {
   return stripStoreRef(node.properties?.['ccm:original']?.[0] ?? '') || nodeId;
 }

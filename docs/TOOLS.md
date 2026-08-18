@@ -175,6 +175,36 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `get_nodes_details` | Metadaten vieler Knoten auf einmal (meist modell-intern) | *„Hol die Details zu diesen Treffern“* |
 | `get_related_content` | Ähnliche Materialien (gleiches Fach/Stufe) | *„Was passt noch dazu?“* / *„Zeig mir ähnliche Materialien“* |
 
+> **`includeAccessInfo`** (beide Detail-Werkzeuge, standardmäßig aus) ergänzt fünf
+> Felder, die sonst nirgends erscheinen: **Zugang** (`ccm:conditionsOfAccess` —
+> „ohne Anmeldung“ / „Anmeldung notwendig“ / „… für erweiterte Funktionen“),
+> **Kosten** (`ccm:price` — „ja“ / „nein“ / „zusätzliche Inhalte per Kauf
+> möglich“), **Werbung** (`ccm:containsAdvertisement` — „Ja“ / „Nein“),
+> **Barrierefreiheit** (`ccm:accessibilitySummary` — A/AA/AAA, BITV 2.0, WCAG)
+> und **OER-Status** (`ccm:license_oer`). Kostet **keinen** zusätzlichen Abruf:
+> die Detail-Werkzeuge lesen ohnehin alle Properties.
+>
+> Abdeckung im Korpus (Staging, 2026-08-18, 590 209 Datensätze): Kosten 339 687 ·
+> Zugang 198 699 · Werbung 69 688 · Barrierefreiheit 3 475 · OER-Status 1 121. Nur
+> was der Datensatz trägt wird gezeigt — es gibt keine „keine Angabe“-Zeile.
+>
+> **Nicht filterbar.** Alle fünf Felder antworten als Suchkriterium mit HTTP 400;
+> sie lassen sich an einem Datensatz ablesen, aber nicht suchen. „Zeig mir
+> Material ohne Login“ geht also nicht.
+>
+> Vier der fünf beschriftet das Repository selbst. **Werbung ist die Ausnahme**
+> und hat als einziges Feld eine lokale Zwei-Werte-Tabelle hinter sich: der
+> Metadatensatz verweist dort auf die Sterne-Skala `quality_advertisement/0…5`,
+> während 69 628 der 69 688 Werte `containsAdvertisement/yes|no` lauten — also
+> kommt kein Label zurück. Die Tabelle ist Rückfallebene, kein Vorrang.
+>
+> Die **Qualitätsfelder** (`ccm:oeh_quality_*`) fehlen hier bewusst — Begründung
+> in `docs/plans/2026-08-18-vokabular-abgleich.md`: eine Beschriftung hängt daran,
+> was das Feld im Metadatensatz DEKLARIERT, und elf der vierzehn speichern etwas
+> anderes (dieselbe Sterne-Skala einmal als URI, einmal als nackte Ziffer). Ein
+> Datensatz trug sieben dieser Felder, und nur eines kam beschriftet zurück.
+> Außerdem sind es redaktionelle Prüfsiegel, die kein Modell setzen soll.
+
 ### Hintergrundtexte
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
@@ -192,7 +222,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 |---|---|---|
 | `search_skill` | Passende WLO-Skills (Inhaltsart „KI-Skill") auflisten — nodeId, Titel, Beschreibung, Keywords; mit `collectionId` nur die Skills einer Sammlung, mit `discipline`/`educationalContext` die zu einem Fach bzw. einer Stufe verschlagworteten | *„Welche WLO-Skills passen zu meiner Aufgabe?“* · *„Welche Skills gibt es für Physik?“* |
 | `get_skill` | Die Anleitung (SKILL.md) zu einer nodeId laden — plus die Liste der weiteren Dateien des Skills (Name + nodeId, ohne Inhalt) | *(Folgeaufruf nach `search_skill`)* |
-| `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat — Katalog (Titel, nodeId, Beschreibung, Keywords) plus die Verwendungshinweise der Redaktion aus dem Registry-Dokument | *„Welche Skills gelten für diese Sammlung?“* · *„Was darf ich hier verwenden?“* |
+| `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat — Katalog (Titel, nodeId, Beschreibung, Keywords) plus die Verwendungshinweise der Redaktion aus dem Registry-Dokument. Mit `context` nur die Skills eines Arbeitszusammenhangs samt dessen Anleitung | *„Welche Skills gelten für diese Sammlung?“* · *„Was darf ich hier verwenden?“* · *„Wie plane ich damit Unterricht?“* |
 | `get_skill_for_task` | Wählt den Skill selbst und liefert die Anleitung direkt — nur bei `WLO_SKILL_TOOL_MODE=one-tool` statt der beiden obigen | *„Gib mir die Anleitung für eine Vertretungsstunde“* |
 | `wlo_auth_status` | Mit welchen Rechten der Server gerade liest — anonym, gemeinsames Dienstkonto oder persönliches Konto | *„Bin ich angemeldet?“* · *„Warum sehe ich diesen Inhalt nicht?“* |
 | `wlo_health_check` | Erreichbarkeit der WLO-API prüfen | *„Ist die WLO-Verbindung gerade erreichbar?“* |
@@ -230,18 +260,88 @@ Werkzeug, das mit Sammlungen zu tun hat, nicht nur bei der Suche:
 
 | Antwortform | Was mitkommt |
 |---|---|
-| Datensatz-Listen (`search_wlo_all`, `search_wlo_collections`, `get_collection_contents`, `get_node_collections`, `get_node_details`) | der **volle Katalog** je Sammlung, bis 100 Skills |
-| Die Sammlung, auf der ein Werkzeug arbeitet (`get_collection_contents`, `search_wlo_within_collection`, `get_topic_page_content`, `get_related_content`) | der **volle Katalog**, mit der Sammlung benannt |
+| Datensatz-Listen (`search_wlo_all`, `search_wlo_collections`, `get_collection_contents`, `get_node_collections`, `get_node_details`) | der Katalog je Sammlung, **im Zeilenbudget** (unten) |
+| Die Sammlung, auf der ein Werkzeug arbeitet (`get_collection_contents`, `search_wlo_within_collection`, `get_topic_page_content`, `get_related_content`) | derselbe Katalog, mit der Sammlung benannt — **plus `skillContext`** |
 | Übersichten mit einer Zeile je Knoten (`browse_collection_tree`, `get_subject_portals`, `search_wlo_topic_pages`) | nur die **Kopfzeile**: Titel, Anzahl, nodeId für `get_skill_registry` |
 
-In **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld
-`skillRegistry` am jeweiligen Knoten. Antwortet der Abruf nicht, steht statt des
-Katalogs „… ist hier nicht geprüft" — das ist etwas anderes als eine Sammlung,
-die keine Skills freigegeben hat, und wird auch anders gesagt.
+**Das Zeilenbudget: eine Zahl, drei Formen.** Ein Katalog darf **12 Zeilen** je
+Sammlung belegen, unabhängig von der Größe der Registry. Was hineinpasst,
+entscheidet die Form.
 
-**Jede aufgelistete Übersicht sagt, dass sie nicht die Anleitung ist.** Die
-ersten beiden Zeilen der Tabelle schließen mit einem festen Satz, ebenso
-`search_skill` und `get_skill_registry` (im JSON als Feld `hint`):
+| Passt | Form | Was steht da |
+|---|---|---|
+| Kontexte + Skills ≤ 12 | **voll** | wie bisher: jeder Skill mit nodeId, nach Kontexten gruppiert |
+| nur die Kontextnamen ≤ 12 | **Kontext-Index** | die Namen mit Anzahl, mehrere je Zeile — **keine** nodeIds |
+| auch das nicht | **Kopfzeile** | Titel, Gesamtzahl, Anzahl Kontexte, und `get_skill_registry` |
+
+Gemessen an der Form der Optik-Registry (28 Skills, 7 Kontexte): **3 Zeilen
+statt 30, 407 statt 3436 Zeichen** je Sammlung — wie viele Namen je Zeile
+passen, hängt an ihrer Länge. Ein flaches Dokument mit 50 Skills schrumpft auf
+eine Zeile (147 Zeichen); dort greift kein Kontext, nur das Budget.
+
+Die Ersparnis entsteht **oberhalb** des Budgets. Innerhalb kostet die
+Gruppierung eine Zeile je Kontext — eine kleine Registry wird dadurch etwas
+länger als ihre flache Liste (echtes Optik-Dokument, 3 Skills in 2 Kontexten:
+818 gegen 659 Zeichen). Zugesichert ist die Obergrenze, nicht eine Ersparnis
+bei jeder Größe.
+
+Formen 2 und 3 drucken **keine Skill-nodeId** und tragen deshalb auch den
+Übersichtssatz nicht — er verspräche einen `get_skill`-Aufruf, für den die
+Antwort keine Kennung mitgibt.
+
+### Kontexte: gezielt statt vollständig
+
+Ein Registry-Dokument gliedert seine Skills über Überschriften: `##` ist ein
+Kontext, `###` ein Unterkontext, und die Prosa von der Überschrift bis zum ersten
+Skill-Block ist die **Anleitung der Redaktion** dazu. Das Anlegen beschreibt
+`docs/SKILLS.md`.
+
+Zwei Parameter greifen darauf zu:
+
+| Parameter | Wo | Wirkung |
+|---|---|---|
+| `context` | `get_skill_registry` | nur die Skills dieses Kontexts (plus die immer geltenden), die Anleitung dazu, und wortgetreu **nur diesen Abschnitt** statt des ganzen Dokuments |
+| `skillContext` | `get_collection_contents`, `search_wlo_within_collection`, `get_node_details`, `get_topic_page_content`, `get_related_content` | derselbe verengte Katalog **plus die Anleitung**, direkt am Sammlungstreffer |
+
+```
+get_skill_registry(nodeId: "9e7a…", context: "Unterricht vorbereiten")
+get_collection_contents(nodeId: "9e7a…", skillContext: "Material erschließen")
+```
+
+Groß-/Kleinschreibung und Leerzeichen sind egal. Ohne Angabe oder mit `all`
+kommt alles. Ein Unterkontext wird als `Kontext/Unterkontext` angesprochen —
+oder mit seinem eigenen Namen, solange der im Dokument eindeutig ist.
+
+**Ein Name, der nicht trifft, verengt nie.** Unbekannt oder mehrdeutig liefert
+den **vollständigen** Katalog plus einen Satz mit den vorhandenen Namen — kein
+Fehler, und keine kurze Liste, die wie ein Ergebnis aussieht. Das Modell lernt
+den richtigen Namen aus genau der Antwort, in der es danebengriff. Bei einem
+Fehlgriff kommt allerdings **keine** Anleitung mit: ein Tippfehler soll nicht die
+teuerste Antwort auslösen.
+
+**Nicht bei `search_wlo_all` / `search_wlo_collections`.** Kontextnamen sind je
+Registry vergeben; ein Parameter über fünf Sammlungen träfe in der einen und ginge
+in der anderen ins Leere. Diese Werkzeuge liefern stattdessen den Index, aus dem
+die Namen überhaupt erst bekannt werden.
+
+**Was Kontexte kosten: nichts.** Sie stehen im Dokumenttext, den der billige
+Tarif ohnehin liest (1 Kinderliste + 1 Download, unverändert). Nur ein
+**benannter** `skillContext` kostet einen Live-Abruf (2 Anfragen, ~1,0–1,4 s),
+weil der Cache die Zusammenfassung hält und nicht die Prosa der Redaktion —
+dafür entfällt der zweite Aufruf. `skillContext: "all"` verlangt keine Prosa und
+wird deshalb wie ein Aufruf ohne Kontext aus dem Cache beantwortet.
+
+In **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld
+`skillRegistry` am jeweiligen Knoten — dort trägt jeder Eintrag sein `context`
+und der Knoten die Liste `contexts` mit Namen und Anzahl. Antwortet der Abruf
+nicht, steht statt des Katalogs „… ist hier nicht geprüft" — das ist etwas
+anderes als eine Sammlung, die keine Skills freigegeben hat, und wird auch
+anders gesagt.
+
+**Jede aufgelistete Übersicht sagt, dass sie nicht die Anleitung ist.** Überall
+dort, wo Skill-nodeIds gedruckt werden — also in der vollen Form der ersten
+beiden Tabellenzeilen —, ebenso in `search_skill` und `get_skill_registry` (im
+JSON als Feld `hint`):
 
 > Das ist nur die Übersicht — die Anleitungen selbst stehen nicht darin. Die
 > Anleitung (SKILL.md) lädt `get_skill` mit der nodeId des gewünschten Skills,
@@ -253,8 +353,8 @@ Der zweite Halbsatz grenzt gegen die Nachbarn ab: eine gerenderte Sammlung führ
 **drei** nodeIds — ihre eigene, die des Registry-Dokuments und die des Skills —
 und die dem Satz nächste ist die falsche.
 
-Die dritte Zeile der Tabelle trägt den Satz **nicht** — dort steht keine
-Skill-nodeId, mit der man ihm folgen könnte.
+Die dritte Tabellenzeile trägt den Satz **nicht**, und die Formen 2 und 3
+ebenso wenig — dort steht keine Skill-nodeId, mit der man ihm folgen könnte.
 
 Die zweite Zeile war die eigentliche Lücke: diese Werkzeuge geben die Sammlung,
 um die es geht, nie als Ergebnis zurück — sie steht in den Argumenten. Wer den
@@ -311,6 +411,17 @@ Drei Regeln gelten für **jedes** davon:
    Wert gespeichert, verworfen oder umgeschrieben wurde.
 3. **Löschen ist über diesen Server endgültig.** Wiederherstellbarkeit ließ sich
    nicht nachweisen, also wird sie nicht versprochen.
+4. **Eine id aus einer Sammlung ist eine Verknüpfung, nicht der Datensatz.**
+   Sammlungslisten liefern ausschließlich Verknüpfungs-ids, und die beiden
+   Richtungen sind gegensätzlich (gemessen 16./17.08.2026): Ein
+   **Metadaten-Schreibvorgang** an eine Verknüpfung würde dort gespeichert, das
+   Original nie erreichen und die Verknüpfung dauerhaft abkoppeln — deshalb
+   lösen die Schreibwerkzeuge auf das Original auf und nennen beide ids in der
+   Vorschau. Ein **Löschvorgang** an eine Verknüpfung entfernt dagegen nur die
+   Verknüpfung; er wird bewusst *nicht* umgeleitet, weil das aus einem
+   harmlosen Aufräumen Datenverlust machen würde. In Ergebnislisten steht die
+   Unterscheidung als `nodeId: … (Verknüpfung; Original: …)` bzw. als Feld
+   `originalId`.
 
 ### Inhalte pflegen
 | Tool | Funktion | Bester Chat-Trigger |
@@ -318,7 +429,7 @@ Drei Regeln gelten für **jedes** davon:
 | `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“* |
 | `wlo_create_content` | Neuen Datensatz anlegen — **zwei Wege**: `url` für Material, das woanders liegt (prüft vorher auf ein Duplikat und nennt den vorhandenen), oder `content`/`fileBase64`, wenn der Datensatz den Inhalt **selbst tragen** soll (im Chat erstelltes Markdown, erzeugtes Bild). Bleibt ein **Entwurf** | *„Leg für diese Seite einen WLO-Datensatz an“* · *„Speichere dieses Arbeitsblatt in WLO“* |
 | `wlo_submit_content` | Einen vorhandenen Datensatz zur redaktionellen Prüfung einreichen — ein eigener Schritt, nie automatisch | *„Reiche diesen Datensatz zur Prüfung ein“* |
-| `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen | *„Lösche diesen Datensatz“* |
+| `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen. Über die id einer **Sammlungs-Verknüpfung** verschwindet nur die Verknüpfung — der Datensatz bleibt; die Vorschau sagt, welcher Fall vorliegt | *„Lösche diesen Datensatz“* |
 
 ### Sammlungen pflegen
 | Tool | Funktion | Bester Chat-Trigger |

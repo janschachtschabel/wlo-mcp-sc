@@ -20,7 +20,7 @@ import { z } from 'zod';
 
 import { getSkill, pickBestSkill, searchSkillsDetailed, type SkillDocument, type SkillSummary } from '../services/skills.js';
 import { formatUnresolvedHint } from '../filter-criteria.js';
-import { DESCRIPTIONS_ONLY_NOTE, oneLine } from '../formatter.js';
+import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
 
 /** Which tool surface is registered — see `WLO_SKILL_TOOL_MODE`. */
@@ -58,12 +58,9 @@ function renderCatalogue(skills: SkillSummary[], query: string | undefined): str
   const lines = [oneLine(`# WLO Skills (${skills.length})${query ? ` — Treffer für „${query}“` : ''}`), ''];
   for (const s of skills) {
     lines.push(oneLine(`## ${s.title}`));
-    // A hit from a subject collection is a REFERENCE. Both ids load the skill,
-    // but only the original may be written to and only it resolves the
-    // companion files without a second lookup — so both are stated.
-    lines.push(oneLine(s.originalId === s.nodeId
-      ? `nodeId: ${s.nodeId}`
-      : `nodeId: ${s.nodeId} (Verknüpfung; Original: ${s.originalId})`));
+    // A hit from a subject collection is a REFERENCE — `nodeIdLine` states both
+    // ids and is shared with the ordinary result renderer.
+    lines.push(oneLine(nodeIdLine(s.nodeId, s.originalId)));
     if (s.description) lines.push(oneLine(s.description));
     if (s.keywords.length) lines.push(oneLine(`Keywords: ${s.keywords.join(', ')}`));
     lines.push('');
@@ -85,9 +82,7 @@ function renderSkill(skill: SkillDocument): string {
   const lines = [
     oneLine(`# ${skill.title}`),
     // Same disclosure as the catalogue: only the original may be written to.
-    oneLine(skill.originalId === skill.nodeId
-      ? `nodeId: ${skill.nodeId}`
-      : `nodeId: ${skill.nodeId} (Verknüpfung; Original: ${skill.originalId})`),
+    oneLine(nodeIdLine(skill.nodeId, skill.originalId)),
   ];
   lines.push(...renderActivation(skill));
   lines.push(...renderFileManifest(skill));

@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
-import { updateNodeMetadata } from '../services/write/nodes.js';
+import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
 import { createContentNode, resolveCreateParent, submitForReview } from '../services/write/nodes-lifecycle.js';
 import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
 import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
@@ -138,7 +138,9 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
       'der Versionshistorie. Beides geht einzeln oder zusammen. ZWEISTUFIG: Ohne confirmToken wird nur eine ' +
       'Vorschau zurückgegeben und NICHTS geschrieben; erst ein zweiter Aufruf mit dem Schlüssel aus der ' +
       'Vorschau schreibt. Danach wird der Datensatz erneut gelesen und je Feld berichtet, was tatsächlich ' +
-      'ankam. Erfordert eine Anmeldung. NICHT für neue Inhalte (dafür wlo_create_content) und nicht zum Löschen.',
+      'ankam. Eine id aus einer Sammlung ist eine Verknüpfung, nicht der Datensatz — geschrieben wird dann ' +
+      'am Original, und die Vorschau nennt beide ids. Erfordert eine Anmeldung. NICHT für neue Inhalte ' +
+      '(dafür wlo_create_content) und nicht zum Löschen.',
     inputSchema: updateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     // Not `noauth`: this tool refuses a caller without an identity.
@@ -173,13 +175,22 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
           };
         }
 
+        // A collection listing hands out REFERENCE ids, so this is the ordinary
+        // case. Resolved BEFORE anything is derived from the record, because
+        // from here on every read of "what is stored" has to mean the node that
+        // will be written — the reference's own view diverges once it has been
+        // written to directly (F2).
+        const baseline = await readWriteBaseline(node, nodeId);
+        if (!baseline.ok) return errorText(baseline.reason);
+        const { target, before } = baseline;
+
         const commit = params['commit'] === true;
         const versionComment = typeof params['versionComment'] === 'string' ? params['versionComment'] : undefined;
 
         // The file name is derived from a title, and on an update the caller may
         // not be changing one — so the record's STORED title is what names it.
         const resolved = resolveFileUpload(
-          collected.desired['cclom:title']?.[0] ?? recordTitle(node.properties) ?? nodeId,
+          collected.desired['cclom:title']?.[0] ?? recordTitle(before) ?? nodeId,
           {
             content: typeof params['content'] === 'string' ? params['content'] : undefined,
             contentFormat: typeof params['contentFormat'] === 'string' ? params['contentFormat'] : undefined,
@@ -207,8 +218,12 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
             : '',
         ].filter(Boolean);
 
-        const cs = buildChangeSet(nodeId, 'content', node.properties ?? {}, collected.desired, {
+        // The token binds to the change set, so the target is fixed before it is
+        // built: deciding later would move the write to a record the preview
+        // never named.
+        const cs = buildChangeSet(target.targetId, 'content', before, collected.desired, {
           ...(extras.length ? { action: extras.join(' ') } : {}),
+          ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
         });
 
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
@@ -219,7 +234,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const refusal = confirmOrExplain(token, cs);
         if (refusal) return refusal;
 
-        const { statuses } = await updateNodeMetadata(nodeId, desiredFromChangeSet(cs), {
+        const { statuses } = await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), {
           commit,
           versionComment,
         });
@@ -228,11 +243,16 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // carries the fields that were meant to describe it. The two are
         // separate repository operations and either can fail alone, so both are
         // reported rather than merged into one verdict.
-        const upload = file ? await uploadContent(nodeId, file) : undefined;
+        //
+        // Aimed at the same node for the same reason, though the repository
+        // would reach the original either way: bytes are not copied per
+        // reference (measured, F4). Sending it somewhere else than the metadata
+        // would make one call obey the confirmed preview and the other not.
+        const upload = file ? await uploadContent(cs.nodeId, file) : undefined;
         const note = uploadNote(upload).replace(/^ — /, '');
 
         try {
-          const verified = await verifyWrite(nodeId, cs);
+          const verified = await verifyWrite(cs);
           const report = reportOutcome(cs, statuses, verified);
           return note ? prependText(report, note) : report;
         } catch (err) {
@@ -338,7 +358,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // folded into a general success.
         const head = `Angelegt: ${result.nodeId}${uploadNote(result.upload)}`;
         try {
-          const verified = await verifyWrite(result.nodeId, stored);
+          const verified = await verifyWrite(stored);
           return prependText(reportOutcome(stored, result.statuses, verified), head);
         } catch (err) {
           return prependText(unverifiedReply(err), head);

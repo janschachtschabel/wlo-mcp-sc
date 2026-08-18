@@ -61,7 +61,12 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 |---|---|
 | `search_skill` | Sucht Skills (Inhaltsart „KI-Skill") mit angehängter Anleitung — passend zu einer Aufgabe. |
 | `get_skill` | Lädt die Anleitung (SKILL.md) eines Skills zu seiner nodeId. |
-| `get_skill_registry` | Nennt die Skills, die eine Sammlung freigegeben hat. |
+| `get_skill_registry` | Nennt die Skills, die eine Sammlung freigegeben hat; mit `context` nur die eines Arbeitszusammenhangs samt Anleitung. |
+
+Sammlungs-Werkzeuge (`get_collection_contents`, `search_wlo_within_collection`,
+`get_node_details`, `get_topic_page_content`, `get_related_content`) nehmen
+denselben Namen als `skillContext` und liefern Skills und Anleitung gleich mit.
+Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 
 ### System
 

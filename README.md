@@ -588,14 +588,24 @@ and has known gaps (protected or bot-blocked pages, pure media files). The
 reported `url` is the **normalised** one — what was actually requested, which is
 not always the string that was passed in.
 
-**28. `get_skill_registry`** — `collectionId`, `outputFormat?`. The skills **one
-collection has approved**, which is the reverse of what 22 answers: not "which
-skills exist" but "which apply *here*". An editorial team files a registry
-document in the collection — an `ai_prompt` record with an attached
+**28. `get_skill_registry`** — `collectionId`, `context?`, `outputFormat?`. The
+skills **one collection has approved**, which is the reverse of what 22 answers:
+not "which skills exist" but "which apply *here*". An editorial team files a
+registry document in the collection — an `ai_prompt` record with an attached
 Markdown — whose `:::`-blocks name the approved skills. The tool returns the
 catalogue (title, nodeId, description, keywords per skill) plus the editors' own
 prose, which is where usage notes live. It does not return the instructions:
 choose from the catalogue, then call 23.
+
+`context` narrows it to one **working situation**. The document groups its
+skills with headings — `##` is a context, `###` a sub-context (addressed as
+`Context/Sub-context`), and the prose above the first block is the editors'
+instruction for it. A context call returns that context's skills plus the ones
+that apply always, the instruction, and verbatim only that section instead of
+the whole document. Case and spacing do not matter; nothing, or `all`, means
+everything. **A name that does not land never narrows** — an unknown or
+ambiguous one returns the full catalogue and names the contexts that exist,
+rather than an error or a short list that looks like a result.
 
 Everything it cannot state plainly is disclosed rather than smoothed over: an
 ambiguous pick when a collection holds several prompt documents, references
@@ -649,6 +659,21 @@ cache does not know is resolved live, once, and then remembered too. The
 catalogue is therefore simply present in collection results, and the cost is
 paid at most once per collection instead of on every search.
 
+**How much of it rides along is bounded: 12 lines per collection**, whatever the
+registry's size. Three forms. Everything fits → the grouped catalogue with a nodeId per
+skill, as before. Too many to list but few enough to name → the **context index**:
+the context names with their counts, several per line, no nodeIds. Not even that
+→ the head line alone, with `get_skill_registry` as the way on. Measured on the
+shape of the Optik registry (28 skills, 7 contexts): **3 lines instead of 30,
+407 characters instead of 3436**; a flat 50-skill document collapses to one line
+of 147.
+
+The saving is entirely above the budget. *Inside* it, grouping costs one line
+per context, so a small registry gets slightly longer than its flat list —
+measured on the real Optik document (3 skills, 2 contexts): 818 characters
+against 659. What the budget guarantees is the ceiling, not a saving at every
+size.
+
 Three properties are worth knowing, because they decide what an answer means:
 
 - **A "no registry here" always rests on a children listing that replied** —
@@ -668,6 +693,17 @@ registry created moments ago can lag. `includeSkillRegistry: true` on
 `search_wlo_all` / `search_wlo_collections` forces a fresh lookup, and
 `get_skill_registry` is always live — reach for either right after creating or
 editing a registry.
+
+**`skillContext`** on `get_collection_contents`,
+`search_wlo_within_collection`, `get_node_details`, `get_topic_page_content` and
+`get_related_content` asks for one context by name and delivers its skills *and*
+the editors' instruction with the collection answer, saving the second call. A
+**named** context is the one path that re-reads the document live (2 requests,
+~1.0–1.4 s): the cache holds the summary, not the prose. `all` asks for no prose
+and is answered from the cache, exactly like a call without a context. Deliberately absent from
+`search_wlo_all` / `search_wlo_collections` — context names are per registry, so
+one parameter across five collections would hit in one and miss in the next.
+Those tools hand over the index a model learns the names from.
 
 ### Wikipedia resolution
 

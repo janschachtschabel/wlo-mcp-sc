@@ -31,6 +31,26 @@ test('search_wlo_content returns text + nodeList structuredContent', async () =>
   } finally { await client.close(); mock.restore(); }
 });
 
+test('a reference keeps its originalId in structuredContent, not only in the text', async () => {
+  // Its own test, deliberately separate from the text-path one in
+  // formatter.test.ts: zod strips what the schema does not declare, so a field
+  // that reaches the rendered text can still vanish from structuredContent with
+  // nothing failing anywhere. Only parsing the real tool result proves both.
+  const mock = installFetchMock(() => ({
+    json: {
+      nodes: [{ ...makeNode('reference-1', 'Titel'), originalId: 'original-1' }],
+      pagination: { total: 1, from: 0, count: 1 },
+    },
+  }));
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'search_wlo_content', arguments: { query: 'mathe' } });
+    const sc = nodeListSchema.parse(result.structuredContent);
+    assert.equal(sc.results[0]?.originalId, 'original-1');
+    assert.match(toolText(result), /Original: original-1/, 'und im Text steht es auch');
+  } finally { await client.close(); mock.restore(); }
+});
+
 test('search_wlo_all returns text + searchAllEnvelope structuredContent', async () => {
   const mock = installFetchMock((url) => {
     if (url.includes('/collections')) return { json: { nodes: [] } };

@@ -205,3 +205,24 @@ test('a cut value is still flattened — line breaks cannot forge a second line'
   const lines = renderChangeSet(cs).split('\n');
   assert.equal(lines.length, 1, 'one change stays one line however long the value is');
 });
+
+test('a redirected write names both ids before it names any field', () => {
+  // WHICH record is being edited outranks what is being changed: a reader who
+  // stops after the first line must not have missed that the id they passed is
+  // not the id that changes.
+  const cs = buildChangeSet('original-1', 'content', BEFORE, { 'cclom:title': ['Neu'] }, {
+    redirectedFrom: 'reference-1',
+  });
+  const lines = renderChangeSet(cs).split('\n');
+
+  assert.match(lines[0] ?? '', /reference-1/, 'die genannte id steht in der ersten Zeile');
+  assert.match(lines[0] ?? '', /original-1/, 'und die id, die tatsächlich geändert wird');
+  assert.match(lines[0] ?? '', /Verknüpfung/, 'und wofür die genannte id steht');
+  assert.match(renderChangeSet(cs), /Titel/, 'die Felder stehen weiterhin darunter');
+});
+
+test('a write that was not redirected says nothing about redirection', () => {
+  const cs = buildChangeSet('node-1', 'content', BEFORE, { 'cclom:title': ['Neu'] });
+  assert.doesNotMatch(renderChangeSet(cs), /Verknüpfung|Original/,
+    'ein Satz über Umleitung, wo keine stattfand, ist eine Behauptung über den Datensatz');
+});

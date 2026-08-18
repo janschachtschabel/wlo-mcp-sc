@@ -346,32 +346,58 @@ test('"Copyright, freier Zugang" is not "urheberrechtsfrei" — and the wrong al
 });
 
 /**
- * Every distinct `ccm:commonlicense_key` the staging corpus holds, with its
- * record count — a facet over all 403 461 records, measured 2026-08-12.
- * `null` marks the two values that are not licence keys of their own.
+ * Every distinct `ccm:commonlicense_key` the staging corpus holds that IS a
+ * licence, with its record count — a facet over all 590 186 records, measured
+ * 2026-08-17. `null` marks the value that is not a licence key of its own.
+ *
+ * Counts move between measurements (`COPYRIGHT_FREE` was 12 445 on 2026-08-12
+ * and is 39 071 now); what they pin is the ORDER OF MAGNITUDE behind each entry,
+ * so a reader can see what dropping one would cost.
  */
 const CORPUS_LICENSE_KEYS: Array<[key: string, records: number, resolvesTo: string | null]> = [
-  ['CC_BY_NC_SA', 70627, 'CC_BY_NC_SA'],
-  ['CC_BY', 62093, 'CC_BY'],
-  ['CUSTOM', 57197, 'CUSTOM'],
-  ['CC_BY_SA', 50240, 'CC_BY_SA'],
-  ['CC_BY_NC_ND', 32080, 'CC_BY_NC_ND'],
-  ['COPYRIGHT_FREE', 12445, 'COPYRIGHT_FREE'],
-  ['CC_BY_NC', 4663, 'CC_BY_NC'],
-  ['CC_BY_ND', 3710, 'CC_BY_ND'],
-  ['CC_0', 2024, 'CC_0'],
-  ['COPYRIGHT_LICENSE', 1359, 'COPYRIGHT_LICENSE'],
+  ['CC_BY_NC_SA', 73370, 'CC_BY_NC_SA'],
+  ['COPYRIGHT_LICENSE', 67247, 'COPYRIGHT_LICENSE'],
+  ['CC_BY', 65649, 'CC_BY'],
+  ['CC_BY_SA', 63239, 'CC_BY_SA'],
+  ['CUSTOM', 57263, 'CUSTOM'],
+  ['COPYRIGHT_FREE', 39071, 'COPYRIGHT_FREE'],
+  ['CC_BY_NC_ND', 34387, 'CC_BY_NC_ND'],
+  ['CC_BY_NC', 8060, 'CC_BY_NC'],
+  ['CC_BY_ND', 4539, 'CC_BY_ND'],
+  ['CC_0', 3505, 'CC_0'],
+  ['PDM', 1011, 'PDM'],
   // A legacy spelling of the same three terms, aliased onto the canonical key so
-  // its 497 records get a readable label and survive the local exactness pass.
-  ['CC_BY_SA_NC', 497, 'CC_BY_NC_SA'],
-  ['PDM', 408, 'PDM'],
-  ['NONE', 56, 'NONE'],
-  // The spaced spelling the index also carries; it already resolved before this
-  // change, through the fuzzy path rather than as a value of its own.
-  ['CC BY-SA', 23, 'CC_BY_SA'],
+  // its records get a readable label and survive the local exactness pass.
+  ['CC_BY_SA_NC', 498, 'CC_BY_NC_SA'],
+  // The spaced spellings the index also carries; they resolve through the fuzzy
+  // path rather than as values of their own.
+  ['CC BY-SA', 64, 'CC_BY_SA'],
+  ['CC BY-ND', 2, 'CC_BY_ND'],
+  ['CC By 4.0', 1, 'CC_BY'],
+  ['NONE', 57, 'NONE'],
   ['UNTERRICHTS_UND_LEHRMEDIEN', 15, 'UNTERRICHTS_UND_LEHRMEDIEN'],
   // Not a licence: the empty key is "no value set".
-  ['', 56, null],
+  ['', 121, null],
+];
+
+/**
+ * The other four values the same facet returns — free text a harvester wrote
+ * into the licence field, measured 2026-08-17. They are listed so nobody
+ * "fixes" them into licences later: a copyright notice is not a licence grant,
+ * and mapping one onto CC BY would invent a permission the record never gave.
+ *
+ * `OTHER` is in the list for the same reason and is not merely a guess:
+ * `GET /config/v1/language/defaults` → `LICENSE.NAMES` is the repository's own
+ * list of licence keys, and it holds 15 — `OTHER` is not among them. (The mds
+ * `values` endpoint is no help here; for this property it just echoes the 23
+ * distinct values the index holds, free text included.)
+ */
+const CORPUS_LICENSE_FREETEXT: Array<[value: string, records: number]> = [
+  ['weimar GmbH Gesellschaft für Wirtschaftsförderung, Kongress- und Tourismusservice', 11],
+  ['© 2006-2026 Weimar, Kulturstadt Europas', 2],
+  ['Keine oder unbekannte Lizenz. Nutzung und Quellenangabe gemäß den im Medium '
+    + 'genannten Bedingungen bzw. gemäß der allgemeingültigen gesetzlichen Regelung (UrhG).', 1],
+  ['OTHER', 1],
 ];
 
 test('every licence key the corpus actually holds resolves to a known licence', () => {
@@ -380,6 +406,16 @@ test('every licence key the corpus actually holds resolves to a known licence', 
   // `filterByExactLicense` drops the record from every licence-filtered result.
   for (const [key, records, expected] of CORPUS_LICENSE_KEYS) {
     assert.equal(resolveVocab(key, 'license'), expected, `${key} (${records} Datensätze)`);
+  }
+});
+
+test('free text in the licence field stays unresolved rather than becoming a licence', () => {
+  // The opposite failure to the test above, and the worse one. An unresolved
+  // value costs a label and a place in a filtered result; a WRONGLY resolved one
+  // tells a reader they may reuse material whose record says nothing of the kind.
+  // Fifteen records, so the cost of leaving them out is small and known.
+  for (const [value, records] of CORPUS_LICENSE_FREETEXT) {
+    assert.equal(resolveVocab(value, 'license'), null, `${value.slice(0, 40)}… (${records} Datensätze)`);
   }
 });
 

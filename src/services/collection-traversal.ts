@@ -106,8 +106,15 @@ export const RECURSIVE_SKIP_MAX = 400;
  * are new, so a subtree whose sub-collections share their references — the
  * normal shape of a curated WLO tree — de-duplicates itself into a standstill
  * and the queue keeps draining. Every collection costs two sequential upstream
- * calls, and nothing aborts them when the client's request times out at 30 s,
- * so the crawl outlives the answer it was for.
+ * calls, and nothing aborts them once the caller has given up — the crawl
+ * outlives the answer it was for.
+ *
+ * Deliberately no number here any more: this said "when the client's request
+ * times out at 30 s", borrowed from `httpServer.requestTimeout`, which measured
+ * 2026-08-17 does NOT bound the work on a request (a handler answering after
+ * 35 s delivers its response). When a client gives up is invisible from here;
+ * the cap stands on the cost of the walk, which is measurable, not on a deadline
+ * that is not.
  */
 const RECURSIVE_VISIT_MAX = 50;
 

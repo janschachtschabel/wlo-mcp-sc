@@ -162,3 +162,22 @@ test('browse_collection_tree: unknown subject errors with the list of available 
     mock.restore();
   }
 });
+
+test('get_subject_portals: a portal that is a reference names its original', async () => {
+  // Same rule as every other rendered nodeId, and for the same reason: the id on
+  // this line is what a caller passes to the next tool. This listing builds its
+  // lines by hand, which is how it missed the shared formulation.
+  const mock = installFetchMock((url) => {
+    const id = decodeURIComponent(url.match(/-home-\/([^/]+)\/children/)?.[1] ?? '');
+    if (id !== WLO_ROOT_COLLECTION_ID) return { json: { nodes: [] } };
+    return { json: { nodes: [{ ...makeNode('ref-portal', 'Mathematik'), originalId: 'orig-portal' }] } };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_subject_portals', arguments: {} });
+    assert.match(toolText(result), /nodeId: ref-portal \(Verkn(ü|ue)pfung; Original: orig-portal\)/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

@@ -13,7 +13,7 @@ import {
   getChildCollectionsResult,
 } from '../wlo-api.js';
 import { sortByTitle } from '../reranker.js';
-import { formatNode, oneLine, registrySummaryLines } from '../formatter.js';
+import { formatNode, nodeIdLine, oneLine, registrySummaryLines } from '../formatter.js';
 import { cachedRegistriesFor } from '../services/skill-registry-cache.js';
 import type { CollectionTreeNode } from '../services/collection-traversal.js';
 import { buildCollectionTree } from '../services/collection-traversal.js';
@@ -150,7 +150,7 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
         for (const p of formatted) {
           const parts: string[] = [];
           parts.push(`## ${p.title}`);
-          parts.push(`nodeId: ${p.nodeId}`);
+          parts.push(nodeIdLine(p.nodeId, p.originalId));
           if (p.description) parts.push(`Beschreibung: ${p.description.slice(0, 300)}${p.description.length > 300 ? '…' : ''}`);
           if (p.disciplines.length) parts.push(`Fach: ${p.disciplines.join(', ')}`);
           if (p.educationalContexts.length) parts.push(`Bildungsstufe: ${p.educationalContexts.join(', ')}`);

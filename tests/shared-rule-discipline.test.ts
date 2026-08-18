@@ -366,3 +366,179 @@ test('a collection search asks BOTH backends, and only one module knows that', (
       + `different question: ${JSON.stringify(found)}`,
   );
 });
+
+/**
+ * The modules that may write. `originalId` is read all over the READ paths for
+ * perfectly good reasons (usage lookups, skill identity), so a repo-wide ban
+ * would be wrong; the rule is about who decides where a write GOES.
+ */
+const writePathFile = (name: string): boolean =>
+  name.startsWith('services/write/') || /^tools\/curation-[a-z-]+\.ts$/.test(name);
+
+function writePathOffenders(pattern: RegExp, owners: string[]): string[] {
+  const out: string[] = [];
+  for (const file of sourceFiles(srcDir)) {
+    const name = rel(file);
+    if (!writePathFile(name) || owners.includes(name)) continue;
+    readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      if (pattern.test(line)) out.push(`${name}:${i + 1}  ${line.trim()}`);
+    });
+  }
+  return out;
+}
+
+test('the write path works out its target in one place', () => {
+  // Measured 2026-08-16 (F1/F2): a metadata write aimed at a collection
+  // reference is STORED on the reference, never reaches the original, and the
+  // reference stops inheriting from then on. `verifyWrite` cannot catch it — it
+  // re-reads the same node and finds what it just wrote.
+  //
+  // Which field answers "is this a reference" is the part that must not be
+  // re-derived per caller: the DTO's `originalId` is absent on an original,
+  // while the `ccm:original` PROPERTY points at the record itself (F6), so a
+  // second implementation reaching for the property without a self-comparison
+  // reports every record as a reference to itself.
+  //
+  // `collections.ts` is the other owner and resolves the OPPOSITE direction —
+  // material id → the reference filed in a given collection — which is what
+  // removing something from a collection needs.
+  assert.deepEqual(
+    writePathOffenders(/originalId|ccm:original/, [
+      'services/write/nodes.ts',
+      'services/write/collections.ts',
+    ]),
+    [],
+    'use resolveWriteTarget from services/write/nodes.ts',
+  );
+});
+
+test('a curation tool writes where the confirmed change set says', () => {
+  // The token binds to the ChangeSet, so `cs.nodeId` IS the node the user
+  // approved. Passing anything else — the raw parameter above all — writes to a
+  // node that was never previewed, which is the redirection hole in reverse:
+  // the preview says "the original will change" and the write goes to the
+  // reference anyway.
+  //
+  // `services/write/` is deliberately out of scope: `nodes-lifecycle.ts` and
+  // `collections.ts` write fields onto a record they have just CREATED, where
+  // there is no change set and the id cannot be a reference.
+  const calls = writePathOffenders(/\bupdateNodeMetadata\s*\(/, [
+    'services/write/nodes.ts',
+    'services/write/nodes-lifecycle.ts',
+    'services/write/collections.ts',
+  ]);
+  const wrong = calls.filter(line => !/updateNodeMetadata\(\s*cs\.nodeId\b/.test(line));
+  assert.deepEqual(wrong, [], 'pass cs.nodeId — the change set names the approved target');
+  assert.ok(calls.length >= 3, `expected the curation write sites to be found, got ${calls.length}`);
+});
+
+test('a rendered nodeId line goes through nodeIdLine, never built by hand', () => {
+  // `nodeIdLine` says "nodeId: X (Verknüpfung; Original: Y)" when the record is a
+  // collection reference. A tool that renders line-oriented text by hand does not
+  // get that for free, and two of them did not have it: `get_node_details` — the
+  // tool a reference id from a collection listing is most likely handed to — and
+  // the Fachportal listing. Both carried `originalId` in `structuredContent`
+  // while the text they rendered said nothing, which is the split the field was
+  // introduced to close.
+  //
+  // `skill-registry.ts` is the one legitimate hand-built line: a RegistryEntry
+  // comes from a `:::` block in a document, not from a node read, so there is no
+  // `originalId` to state and claiming one would need a fetch per entry.
+  //
+  // Scope, stated so nobody reads more into a green run: this matches the
+  // template-literal form of the STANDALONE line, which is the form every such
+  // line in this codebase uses. Built by concatenation it would slip through, and
+  // the inline `(nodeId: X)` inside a list item is deliberately not matched —
+  // those render entries that carry no `originalId` (parent collections, registry
+  // entries, companion files).
+  const found = offenders(/`nodeId: \$\{/, [
+    'formatter.ts',
+    'tools/skill-registry.ts',
+  ]);
+  assert.deepEqual(found, [], `nodeId-Zeile von Hand gebaut statt über nodeIdLine:\n${found.join('\n')}`);
+});
+
+test('a redirected change set is diffed against the node it will WRITE', () => {
+  // Resolving the target is only half the rule. The change set also carries a
+  // BASELINE, and it has to come from the same node: while a reference still
+  // inherits, its properties equal the original's and nothing looks wrong — they
+  // diverge exactly once the reference has been written to directly (F2), which
+  // is the state older versions of these tools produced.
+  //
+  // Diffing against the reference while writing to the original then costs three
+  // ways at once: a field counts as unchanged because the REFERENCE already
+  // shows the wanted value (the original never gets it, and the tool reports
+  // success), the preview shows the reference's value as "before", and a merged
+  // field — keywords — merges into the reference's list and writes that OVER the
+  // original's, dropping whatever only the original had.
+  //
+  // `readWriteBaseline` returns the target and the baseline together, which is
+  // why the guard is "used it" rather than "did the right thing with it":
+  // `resolveWriteTarget` hands back a target with no baseline, and the only one
+  // in reach at that point is the requested node's.
+  //
+  // Reach, so a green run is not read as more than it is: the second check
+  // scans for `node.properties` up to the first `)`, which is the shape the
+  // defect had. Wrapped in parentheses it would slip through, and nothing here
+  // notices a baseline that is right while a SENTENCE beside it still names the
+  // requested node — that one is covered per tool
+  // (`tools-curation-suggestions.test.ts` pins the title/id pair).
+  const wrong: string[] = [];
+  for (const file of sourceFiles(srcDir)) {
+    const name = rel(file);
+    if (!/^tools\/curation-[a-z-]+\.ts$/.test(name)) continue;
+    const text = readFileSync(file, 'utf8');
+    if (!text.includes('buildChangeSet(target.targetId')) continue;
+    if (!text.includes('readWriteBaseline')) {
+      wrong.push(`${name}: baut auf target.targetId, holt die Baseline aber nicht über readWriteBaseline`);
+    }
+    if (/buildChangeSet\(target\.targetId[^)]*node\.properties/.test(text)) {
+      wrong.push(`${name}: Baseline kommt vom ANGEFRAGTEN Knoten statt vom Ziel`);
+    }
+  }
+  assert.deepEqual(wrong, [], `Baseline und Schreibziel müssen derselbe Knoten sein:\n${wrong.join('\n')}`);
+});
+
+test('every write that can carry ccm:wwwurl keeps the larger timeout', () => {
+  // Measured 2026-08-17: setting `ccm:wwwurl` makes the repository render a
+  // preview of the page while the write is in flight — 8.8 s warm, 46.5 s cold
+  // for a real site. It is slow WHEREVER it happens: creating with the URL took
+  // 8.8 s, creating without it 0.5 s and setting the URL afterwards 7.8 s. So the
+  // budget follows the property, not the endpoint, and both writers need it —
+  // `wlo_update_content` changing a source URL goes through the metadata path.
+  //
+  // A source-level guard because the behaviour cannot be tested at the seam:
+  // `wloFetch` attaches its own signal when the caller supplies none, so by the
+  // time a fetch mock sees the request both paths look identical.
+  const sites: Array<[file: string, needle: RegExp]> = [
+    ['services/write/nodes-lifecycle.ts', /signal:\s*AbortSignal\.timeout\(writeTimeoutMs\(body\)\)/],
+    ['services/write/nodes.ts', /signal:\s*AbortSignal\.timeout\(writeTimeoutMs\(properties\)\)/],
+  ];
+  const missing = sites
+    .filter(([file, needle]) => !needle.test(readFileSync(join(srcDir, file), 'utf8')))
+    .map(([file]) => file);
+  assert.deepEqual(missing, [],
+    'ohne writeTimeoutMs läuft ein URL-Schreibvorgang wieder gegen das gewöhnliche Limit');
+});
+test('what a context NAME means, and what "narrowed" means, are each defined once', () => {
+  // Six surfaces take a context name — `get_skill_registry` plus the five
+  // collection tools — and every one of them can get the same two rules wrong:
+  // how a name is normalised before it is compared (case, surrounding space,
+  // repeated space, the reserved "all"), and what a narrowed answer carries
+  // (the context's own skills PLUS the ones that apply always, and the document
+  // slice that goes with them).
+  //
+  // The second rule is the one that rots quietly: a copy that forgets the
+  // always-applicable skills answers with a SHORTER approval list and looks
+  // entirely plausible doing it.
+  const defined = (name: string) => new RegExp(`(export )?(async )?function ${name}\\b|const ${name}\\s*=`);
+
+  assert.deepEqual(
+    offenders(defined('resolveContext'), ['services/registry-contexts.ts']), [],
+    'resolveContext is defined in services/registry-contexts.ts and nowhere else',
+  );
+  assert.deepEqual(
+    offenders(defined('narrowRegistry'), ['services/skill-registry.ts']), [],
+    'narrowRegistry is defined in services/skill-registry.ts and nowhere else',
+  );
+});

@@ -23,8 +23,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { WLO_REPOSITORY_URL } from '../../src/wlo-config.js';
-import { resolveServiceCredential } from '../../src/auth/credential.js';
+import { requireLiveTarget, runStamp } from './guard.js';
 import {
   createCollection,
   deleteCollection,
@@ -36,35 +35,6 @@ import {
 } from '../../src/services/write/nodes-lifecycle.js';
 import type { MutationOutcome } from '../../src/services/write/verify.js';
 
-/**
- * The one host this file will talk to. Hard-coded, not configurable: "testing
- * target is staging, never production" is an operator rule, and a contract test
- * that can be pointed at production by one env line is how that rule breaks.
- */
-const STAGING_HOST = 'repository.staging.openeduhub.net';
-
-/** Refuse to run against the wrong repository, or without a credential. */
-function requireLiveTarget(): void {
-  const host = new URL(WLO_REPOSITORY_URL).hostname;
-  assert.equal(
-    host,
-    STAGING_HOST,
-    `Live-Vertragstests laufen ausschließlich gegen Staging (${STAGING_HOST}); ` +
-      `konfiguriert ist "${host}". Testziel ist Staging, niemals Produktion.`,
-  );
-  const cred = resolveServiceCredential({
-    user: process.env['WLO_SERVICE_USER'],
-    password: process.env['WLO_SERVICE_PASSWORD'],
-  });
-  assert.ok(
-    cred,
-    'WLO_SERVICE_USER / WLO_SERVICE_PASSWORD sind nicht gesetzt — `npm run test:live` ' +
-      'lädt sie aus .env; ohne Anmeldung gibt es keinen Schreib-Vertrag zu prüfen.',
-  );
-}
-
-/** Names every throwaway after the run, so a leftover is identifiable. */
-const runStamp = new Date().toISOString();
 
 test('collection contract: staging accepts create, rename and delete', async () => {
   requireLiveTarget();

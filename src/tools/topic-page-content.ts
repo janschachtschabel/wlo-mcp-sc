@@ -37,6 +37,13 @@ Gib EINES an:
 - variantId (eine "Variante-ID") oder collectionId (eine "Sammlung-nodeId") aus
   search_wlo_topic_pages, wenn du diese Suche schon ausgeführt hast.`,
     inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
       query: z.string().optional().describe(
         'Topic name (German), e.g. "Optik". Resolves the best matching Themenseite internally and renders its swimlanes in ONE call — no prior search_wlo_topic_pages needed. Alternative to variantId/collectionId.'
       ),
@@ -113,7 +120,7 @@ Gib EINES an:
           // Still worth answering: the caller named a collection, and whether it
           // has approved skills does not depend on its page having swimlanes.
           const emptyContent = [{ type: 'text' as const, text }];
-          const emptyRegistry = await subjectRegistryText(empty.collectionId ?? '');
+          const emptyRegistry = await subjectRegistryText(empty.collectionId ?? '', params.skillContext);
           if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
           return { content: emptyContent, structuredContent: empty };
         }
@@ -129,7 +136,7 @@ Gib EINES an:
         // COLLECTION id — never the variant, which is one rendering of it. Its
         // own content block in both formats: `text` is the payload in json mode,
         // and the swimlane schema has nowhere to put a catalogue.
-        const registryText = await subjectRegistryText(struct.collectionId ?? '');
+        const registryText = await subjectRegistryText(struct.collectionId ?? '', params.skillContext);
         const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
         if (params.outputFormat === 'json') {
           return {

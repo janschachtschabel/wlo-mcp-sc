@@ -19,11 +19,16 @@ import { z } from 'zod';
 
 import {
   loadSkillRegistry,
+  narrowRegistry,
+  type ContextResolution,
+  type RegistryContext,
+  type RegistryEntry,
   type RegistryMiss,
   type ScanTruncation,
   type SkillRegistry,
 } from '../services/skill-registry.js';
 import { DESCRIPTIONS_ONLY_NOTE, oneLine } from '../formatter.js';
+import { sanitizeText } from '../text-sanitize.js';
 import { toolError } from './shared.js';
 
 const UNTRUSTED_NOTE =
@@ -53,30 +58,69 @@ function missText(reason: RegistryMiss, scanTruncated?: ScanTruncation): string 
 }
 
 /**
- * The catalogue: one entry per approved skill, every value through `oneLine`.
+ * One group of the catalogue: a heading, an optional lead, one block per skill.
  *
- * The listing is line-oriented and each line carries a nodeId the model may call
- * next, so a newline inside a repository-supplied title would otherwise forge a
- * second entry pointing anywhere its author chose.
+ * Every value goes through `oneLine`. The listing is line-oriented and each line
+ * carries a nodeId the model may call next, so a newline inside a
+ * repository-supplied title would otherwise forge a second entry pointing
+ * anywhere its author chose.
  */
-function renderCatalogue(registry: SkillRegistry): string[] {
-  if (!registry.entries.length) {
-    return [oneLine('Die Registry nennt keine abrufbaren Skills.')];
-  }
-  const lines = [`## Freigegebene Skills (${registry.entries.length})`, ''];
-  for (const e of registry.entries) {
+function renderGroup(heading: string, entries: RegistryEntry[], lead?: string): string[] {
+  const lines = [heading, ''];
+  if (lead) lines.push(oneLine(lead), '');
+  for (const e of entries) {
     lines.push(oneLine(`### ${e.title}`));
     lines.push(oneLine(`nodeId: ${e.nodeId}`));
     if (e.description) lines.push(oneLine(e.description));
     if (e.keywords?.length) lines.push(oneLine(`Keywords: ${e.keywords.join(', ')}`));
     lines.push('');
   }
+  return lines;
+}
+
+/**
+ * The catalogue, in one group or two.
+ *
+ * Narrowed to a context, the general skills come along — they apply everywhere —
+ * but under their OWN heading. Mixing them into one list would let a reader take
+ * all of them for the context's own, which is a claim about editorial intent
+ * that the document does not make. A count in a preceding sentence is not the
+ * same thing: it says how many, never which.
+ *
+ * Every emptiness sentence names WHOSE emptiness it is. `registry` here is the
+ * narrowed VIEW, so "this registry approves nothing" is false whenever a context
+ * was asked for — the registry may hold plenty, just not here. Found in review
+ * 2026-08-18; the correct sentence existed but sat behind an early return that
+ * fired first.
+ */
+function renderCatalogue(registry: SkillRegistry, narrowed: Narrowed): string[] {
+  const ctx = narrowed.matched;
+  const always = ctx ? registry.entries.filter(e => !e.context) : [];
+  const own = ctx ? registry.entries.filter(e => e.context) : registry.entries;
+
+  if (!registry.entries.length) {
+    if (!ctx) return [oneLine('Die Registry nennt keine abrufbaren Skills.')];
+    const others = registry.contexts.filter(c => c.path !== ctx.path).map(c => c.path);
+    return [oneLine(`Der Kontext „${ctx.path}" nennt keine Skills, und es gibt keine, die immer gelten.`
+      + (others.length ? ` Andere Kontexte: ${joinPaths(others)}.` : ''))];
+  }
+
+  const lines = own.length
+    ? renderGroup(`## Freigegebene Skills (${own.length})`, own)
+    // Reachable only when narrowed: unnarrowed, `own` IS `entries`, and an empty
+    // `entries` returned above. Naming `ctx` without a fallback keeps that an
+    // error if it ever stops holding, rather than printing "undefined".
+    : [oneLine(`Der Kontext „${ctx!.path}" nennt selbst keine Skills.`), ''];
+  if (always.length) {
+    lines.push(...renderGroup(`## Gilt immer (${always.length})`, always,
+      'Aus dem allgemeinen Teil der Registry — diese Skills gelten in jedem Kontext.'));
+  }
   lines.push(DESCRIPTIONS_ONLY_NOTE);
   return lines;
 }
 
 /** What the answer does not cover — stated, never left to be inferred from a short list. */
-function renderDisclosures(registry: SkillRegistry): string[] {
+function renderDisclosures(registry: SkillRegistry, narrowed: Narrowed): string[] {
   const lines: string[] = [];
   if (registry.unresolved.length) {
     lines.push('', `### Nicht auflösbare Verweise (${registry.unresolved.length})`);
@@ -84,7 +128,10 @@ function renderDisclosures(registry: SkillRegistry): string[] {
       lines.push(oneLine(`- ${u.title}${u.nodeId ? ` (nodeId: ${u.nodeId})` : ' — keine nodeId im Dokument'}`));
     }
   }
-  if (registry.truncated) {
+  // Only where the catalogue below IS the first N. Narrowed, the same numbers
+  // describe a list of a different size, and `narrow` has already said it in
+  // terms that fit.
+  if (registry.truncated && !narrowed.matched) {
     lines.push('', oneLine(
       `_Die Registry nennt ${registry.truncated.referenced} Skills; hier stehen die ersten `
       + `${registry.truncated.listed}._`));
@@ -97,13 +144,135 @@ function renderDisclosures(registry: SkillRegistry): string[] {
   return lines;
 }
 
-function renderRegistry(registry: SkillRegistry, reason: RegistryMiss | undefined): string {
+/**
+ * What one call is about: the whole registry, or one context of it.
+ *
+ * The two misses — a name nobody carries, and a name two contexts carry — are
+ * handled identically on purpose: fall back to EVERYTHING and say what went
+ * wrong. A model guesses a context name before it knows the names, so an answer
+ * that only refuses strands it, while an answer that carries the full catalogue
+ * plus the list lets it learn the right name from the very reply it got wrong.
+ */
+interface Narrowed {
+  /** The registry as this call reports it — entries and document already narrowed. */
+  view: SkillRegistry;
+  /** The context that matched, if one did. */
+  matched?: RegistryContext;
+  /** Server-derived lines that explain the narrowing, or why it did not happen. */
+  notice: string[];
+  /**
+   * Why the ask did not land, for the JSON branch — where there is no notice
+   * line to read. All three kinds come straight from `resolveContext`: a payload
+   * showing neither `context` nor a miss cannot be told from one where nothing
+   * was asked, and `no_contexts` is the case this surface used to derive for
+   * itself while `subjectRegistryText` derived it differently.
+   */
+  miss?: Extract<ContextResolution, { kind: 'unknown' | 'ambiguous' | 'no_contexts' }>;
+}
+
+const joinPaths = (paths: string[]): string => paths.join(' · ');
+
+/** The catalogue index: which contexts exist, and how to ask for one. */
+function contextIndex(registry: SkillRegistry): string[] {
+  if (!registry.contexts.length) return [];
+  const lines = ['', `## Kontexte (${registry.contexts.length})`, ''];
+  for (const c of registry.contexts) {
+    lines.push(oneLine(`- ${c.path} — ${c.skills.length} Skill${c.skills.length === 1 ? '' : 's'}`));
+  }
+  if (registry.contextsTruncated) {
+    lines.push(oneLine(`_Das Dokument gliedert ${registry.contextsTruncated.found} Kontexte; `
+      + `hier stehen die ersten ${registry.contextsTruncated.listed}._`));
+  }
+  lines.push('', 'Gezielt: `get_skill_registry` erneut mit `context: "<Name>"` — das kürzt die '
+    + 'Antwort und liest nur die Skills dieses Kontexts.');
+  return lines;
+}
+
+function narrow(registry: SkillRegistry, wanted: string | undefined): Narrowed {
+  // The notice lines land ABOVE the `---`, in the server-derived region the
+  // whole trust boundary rests on. `oneLine` collapses CR/LF and nothing else —
+  // U+2028, U+0085, U+202E and U+200B pass through it unchanged (measured
+  // 2026-08-18) — so an echoed name can forge a line there. `sanitizeText` is
+  // what `subjectRegistryText` already used for this same value.
+  const asked = sanitizeText((wanted ?? '').trim());
+  // What "narrowed" MEANS lives in the service, shared with `subjectRegistryText`:
+  // which entries come along and which slice of the document does. Only the
+  // prose below belongs to this surface.
+  const { view, resolution } = narrowRegistry(registry, asked);
+
+  if (resolution.kind === 'found') {
+    const ctx = resolution.context;
+
+    const notice = [oneLine(`Kontext: ${ctx.path}`)];
+    if (resolution.parent) {
+      notice.push(oneLine(`Übergeordnet: ${resolution.parent.path} — dessen Anweisung gilt hier mit.`));
+    }
+    if (resolution.children.length) {
+      notice.push(oneLine(`Unterkontexte: ${joinPaths(resolution.children.map(c => c.path))} `
+        + '— je einzeln über `context` abrufbar.'));
+    }
+    // `truncated` counts the WHOLE catalogue against the cap, so its usual
+    // sentence ("here are the first N") describes a list of a different size
+    // once narrowed — and it is reworded below. The FIELD stays: it is a fact
+    // about the registry, not about this slice, and a first attempt that dropped
+    // it left a JSON caller with no disclosure at all, which is the very rule
+    // this package was fixing an instance of.
+    if (registry.truncated) {
+      notice.push(oneLine(`Die Registry nennt ${registry.truncated.referenced} Skills; `
+        + `nur die ersten ${registry.truncated.listed} wurden gelesen, diese Auswahl kann `
+        + 'deshalb unvollständig sein.'));
+    }
+    return { view, matched: ctx, notice };
+  }
+
+  // Everything, plus one sentence about why the name did not land.
+  if (resolution.kind === 'unknown') {
+    return {
+      view: registry,
+      miss: resolution,
+      notice: [oneLine(`Der Kontext „${asked}" kommt in dieser Registry nicht vor. `
+        + `Vorhanden: ${joinPaths(resolution.available)}. `
+        + 'Deshalb steht hier der vollständige Katalog.')],
+    };
+  }
+  if (resolution.kind === 'ambiguous') {
+    return {
+      view: registry,
+      miss: resolution,
+      notice: [oneLine(`Der Name „${asked}" ist hier mehrdeutig: ${joinPaths(resolution.paths)}. `
+        + 'Deshalb steht der vollständige Katalog; wähle einen der genannten Pfade.')],
+    };
+  }
+  // A name over a document with no outline. `resolveContext` reports it as its
+  // own outcome; deriving it here from `kind === 'all'` was the second copy of
+  // one rule, and the two copies disagreed about the reserved word `all`.
+  if (resolution.kind === 'no_contexts') {
+    return {
+      view: registry,
+      miss: resolution,
+      notice: [oneLine(`Diese Registry gliedert sich nicht in Kontexte — „${asked}" konnte deshalb `
+        + 'nicht greifen. Hier steht der vollständige Katalog.')],
+    };
+  }
+  return { view: registry, notice: [] };
+}
+
+function renderRegistry(
+  registry: SkillRegistry,
+  reason: RegistryMiss | undefined,
+  narrowed: Narrowed,
+): string {
   const lines = [
     oneLine(`# ${registry.registryTitle || 'Skill-Registry'}`),
     oneLine(`Registry-Dokument: ${registry.registryNodeId} — Sammlung: ${registry.collectionId}`),
+    ...narrowed.notice,
     '',
-    ...renderCatalogue(registry),
-    ...renderDisclosures(registry),
+    ...renderCatalogue(registry, narrowed),
+    // Only where nothing was narrowed: with a context in hand the answer already
+    // names its parent, its children and the general part, and repeating the
+    // whole outline underneath would undo the shortening that was asked for.
+    ...(narrowed.matched ? [] : contextIndex(registry)),
+    ...renderDisclosures(registry, narrowed),
     '',
     UNTRUSTED_NOTE,
     '',
@@ -133,12 +302,21 @@ diese eine Sammlung vorgesehen ist.`,
       collectionId: z.string().min(1).max(64).describe(
         'nodeId der Inhaltssammlung, deren Skill-Registry gelesen werden soll.'
       ),
+      context: z.string().max(120).optional().describe(
+        'Nur die Skills eines Arbeitszusammenhangs (Überschrift im Registry-Dokument, z. B. '
+        + '„Redaktionsumgebung" oder „Redaktionsumgebung/Qualität"). Ohne Angabe oder mit "all": '
+        + 'alles. Ein Kontext-Aufruf ist kürzer und schneller. Passt der Name nicht, kommt trotzdem '
+        + 'die vollständige Antwort samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
     { readOnlyHint: true },
     async (params) => {
       try {
         const { registry, reason, scanTruncated } = await loadSkillRegistry(params.collectionId.trim());
+        // Resolved once, used by both output formats — the rule which context a
+        // name means must not differ between markdown and JSON.
+        const narrowed = registry ? narrow(registry, params.context) : undefined;
         if ((params.outputFormat ?? 'markdown') === 'json') {
           // The same framing the markdown view puts in front of the document:
           // this hands over the very same repository text, so it carries the
@@ -152,20 +330,33 @@ diese eine Sammlung vorgesehen ist.`,
           // entries there is nothing for it to be about. This branch runs ahead
           // of the `!registry` check below, so an unconditional field shipped
           // "das ist nur die Übersicht" beside `registry: null`.
+          // ONE view for the payload AND for every condition below it. Reading
+          // the unnarrowed registry while shipping the narrowed one is what put
+          // "das ist nur die Übersicht" beside an empty catalogue.
+          const shown = narrowed?.view ?? registry;
           const payload = {
-            registry, reason: reason ?? null,
+            registry: shown, reason: reason ?? null,
             ...(scanTruncated ? { scanTruncated } : {}),
+            // The matched context as a NAMED field, which is where the
+            // instruction belongs in JSON: unlike the markdown branch, a field
+            // cannot be mistaken for a section the document itself wrote.
+            ...(narrowed?.matched ? { context: narrowed.matched } : {}),
+            ...(narrowed?.miss ? { contextMiss: narrowed.miss } : {}),
+            // `registry.markdown` otherwise means "the document, unchanged". A
+            // narrowed call puts a slice there, and JSON has no notice line to
+            // read, so the payload says so itself.
+            ...(narrowed?.matched ? { markdownIsExcerpt: true } : {}),
             note: UNTRUSTED_NOTE.replace(/^>\s*Hinweis:\s*/, ''),
-            ...(registry?.entries.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
+            ...(shown?.entries.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
           };
           return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
         }
         // A miss is an ANSWER about the collection, not a tool failure: the call
         // did what it was asked to, and `isError` would tell the model to retry.
-        if (!registry) {
+        if (!registry || !narrowed) {
           return { content: [{ type: 'text' as const, text: oneLine(missText(reason ?? 'no_registry', scanTruncated)) }] };
         }
-        return { content: [{ type: 'text' as const, text: renderRegistry(registry, reason) }] };
+        return { content: [{ type: 'text' as const, text: renderRegistry(narrowed.view, reason, narrowed) }] };
       } catch (err) {
         return toolError('Fehler beim Laden der Skill-Registry', err);
       }

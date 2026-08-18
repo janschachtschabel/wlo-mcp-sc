@@ -15,13 +15,14 @@ import {
   readNodeTextContent,
   type WloNode,
 } from '../wlo-api.js';
-import { formatNode, oneLine, registrySummaryLines } from '../formatter.js';
+import { formatNode, nodeIdLine, oneLine, registrySummaryLines } from '../formatter.js';
+import { accessInfo, accessInfoLines } from '../node-access.js';
 import { getParentCollections } from '../services/node-collections.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { registerWloTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
-import { nodeLookupMiss, toolError } from './shared.js';
+import { nodeLookupMiss, subjectRegistryText, toolError } from './shared.js';
 import { mapPool } from '../concurrency.js';
 
 // Full-text length caps. JSON/bulk output carries the fuller text for machine
@@ -46,10 +47,17 @@ const DESCRIPTION_PREVIEW_CAP = 400;
  * How many nodes of a bulk call may have their full text fetched.
  *
  * `/textContent` is the slow endpoint (median 4.6 s, max 9.2 s measured — see
- * `wlo-node-text.ts`), so 50 ids at pool width 10 is five waves and can outlast
- * the server's own 30 s request timeout: the caller then loses the connection
- * instead of receiving the metadata it also asked for. The remaining ids are
- * NAMED in the response rather than silently left textless.
+ * `wlo-node-text.ts`), so 50 ids at pool width 10 is five waves: ~23 s at the
+ * median and ~46 s at the maximum, spent before a single line reaches the
+ * caller. The remaining ids are NAMED in the response rather than silently left
+ * textless.
+ *
+ * The cap is about that WAIT, not about a server-side limit. This comment used
+ * to say the batch "can outlast the server's own 30 s request timeout"; measured
+ * 2026-08-17, `httpServer.requestTimeout` bounds RECEIVING a request and not the
+ * work on it — a handler answering after 35 s delivers its response — which is
+ * also why this server's SSE streams survive. What gives up is the client, on a
+ * budget we cannot see.
  */
 const TEXT_ENRICH_MAX = 20;
 
@@ -68,8 +76,15 @@ export function registerNodeDetailTools(server: McpServer, searchResultsWidgetUr
     widgetUri: searchResultsWidgetUri,
     description: `Die DETAILANSICHT eines WLO-Datensatzes: Titel, Fach, Bildungsstufe, Lizenz, Anbieter, Link — die Metadaten, nicht der Inhalt. Für ein Material schnell (~0,3 s); bei einer SAMMLUNG kommt einmalig der Abruf ihrer freigegebenen Skills dazu (~1 s), danach ist er gemerkt.
 Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung des Materials will, braucht get_wlo_content_text — nicht dieses Werkzeug. Dort kommt der Text notfalls auch von der verlinkten Seite und es wird gesagt, warum keiner da ist; \`includeTextContent\` hier ist nur die schnelle Variante ohne diesen Rückfall.
-Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: textContent, parents (in welcher Sammlung der Datensatz liegt) und raw — Letzteres genau fünf Vokabular-URIs plus den Lizenzschlüssel (ccm:taxonid, ccm:educationalcontext, ccm:educationalintendedenduserrole, ccm:oeh_lrt_aggregated, ccm:commonlicense_key), NICHT den ganzen Property-Bag.`,
+Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: textContent, parents (in welcher Sammlung der Datensatz liegt), accessInfo (Login nötig? Kosten? Werbung? Barrierefreiheit? OER-Status) und raw — Letzteres genau fünf Vokabular-URIs plus den Lizenzschlüssel (ccm:taxonid, ccm:educationalcontext, ccm:educationalintendedenduserrole, ccm:oeh_lrt_aggregated, ccm:commonlicense_key), NICHT den ganzen Property-Bag.`,
     inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
       nodeId: z.string().describe('Node ID of a content item or collection (from search results)'),
       includeTextContent: z.boolean().optional().default(false).describe(
         'Also fetch the stored full-text content of the node (crawled webpage/PDF text)'
@@ -79,6 +94,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
       ),
       includeRaw: z.boolean().optional().default(false).describe(
         'Include the unresolved vocabulary URIs and the licence key alongside the resolved labels'
+      ),
+      includeAccessInfo: z.boolean().optional().default(false).describe(
+        'Also report access conditions (login? cost? advertising?), accessibility conformance '
+        + '(WCAG/BITV) and OER status. Costs no extra request. Only what the record carries.'
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown').describe(
         '"markdown" (default, human-readable) or "json" (structured data, easier to parse for callers)'
@@ -126,6 +145,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
           ? await getParentCollections(node, params.nodeId)
           : ({ status: 'ok', collections: [] } as const);
         const parents = parentOutcome.status === 'ok' ? parentOutcome.collections : [];
+        // Free: `readNodeMetadata` already read `-all-`, so this is a projection
+        // of properties in hand, not a second request. Behind a flag anyway —
+        // the point of opt-in here is that no existing answer grows.
+        const access = params.includeAccessInfo ? accessInfo(props) : {};
 
         // ── JSON output ───────────────────────────────────────────────────
         if (params.outputFormat === 'json') {
@@ -146,6 +169,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
               payload['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${textRead.status}).`;
             }
           }
+          if (params.includeAccessInfo) payload['accessInfo'] = access;
           if (params.includeRaw) {
             payload['raw'] = {
               disciplines: props['ccm:taxonid'] ?? [],
@@ -167,7 +191,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         // would open a second record with its own nodeId and `Lizenz:` line.
         const lines: string[] = [];
         lines.push(`## ${formatted.title || params.nodeId}`);
-        lines.push(`nodeId: ${params.nodeId}`);
+        // Through the shared rule, not by hand: this is the tool a reference id
+        // from a collection listing is most likely handed to, and the sentence
+        // that says so must read the same here as in a search result.
+        lines.push(nodeIdLine(params.nodeId, formatted.originalId));
         if (formatted.description) {
           const d = formatted.description;
           lines.push(`Beschreibung: ${d.slice(0, DESCRIPTION_PREVIEW_CAP)}${d.length > DESCRIPTION_PREVIEW_CAP ? '…' : ''}`);
@@ -182,6 +209,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         if (formatted.userRoles.length) lines.push(`Zielgruppe: ${formatted.userRoles.join(', ')}`);
         if (formatted.learningResourceTypes.length) lines.push(`Ressourcentyp: ${formatted.learningResourceTypes.join(', ')}`);
         if (formatted.license) lines.push(`Lizenz: ${formatted.license}`);
+        // Beside the licence, not appended at the end: "may I use this, and can
+        // my pupils open it" is one question, and OER status is a statement
+        // about the licence itself.
+        lines.push(...accessInfoLines(access));
         if (formatted.publisher) lines.push(`Anbieter: ${formatted.publisher}`);
         if (formatted.url) lines.push(`URL: ${formatted.url}`);
         if (formatted.previewUrl) lines.push(`Vorschaubild: ${formatted.previewUrl}`);
@@ -190,7 +221,19 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         // Hand-built format, so `renderToText`'s registry lines do not arrive on
         // their own — same lines, same caps, from the one function that owns
         // them.
-        if (formatted.skillRegistry) lines.push(...registrySummaryLines(formatted.skillRegistry));
+        //
+        // `skillContext` cannot be served from here: the node carries the cached
+        // SUMMARY, and a named context needs the editors' prose, which only a
+        // live read has. It therefore goes through `subjectRegistryText` like
+        // every other single-collection answer, and replaces these lines rather
+        // than joining them — two catalogues for one collection, one narrowed
+        // and one not, is a contradiction a reader has to resolve.
+        const skillContext = String(params.skillContext ?? '').trim();
+        const contextual = skillContext && formatted.nodeType === 'collection'
+          ? await subjectRegistryText(params.nodeId, skillContext)
+          : '';
+        if (contextual) lines.push(...contextual.split('\n'));
+        else if (formatted.skillRegistry) lines.push(...registrySummaryLines(formatted.skillRegistry));
         lines.push(`Typ: ${formatted.nodeType === 'collection' ? 'Sammlung' : 'Inhalt'}`);
 
         if (params.includeRaw) {
@@ -254,6 +297,8 @@ Optionally enrich each entry (like get_node_details, but for the whole batch):
   full text is the SLOW read, so it is fetched for at most the first ${TEXT_ENRICH_MAX} nodes;
   the rest are named in \`textContentSkipped\`. Ask for fewer ids, or use get_wlo_content_text.
 - includeParents: adds \`parents\` (the collections each node belongs to) per node
+- includeAccessInfo: adds \`accessInfo\` (login? cost? advertising? WCAG/BITV? OER status?)
+  per node — no extra request, and only what the record actually carries
 
 Failed lookups (deleted node, network error) are returned in the \`failed\` array, not as
 overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
@@ -266,6 +311,11 @@ overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
       ),
       includeParents: z.boolean().optional().default(false).describe(
         'Also fetch the parent collections each node belongs to'
+      ),
+      includeAccessInfo: z.boolean().optional().default(false).describe(
+        'Also report access conditions (login, cost, advertising), accessibility conformance '
+        + 'and OER status per node. '
+        + 'Costs no extra request.'
       ),
     },
     { readOnlyHint: true },
@@ -285,6 +335,10 @@ overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
           const node = metas[i];
           if (node) {
             results[id] = { ...formatNode(node) };
+            // Here rather than in the enrichment block below: those cost an
+            // upstream call each, this is a projection of properties already in
+            // hand (`getNodeMetadata` reads `-all-`).
+            if (params.includeAccessInfo) results[id]['accessInfo'] = accessInfo(node.properties ?? {});
             resolvedIds.push(id);
             loaded.set(id, node);
           } else {

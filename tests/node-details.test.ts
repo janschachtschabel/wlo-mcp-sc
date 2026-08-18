@@ -327,3 +327,159 @@ test('get_nodes_details: without the flags, output is unchanged and no extra fet
     mock.restore();
   }
 });
+
+test('get_node_details: the detail view of a reference names the original', async () => {
+  // The likeliest place a reference id is pasted: a collection listing hands out
+  // nothing else, and this is the tool you call next to find out what it is.
+  //
+  // It builds its own `nodeId:` line rather than going through `renderToText`,
+  // so it was missed when the shared rule was introduced — the rendered text
+  // said nothing while `structuredContent` carried `originalId` all along.
+  const mock = installFetchMock((url) => {
+    const id = decodeURIComponent(url.match(/-home-\/([^/]+)\/metadata/)?.[1] ?? '');
+    return { json: { node: { ...makeNode(id, `Titel ${id}`), originalId: 'original-1' } } };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'ref-1' } });
+    assert.match(toolText(result), /nodeId: ref-1 \(Verkn(ü|ue)pfung; Original: original-1\)/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_node_details: a record that is not a reference keeps the plain nodeId line', async () => {
+  const mock = installNodeMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'n1' } });
+    const text = toolText(result);
+    assert.match(text, /nodeId: n1\n/);
+    assert.doesNotMatch(text, /Original:/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+/** A record carrying all three access fields, labelled the way the repository does. */
+const ACCESS_PROPS = {
+  'ccm:conditionsOfAccess': ['http://w3id.org/openeduhub/vocabs/conditionsOfAccess/no_login'],
+  'ccm:conditionsOfAccess_DISPLAYNAME': ['ohne Anmeldung'],
+  'ccm:price': ['http://w3id.org/openeduhub/vocabs/price/yes_for_additional'],
+  'ccm:price_DISPLAYNAME': ['zusätzliche Inhalte / Features per Kauf möglich'],
+  // Deliberately WITHOUT a `_DISPLAYNAME`, because that is the measured reality
+  // (2026-08-18): the metadata set declares the star scale for this field while
+  // the corpus stores `containsAdvertisement/yes|no`, so the repository sends no
+  // label. This is the only fixture entry that exercises `VOCAB_FALLBACK`
+  // through a tool rather than through the unit test.
+  'ccm:containsAdvertisement': ['http://w3id.org/openeduhub/vocabs/containsAdvertisement/yes'],
+  'ccm:accessibilitySummary': ['http://w3id.org/openeduhub/vocabs/accessibilitySummary/aa'],
+  'ccm:accessibilitySummary_DISPLAYNAME': ['AA (mittel)'],
+  'ccm:license_oer': ['http://w3id.org/openeduhub/vocabs/oer/0'],
+  'ccm:license_oer_DISPLAYNAME': ['alles OER'],
+};
+
+function installAccessMock() {
+  return installFetchMock((url) => {
+    const id = decodeURIComponent(url.match(/-home-\/([^/]+)\/metadata/)?.[1] ?? '');
+    return { json: { node: makeNode(id, `Titel ${id}`, ACCESS_PROPS) } };
+  });
+}
+
+test('get_node_details: includeAccessInfo adds all five fields', async () => {
+  const mock = installAccessMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_node_details',
+      arguments: { nodeId: 'n1', includeAccessInfo: true },
+    });
+    const text = toolText(result);
+    assert.match(text, /Zugang: ohne Anmeldung/);
+    assert.match(text, /Kosten: zusätzliche Inhalte \/ Features per Kauf möglich/);
+    // From the local table, not from the repository — the fixture sends no
+    // `_DISPLAYNAME` for this field.
+    assert.match(text, /Werbung: Ja/);
+    assert.match(text, /Barrierefreiheit: AA \(mittel\)/);
+    assert.match(text, /OER-Status: alles OER/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_node_details: without the flag the answer carries none of it', async () => {
+  // The assurance the plan asks for: an existing caller's output does not grow.
+  // The properties are in the response either way — `readNodeMetadata` reads
+  // `-all-` — so nothing but the flag keeps them out.
+  const mock = installAccessMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'n1' } });
+    const text = toolText(result);
+    for (const label of ['Zugang:', 'Kosten:', 'Werbung:', 'Barrierefreiheit:', 'OER-Status:']) {
+      assert.ok(!text.includes(label), `"${label}" darf ohne includeAccessInfo nicht erscheinen`);
+    }
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_node_details: the JSON format carries the same five values', async () => {
+  const mock = installAccessMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_node_details',
+      arguments: { nodeId: 'n1', includeAccessInfo: true, outputFormat: 'json' },
+    });
+    const payload = JSON.parse(toolText(result));
+    assert.deepEqual(payload.accessInfo, {
+      conditionsOfAccess: 'ohne Anmeldung',
+      price: 'zusätzliche Inhalte / Features per Kauf möglich',
+      advertising: 'Ja',
+      accessibility: ['AA (mittel)'],
+      oerStatus: 'alles OER',
+    });
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_nodes_details: includeAccessInfo enriches every node of the batch', async () => {
+  const mock = installAccessMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_nodes_details',
+      arguments: { nodeIds: ['n1', 'n2'], includeAccessInfo: true },
+    });
+    const payload = JSON.parse(toolText(result));
+    assert.equal(payload.results.n1.accessInfo.conditionsOfAccess, 'ohne Anmeldung');
+    assert.equal(payload.results.n2.accessInfo.oerStatus, 'alles OER');
+    assert.equal(payload.results.n1.accessInfo.accessibility[0], 'AA (mittel)');
+    assert.equal(payload.results.n1.accessInfo.price, 'zusätzliche Inhalte / Features per Kauf möglich');
+    // The batch tool loads through `getNodeMetadata`, not `readNodeMetadata`:
+    // a projection that dropped this field would leave the unit test green.
+    assert.equal(payload.results.n2.accessInfo.advertising, 'Ja');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_nodes_details: without the flag no node carries accessInfo', async () => {
+  const mock = installAccessMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_nodes_details', arguments: { nodeIds: ['n1'] } });
+    assert.equal(JSON.parse(toolText(result)).results.n1.accessInfo, undefined);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

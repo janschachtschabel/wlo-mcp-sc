@@ -76,3 +76,56 @@ test('an unknown fence kind is ignored', () => {
 test('markdown without blocks yields nothing', () => {
   assert.deepEqual(parseSkillReferences('# Nur Text\n\nEin [Link](https://example.org).'), []);
 });
+
+test('every block reports the offset of its opening fence', () => {
+  // The offset is what lets `skill-registry.ts` decide which section — and
+  // therefore which context — a block sits in. Without it the two parsers have
+  // no common coordinate and the assignment would need a second block parser.
+  const md = `# Stunde planen\n\nZuerst das Material:\n\n${MATERIAL}\n\nDann der Folge-Skill:\n\n${SKILL}\n\nFertig.`;
+  const refs = parseSkillReferences(md);
+
+  assert.equal(refs.length, 2);
+  assert.ok(refs[0]!.offset < refs[1]!.offset, 'offsets rise with document order');
+  for (const ref of refs) {
+    assert.ok(md.startsWith(':::', ref.offset),
+      `offset ${ref.offset} must point at the opening fence, found ${JSON.stringify(md.slice(ref.offset, ref.offset + 3))}`);
+  }
+  assert.equal(refs[0]!.offset, md.indexOf(MATERIAL));
+  assert.equal(refs[1]!.offset, md.indexOf(SKILL));
+});
+
+test('a title keeps the characters the author escaped, not the backslashes', () => {
+  // Measured against the real Optik registry 2026-08-18: the editor writes
+  // `Skill\_Qualitätscheck\_Sachrichtigkeit` because `_so_` would be italic.
+  // The escapes reached the output, and the cheap tier has no record title to
+  // override them — so this is what a collection hit actually showed.
+  const md = '::: ki-skill\n[Skill\\_Qualität\\_Check](https://repo/components/render/'
+    + '431893a7-d63d-4cf9-9893-a7d63dfcf9bb)\n:::';
+  const [ref] = parseSkillReferences(md);
+  assert.equal(ref!.title, 'Skill_Qualität_Check');
+});
+
+test('emphasis is unwrapped BEFORE escapes are resolved', () => {
+  // Order decides correctness here. Unescape first and `\*kein Stern\*` becomes
+  // `*kein Stern*`, which the emphasis pass then strips — removing the very
+  // asterisks the author marked as text.
+  const md = '::: ki-skill\n[\\*kein Stern\\*](https://repo/components/render/'
+    + '431893a7-d63d-4cf9-9893-a7d63dfcf9bb)\n:::';
+  const [ref] = parseSkillReferences(md);
+  assert.equal(ref!.title, '*kein Stern*');
+});
+
+test('a bold title survives both passes', () => {
+  const md = '::: wlo-material\n[**Bruch\\_rechnen**](https://extern.example)\n:::';
+  const [ref] = parseSkillReferences(md);
+  assert.equal(ref!.title, 'Bruch_rechnen');
+});
+
+test('a backslash that escapes nothing stays put', () => {
+  // CommonMark: a backslash is literal unless it precedes ASCII punctuation.
+  const md = '::: ki-skill\n[C:\\pfad und 50\\% davon](https://repo/components/render/'
+    + '431893a7-d63d-4cf9-9893-a7d63dfcf9bb)\n:::';
+  const [ref] = parseSkillReferences(md);
+  assert.equal(ref!.title, 'C:\\pfad und 50% davon',
+    'the backslash before "p" is text; the one before "%" is an escape');
+});

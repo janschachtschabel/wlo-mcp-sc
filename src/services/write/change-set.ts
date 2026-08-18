@@ -33,6 +33,7 @@ export interface FieldChange {
 }
 
 export interface ChangeSet {
+  /** The node that will be written. Not necessarily the one the caller named. */
   nodeId: string;
   kind: ChangeKind;
   changes: FieldChange[];
@@ -40,6 +41,17 @@ export interface ChangeSet {
   destructive: boolean;
   /** Title of the affected node at planning time, for the deletion preview. */
   title: string;
+  /**
+   * The id the caller named, when it is NOT the one being written: they named a
+   * collection reference and the write was redirected to the original
+   * (`resolveWriteTarget`).
+   *
+   * It is carried in the change set rather than handled inside the write call
+   * because the token binds to this object. A redirection decided after the
+   * preview would move the write to a record the user never saw named — the
+   * same hole as sending a different field with an approved token.
+   */
+  redirectedFrom?: string;
   /**
    * A mutation that changes no field but still needs confirming — submitting a
    * record for review, adding it to a collection. One German sentence, rendered
@@ -83,7 +95,7 @@ export function buildChangeSet(
   kind: ChangeKind,
   before: Record<string, string[]>,
   desired: Record<string, string[]>,
-  opts: { destructive?: boolean; action?: string } = {},
+  opts: { destructive?: boolean; action?: string; redirectedFrom?: string } = {},
 ): ChangeSet {
   const changes: FieldChange[] = [];
 
@@ -109,6 +121,7 @@ export function buildChangeSet(
     destructive: opts.destructive === true,
     title: before['cclom:title']?.[0] ?? before['cm:name']?.[0] ?? '',
     ...(opts.action ? { action: opts.action } : {}),
+    ...(opts.redirectedFrom ? { redirectedFrom: opts.redirectedFrom } : {}),
   };
 }
 
@@ -163,6 +176,22 @@ function renderValues(values: string[] | null): string {
  */
 export function renderChangeSet(cs: ChangeSet): string {
   const lines: string[] = [];
+
+  // First, ahead of the action and every field: WHICH record is edited outranks
+  // what changes in it. A reader who stops after one line must not have missed
+  // that the id they passed is not the id that changes. Both ids are flattened
+  // like every other foreign value here — one of them came from the caller.
+  //
+  // What it does NOT say is that the reference will show the new value. It
+  // usually will, by inheritance — but a reference that was overridden once
+  // keeps its own value for good (measured, F2), and this preview has not read
+  // it. An unverified promise is the one thing a confirmation must not contain.
+  if (cs.redirectedFrom) {
+    lines.push(
+      `Achtung: „${flattenText(cs.redirectedFrom)}“ ist eine Verknüpfung in einer Sammlung, `
+        + `kein eigener Datensatz. Geändert wird das Original: ${flattenText(cs.nodeId)}.`,
+    );
+  }
 
   // Flattened, not capped. The action is a whole sentence built from parts that
   // were sanitized individually (a title via `recordTitle`, a suggestion id via

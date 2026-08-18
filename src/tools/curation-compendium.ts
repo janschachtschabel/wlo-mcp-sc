@@ -17,7 +17,12 @@ import { z } from 'zod';
 
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
-import { updateNodeMetadata, deleteProperty } from '../services/write/nodes.js';
+import {
+  updateNodeMetadata,
+  deleteProperty,
+  readWriteBaseline,
+  type WriteTarget,
+} from '../services/write/nodes.js';
 import { verifyWrite } from '../services/write/verify.js';
 import { validateField } from '../services/write/fields.js';
 import { getNodeMetadata, readNodeMetadata } from '../wlo-node.js';
@@ -53,7 +58,7 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
       confirmToken: z.string().optional()
         .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -69,24 +74,36 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
         if (!node) {
           return errorText(`Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
         }
-        const before = node.properties ?? {};
+        // A collection can itself be filed into another collection, so the id
+        // reaching this tool can be a reference like any other. When it is not —
+        // the ordinary case — this resolves to the id as given and reads nothing
+        // extra, which is why it is applied rather than reasoned about.
+        //
+        // `before` must come from the node that will be WRITTEN: an overridden
+        // reference shows its own text, and diffing against that would compare
+        // one record while changing another.
+        const baseline = await readWriteBaseline(node, nodeId);
+        if (!baseline.ok) return errorText(baseline.reason);
+        const { target, before } = baseline;
         const title = sanitizeText(before['cm:title']?.[0] ?? before['cclom:title']?.[0] ?? nodeId);
 
-        if (remove) return await handleRemoval(nodeId, title, before, params);
+        if (remove) return await handleRemoval(target, title, before, params);
 
         const validated = validateField(PROPERTY, text as string);
         if (!validated.ok) return errorText(validated.reason);
 
-        const cs = buildChangeSet(nodeId, 'compendium', before, { [PROPERTY]: validated.values });
+        const cs = buildChangeSet(target.targetId, 'compendium', before, { [PROPERTY]: validated.values }, {
+          ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
+        });
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
         if (!token) return previewReply(cs, 'Zum Übernehmen bitte bestätigen.');
 
         const refusal = confirmOrExplain(token, cs);
         if (refusal) return refusal;
 
-        const { statuses } = await updateNodeMetadata(nodeId, desiredFromChangeSet(cs), { commit: false });
+        const { statuses } = await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), { commit: false });
         try {
-          return reportOutcome(cs, statuses, await verifyWrite(nodeId, cs));
+          return reportOutcome(cs, statuses, await verifyWrite(cs));
         } catch (err) {
           return unverifiedReply(err);
         }
@@ -105,7 +122,7 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
  * confirmation token binds to.
  */
 async function handleRemoval(
-  nodeId: string,
+  target: WriteTarget,
   title: string,
   before: Record<string, string[]>,
   params: Record<string, unknown>,
@@ -114,8 +131,12 @@ async function handleRemoval(
     return errorText(`Die Sammlung „${title}“ hat keinen Kompendialtext, der entfernt werden könnte.`);
   }
 
-  const cs = buildChangeSet(nodeId, 'compendium', before, {}, {
-    action: `Entfernt den Kompendialtext von „${title}“ (${nodeId}). Die Sammlung selbst bleibt mit allen Inhalten bestehen.`,
+  // The id in the sentence is the one that will be changed, not the one that was
+  // typed — the redirection line above it names both.
+  const cs = buildChangeSet(target.targetId, 'compendium', before, {}, {
+    action: `Entfernt den Kompendialtext von „${title}“ (${target.targetId}). `
+      + 'Die Sammlung selbst bleibt mit allen Inhalten bestehen.',
+    ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
   });
 
   const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
@@ -124,13 +145,13 @@ async function handleRemoval(
   const refusal = confirmOrExplain(token, cs);
   if (refusal) return refusal;
 
-  const failure = await deleteProperty(nodeId, PROPERTY);
+  const failure = await deleteProperty(cs.nodeId, PROPERTY);
   if (failure) return errorText(`Der Kompendialtext konnte nicht entfernt werden: ${failure}`);
 
   // The status is read, not inferred from a null node: `getNodeMetadata` folds
   // every non-OK response into null, and "we could not look" would otherwise be
   // indistinguishable from "the property is gone" — and reported as success.
-  const { node: after, status } = await readNodeMetadata(nodeId);
+  const { node: after, status } = await readNodeMetadata(cs.nodeId);
   if (!after) {
     return errorText(
       `Das Entfernen wurde abgeschickt, ließ sich danach aber nicht überprüfen ` +

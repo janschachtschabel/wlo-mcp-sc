@@ -124,6 +124,32 @@ test('no description exceeds the length a host will truncate', async () => {
     `over ${MAX_DESCRIPTION} characters — truncation removes the guidance at the end`);
 });
 
+/**
+ * ── What a collection id actually names (2026-08-17) ────────────────────────
+ *
+ * A collection listing hands out REFERENCE ids and nothing else, so that is the
+ * id a caller passes on. Two measurements make the difference matter, and they
+ * point in opposite directions: a metadata write aimed at a reference is stored
+ * on the REFERENCE and never reaches the record (F1/F2), while a deletion aimed
+ * at one removes only the reference and leaves the record alone (F10).
+ */
+
+test('wlo_delete_content does not promise a destruction a reference id will not cause', async () => {
+  const text = await descriptionOf('wlo_delete_content');
+  // It said, flatly, that the tool "zerstört das Material für alle Sammlungen,
+  // in denen es vorkommt". True of a record id, false of a reference id — and
+  // the reference is the id a collection listing gives you.
+  assert.doesNotMatch(text, /zerstört das Material für alle Sammlungen/,
+    'die unbedingte Zusage ist über eine Verknüpfungs-id falsch');
+  assert.match(text, /Verknüpfung/, 'der Fall wird benannt');
+});
+
+test('wlo_update_content says a write follows the reference to the record', async () => {
+  const text = await descriptionOf('wlo_update_content');
+  assert.match(text, /Verknüpfung/, 'eine Sammlungs-id ist eine Verknüpfung');
+  assert.match(text, /Original/, 'und geschrieben wird am Original');
+});
+
 test('the server instructions answer to the repository’s other names', async () => {
   // "Leg das bei WirLernenOnline an", "trag das in edu-sharing ein" — the same
   // request, and only one of those names appeared anywhere in the surface. The

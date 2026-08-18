@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { searchWithLicense } from '../src/services/license-search.js';
 import type { SearchCriterion, SearchResponse } from '../src/wlo-api.js';
-import { FACET_LIMIT } from '../src/wlo-api.js';
+import { FACET_BUCKET_MAX, FACET_LIMIT } from '../src/wlo-api.js';
 import { installFetchMock } from './fetchMock.js';
 
 /**
@@ -286,27 +286,41 @@ test('every key gets the full window — splitting it would starve the exactness
   for (const c of calls) assert.equal(c.size, 50);
 });
 
+/** `length` buckets, the first of which is a licence the OER bundle selects. */
+const buckets = (length: number) =>
+  Array.from({ length }, (_, i) => ({ value: i === 0 ? 'CC_BY' : `OTHER_${i}`, count: 1 }));
+
 test('a facet answer that may be truncated is not trusted as a total', async () => {
-  // `ngsearch` asks for at most FACET_LIMIT buckets. Staging holds 16 distinct
-  // licence keys over the whole index, so the aggregation is complete there —
-  // but a full bucket list means we cannot PROVE it, and a silently truncated
-  // sum would understate the corpus while looking authoritative. Falling back to
-  // the upstream number is the honest answer.
-  facetBuckets = Array.from({ length: FACET_LIMIT }, (_, i) => ({
-    value: i === 0 ? 'CC_BY' : `OTHER_${i}`,
-    count: 1,
-  }));
+  // A response carrying the most buckets the server will return cannot be proven
+  // complete, and a silently truncated sum would understate the corpus while
+  // looking authoritative. Falling back to the upstream number is the honest
+  // answer.
+  facetBuckets = buckets(FACET_BUCKET_MAX);
   const { run } = recorder(7);
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
   assert.equal(res.pagination.total, 28, 'the summed fallback, not the possibly-partial 1');
 });
 
-test('one bucket short of the limit is a complete answer and is used', async () => {
-  facetBuckets = Array.from({ length: FACET_LIMIT - 1 }, (_, i) => ({
-    value: i === 0 ? 'CC_BY' : `OTHER_${i}`,
-    count: 1,
-  }));
+test('one bucket short of the maximum is a complete answer and is used', async () => {
+  facetBuckets = buckets(FACET_BUCKET_MAX - 1);
   const { run } = recorder(7);
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
   assert.equal(res.pagination.total, 1);
+});
+
+test('more buckets than were ASKED for is normal, and the answer is still used', async () => {
+  // Measured 2026-08-17: `facetLimit` is not a cap. The server answers with up to
+  // FIVE times the requested limit (ccm:taxonid: 1→5, 2→10, 10→50, 50→250,
+  // 80→376 = every distinct value there is). So a list longer than FACET_LIMIT is
+  // the normal case, not evidence of truncation — and staging really does hold 23
+  // distinct licence keys corpus-wide against a requested limit of 20.
+  //
+  // Treating that as "possibly truncated" discarded a correct exact count and
+  // fell back to the family total, which this module documents as overstating by
+  // 98–164 %. The old threshold was the requested limit, so this was live.
+  assert.ok(FACET_BUCKET_MAX > FACET_LIMIT, 'a response may exceed the requested limit');
+  facetBuckets = buckets(23);
+  const { run } = recorder(7);
+  const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
+  assert.equal(res.pagination.total, 1, 'the exact count, not the 28 the families sum to');
 });
