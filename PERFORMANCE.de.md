@@ -98,6 +98,7 @@ Gewinn (Exakt-Treffer von #3 → #1; z.B. „Klimawandel“/„Mittelalter“ r�
 | Collections-Baumlauf | level1 ≤100 · level2 ≤25 · level3 ≤15 | |
 | `minScore` | max(5, Terme×3) | Quality-Floor im Reranking |
 | Properties/Node | ~24 (statt ~59) | O2 |
+| `WLO_COMPENDIUM_SECTION_MAX` | **2000** | Zeichen je Hauptabschnitt eines Kompendiumstextes, der ohne `query` ausgeliefert wird — O11 |
 
 ## Was nach dem Ranking ausgeliefert wird
 `enhancedSearch`: ≤5 Varianten × `POOL_SIZE` Kandidaten → RRF-Merge +
@@ -265,6 +266,42 @@ kosten fünf gleichzeitige Aufrufe pro Aufruf genauso viel wie ein einzelner
 (Faktor 0,96), zehn gleichzeitige 1,65× — weit entfernt vom Faktor 10, den
 Serialisierung bedeuten würde. Was bei zehn bremst, ist edu-sharing, nicht
 dieser Server.
+
+## O11 — Kompendiumstext beantwortet eine Frage, statt ganz zu kommen  *(umgesetzt 2026-08-18)*
+
+**Problem.** `get_compendium_text` lieferte die redaktionelle Prosa einer Sammlung
+ungekürzt. Gemessen über die 11 Sammlungen auf Staging, die einen solchen Text
+führen: Median 9 473 Zeichen, p90 16 411, **max 65 250**. Wer nach einem Lehrplan
+fragte, bekam alles und bezahlte alles.
+
+**Änderung.** Jede Antwort beginnt mit dem Inhaltsverzeichnis der Überschriften.
+Ohne `query` folgt der ganze Text mit je Hauptabschnitt gedeckelten Abschnitten,
+mit `query` nur die passenden Passagen, gewichtet über BM25
+(`src/text-bm25.ts`) und jede unter ihrem Überschriftenpfad.
+
+| Aufruf auf dem längsten Text (65 250 Zeichen) | ausgeliefert | ms |
+|---|---|---|
+| ohne `query` (vor dieser Änderung) | 65 250 | — |
+| ohne `query` | **20 802** | 739–1 121 |
+| `query: "Lehrplan Thüringen Regelschule"` | **4 964** | 588–601 |
+| `query: "Brechung an der Linse"` | 8 725 | 572–833 |
+| `query` ohne Treffer (nur Inhaltsverzeichnis) | 2 083 | 466–526 |
+
+**Kostet upstream nichts.** Die Auswahl ist lokal: derselbe eine Metadaten-Abruf
+holt den Text, das Ranking ist reine Rechenzeit — der absolute Worst Case,
+25 Sammlungen × längster Text × 7 Suchwörter, gemessen **91 ms**.
+
+Drei Bauarten hat die Messung ausgeschlossen, und jede sah zuerst naheliegend
+aus: „je H1 kappen" hätte jedes Dokument als Ganzes gekappt (10 von 10 Texten
+tragen ihren Titel in einer einzelnen H1); ein roher Absatz ist die falsche
+BM25-Einheit (329 von 972 echten Absätzen sind kürzer als 40 Zeichen, und die
+Längennormalisierung hebt eine nackte Tabellenzeile über die Prosa, die sie
+erklärt — deshalb werden Absätze erst auf 200 Zeichen aufgesammelt); und ein
+ganzer Abschnitt ist zu grob (größter Eigentext: 16 317 Zeichen).
+
+**Bewusst unangetastet:** `GET /api/compendium` und das `includeCompendium`-Bündeln
+in `search_wlo_content` liefern weiterhin den Volltext — sie rufen
+`getCompendiumTexts` direkt auf, und den hat diese Änderung nicht angefasst.
 
 ## Offenes Optimierungspotenzial
 

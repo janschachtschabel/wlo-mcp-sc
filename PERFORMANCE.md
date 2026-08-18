@@ -97,6 +97,7 @@ cannot lose anything relevant. Loss check over 6 queries:
 | Collections tree walk | level1 ≤100 · level2 ≤25 · level3 ≤15 | |
 | `minScore` | max(5, terms×3) | quality floor in reranking |
 | Properties/node | ~24 (instead of ~59) | O2 |
+| `WLO_COMPENDIUM_SECTION_MAX` | **2000** | characters per main section of a compendium text delivered without a `query` — O11 |
 
 ## What gets delivered after ranking
 `enhancedSearch`: ≤5 variants × `POOL_SIZE` candidates → RRF merge +
@@ -256,6 +257,42 @@ Every other tool was already at or below ~1.2 s and was left alone.
 simultaneous tool calls cost the same per call as a single one (factor 0.96) and
 ten cost 1.65× — far from the factor 10 that serialization would produce. What
 slows down at ten is edu-sharing, not this server.
+
+## O11 — Compendium answers a question instead of arriving whole  *(implemented 2026-08-18)*
+
+**Problem.** `get_compendium_text` returned the untruncated editorial prose of a
+collection. Measured over the 11 collections on staging that carry such a text:
+median 9 473 characters, p90 16 411, **max 65 250**. A model asking about one
+curriculum received the whole thing and paid for all of it.
+
+**Change.** Every answer opens with the outline of the document's headings.
+Without a `query` the whole text follows, each main section capped on its own;
+with a `query` only the passages that answer it, ranked by BM25
+(`src/text-bm25.ts`) and each labelled with its heading path.
+
+| call on the largest text (65 250 chars) | delivered | ms |
+|---|---|---|
+| without `query` (before this change) | 65 250 | — |
+| without `query` | **20 802** | 739–1 121 |
+| `query: "Lehrplan Thüringen Regelschule"` | **4 964** | 588–601 |
+| `query: "Brechung an der Linse"` | 8 725 | 572–833 |
+| `query` with no match (outline only) | 2 083 | 466–526 |
+
+**Costs nothing upstream.** The selection is local: the same single metadata read
+fetches the text, and the ranking is CPU only — the absolute worst case, 25
+collections × the largest text × 7 query terms, measured **91 ms**.
+
+Three shapes the measurement ruled out, each of which looked obvious first:
+capping "per H1" would have capped each document as a whole (10 of 10 texts put
+their title in a single H1); a raw paragraph is the wrong BM25 unit (329 of 972
+real paragraphs are under 40 characters, and length normalisation puts a bare
+table row above the prose explaining it, so paragraphs are accumulated to 200
+characters first); and a whole section is too coarse (largest own-body section:
+16 317 characters).
+
+**Deliberately untouched:** `GET /api/compendium` and the `includeCompendium`
+bundling inside `search_wlo_content` still deliver the full text — they call
+`getCompendiumTexts` directly, which this change did not alter.
 
 ## Open optimization potential
 

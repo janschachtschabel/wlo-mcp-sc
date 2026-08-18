@@ -193,6 +193,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_TEXT_EXTRACTION_URL` | *(keiner — nicht gesetzt = aus)* | alle | Basis-URL des Text-Extraktionsdienstes, auf den `get_wlo_content_text` bei extern verlinktem Material (`ccm:wwwurl`) zurückfällt, dessen Text das Repository nicht gespeichert hat. Jede Instanz betreibt üblicherweise einen eigenen, deshalb gibt es **keinen Default**: nicht gesetzt (oder leer) schaltet den externen Weg ab und loggt den Grund, dann bleibt `/textContent` des Repositories die einzige Quelle. Ein Wert, der nicht als Basis taugt (kein Schema, kein http(s), oder mit Query/Fragment), schaltet ihn ebenfalls ab und warnt, damit ein Tippfehler keine Material-URLs an einen nicht gewählten Host schickt. Auf den Extraktionsdienst *deines* Repositories zeigen lassen — ein Default auf den Staging-Dienst hat Produktions-Material-URLs in eine andere Umgebung geschickt. |
 | `WLO_TEXT_TIMEOUT_MS` | `25000` | alle | Timeout (ms) für Volltext-Abrufe — sowohl `/textContent` als auch den Extraktionsdienst. Bewusst größer als `WLO_FETCH_TIMEOUT_MS`: `/textContent` wurde mit 4,6 s Median und 9,2 s Maximum gemessen. Volltext ist der eine Aufruf, der länger dauern darf als alles andere. |
 | `WLO_TOPIC_POOL` | `10` | alle | Fächerbreite für die Anreicherung von Themenseiten-Kandidaten (parallel abgesetzte Metadaten-Abrufe). Höher = weniger sequenzielle Wellen bei mehr gleichzeitiger Upstream-Last. |
+| `WLO_COMPENDIUM_SECTION_MAX` | `2000` | alle | Zeichen, die **ein Hauptabschnitt** eines Kompendiumstextes beitragen darf, wenn `get_compendium_text` ohne `query` aufgerufen wird. Jeder Abschnitt erscheint weiterhin — jeder wird für sich gekappt, keiner verschwindet hinter einem anderen —, und das Inhaltsverzeichnis ist immer vollständig; mit `query` gilt der Deckel stattdessen je Passage. Was ein Hauptabschnitt ist, wird am Dokument abgelesen (die flachste Überschriftenebene, die mehr als einmal vorkommt), denn alle zehn Texte auf Staging mit Überschriften tragen ihren Titel in einer einzelnen H1: ein Deckel „je H1“ hätte jedes Dokument als Ganzes gekappt. Beim Standardwert ändert sich genau eine der elf Sammlungen mit Kompendiumstext (65 250 → 20 802 ausgelieferte Zeichen), die anderen zehn kommen unverändert — der Deckel ist für den Ausreißer. Eine Betreiber-Einstellung und kein Aufrufparameter: er existiert, damit eine Antwort nicht endlos wird, und wer ihn hochsetzen kann, hat keinen. `/api/compendium` und `search_wlo_content?includeCompendium` sind nicht betroffen und liefern weiterhin den Volltext. |
 | `PORT` | `3000` | HTTP-Modus | Port für den eigenständigen HTTP-Server. |
 | `MCP_SSE` | `false` | HTTP-Modus | Bei wahrem Wert (`1`/`true`/`yes`) wird `POST /mcp` als echter Server-Sent-Events-Stream ausgeliefert (vom ChatGPT-Entwicklermodus benötigt). Standard sind Einzel-JSON-Antworten (maximale Client-Kompatibilität). Hinter einem Reverse-Proxy **muss** das Buffering für die `/mcp`-Location deaktiviert sein — siehe [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Das Docker-Image setzt dies standardmäßig auf `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | alle | MIME-Type der inline-Apps-SDK-Widget-Ressourcen. Standard ist der MCP-Apps-Standard (portabel). Auf `text/html+skybridge` setzen, falls eine Legacy-ChatGPT-Runtime die Widgets mit dem Standardwert nicht rendert. |
@@ -1137,6 +1138,7 @@ wlo-mcp-server/
 │   ├── services/             # business logic reused by tools + REST + widgets
 │   │   ├── search.ts         #   searchAll (combined search + opt-in enrichments)
 │   │   ├── compendium.ts     #   getCompendiumTexts
+│   │   ├── compendium-view.ts #   Inhaltsverzeichnis, Abschnitts-Deckel, BM25-Passagenauswahl
 │   │   ├── publishers.ts     #   lookupPublishers (facet-based counts)
 │   │   ├── related.ts        #   getRelatedContent
 │   │   ├── stats.ts          #   getCollectionStats
@@ -1164,6 +1166,7 @@ wlo-mcp-server/
 │   ├── reranker.ts           # RRF-Merge + Quality-Scoring (pure)
 │   ├── query-expand.ts       # Query → gewichtete Backend-Varianten (Synonyme, Stoppwörter)
 │   ├── node-match.ts         # lokales Node-Matching (Text + Kriterien) für /children-Fallbacks
+│   ├── text-bm25.ts          # Okapi BM25 über einen kleinen In-Memory-Korpus (pure)
 │   ├── formatter.ts          # WloNode → FormattedNode → markdown / json
 │   ├── logger.ts             # minimal structured JSON logger (stderr only)
 │   ├── rate-limit.ts         # in-memory per-IP rate limiter + client-IP resolution

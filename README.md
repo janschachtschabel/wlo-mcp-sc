@@ -175,6 +175,7 @@ else has sensible defaults.
 | `WLO_TEXT_EXTRACTION_URL` | *(none — unset disables)* | all | Base URL of the text-extraction service `get_wlo_content_text` falls back to for externally linked material (`ccm:wwwurl`) whose text the repository has not stored. Each instance normally runs its own, so there is **no default**: unset (or empty) disables the external path and logs why, and the repository's own `/textContent` remains the only source. A value that cannot serve as a base (no scheme, not http(s), or carrying a query/fragment) disables it and warns too, so a typo cannot redirect material URLs to a host you did not choose. Point it at the extraction service belonging to *your* repository — a default pointing at the staging service used to send production material URLs into another environment. |
 | `WLO_TEXT_TIMEOUT_MS` | `25000` | all | Timeout (ms) for full-text reads — both `/textContent` and the extraction service. Deliberately larger than `WLO_FETCH_TIMEOUT_MS`: `/textContent` was measured at a 4.6 s median and a 9.2 s maximum. Full text is the one call allowed to take longer than everything else. |
 | `WLO_TOPIC_POOL` | `10` | all | Fan-out width for topic-page candidate enrichment (metadata reads issued in parallel). Higher = fewer sequential waves at more simultaneous upstream load. |
+| `WLO_COMPENDIUM_SECTION_MAX` | `2000` | all | Characters one **main section** of a compendium text may contribute when `get_compendium_text` is called without a `query`. Every section still appears — each is cut on its own, so nothing hides behind anything else — and the outline of headings is always complete; with a `query` it caps a single passage instead. What counts as a main section is read off the document (the shallowest heading level used more than once), because all ten texts on staging that carry headings put their title in a single H1: a cap "per H1" would have capped each document as a whole. At the default exactly one of the eleven collections carrying such a text changes (65 250 → 20 802 characters delivered) and the other ten come back untouched — it is there for the outlier. An operator setting and not a tool parameter: it exists so an answer cannot grow without bound, and a caller who can raise it has no cap. `/api/compendium` and `search_wlo_content?includeCompendium` are unaffected and still return the full text. |
 | `PORT` | `3000` | HTTP mode | Port for the standalone HTTP server. |
 | `MCP_SSE` | `false` | HTTP mode | When truthy (`1`/`true`/`yes`), serve `POST /mcp` as a real Server-Sent-Events stream (required by ChatGPT developer mode). Default is single-JSON responses (maximal client compatibility). Behind a reverse proxy, buffering **must** be disabled for the `/mcp` location — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). The Docker image defaults this to `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | all | MIME type for the inlined Apps-SDK widget resources. Default is the MCP-Apps standard (portable). Set to `text/html+skybridge` if a legacy ChatGPT runtime does not render the widgets with the standard value. |
@@ -1085,6 +1086,7 @@ wlo-mcp-server/
 │   ├── services/             # business logic reused by tools + REST + widgets
 │   │   ├── search.ts         #   searchAll (combined search + opt-in enrichments)
 │   │   ├── compendium.ts     #   getCompendiumTexts
+│   │   ├── compendium-view.ts #   outline, per-section cap, BM25 passage selection
 │   │   ├── publishers.ts     #   lookupPublishers (facet-based counts)
 │   │   ├── related.ts        #   getRelatedContent
 │   │   ├── stats.ts          #   getCollectionStats
@@ -1112,6 +1114,7 @@ wlo-mcp-server/
 │   ├── reranker.ts           # RRF merge + quality scoring (pure)
 │   ├── query-expand.ts       # query → weighted backend variants (synonyms, stopwords)
 │   ├── node-match.ts         # local node matching (text + criteria) for /children fallbacks
+│   ├── text-bm25.ts          # Okapi BM25 over a small in-memory corpus (pure)
 │   ├── formatter.ts          # WloNode → FormattedNode → markdown / json
 │   ├── logger.ts             # minimal structured JSON logger (stderr only)
 │   ├── rate-limit.ts         # in-memory per-IP rate limiter + client-IP resolution

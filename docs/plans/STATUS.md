@@ -7973,3 +7973,45 @@ Verzeichnis ausdrücklich verlangt.
 2 083 Zeichen.
 
 Nichts committet.
+
+### Doku-Durchgang + CI-Ursache ✅ 2026-08-18
+
+**Doku.** Der neue Parameter und die neue Einstellung stehen jetzt überall dort,
+wo jemand sie sucht, nicht nur im Werkzeugeintrag: `WLO_COMPENDIUM_SECTION_MAX`
+in den Konfigurationstabellen beider READMEs und in `docs/DEPLOYMENT.md`
+(vorher nur als Prosa erwähnt — die kanonischen Tabellen kannten sie nicht) ·
+`src/text-bm25.ts` und `src/services/compendium-view.ts` im Modulbaum beider
+READMEs · ein Erklärblock in `docs/TOOLS.md` nach dem Muster des
+Kontexte-Abschnitts (zwei Formen, Beispiele, was die Antwort über sich selbst
+sagt) · die Zeile in `docs/INTEGRATION.md` · und **O11** in `PERFORMANCE.md`
+und `PERFORMANCE.de.md` mit der Messtabelle, denn das ist der Ort, an dem dieses
+Projekt Token- und Latenzänderungen führt.
+
+**Die GitHub-Pipeline scheiterte an einem Test — und es war keine Codefrage.**
+`not ok 271 - no document states a tool count the server contradicts`, mit einem
+nackten `ENOENT ... open '.../CLAUDE.md'`. Lokal grün, weil die Datei hier liegt;
+im Repository liegt sie nicht, sie wurde nie hochgeladen (nicht gitignored).
+`tests/docs-claims.test.ts` führt sie in `COUNTED_DOCS`, weil sie Toolzahlen
+nennt.
+
+Gefunden wurde das durch Ausschluss und dann durch Nachbau, nicht durch Raten:
+Node 20 lokal (die CI-Version) lief 2092/2092 durch, also lag es nicht an der
+Laufzeit; `src/` und `tests/` sind zwischen Repository und Arbeitskopie
+byte-identisch, also lag es nicht am Code. Erst ein Klon des öffentlichen
+Repositories mit anschließendem Suitelauf zeigte den Test — und mit
+hineinkopierter `CLAUDE.md` lief derselbe Klon 2092/2092.
+
+**Behoben ist nur die Diagnostizierbarkeit**, denn die Ursache ist ein Upload:
+`read()` in `docs-claims.test.ts` nennt jetzt die Datei und sagt, dass sie ins
+Repository gehört. Es bleibt ein harter Fehlschlag — ein Dokument, das still
+übersprungen wird, ist eine Prüfung, die aufgehört hat zu laufen und weiter grün
+meldet.
+
+**Offen und beim Nutzer:** `CLAUDE.md` mit hochladen (oder sie aus `COUNTED_DOCS`
+streichen, falls sie bewusst nicht ins Repository soll — die Fehlermeldung nennt
+beide Wege).
+
+**Tore:** `npm test` → **2092 pass, 0 fail** (auch unter Node 20) · `tsc` → 0 ·
+`lint` → 0.
+
+Nichts committet.

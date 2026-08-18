@@ -25,7 +25,32 @@ import { connectedClient } from './fetchMock.js';
 import { registerSkillTools } from '../src/tools/skills.js';
 
 const root = new URL('../', import.meta.url);
-const read = (name: string) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
+
+/**
+ * Read a document this suite makes claims about.
+ *
+ * A missing one is a HARD failure and stays one — a document listed here and
+ * silently skipped is a check that has stopped running while still reporting
+ * green. What changed on 2026-08-18 is only the message: `CLAUDE.md` had never
+ * been uploaded to the repository, so CI failed with a bare
+ * `ENOENT ... open '/home/runner/work/.../CLAUDE.md'` under a test named "no
+ * document states a tool count the server contradicts". Nothing in that pointed
+ * at the actual problem, and locally every file was present, so reproducing it
+ * took cloning the repository and running the suite against it. The file name
+ * and the reason belong in the failure.
+ */
+const read = (name: string): string => {
+  try {
+    return readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    throw new Error(
+      `${name} is missing from the repository. This suite checks the claims that document makes `
+      + '(tool counts, tool names, parameters), so it must be checked in — not skipped. '
+      + 'If it genuinely does not belong in the repository, remove it from the list that names it.',
+    );
+  }
+};
 
 /** Curation tool names as the source actually registers them. */
 function curationToolNames(): string[] {

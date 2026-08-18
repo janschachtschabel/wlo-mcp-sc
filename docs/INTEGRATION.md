@@ -71,7 +71,7 @@ immer anonym.
 | Werkzeug | Zweck |
 |---|---|
 | `get_wlo_content_text` | Der **eigentliche Text** eines Materials (auch aus PDF/DOCX/PPTX) |
-| `get_compendium_text` | Der redaktionelle Kompendialtext einer Sammlung |
+| `get_compendium_text` | Der redaktionelle Kompendialtext einer Sammlung — immer mit Inhaltsverzeichnis; mit `query` nur die passenden Absätze statt bis zu 65 000 Zeichen |
 | `get_wikipedia_summary` | Wikipedia-Anriss oder Volltext (Ergänzung, kein OER) |
 | `get_url_text` ⚠️ | Text hinter einer **beliebigen** Web-Adresse. Als **unsicher** deklariert, im Docker-Deployment ab Werk aus |
 

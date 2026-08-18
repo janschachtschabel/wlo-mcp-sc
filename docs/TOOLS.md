@@ -211,6 +211,48 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `get_compendium_text` | Redaktioneller Kompendiumstext einer Sammlung — immer mit Inhaltsverzeichnis, mit `query` nur die passenden Absätze (BM25) | *„Gib mir den ganzen Kompendiumstext dieser Sammlung“*, *„Was sagt der Kompendiumstext zum Lehrplan Thüringen?“* |
 | `get_wikipedia_summary` | Wikipedia: Anriss, oder mit `fullText` der ganze Artikeltext (Ergänzung, kein OER) | *„Gib mir den Wikipedia-Artikel zu Zellatmung“* |
 
+#### Kompendiumstext: Inhaltsverzeichnis immer, Absätze auf Wunsch
+
+Ein Kompendiumstext ist redaktionelle Prosa zu einer Sammlung und kann sehr lang
+werden — der längste auf Staging hat **65 250 Zeichen**. Deshalb antwortet
+`get_compendium_text` in zwei Formen, und beide beginnen mit dem
+**Inhaltsverzeichnis** der Überschriften des Dokuments:
+
+| Aufruf | Antwort |
+|---|---|
+| ohne `query` | Inhaltsverzeichnis + der ganze Text, **jeder Hauptabschnitt für sich gekappt** |
+| mit `query` | Inhaltsverzeichnis + nur die Absätze, die dazu passen, jeder unter seinem Überschriftenpfad |
+
+```
+get_compendium_text(nodeId: "9e7a…")
+get_compendium_text(nodeId: "9e7a…", query: "Lehrplan Thüringen Regelschule")
+```
+
+Das Inhaltsverzeichnis geht **immer** mit, auch bei einer gezielten Frage: wer nur
+Ausschnitte sieht, weiß sonst nicht, was er nicht gesehen hat — und kann die
+zweite, genauere Frage nicht stellen.
+
+`query` ist ein Suchtext, keine Frage: Stichwörter wie „Lehrplan Thüringen
+Regelschule" wirken besser als ein ganzer Satz. Gewichtet wird mit **BM25**;
+Groß-/Kleinschreibung ist egal, deutsche Komposita treffen („Brechung" findet
+„Lichtbrechung"), und Füllwörter zählen nicht mit.
+
+> **Was die Antwort über sich selbst sagt.** Suchwörter, die im Text **gar nicht**
+> vorkommen, werden benannt: „Lehrplan Thüringen Regelschule" auf der Sammlung
+> Optik trifft nur über *Lehrplan* und liefert Lehrpläne aus Rheinland-Pfalz und
+> Sachsen — ohne den Satz *„Nicht gefunden: thüringen, regelschule"* läse sich das
+> wie eine Antwort auf die gestellte Frage. Und ein Treffer ohne Ergebnis ist
+> **kein Fehler**: dann kommt das Inhaltsverzeichnis mit dem Hinweis, dass nichts
+> passte — nie stillschweigend der Volltext, der eine andere Frage beantwortet.
+
+> Betreiber-Stellschraube: `WLO_COMPENDIUM_SECTION_MAX` (Standard 2000 Zeichen je
+> Hauptabschnitt). Was ein Hauptabschnitt ist, wird am Dokument abgelesen — die
+> flachste Überschriftenebene, die mehr als einmal vorkommt. Gemessen tragen
+> 10 von 10 Texten mit Überschriften ihren Titel in einer einzelnen H1 und ihre
+> 11–18 Inhaltsabschnitte in H2; ein Deckel „je H1“ hätte also jedes Dokument als
+> Ganzes gekappt. `GET /api/compendium` und `search_wlo_content` mit
+> `includeCompendium` liefern unabhängig davon weiterhin den Volltext.
+
 ### Vokabular & Anbieter
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
