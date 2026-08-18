@@ -596,10 +596,10 @@ const OUTLINED_MD = [
   ':::',
 ].join('\n');
 
-function outlinedCollectionMock(markdown = OUTLINED_MD) {
+function outlinedCollectionMock(markdown = OUTLINED_MD, collection = 'coll-1') {
   return installFetchMock((url): MockResult => {
     if (url.includes('/eduservlet/download')) return { text: markdown };
-    if (url.includes('/coll-1/children')) {
+    if (url.includes(`/${collection}/children`)) {
       return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
     }
     return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
@@ -771,16 +771,284 @@ test('subjectRegistryText: a name that cannot land on a flat registry still says
   } finally { mock.restore(); }
 });
 
-test('subjectRegistryText: "all" costs no live lookup — the cache already answers it', async () => {
+test('subjectRegistryText: "all" still triggers no live REGISTRY lookup', async () => {
   // The live path exists because the cache holds the SUMMARY and not the
-  // editors' prose. `all` needs no prose, so paying 2 upstream calls (~1.0-1.4 s)
-  // for it is the cost this whole package exists to avoid.
+  // editors' prose. `all` needs no prose, so re-reading the document for it is
+  // the cost this whole package exists to avoid.
+  //
+  // Since 2026-08-18 the overview DOES pay for the first few descriptions (the
+  // user's decision), so this no longer asserts "no calls at all" — what it
+  // still guards is that `all` does not fall down the document path.
   const { mock } = toolMock();
   try {
     await warm();
-    const before = mock.calls.length;
+    const before = mock.calls.filter(c => /children|download/.test(c.url)).length;
     const text = await subjectRegistryText('coll-1', 'all');
-    assert.equal(mock.calls.length, before, 'the cached catalogue answers it');
+    const after = mock.calls.filter(c => /children|download/.test(c.url)).length;
+    assert.equal(after, before, 'the cached catalogue answers it — no re-read of the document');
     assert.match(text, /Für die angefragte Sammlung coll-1/);
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: the two instruction levels stay apart, each named', async () => {
+  // They used to be joined with a space, so a reader could not tell where the
+  // general part ended and the context's own began — the levels are written by
+  // the editors as separate sections and must not arrive as one paragraph.
+  const mock = outlinedCollectionMock();
+  try {
+    const text = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+    const general = text.split('\n').find(l => l.includes('Allgemeine Vorrede'));
+    const own = text.split('\n').find(l => l.includes('Zuerst den Bestand sichten'));
+
+    assert.ok(general && own, 'both instructions are there');
+    assert.notEqual(general, own, 'and they are NOT the same line');
+    assert.match(general, /^Allgemein/, 'the general one says it applies everywhere');
+    assert.match(own, /^Kontext/, 'the context one names its context');
+    assert.ok(own.includes('Redaktionsumgebung'), 'by name');
+    // The label belongs to the line it introduces: a general instruction that
+    // arrived under the context label would assert editorial intent nobody wrote.
+    assert.ok(!general.includes('Zuerst den Bestand sichten'));
+    assert.ok(!own.includes('Allgemeine Vorrede'));
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a named context also carries what each skill is FOR', async () => {
+  // The overview is title+nodeId only and costs no metadata call — that is the
+  // cheap tier's contract. A NAMED context is already a live read of one
+  // collection, so it can afford one head per skill it will actually show.
+  // Keywords stay out by decision: they are the longest field and the
+  // description answers "is this the one I want".
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/eduservlet/download')) return { text: OUTLINED_MD };
+    if (url.includes('/coll-1/children')) {
+      return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    const meta = /-home-\/([^/]+)\/metadata/.exec(url);
+    if (meta) {
+      return { json: { node: makeNode(meta[1], 'Titel ' + meta[1], {
+        'cclom:general_description': ['Wofuer dieser Skill da ist.'],
+        'cclom:general_keyword': ['ein-schlagwort', 'noch-eins'],
+      }) } };
+    }
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+  try {
+    const text = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+    assert.match(text, /Wofuer dieser Skill da ist\./, 'the description of a shown skill');
+    assert.ok(!text.includes('ein-schlagwort'), 'keywords deliberately stay out');
+
+    const meta = mock.calls.filter(c => c.url.includes('/metadata')).length;
+    assert.ok(meta > 0 && meta <= 3, `one head per SHOWN skill, not per declared one; got ${meta}`);
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: the overview is bounded to three metadata reads, never the whole registry', async () => {
+  // Written on 2026-08-17 as "costs no metadata call" and rewritten on 2026-08-18
+  // when the user asked for descriptions here too. The number changed; the thing
+  // it guards did not — that this surface cannot turn into one read per declared
+  // skill. `DESCRIBED_MAX` is the whole reason it is affordable.
+  const mock = outlinedCollectionMock();
+  try {
+    await subjectRegistryText('coll-1');
+    const reads = mock.calls.filter(c => c.url.includes('/metadata')).length;
+    assert.ok(reads <= 3, `at most three reads for one collection, got ${reads}`);
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: every description line is indented, including the first', async () => {
+  // `capText` trims, so leading spaces baked in BEFORE the cap are lost on the
+  // first line only — which made it look like a heading with a sub-list under
+  // it. Indentation carries meaning in this block: flush left reads as a
+  // statement about the record above.
+  const mock = installFetchMock((url) => {
+    if (url.includes('/eduservlet/download')) return { text: OUTLINED_MD };
+    if (url.includes('/coll-1/children')) {
+      return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    const meta = /-home-\/([^/]+)\/metadata/.exec(url);
+    if (meta) {
+      return { json: { node: makeNode(meta[1], 'Titel ' + meta[1], {
+        'cclom:general_description': ['Wofuer dieser Skill da ist.'],
+      }) } };
+    }
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+  try {
+    const text = await subjectRegistryText('coll-1', 'Redaktionsumgebung');
+    const body = text.split('\n').filter(l => l.includes('Wofuer dieser Skill da ist.'));
+    assert.ok(body.length >= 2, 'more than one description is shown');
+    for (const l of body) assert.match(l, /^ {2}\S/, `indented: ${JSON.stringify(l.slice(0, 30))}`);
+  } finally { mock.restore(); }
+});
+
+// ── Descriptions in the plain overview (2026-08-18, the user's decision) ─────
+
+/** Five skills, so the top-3 cap has something to cut. */
+const FIVE_MD = [
+  '# Katalog',
+  '',
+  'Vorrede.',
+  '',
+  ...[1, 2, 3, 4, 5].flatMap(n => [
+    '::: ki-skill',
+    `[Skill ${n}](https://repo.example/edu-sharing/components/render/0000000${n}-0000-4000-8000-000000000000)`,
+    ':::',
+    '',
+  ]),
+].join('\n');
+
+/** `unreadable` names a node id whose metadata read answers 404. */
+function fiveSkillMock(collection: string, unreadable = '') {
+  return installFetchMock((url) => {
+    if (url.includes('/eduservlet/download')) return { text: FIVE_MD };
+    if (url.includes(`/${collection}/children`)) {
+      return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    const meta = /-home-\/([^/]+)\/metadata/.exec(url);
+    if (meta) {
+      if (unreadable && meta[1] === unreadable) return { status: 404, json: {} };
+      return { json: { node: makeNode(meta[1], `Titel ${meta[1]}`, {
+        'cclom:general_description': [`Wozu ${meta[1]} da ist.`],
+      }) } };
+    }
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+}
+
+test('subjectRegistryText: the plain overview carries descriptions too', async () => {
+  const mock = fiveSkillMock('coll-desc');
+  try {
+    const text = await subjectRegistryText('coll-desc');
+    assert.match(text, /Wozu die Skills da sind/, 'the block is there without a context');
+    assert.match(text, /Wozu 00000001-0000-4000-8000-000000000000 da ist\./);
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: only the first three are described, and only three are fetched', async () => {
+  // The cap is what makes this affordable on a registry of any size: a hundred
+  // declared skills must not become a hundred metadata reads per answer.
+  const mock = fiveSkillMock('coll-cap');
+  try {
+    const text = await subjectRegistryText('coll-cap');
+    for (const n of [1, 2, 3]) {
+      assert.match(text, new RegExp(`Wozu 0000000${n}-`), `skill ${n} is described`);
+    }
+    for (const n of [4, 5]) {
+      assert.ok(!text.includes(`Wozu 0000000${n}-`), `skill ${n} keeps title and nodeId only`);
+      assert.ok(text.includes(`0000000${n}-0000-4000-8000-000000000000`), `but is still listed`);
+    }
+    assert.equal(mock.calls.filter(c => c.url.includes('/metadata')).length, 3,
+      'three reads, not five');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a skill we just learned is unreadable is not offered for loading', async () => {
+  // We paid for the head, so we KNOW. Still printing "laden mit get_skill" next
+  // to it promises a call that answers "nicht abrufbar" — the disclosure also
+  // says how far the check reached, because the cap means it did not cover all.
+  const mock = fiveSkillMock('coll-403', '00000002-0000-4000-8000-000000000000');
+  try {
+    const text = await subjectRegistryText('coll-403');
+    assert.match(text, /Nicht abrufbar/, 'the finding is stated');
+    assert.match(text, /00000002-0000-4000-8000-000000000000/, 'by nodeId');
+    assert.match(text, /ersten 3|erste 3/, 'and says how far the check reached');
+  } finally { mock.restore(); }
+});
+
+// ── Always the general instruction; a hit keeps the shape (2026-08-18) ──────
+
+test('subjectRegistryText: the overview carries the general instruction too', async () => {
+  // The catalogue is meant to hang on every collection/topic-page answer WITH
+  // the general skills AND the words that govern them. It comes from the cache,
+  // not from a live read: the document costs ~1.5 s and the overview is 0.3 s.
+  const mock = outlinedCollectionMock(OUTLINED_MD, 'coll-general');
+  try {
+    const text = await subjectRegistryText('coll-general');
+    assert.match(text, /Allgemeine Vorrede/, 'the general instruction is attached');
+    assert.match(text, /Allgemein \(gilt in jedem Kontext\)/, 'labelled as the general level');
+    assert.ok(!text.includes('Anweisung fuer das Browserplugin'),
+      'but no context prose — that is what naming a context is for');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a matched context keeps the always-valid skills apart', async () => {
+  // Previously the narrowed list was flat, so a reader could not tell which
+  // skill belonged to the context and which applies everywhere — while
+  // get_skill_registry made exactly that distinction.
+  const mock = outlinedCollectionMock(OUTLINED_MD, 'coll-apart');
+  try {
+    const text = await subjectRegistryText('coll-apart', 'Redaktionsumgebung');
+    const lines = text.split('\n');
+    const ctxAt = lines.findIndex(l => /Kontext: Redaktionsumgebung/.test(l));
+    const alwaysAt = lines.findIndex(l => /gilt immer/.test(l));
+    const skillAt = lines.findIndex(l => /Vertretungsstunde/.test(l));
+
+    assert.ok(ctxAt >= 0, 'the matched context is named as a group');
+    assert.ok(alwaysAt > ctxAt, 'the always-valid block follows it');
+    assert.ok(skillAt > ctxAt && skillAt < alwaysAt, 'its own skill sits under the context');
+    assert.match(lines[alwaysAt], /Lehrprofil|\(1\)/, 'and the always-block has its own count');
+  } finally { mock.restore(); }
+});
+
+test('subjectRegistryText: a matched context still names the other contexts', async () => {
+  // So a second, more precise get_skill_registry call is possible without first
+  // asking again without a context.
+  const mock = outlinedCollectionMock(OUTLINED_MD, 'coll-others');
+  try {
+    const text = await subjectRegistryText('coll-others', 'Redaktionsumgebung');
+    assert.match(text, /Weitere Kontexte/, 'the other names are offered');
+    assert.match(text, /Browserplugin/, 'by name');
+    assert.ok(!text.includes('Anweisung fuer das Browserplugin'),
+      'names only — their prose stays out');
+  } finally { mock.restore(); }
+});
+
+/** Two H3 with the SAME title under different H2 — the ambiguous shape. */
+const NESTED_MD = [
+  '# Katalog',
+  '',
+  'Vorrede.',
+  '',
+  '## Planung',
+  '',
+  '### Material',
+  '',
+  '::: ki-skill',
+  '[Planungsmaterial](https://repo.example/edu-sharing/components/render/00000011-0000-4000-8000-000000000000)',
+  ':::',
+  '',
+  '## Pruefung',
+  '',
+  '### Material',
+  '',
+  '::: ki-skill',
+  '[Pruefmaterial](https://repo.example/edu-sharing/components/render/00000012-0000-4000-8000-000000000000)',
+  ':::',
+].join('\n');
+
+test('subjectRegistryText: EVERY context name it offers is one that lands', async () => {
+  // The round trip is the point, and it has to cover every name — the first one
+  // offered here is an H2 whose bare heading is unique, so checking only that
+  // one passes while a sub-context's bare heading ("Material" under two
+  // parents) comes back AMBIGUOUS: a recommendation that cannot be followed.
+  const mock = outlinedCollectionMock(NESTED_MD, 'coll-nested');
+  try {
+    const first = await subjectRegistryText('coll-nested', 'Planung/Material');
+    const line = first.split('\n').find(l => l.startsWith('Weitere Kontexte'));
+    assert.ok(line, `a "Weitere Kontexte" line is there: ${JSON.stringify(first.slice(-300))}`);
+
+    const offered = line
+      .replace(/^Weitere Kontexte in dieser Registry: /, '')
+      .split(' \u2014 ')[0]
+      .split(' \u00b7 ')
+      .map(s => (s.lastIndexOf(' (') > 0 ? s.slice(0, s.lastIndexOf(' (')) : s).trim())
+      .filter(Boolean);
+    assert.ok(offered.length >= 2, `several names are offered, got ${JSON.stringify(offered)}`);
+
+    for (const name of offered) {
+      const back = await subjectRegistryText('coll-nested', name);
+      assert.ok(!back.includes('mehrdeutig'), `"${name}" must not come back as ambiguous`);
+      assert.ok(!back.includes('kommt in dieser Registry nicht vor'), `"${name}" must be known`);
+    }
   } finally { mock.restore(); }
 });

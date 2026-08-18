@@ -326,7 +326,7 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 11 | `get_nodes_details` | Bulk metadata for many `nodeIds` in parallel | json |
 | 12 | `get_topic_page_content` | The swimlane **content structure** of a topic page, render-ready | markdown / json |
 | 13 | `get_wikipedia_summary` | Wikipedia for a term: lead extract, or the FULL article text with `fullText` | markdown / json |
-| 14 | `get_compendium_text` | FULL editorial compendium text of one/more collections (bulk, ≤25) | markdown / json |
+| 14 | `get_compendium_text` | Editorial compendium text of one/more collections (bulk, ≤25) — outline always, `query` narrows to the matching passages | markdown / json |
 | 15 | `search_wlo_within_collection` | Filtered search over one collection's contents listing (incl. licence) | markdown / json |
 | 16 | `search` | ChatGPT knowledge convention: lightweight hits `{id,title,url}` across WLO. `WLO_SEARCH_OUTPUT_MODE=rich` adds the `search_wlo_all` buckets and widget beside `results` | json (+ text) |
 | 17 | `fetch` | ChatGPT knowledge convention: one node's full document `{id,title,text,url,metadata}`. `WLO_SEARCH_OUTPUT_MODE=rich` adds the complete record (preview image, download link) and the detail widget | json (+ text) |
@@ -475,10 +475,14 @@ alongside WLO material — not for OER material search.
 `readOnlyHint` + `openWorldHint`.
 
 **14. `get_compendium_text`** — `nodeId?` **or** `nodeIds?` (array, ≤25),
-`outputFormat?`. Returns the FULL, untruncated editorial compendium text of the
-given collection(s) — the authoritative prose overview — for when a collection
-result shows only the 500-char preview. `compendiumText` is `null` for nodes
-without the property.
+`query?`, `outputFormat?`. Returns the editorial compendium text of the given
+collection(s) — the authoritative prose overview — for when a collection result
+shows only the 500-char preview. Every answer opens with the **outline** of the
+document's headings. With `query` (e.g. `"Lehrplan Thüringen Regelschule"`) only
+the passages that answer it come back, ranked by BM25, and query words that
+occur nowhere in the text are named; without it the whole text, each main
+section capped at `WLO_COMPENDIUM_SECTION_MAX` characters (default 2000).
+`compendiumText` is `null` for nodes without the property.
 
 **15. `search_wlo_within_collection`** — `nodeId` (required, the collection),
 `query?`, the six vocab filters (incl. `license`), `maxResults?` (1–50,

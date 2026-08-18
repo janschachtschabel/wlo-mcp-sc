@@ -502,20 +502,83 @@ export function narrowRegistry(registry: SkillRegistry, wanted: string | undefin
 }
 
 /**
+ * Fill in the description of entries a caller has already narrowed down to what
+ * it will show. One metadata read per entry, bounded by the same pool the
+ * expensive tier uses.
+ *
+ * Not `loadSkillRegistry({resolveHeads: true})`, and the difference is the bill:
+ * that resolves EVERY declared skill (up to `REGISTRY_MAX`), while a narrowed
+ * collection answer shows one context's skills plus the always-valid ones. On a
+ * registry declaring a hundred, resolving first and narrowing after pays for
+ * ninety-odd records nobody will read.
+ *
+ * Keywords are deliberately not filled in (the user's decision, 2026-08-18):
+ * they are the longest field by far — measured at ~175 characters per skill
+ * against ~170 for the description — and the description is what answers "is
+ * this the skill I want".
+ *
+ * An entry whose record could not be read comes back under `unreadable` rather
+ * than silently among the rest. The caller paid for that head, so it KNOWS —
+ * and a catalogue that still says „laden mit get_skill“ beside it promises a
+ * call that will answer „nicht abrufbar“. It stays listed either way: the cheap
+ * tier lists it too, and dropping it would make the same collection answer
+ * shorter for having looked closer.
+ */
+export async function describeEntries(
+  entries: readonly RegistryEntry[],
+): Promise<{ described: RegistryEntry[]; unreadable: RegistryEntry[] }> {
+  // Spread rather than widening the parameter: `readonly` is the promise to the
+  // caller that its list is not touched, and `mapPool` takes a mutable one.
+  const heads = await mapPool([...entries], REGISTRY_POOL, e => getNodeMetadata(e.nodeId, SKILL_PROPS));
+  const described: RegistryEntry[] = [];
+  const unreadable: RegistryEntry[] = [];
+  entries.forEach((entry, i) => {
+    const node = heads[i];
+    if (!node) { unreadable.push(entry); return; }
+    const description = formatNode(node).description;
+    if (description) described.push({ ...entry, description });
+  });
+  return { described, unreadable };
+}
+
+/** One instruction and the level it governs. */
+export interface ContextInstruction {
+  /** `general` applies everywhere; `parent` is the H2 above an H3. */
+  scope: 'general' | 'parent' | 'context';
+  /** The heading it was written under — absent for `general`, which has none. */
+  title?: string;
+  text: string;
+}
+
+/**
  * The instructions that govern a matched context, in the order they apply:
  * the general part first, then the parent's, then the context's own.
+ *
+ * Each carries its SCOPE, and a caller that renders them must keep them apart.
+ * Joined into one paragraph — which is what this returned before 2026-08-18 —
+ * a reader cannot tell where the general part ends and the context's own
+ * begins, and the editors wrote them as separate sections precisely because
+ * they mean different things.
  *
  * Structured fields rather than the document slice — a caller that only wants
  * "what am I supposed to do here" has no use for the `:::` blocks and the
  * per-skill prose that sit in the same section.
  */
-export function contextInstructions(registry: SkillRegistry, resolution: ContextResolution): string[] {
+export function contextInstructions(
+  registry: SkillRegistry, resolution: ContextResolution,
+): ContextInstruction[] {
   if (resolution.kind !== 'found') return [];
-  return [
-    registry.general.instruction,
-    resolution.parent?.instruction,
-    resolution.context.instruction,
-  ].filter((s): s is string => Boolean(s));
+  const parts: ContextInstruction[] = [];
+  if (registry.general.instruction) {
+    parts.push({ scope: 'general', text: registry.general.instruction });
+  }
+  if (resolution.parent?.instruction) {
+    parts.push({ scope: 'parent', title: resolution.parent.title, text: resolution.parent.instruction });
+  }
+  if (resolution.context.instruction) {
+    parts.push({ scope: 'context', title: resolution.context.title, text: resolution.context.instruction });
+  }
+  return parts;
 }
 
 /**

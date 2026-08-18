@@ -497,7 +497,7 @@ function packNames(names: string[], width = 100): string[] {
  */
 export function registrySummaryLines(
   r: NonNullable<FormattedNode['skillRegistry']>,
-  opts: { entries?: boolean } = {},
+  opts: { entries?: boolean; described?: boolean; narrowed?: boolean } = {},
 ): string[] {
   const declared = r.truncated?.referenced ?? r.entries.length;
   const contexts = r.contexts ?? [];
@@ -531,6 +531,12 @@ export function registrySummaryLines(
   } else if (r.truncated) {
     reach = `hier die ersten ${r.truncated.listed}; die übrigen nennt nur das Registry-Dokument selbst `
       + '(get_skill_registry gibt es unverändert aus)';
+  } else if (opts.described) {
+    // The caller already put the descriptions AND the editors' instruction in
+    // this answer (the named-context path of `subjectRegistryText`). Offering
+    // them as what the tool adds sends a model back for what it is holding;
+    // what is genuinely still there is the keywords and the document itself.
+    reach = 'alle hier gelistet; Schlagworte und das Registry-Dokument mit get_skill_registry';
   } else {
     reach = 'alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry';
   }
@@ -540,7 +546,14 @@ export function registrySummaryLines(
     reach += '; die übrigen nennt nur das Registry-Dokument selbst';
   }
 
-  const outline = contexts.length ? ` in ${contexts.length} Kontexten` : '';
+  // Suppressed on a NARROWED answer: `contexts` then holds the one context that
+  // matched, so the number would be the view's while the sentence reads as a
+  // claim about the registry — and that answer names its context in its opening
+  // line anyway. The singular is spelled out because „in 1 Kontexten" is wrong
+  // German and a registry with exactly one context is ordinary.
+  const outline = opts.narrowed || !contexts.length
+    ? ''
+    : ` in ${contexts.length} ${contexts.length === 1 ? 'Kontext' : 'Kontexten'}`;
   const lines = [
     `Skill-Registry: ${r.title || '(ohne Titel)'} (nodeId: ${r.nodeId}) — `
     + `${declared} freigegebene Skills${outline}, ${reach}`,

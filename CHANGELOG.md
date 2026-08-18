@@ -9,6 +9,37 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Added — a compendium text answers a question instead of arriving whole (2026-08-18)
+
+`get_compendium_text` takes a `query`. With one it returns the passages that
+answer it, ranked by BM25 (`src/text-bm25.ts`), each under the heading path it
+came from; without one the whole text, every main section capped on its own.
+Either way the answer opens with the **outline** of the document's headings — a
+model handed excerpts otherwise cannot tell what it did not see, and so cannot
+ask the narrower second question.
+
+Measured against staging over the 11 collections that carry such a text. The
+largest is 65 250 characters: whole it now comes back as 20 802 (outline plus
+capped sections, `truncated: true`, `charCount` still the full 65 250), and
+`query: "Lehrplan Thüringen Regelschule"` as 4 964 — including the sentence
+naming what did NOT match. That sentence is the point: two of the three words
+occur nowhere in that text, and without it a page of Rheinland-Pfalz curricula
+reads as an answer to the question that was asked.
+
+Three shapes the measurement ruled out. Capping "per H1" would have capped each
+document as a whole — 10 of 10 texts put their title in a single H1 and their
+11–18 content sections in H2, so a main section is worked out from the document
+(the shallowest heading level used more than once). A raw paragraph is the wrong
+BM25 unit — 329 of 972 real paragraphs are under 40 characters, and length
+normalisation puts a bare table row above the prose that explains it, so
+paragraphs are accumulated to 200 characters first. And a whole section is too
+coarse: the largest own-body section holds 16 317 characters.
+
+New setting `WLO_COMPENDIUM_SECTION_MAX` (default 2000). An operator setting and
+not a tool parameter: it exists so an answer cannot grow without bound, and a
+caller who can raise it has no cap. At the default exactly one of the eleven
+texts changes; the other ten come back untouched.
+
 ### Added — a skill registry can group its skills by working situation (2026-08-18)
 
 A registry document now structures its catalogue with its own Markdown
@@ -111,6 +142,69 @@ keyword only the record had.
 `readWriteBaseline` now returns the target and its baseline together, and the
 extra read happens only when a redirection is in play. An unreadable record
 refuses rather than falling back to the reference.
+
+### Added — the catalogue now hangs on every collection answer, whole (2026-08-18)
+
+A collection or topic-page answer carries the approved skills, their first three
+descriptions, AND the editors' general instruction — the prose above the first
+H2, the words that govern the skills that apply always. It comes from the cache,
+not from a live read: measured, the warm overview is 286–393 ms while re-reading
+the document costs ~1.5 s. The instruction is stored on the cache ENTRY, never on
+`CachedRegistry`, which is the field a search-result node carries — a collection
+answer wants the prose, a list of fifty hits does not. Capped at 1200 characters
+per collection, which is a memory bound: the cache holds up to 2000 entries.
+
+Naming a `skillContext` narrows it the way `get_skill_registry` does, and now
+keeps the same shape: the matched context is its own group and the always-valid
+skills stand apart from it, instead of the flat list a reader could not take
+apart. The other contexts are named below it, so a second and more precise
+`get_skill_registry` call needs no round trip without a context first.
+
+Two sentences were wrong and are fixed: „in 1 Kontexten" (a registry with one
+context is ordinary), and the context count on a narrowed answer, which was the
+VIEW's number in a sentence that reads as a claim about the registry. A narrowed
+answer now claims no count — it names its context in its opening line.
+
+### Added — a collection answer says what each skill is FOR (2026-08-18)
+
+Every collection answer — with or without a `skillContext` — now carries the
+description of its first three skills under „Wozu die Skills da sind". Skills
+past the third keep title and nodeId, as before. Keywords stay out by decision:
+measured at ~175 characters per skill against ~170 for the description, and the
+description is what answers „is this the one I want“.
+
+**Three is a cap on the READS, not just on the output.** A registry may declare a
+hundred skills, and one metadata read each is the cost the cheap tier exists to
+avoid; `describeEntries` also runs AFTER any narrowing, so a targeted context
+pays for what it shows rather than for what the document declares. The catalogue
+that travels with SEARCH RESULTS is a different path — the cache, up to ten
+collections per request — and is unchanged and still free.
+
+A skill whose record cannot be read is now named as such („Nicht abrufbar
+(geprüft für die ersten 3)“) instead of being offered with „laden mit
+get_skill“. We paid for that head, so we know; the sentence names its own reach,
+because the cap means the check did not cover the rest.
+
+The descriptions render below the catalogue rather than inside it. The list is
+bounded to `REGISTRY_INLINE_MAX` lines, and a description line per skill would
+push a four-skill context into the short form that prints no nodeId — adding
+information must not cost the answer its usable half. The head line drops its
+„descriptions with get_skill_registry“ offer where the descriptions are already
+present, and names the keywords and the document instead.
+
+### Changed — a collection answer keeps the instruction levels apart (2026-08-18)
+
+`skillContext` on a collection tool delivers the editors' prose. A registry
+writes it on two levels — the general part above the first H2, and the context's
+own section — and they were joined with a space, so a reader could not tell
+where one ended and the other began. Each now gets its own line and a label
+(`Allgemein (gilt in jedem Kontext):` / `Kontext „Name“:` / `Übergeordneter
+Kontext „Name“:` for an H3's parent), which also makes them separable by a
+client rather than only by a human.
+
+`contextInstructions` returns `{scope, title, text}` per level instead of a flat
+list of strings. The cap over the whole block is unchanged, so a collection hit
+carries no more prose than before.
 
 ### Added — cost and advertising, and what a label actually depends on (2026-08-18)
 

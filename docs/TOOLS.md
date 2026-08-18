@@ -208,7 +208,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 ### Hintergrundtexte
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `get_compendium_text` | Vollständiger redaktioneller Kompendiumstext einer Sammlung | *„Gib mir den ganzen Kompendiumstext dieser Sammlung“* |
+| `get_compendium_text` | Redaktioneller Kompendiumstext einer Sammlung — immer mit Inhaltsverzeichnis, mit `query` nur die passenden Absätze (BM25) | *„Gib mir den ganzen Kompendiumstext dieser Sammlung“*, *„Was sagt der Kompendiumstext zum Lehrplan Thüringen?“* |
 | `get_wikipedia_summary` | Wikipedia: Anriss, oder mit `fullText` der ganze Artikeltext (Ergänzung, kein OER) | *„Gib mir den Wikipedia-Artikel zu Zellatmung“* |
 
 ### Vokabular & Anbieter
@@ -330,6 +330,23 @@ Tarif ohnehin liest (1 Kinderliste + 1 Download, unverändert). Nur ein
 weil der Cache die Zusammenfassung hält und nicht die Prosa der Redaktion —
 dafür entfällt der zweite Aufruf. `skillContext: "all"` verlangt keine Prosa und
 wird deshalb wie ein Aufruf ohne Kontext aus dem Cache beantwortet.
+
+> Seit 2026-08-18 trägt **jede** Sammlungs-Antwort — mit oder ohne
+> `skillContext` — die **Beschreibung** der ersten **drei** Skills („Wozu die
+> Skills da sind"). Ab dem vierten bleibt es bei Titel + nodeId.
+>
+> Die Drei ist eine Grenze für die **Abrufe**, nicht nur für die Ausgabe: eine
+> Registry darf hundert Skills deklarieren, und ein Metadaten-Abruf je Skill ist
+> genau der Preis, den der billige Tarif vermeidet. Bei einem benannten Kontext
+> läuft die Auflösung zudem NACH dem Verengen — bezahlt wird, was gezeigt wird.
+> Schlagworte bleiben draußen (längstes Feld, ~175 Zeichen je Skill gemessen);
+> die gibt es weiter nur mit `get_skill_registry`.
+>
+> Der Katalog, der mit **Suchtreffern** reist, ist ein anderer Weg (Cache, bis zu
+> zehn Sammlungen je Anfrage) und bleibt unverändert kostenlos.
+>
+> Ein Skill, dessen Datensatz nicht lesbar ist, wird als „Nicht abrufbar
+> (geprüft für die ersten 3)" benannt statt mit „laden mit get_skill" angeboten.
 
 In **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld
 `skillRegistry` am jeweiligen Knoten — dort trägt jeder Eintrag sein `context`

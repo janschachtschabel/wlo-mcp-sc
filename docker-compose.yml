@@ -189,6 +189,7 @@ services:
       WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"
       WLO_POOL_SIZE: "${WLO_POOL_SIZE:-}"
       WLO_TOPIC_POOL: "${WLO_TOPIC_POOL:-}"
+      WLO_COMPENDIUM_SECTION_MAX: "${WLO_COMPENDIUM_SECTION_MAX:-}"
 
       # ── 7 — widgets / ChatGPT submission (special case) ─────────────────────
       # WLO_WIDGET_DOMAIN must stay unset for Claude and every non-ChatGPT host —

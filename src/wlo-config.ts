@@ -436,6 +436,28 @@ export const WLO_TEXT_TIMEOUT_MS: number =
 export const WLO_TOPIC_POOL: number =
   resolvePositiveInt(process.env['WLO_TOPIC_POOL'], 10, 'WLO_TOPIC_POOL');
 
+/**
+ * How many characters one main section of a compendium text may contribute when
+ * the whole text is fetched (`get_compendium_text` without a `query`).
+ *
+ * A cap and not a page size: every section still appears, each cut on its own,
+ * so the outline stays complete and no section disappears behind another. What
+ * a main section IS depends on the document and is worked out in
+ * `services/compendium-view.ts` — measured, it is the H2 level, because all ten
+ * texts on staging that carry headings put their title in the single H1.
+ *
+ * Measured 2026-08-18 over the 11 collections on staging that carry such a
+ * text: at the default of 2000 exactly ONE of them changes (Optik, 65 250 →
+ * 18 744 characters, 6 of its 12 sections cut) and the other nine are returned
+ * untouched. The cap is there for the outlier, not for the normal case.
+ *
+ * Operator setting rather than a tool parameter: it exists so that an answer
+ * cannot grow without bound, and a caller who can raise it has no cap.
+ * Override via ``WLO_COMPENDIUM_SECTION_MAX``; default 2000.
+ */
+export const WLO_COMPENDIUM_SECTION_MAX: number =
+  resolvePositiveInt(process.env['WLO_COMPENDIUM_SECTION_MAX'], 2000, 'WLO_COMPENDIUM_SECTION_MAX');
+
 // ── Property filter (O2: request only fields that are actually used) ──────────
 //
 // edu-sharing accepts ``propertyFilter`` ONLY as a REPEATED query param

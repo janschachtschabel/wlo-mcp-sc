@@ -7708,3 +7708,268 @@ mitgenommen: `accessInfoLines` sprach von „the three lines“.
 gegen Staging unverändert korrekt (`Werbung: Ja` weiterhin aus der Tabelle).
 
 Nichts committet.
+
+## Anleitungsebenen getrennt + Optik live geprüft ✅ 2026-08-18
+
+**Live-Test des ausgelieferten Servers** (`wlo-mcp.87.106.195.152.nip.io`): 42
+Werkzeuge, anonym 200, Müll-Bearer 401, beide OAuth-Discovery-Dokumente, CORS-
+Ausnahme nur auf `/auth/ticket`, alle vier privaten Adressen von `get_url_text`
+abgelehnt — und `Kosten:`/`Werbung:` aus der Produktion, also ist der Stand von
+heute ausgeliefert.
+
+**Optik-Registry geprüft.** Struktur kommt exakt richtig an: H1 + Vorrede + zwei
+Blöcke → „Gilt immer", `## Browserplugin` ohne Skills → `Kontext (0)`,
+`## Redaktionsumgebung` → `Kontext (1)`. Verengung leckt nichts: `narrowRegistry`
+nimmt nur `context === ctx.path` plus die kontextfreien, und der wortgetreue
+Auszug nur den angefragten Abschnitt — durch drei bestehende Wächter gedeckt.
+**Die 28 Einträge von 2026-08-12 gibt es nicht mehr** (Redaktion hat das Dokument
+auf 985 Zeichen / 3 Blöcke umgebaut, Nutzerentscheidung); `CLAUDE.md` korrigiert.
+Ein Skill (`431893a7…`) antwortet **HTTP 403** — nicht öffentlich freigegeben,
+redaktionell zu beheben; deshalb sagt die Sammlungs-Zeile „3 freigegebene Skills"
+und `get_skill_registry` listet 2 plus einen unter „Nicht auflösbare Verweise".
+
+**Geändert:** die zwei Anleitungsebenen werden nicht mehr zu einem Absatz
+verkettet. `contextInstructions` liefert `{scope, title, text}`,
+`subjectRegistryText` rendert eine Zeile je Ebene mit Beschriftung. `flattenText`
+läuft dabei je TEIL — über den Block angewandt macht es die Trennung sofort
+wieder rückgängig, weil es jeden Whitespace-Lauf kollabiert.
+
+**Eigener Fehler beim Bauen, hier festgehalten:** ein Python-Schnitt
+(`b[:start]`) beim Reparieren eines Testliterals hat **11 Tests** am Dateiende
+von `tests/tools-registry-cache.test.ts` gelöscht. Aufgefallen ist es nur, weil
+die Gesamtzahl von 2040 auf 2030 fiel — die Suite war grün. Wiederhergestellt
+aus `C:/Users/jan/github/wlo-mcp-sc` (Stand 13:54, bis Zeile 622 zeichengleich).
+**Merksatz: eine grüne Suite ist kein Beleg dafür, dass die Tests noch da sind
+— nur die Anzahl ist es.**
+
+**Tore:** `npm test` → **2041 pass, 0 fail** · `tsc` → 0 · `lint` → 0 · lokal
+gegen die echte Optik-Sammlung geprüft (beide Ebenen getrennt und benannt).
+
+Nichts committet.
+
+## Beschreibungen am benannten Kontext ✅ 2026-08-18
+
+Nutzerwunsch: die Sammlungs-Oberfläche soll Beschreibung und Keywords mitgeben,
+„es werden nicht so viele je Sammlung". **Gemessen, bevor gebaut:** für Optik
+(3 Skills) sind es +3 Metadaten-Abrufe und +1 027 Zeichen — für dasselbe Dokument
+sechs Tage vorher (28 Skills) wären es +28 Abrufe und ~9 585 Zeichen gewesen, und
+`REGISTRY_MAX` erlaubt 100. Zwei Multiplikatoren kamen dazu: die Übersicht ohne
+Kontext bedient bis zu **10** Sammlungen je Anfrage aus dem Cache, und
+`REGISTRY_INLINE_MAX` (12 Zeilen) hätte einen Vier-Skill-Kontext in die Kurzform
+ohne nodeIds gekippt — mehr Information hätte die Antwort schlechter gemacht.
+
+**Gebaut wurde daher: Beschreibungen nur am benannten `skillContext`, keine
+Keywords** (Nutzerentscheidung; gemessen ~175 Zeichen je Skill gegen ~170 für die
+Beschreibung). `describeEntries` läuft **nach** dem Verengen — ein Abruf je
+gezeigtem Skill, nicht je deklariertem. Die Beschreibungen stehen unter der Liste,
+außerhalb des Zeilenbudgets. Die kostenlose Übersicht ist unberührt und durch
+einen eigenen Test gedeckt, der die Metadaten-Abrufe auf 0 zählt.
+
+Zwei Ungenauigkeiten, die erst der Live-Lauf zeigte und die beide von dieser
+Änderung kamen: die erste Beschreibungszeile verlor ihre Einrückung (`capText`
+trimmt — eingerückt wird jetzt NACH dem Kappen), und die Kopfzeile bot weiter
+„Beschreibungen mit get_skill_registry" an, obwohl sie danebenstanden. Dafür hat
+`registrySummaryLines` einen vierten `reach`-Fall (`opts.described`), der
+Schlagworte und das Dokument nennt.
+
+**Tore:** `npm test` → **2045 pass, 0 fail** · `tsc` → 0 · `lint` → 0.
+**Live gegen Optik:** ohne Kontext 2 Anfragen / **0** Metadaten / 914 Zeichen ·
+mit `"Redaktionsumgebung"` 5 Anfragen / 3 Metadaten / 2 097 Zeichen, alle drei
+Beschreibungen gleichmäßig eingerückt.
+
+**Offen (Betreiber/Redaktion):** `Skill_Qualitätscheck_Sachrichtigkeit`
+(`431893a7…`) ist nicht öffentlich freigegeben — mit Dienstkonto löst er auf, anonym
+403. Solange das so ist, sagt die Sammlungs-Zeile „3 freigegebene Skills" und
+`get_skill_registry` listet 2 plus einen unter „Nicht auflösbare Verweise".
+
+Nichts committet.
+
+### Nachtrag: Beschreibungen auch ohne Kontext, Deckel 3 ✅ 2026-08-18
+
+Nutzerentscheidung nach der Messung: die Beschreibungen sollen **auf beiden**
+Pfaden der Sammlungs-Oberfläche stehen, begrenzt auf die **ersten drei** Skills
+je Sammlung; ab dem vierten bleibt es bei Titel + nodeId.
+
+`DESCRIBED_MAX` = 3 ist damit ein Deckel auf die **Abrufe**, nicht nur auf die
+Ausgabe — das ist der Grund, warum es tragfähig ist: eine Registry darf 100
+Skills deklarieren. Gerendert wird an **einer** Stelle (`skillDescriptionLines`),
+weil beide Pfade sie brauchen und eine zweite Kopie still den Deckel verlöre. Der
+Katalog an SUCHTREFFERN (Cache, bis zu 10 Sammlungen je Anfrage) ist unberührt.
+
+**Mitbehoben:** ein Skill, dessen Kopf sich nicht lesen ließ, wird als „Nicht
+abrufbar (geprüft für die ersten 3)" benannt statt mit „laden mit get_skill"
+angeboten. Wir bezahlen den Abruf ohnehin, also wissen wir es — und der Satz
+nennt seine eigene Reichweite, weil der Deckel die übrigen ungeprüft lässt.
+
+**Zwei bestehende Zusicherungen umgeschrieben, nicht gelöscht.** Beide pinnten
+den alten Vertrag „0 Metadaten-Abrufe in der Übersicht", den diese Entscheidung
+aufhebt. Sie prüfen jetzt, was weiterhin gilt: `all` löst **kein** erneutes Lesen
+des Dokuments aus, und die Übersicht bleibt bei **höchstens drei** Abrufen —
+niemals einer je deklariertem Skill.
+
+**Tore:** `npm test` → **2048 pass, 0 fail** · `tsc` → 0 · `lint` → 0.
+**Live gegen Optik:** ohne Kontext 5 Anfragen / 3 Metadaten / 1 572 Zeichen ·
+mit `"Redaktionsumgebung"` 5 / 3 / 2 097 Zeichen, beide mit allen drei
+Beschreibungen.
+
+**Nicht live belegt:** die „Nicht abrufbar"-Zeile. Lokal läuft die Erhebung mit
+Dienstkonto, und damit ist der 403-Skill lesbar — der Fall ist durch einen Test
+gedeckt, nicht durch einen Lauf gegen echte Daten.
+
+Nichts committet.
+
+### Nachtrag 2: Katalog vollständig an jeder Sammlungs-Antwort ✅ 2026-08-18
+
+Zielbild des Nutzers: an den sammlungs- und themenseiten-relevanten Werkzeugen
+hängt **immer** der Katalog mit den allgemeinen Skills **und Anweisungen**; ein
+mitgegebener Kontext verengt auf das Relevante, wie `get_skill_registry`; und die
+übrigen Kontexte werden genannt, damit ein zweiter Aufruf genauer wird.
+
+**Gemessen, bevor gebaut:** warme Übersicht 286–393 ms gegen **1 851 ms** mit
+Dokument-Lesen. „Immer die Anweisung" durfte also nicht heißen „immer das
+Dokument lesen". Die allgemeine Anweisung ist 356 Zeichen (Optik) — klein genug
+für den Cache.
+
+**Gebaut:** `CacheEntry.generalInstruction`, **nicht** `CachedRegistry` — Letzteres
+IST das Feld, das ein Suchtreffer-Knoten trägt, und Prosa dort läge in jedem
+Treffer. Gedeckelt beim SPEICHERN (1200 Zeichen): der Cache hält bis zu 2000
+Einträge, ungedeckelt wäre die Eintragsgrenze keine Speichergrenze. Ein Treffer
+behält seinen eigenen Kontext in der Gliederung, wodurch Kontext-Skills und
+immer geltende getrennt erscheinen; darunter „Weitere Kontexte in dieser
+Registry: …".
+
+**Zwei falsche Sätze mitgefunden und korrigiert:** „in 1 Kontexten" (falscher
+Plural, betraf auch die Übersicht) und die Kontextzahl auf einer verengten
+Antwort — die war die der SICHT in einem Satz, der wie eine Aussage über die
+Registry liest. Verengt wird jetzt gar keine Zahl genannt.
+
+**Eigener Fehler, zum zweiten Mal in dieser Sitzung:** ein Bash-Heredoc hat einen
+Backslash geschluckt, `\b` wurde in Python zu einem **Backspace-Byte** und landete
+in `tests/formatter.test.ts`. Gefangen hat es der Wächter „no source file carries
+a raw control character" — nicht ich. **Konsequenz: Test- und Quelltexte mit
+Regexen gehen über eine Skriptdatei (Write), nicht über einen Heredoc.**
+
+**Tore:** `npm test` → **2052 pass, 0 fail** · `tsc` → 0 · `lint` → 0.
+**Live gegen Optik:** Übersicht 2 093 Zeichen mit Katalog + allgemeiner Anweisung ·
+`"Redaktionsumgebung"` 2 287 Zeichen mit getrennter Gruppierung, „Weitere
+Kontexte: Browserplugin (0)" und beiden Anweisungsebenen.
+
+Nichts committet.
+
+### Review-Runde ✅ 2026-08-18 — 4 Befunde, alle behoben
+
+**3 MINOR, 1 NIT**, alle in Code dieser Sitzung.
+
+**Der eine, der funktional zählt:** die neue Zeile „Weitere Kontexte" bot den
+BLANKEN Überschriftentext an (`c.title`), während `resolveContext` zuerst gegen
+den PFAD vergleicht und eine Überschrift, die sich unter zwei Eltern wiederholt,
+als `ambiguous` meldet. Bei einem Unterkontext ist `title` = „Material", `path` =
+„Planung/Material" — die Empfehlung war also ein Aufruf, der nicht greift. Jetzt
+`c.path`, wie der Kontext-Index es ohnehin druckt.
+
+**Der Test dazu war beim ersten Anlauf grün und trotzdem wertlos:** er prüfte nur
+den ERSTEN angebotenen Namen, und der ist eine H2 mit eindeutiger Überschrift. Er
+prüft jetzt JEDEN angebotenen Namen im Rundlauf. Mit `c.title` eingespielt:
+`"Material" must not come back as ambiguous`.
+
+**Drei Kommentar-/Doku-Befunde**, alle von den Änderungen desselben Tages falsch
+gemacht: ein überholter Block, der das Gegenteil des Codes begründete („die
+Gliederung wird fallen gelassen"); die Zusage, der Cache halte „nicht die Prosa"
+(er hält jetzt die allgemeine Anweisung, nur nicht die je Kontext); und „ein
+Katalog kostet nichts", während die Übersicht bis zu drei Metadaten-Abrufe zahlt.
+
+**Tore:** `npm test` → **2053 pass, 0 fail** · `tsc` → 0 · `lint` → 0.
+
+Nichts committet.
+
+---
+
+## Kompendiumstext: Inhaltsverzeichnis + gezielte Passagen (BM25) ✅ 2026-08-18
+
+Entwurf + Aufgaben: `docs/plans/2026-08-18-kompendium-bm25-design.md`.
+`get_compendium_text` nimmt einen `query`; jede Antwort beginnt mit dem
+Inhaltsverzeichnis.
+
+**Gemessen vor dem Bauen** (Staging, 158 Sammlungen, 11 mit Kompendiumstext).
+Drei Bauarten sind daran gescheitert, bevor sie geschrieben wurden: „je H1
+kappen" hätte jedes Dokument als Ganzes gekappt (10 von 10 tragen genau eine H1,
+die Inhalte liegen in H2); ein roher Absatz ist die falsche BM25-Einheit (329
+von 972 unter 40 Zeichen, die Längennormalisierung hebt Tabellenzeilen über die
+Prosa); und ein ganzer Abschnitt wäre zu grob (größter Eigentext 16 317 Zeichen).
+
+**Neu:** `src/text-bm25.ts` (rein) · `src/services/compendium-view.ts` (rein) ·
+`WLO_COMPENDIUM_SECTION_MAX`, Standard 2000, in `.env.example` und
+`docker-compose.yml`.
+
+**Ein Test hat eine Prämisse widerlegt.** Die Zusicherung „eine Überschrift mit
+`\r` darf keine Gliederungszeile fälschen" ging rot — nicht weil der Schutz
+fehlte, sondern weil der Fall nicht existiert: JavaScripts `.` schließt `\r`
+aus, die Zeile gilt gar nicht als Überschrift. Kommentar und Test sagen jetzt
+das Gemessene statt des Vermuteten; der `oneLine`-Aufruf bleibt, weil die Zusage
+dem Renderer gehört und nicht der Zeichenklasse des Parsers von heute.
+
+**Live gegen Optik (65 250 Zeichen), durch das Werkzeug:**
+
+| Aufruf | Antwort | ms |
+|---|---|---|
+| ohne `query` | 20 802 Zeichen, `truncated=true`, `charCount=65250` | 1 121 |
+| `"Lehrplan Thüringen Regelschule"` | 4 964 Zeichen, 8 Passagen, **nicht gefunden: thüringen, regelschule** | 588 |
+| `"Brechung an der Linse"` | 8 725 Zeichen, 8 Passagen, nichts unbeantwortet | 833 |
+| `"Quantenfeldtheorie Stringtheorie"` | 2 083 Zeichen (nur Inhaltsverzeichnis), **kein** `isError` | 466 |
+
+**Tore:** `npm test` → **2086 pass, 0 fail** · `tsc` → 0 · `lint` → 0.
+
+Nichts committet.
+
+### Review-Runde ✅ 2026-08-18 — 7 Befunde, alle behoben
+
+`/better-coding-review` über dasselbe Paket: 0 kritisch, **1 schwer**, 4 mittel,
+2 Kleinigkeiten.
+
+**Der schwere war eine gebrochene Symmetrie, die ich selbst eingebaut hatte.**
+`queryTerms` trennt nur an Leerraum, die Dokumentseite an `[\p{L}\p{N}]+` — ein
+Suchwort mit Bindestrich, Schrägstrich oder Satzzeichen konnte deshalb KEIN
+Token treffen. Gemessen am echten Optik-Text (nennt „Rheinland-Pfalz" siebenmal):
+`"Lehrplan Rheinland-Pfalz"` meldete `rheinland-pfalz` als **nicht gefunden**.
+Ebenso verlor `"Wellenoptik?"` sein Wort ans Fragezeichen — bei einem
+Chat-Werkzeug der Normalfall. Damit log genau die Zeile, die dieses Paket als
+Ehrlichkeits-Zusage führt. `termMatches` war bisher immer auf ein ganzes
+Textfeld angewandt, wo `includes` den Bindestrich mitnahm; erst das Tokenisieren
+der Dokumentseite hat das gebrochen. Behoben in `normalizedTerms`: die Anfrage
+läuft durch denselben Tokenizer, `queryTerms` behält die Stoppwort-Hoheit.
+Nach dem Fix: `nicht gefunden: []` für alle drei Proben.
+
+**Ein Test hat mich dabei korrigiert.** Meine Zusicherung „`Was sagt der Text zur
+Wellenoptik?` findet alles" ging rot — zu Recht: „was", „sagt", „text" fehlen dem
+kleinen Fixture wirklich. Die Zusicherung sagt jetzt, was gilt, und hält fest,
+warum die Liste so bleibt (das Werkzeug erbittet einen Suchtext, und zu
+entscheiden, welches Wort des Aufrufers „zählte", wäre Raten). Am echten
+65-kB-Text tritt das Rauschen nicht auf.
+
+**Die übrigen sechs:** doppelte Suchwörter zählten doppelt und standen zweimal in
+`unmatched` · `Bm25Result.matched` hatte keinen Leser und ist gestrichen · der
+Entwurf versprach Passagen „mit Punktzahl", die der Code nicht führt (Vertrag
+korrigiert, mit dem Grund: ein roher BM25-Wert ist zwischen Anfragen nicht
+vergleichbar) · Zahlendrift 18 725 gegen 18 744 in vier Dokumenten (18 725 war
+die Schätzung vor der Umsetzung, nie nachgemessen) · eine titellose Überschrift
+erzeugte ein leeres `- ` in der Gliederung und ein leeres `### ` über der Passage
+(jetzt durchsichtig, sie erbt den Pfad des benannten Abschnitts darüber) · die
+`outputFormat`-Beschreibung versprach ein `outline`, das ein Eintrag ohne
+Kompendiumstext nicht trägt.
+
+**Toolbeschreibungen geprüft** (die ausdrücklich gestellte Frage): angepasst,
+676 von 1024 Zeichen, nennt `query`, Beispiel und Inhaltsverzeichnis. Kein
+anderes Werkzeug nennt das Kompendium in seiner Beschreibung, also keine
+Querverweis-Drift; `includeCompendium` in `search_wlo_content` sagt weiter
+„vollständigen Kompendiumstext" und bleibt richtig, weil `getCompendiumTexts`
+unverändert ist.
+
+**Nicht geändert, deine Entscheidung:** das Inhaltsverzeichnis ist ungedeckelt,
+während der Körper gedeckelt ist (gemessen 16–61 Zeilen). Du hast das volle
+Verzeichnis ausdrücklich verlangt.
+
+**Tore:** `npm test` → **2092 pass, 0 fail** · `tsc` → 0 · `lint` → 0 ·
+`npm run build` → 0. Live gegen Optik unverändert: 20 802 / 4 964 / 8 725 /
+2 083 Zeichen.
+
+Nichts committet.

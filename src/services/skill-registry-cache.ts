@@ -36,6 +36,7 @@
 
 import type { WloNode } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
+import { capText } from '../text-cap.js';
 import { ngsearch } from '../wlo-search.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
@@ -101,7 +102,23 @@ export interface CacheEntry {
    * not count it, so the caller keeps its pointer line.
    */
   scanTruncated?: ScanTruncation;
+  /**
+   * The registry's general instruction — the prose above its first H2, capped.
+   *
+   * Held HERE and deliberately not on `CachedRegistry`: that type IS the field a
+   * result node carries, so putting prose there would put it in every search hit,
+   * which is the cost this cache exists to remove. A collection answer wants it;
+   * a list of fifty search results does not.
+   *
+   * Capped at storage time rather than at render time, because this map holds up
+   * to `CACHE_MAX_ENTRIES` entries and a curator can write a page: uncapped, the
+   * bound on the number of entries would stop being a bound on memory.
+   */
+  generalInstruction?: string;
 }
+
+/** Per-collection cap for the stored instruction — a memory bound, not a layout one. */
+const GENERAL_INSTRUCTION_MAX = 1200;
 
 /** The shape a result node carries — the field itself, not a copy of its declaration. */
 export type CachedRegistry = NonNullable<FormattedNode['skillRegistry']>;
@@ -194,10 +211,12 @@ function lookupOnce(collectionId: string): Promise<RegistryLookup> {
  */
 function entryFrom(result: RegistryLookup | null, checkedAt: number): CacheEntry | null {
   if (!result || result.reason === 'unreadable') return null;
+  const general = result.registry?.general.instruction;
   return {
     registry: result.registry ? toRegistrySummary(result.registry) : null,
     checkedAt,
     ...(result.scanTruncated ? { scanTruncated: result.scanTruncated } : {}),
+    ...(general ? { generalInstruction: capText(general, GENERAL_INSTRUCTION_MAX).text } : {}),
   };
 }
 
@@ -387,10 +406,16 @@ export function cachedRegistriesFor(ids: string[]): Map<string, CachedRegistry> 
  */
 export async function ensureRegistryFor(
   collectionId: string,
-): Promise<{ registry: CachedRegistry | null; answered: boolean }> {
+): Promise<{ registry: CachedRegistry | null; answered: boolean; generalInstruction?: string }> {
   if (!WLO_SKILL_CACHE || !collectionId) return { registry: null, answered: false };
   const known = entries.get(collectionId);
-  if (known) return { registry: known.registry, answered: !known.scanTruncated };
+  if (known) {
+    return {
+      registry: known.registry,
+      answered: !known.scanTruncated,
+      ...(known.generalInstruction ? { generalInstruction: known.generalInstruction } : {}),
+    };
+  }
 
   const result = await lookupOnce(collectionId).catch(() => null);
   const entry = entryFrom(result, Date.now());
@@ -402,7 +427,11 @@ export async function ensureRegistryFor(
     return { registry: null, answered: false };
   }
   remember(collectionId, entry);
-  return { registry: entry.registry, answered: !entry.scanTruncated };
+  return {
+    registry: entry.registry,
+    answered: !entry.scanTruncated,
+    ...(entry.generalInstruction ? { generalInstruction: entry.generalInstruction } : {}),
+  };
 }
 
 /** What one tick did. Logged in full — a background job nobody can see is a rumour. */

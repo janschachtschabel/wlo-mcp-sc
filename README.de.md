@@ -350,7 +350,7 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 11 | `get_nodes_details` | Metadaten im Bulk für viele `nodeIds` parallel | json |
 | 12 | `get_topic_page_content` | Die Swimlane-**Inhaltsstruktur** einer Themenseite, render-fertig | markdown / json |
 | 13 | `get_wikipedia_summary` | Wikipedia zu einem Begriff: Anriss — oder der GANZE Artikeltext mit `fullText` | markdown / json |
-| 14 | `get_compendium_text` | VOLLER redaktioneller Kompendiumstext einer/mehrerer Sammlungen (Bulk, ≤25) | markdown / json |
+| 14 | `get_compendium_text` | Redaktioneller Kompendiumstext einer/mehrerer Sammlungen (Bulk, ≤25) — Inhaltsverzeichnis immer, `query` verengt auf die passenden Absätze | markdown / json |
 | 15 | `search_wlo_within_collection` | Gefilterte Suche über die Inhaltsliste einer Sammlung (auch nach Lizenz) | markdown / json |
 | 16 | `search` | ChatGPT-Knowledge-Konvention: leichte Treffer `{id,title,url}` über WLO. Mit `WLO_SEARCH_OUTPUT_MODE=rich` zusätzlich die Töpfe und das Widget von `search_wlo_all` | json (+ Text) |
 | 17 | `fetch` | ChatGPT-Knowledge-Konvention: volles Dokument eines Knotens `{id,title,text,url,metadata}`. Mit `WLO_SEARCH_OUTPUT_MODE=rich` zusätzlich der vollständige Datensatz (Vorschaubild, Download-Link) und die Detailansicht | json (+ Text) |
@@ -490,9 +490,14 @@ Für enzyklopädischen Kontext neben
 WLO-Material — nicht für die OER-Materialsuche. `readOnlyHint` + `openWorldHint`.
 
 **14. `get_compendium_text`** — `nodeId?` **oder** `nodeIds?` (Array, ≤25),
-`outputFormat?`. Gibt den VOLLEN, ungekürzten redaktionellen Kompendiumstext der
+`query?`, `outputFormat?`. Gibt den redaktionellen Kompendiumstext der
 angegebenen Sammlung(en) zurück — die maßgebliche Prosa-Übersicht — für den Fall,
-dass ein Sammlungstreffer nur die 500-Zeichen-Vorschau zeigt. `compendiumText`
+dass ein Sammlungstreffer nur die 500-Zeichen-Vorschau zeigt. Jede Antwort
+beginnt mit dem **Inhaltsverzeichnis** der Überschriften. Mit `query` (z. B.
+`"Lehrplan Thüringen Regelschule"`) kommen nur die dazu passenden Absätze
+zurück (BM25-Ranking), und Suchwörter, die im Text nicht vorkommen, werden
+benannt; ohne `query` der ganze Text, je Hauptabschnitt auf
+`WLO_COMPENDIUM_SECTION_MAX` Zeichen gekappt (Standard 2000). `compendiumText`
 ist `null` für Knoten ohne die Eigenschaft.
 
 **15. `search_wlo_within_collection`** — `nodeId` (erforderlich, die Sammlung),

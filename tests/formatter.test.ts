@@ -766,3 +766,42 @@ test('the head-line tier stays one line and names no context', () => {
   assert.match(lines[0]!, /2 Kontexten/, 'the count may be named');
   assert.ok(!lines[0]!.includes('Planung'), 'the names may not');
 });
+
+test('registrySummaryLines: with descriptions already in the answer the head line stops offering them', () => {
+  // The collection surface fetches descriptions for a named context. Telling a
+  // model to call get_skill_registry "for descriptions" then sends it back for
+  // what it is already holding. What that tool still adds is the keywords and
+  // the document itself.
+  const registry = {
+    nodeId: 'reg-1', title: 'Katalog', entries: [{ nodeId: 'n1', title: 'Skill A' }],
+  };
+  const plain = registrySummaryLines(registry)[0];
+  const withDescriptions = registrySummaryLines(registry, { described: true })[0];
+
+  assert.match(plain, /Beschreibungen/, 'unchanged where the caller has none');
+  assert.ok(!withDescriptions.includes('Beschreibungen'),
+    'must not offer what the answer already carries');
+  assert.match(withDescriptions, /Schlagworte|Registry-Dokument/,
+    'and names what the tool genuinely still adds');
+  assert.match(withDescriptions, /alle hier gelistet/, 'the completeness claim is unchanged');
+});
+
+test('registrySummaryLines: the outline phrase is grammatical, and absent when narrowed', () => {
+  // "in 1 Kontexten" is wrong German, and on a NARROWED answer the number is the
+  // view's while the head line reads as a claim about the registry — the
+  // narrowed answer names its context in its opening line anyway.
+  const one = registrySummaryLines({
+    nodeId: 'r', title: 'K', entries: [{ nodeId: 'n1', title: 'A', context: 'Nur einer' }],
+    contexts: [{ path: 'Nur einer', skills: 1 }],
+  })[0];
+  assert.match(one, /in 1 Kontext\b/, 'singular');
+  assert.ok(!one.includes('1 Kontexten'), 'never the plural ending on one');
+
+  const narrowed = registrySummaryLines({
+    nodeId: 'r', title: 'K', entries: [{ nodeId: 'n1', title: 'A', context: 'Nur einer' }],
+    contexts: [{ path: 'Nur einer', skills: 1 }],
+  }, { narrowed: true })[0];
+  assert.ok(!/in \d+ Kontext/.test(narrowed),
+    'a narrowed answer claims no context count at all');
+});
+
