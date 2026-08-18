@@ -8035,3 +8035,37 @@ ausgegebenem `$?`.
 
 **Tore (ungefiltert, mit Exit-Code):** `npm test` → exit 0, **2092 pass, 0
 fail** · `npm run lint` → exit 0 · `tsc` → exit 0 · `npm run build` → exit 0.
+
+#### Nachtrag II: `CLAUDE.md` aus `COUNTED_DOCS` (2026-08-18, Nutzerentscheidung)
+
+Der dritte Pipeline-Lauf scheiterte wieder an demselben einen Test — der
+Lint-Fix war im Repository, also lief `npm test` erstmals wieder an und traf auf
+dieselbe fehlende Datei. `CLAUDE.md` stand in `COUNTED_DOCS`, war aber **noch
+nie** im Repository. Der Test verlangte damit eine Datei, die dort nicht
+hingehört.
+
+Entscheidung des Nutzers: aus der Liste streichen, statt 1521 Zeilen interner
+Messungen und Entwurfsbegründungen öffentlich zu machen. Es kostet keine
+Abdeckung, die ein Leser bemerkt — die fünf verbleibenden Dokumente
+(`README.md`, `README.de.md`, `docs/TOOLS.md`, `docs/TOOLS-KOMPAKT.md`,
+`docs/INTEGRATION.md`) sind die, die dieses Projekt veröffentlicht, und jede
+Zahlenaussage darin wird weiter geprüft. Der klarere Fehlertext von Nachtrag I
+bleibt: er gilt jetzt für diese fünf.
+
+**Die eigentliche Lehre betrifft aber mein Vorgehen, nicht den Test.** Ich habe
+dreimal „lokal grün" gemeldet und dreimal ist die Pipeline gefallen, weil der
+Unterschied nicht im Code lag, sondern im ZUSTAND DES REPOSITORIES nach einem
+manuellen Upload — etwas, das ein lokaler Lauf grundsätzlich nicht sehen kann.
+Seither wird die Pipeline nachgebaut statt beschrieben: Repository klonen, den
+geplanten Upload darüberlegen (ohne die Dateien, die der Nutzer nicht hochlädt),
+und `build → typecheck → lint → test` in der Reihenfolge der CI durchlaufen
+lassen. Dieser Lauf, gegen `0b9431a` + Upload, ohne `CLAUDE.md`:
+
+| Schritt | Exit |
+|---|---|
+| `npm run build` | 0 |
+| `npm run typecheck` | 0 |
+| `npm run lint` | 0 |
+| `npm test` | 0 — **2092 pass, 0 fail** |
+
+Nichts committet.

@@ -210,8 +210,23 @@ test('the auth document exists and names the rules it is there to protect', () =
  */
 const COUNTED_DOCS = [
   'README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md',
-  'docs/INTEGRATION.md', 'CLAUDE.md',
+  'docs/INTEGRATION.md',
 ];
+
+/**
+ * `CLAUDE.md` is deliberately NOT in that list (2026-08-18, the user's
+ * decision).
+ *
+ * It states tool counts, so listing it looked right — but it is a local
+ * agent-instruction file in this project and has never been part of the
+ * repository, which made CI fail on a file that was never going to be there
+ * while every local run stayed green. The alternative was publishing 1521 lines
+ * of internal measurements and design rationale to a public repository, which is
+ * a bigger change than a doc check is worth.
+ *
+ * Nothing a reader sees loses coverage: the five documents above are the ones
+ * this project publishes, and every count claim in them is still checked.
+ */
 
 /**
  * How many tools each skill mode registers, MEASURED rather than assumed.
