@@ -8015,3 +8015,23 @@ beide Wege).
 `lint` → 0.
 
 Nichts committet.
+
+#### Nachtrag: der Lint-Fehler war lokal die ganze Zeit da (2026-08-18)
+
+Die Pipeline scheiterte im nächsten Lauf an ESLint, an genau der Zeile, die der
+Eintrag darüber hinzugefügt hat: `preserve-caught-error` — ein `throw` im
+`catch` ohne `{ cause }`. Behoben, mit dem ursprünglichen `ENOENT` als `cause`,
+denn dessen aufgelöster Pfad ist es, der ein fehlendes Dokument von einer
+falschen Wurzel unterscheidet. Nachgeprüft, dass der Reporter weiterhin die
+AUSSAGE zeigt und nicht die Ursache.
+
+**Der Befund über den Befund ist wichtiger.** ESLint war lokal und in der CI
+dieselbe Version (10.8.1), und der Fehler stand lokal im Baum — ich hatte das
+Tor durch `npm run lint 2>&1 | tail -1` geführt. Das schneidet die Meldung ab
+UND ersetzt den Exit-Code durch den von `tail`, also durch 0. Ein Gate durch
+eine Pipe zu schicken, die seinen Ausgang verschluckt, ist kein Gate. Seither
+laufen `lint`, `typecheck`, `build` und `test` ungefiltert und mit
+ausgegebenem `$?`.
+
+**Tore (ungefiltert, mit Exit-Code):** `npm test` → exit 0, **2092 pass, 0
+fail** · `npm run lint` → exit 0 · `tsc` → exit 0 · `npm run build` → exit 0.

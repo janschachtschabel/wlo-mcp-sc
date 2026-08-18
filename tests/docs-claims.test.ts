@@ -44,10 +44,16 @@ const read = (name: string): string => {
     return readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // `cause` keeps the original ENOENT — with its resolved path — reachable
+    // behind the sentence that says what to do about it. Losing it would trade
+    // one unhelpful message for another: the reader could no longer see WHERE
+    // the file was looked for, which is what tells a missing file apart from a
+    // wrong root.
     throw new Error(
       `${name} is missing from the repository. This suite checks the claims that document makes `
       + '(tool counts, tool names, parameters), so it must be checked in — not skipped. '
       + 'If it genuinely does not belong in the repository, remove it from the list that names it.',
+      { cause: err },
     );
   }
 };
