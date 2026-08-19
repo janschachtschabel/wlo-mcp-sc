@@ -192,18 +192,52 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 > sie lassen sich an einem Datensatz ablesen, aber nicht suchen. „Zeig mir
 > Material ohne Login“ geht also nicht.
 >
-> Vier der fünf beschriftet das Repository selbst. **Werbung ist die Ausnahme**
-> und hat als einziges Feld eine lokale Zwei-Werte-Tabelle hinter sich: der
-> Metadatensatz verweist dort auf die Sterne-Skala `quality_advertisement/0…5`,
-> während 69 628 der 69 688 Werte `containsAdvertisement/yes|no` lauten — also
-> kommt kein Label zurück. Die Tabelle ist Rückfallebene, kein Vorrang.
+> Vier der fünf beschriftet das Repository selbst. **Werbung** braucht zwei
+> Rückfallebenen: der Metadatensatz deklariert dort die Sterne-Skala
+> `quality_advertisement/0…5`, während 69 628 der 69 688 Werte
+> `containsAdvertisement/yes|no` lauten. Für die `yes|no`-Mehrheit gibt es eine
+> lokale Zwei-Werte-Tabelle, für die 60 Sterne-Reste die deklarierte Skala —
+> und die ist keine Kosmetik: **`5` heißt „✰✰✰✰✰ ohne Werbung"**, eine nackte
+> „5" liest sich als das Gegenteil.
+
+> **`includeQualityInfo`** (beide Detail-Werkzeuge, standardmäßig aus) ergänzt
+> die redaktionelle **Qualitätsbewertung** eines Datensatzes: Sachrichtigkeit,
+> Didaktik, Sprache, Medien, Neutralität, Transparenz, Aktualität, Datenschutz,
+> Bildungsrelevanz sowie Urheber-, Straf- und Persönlichkeitsrecht und
+> Jugendschutz — als die Beschriftungen, die das Repository selbst deklariert
+> („✰✰✰ gute Methodik", „keine Auffälligkeiten gefunden (Maschine)"). Kostet
+> ebenfalls keinen zusätzlichen Abruf.
 >
-> Die **Qualitätsfelder** (`ccm:oeh_quality_*`) fehlen hier bewusst — Begründung
-> in `docs/plans/2026-08-18-vokabular-abgleich.md`: eine Beschriftung hängt daran,
-> was das Feld im Metadatensatz DEKLARIERT, und elf der vierzehn speichern etwas
-> anderes (dieselbe Sterne-Skala einmal als URI, einmal als nackte Ziffer). Ein
-> Datensatz trug sieben dieser Felder, und nur eines kam beschriftet zurück.
-> Außerdem sind es redaktionelle Prüfsiegel, die kein Modell setzen soll.
+> **Wenige Datensätze sind bewertet** (30–120 Belegungen je Skalenfeld, 3 444 bei
+> Jugendschutz), und ein unbewertetes Feld fehlt in der Antwort.
+>
+> Bis 2026-08-18 galten diese Felder als unlesbar. Die Erhebung vom 17.8. hatte
+> gemessen, dass elf der vierzehn Werte außerhalb ihrer eigenen Deklaration
+> speichern, und dort aufgehört. Nachgemessen speichert der Korpus **beide
+> Formen nebeneinander im selben Feld** — `…/quality_didactics/1` und eine nackte
+> `"4"` —, und nur die URI-Form kommt mit `_DISPLAYNAME` zurück. Die Ziffer ist
+> kein kaputter Wert, sondern dieselbe Position auf derselben festen Skala: die
+> Beschriftung gab es, nur das Nachschlagen fehlte.
+> `src/vocabs-quality-scale.ts` liefert es, **erzeugt** aus dem Metadatensatz
+> (`scripts/generate-quality-scales.mjs`, 10 Skalen, 52 Beschriftungen) statt hier
+> erfunden. Antwortet der Datensatz selbst, gewinnt er.
+>
+> `ccm:oeh_quality_login` fehlte bis zum 2026-08-19 bewusst: `ccm:conditionsOfAccess`
+> sagt dieselbe Sache dreiwertig und auf 198 699 statt 72 787 Datensätzen, und
+> eine Tatsache zweimal auszugeben lädt zum Widerspruch ein. Das Schreiben hat
+> die Abwägung gekippt — ein Feld, das man setzen und nicht zurücklesen kann, ist
+> nicht prüfbar. Es steht als `Login:`, die Zugangsfläche als `Zugang:`.
+>
+> **Schreibend** sind seit dem 2026-08-19 alle vierzehn Felder offen: die neun
+> Skalen (sieben 0–5, dazu `Login` und `Bildungsrelevanz` mit 0–1) und die fünf
+> Befundfelder, dort nur die MASCHINEN-Werte — siehe `wlo_update_content`.
+> Geschrieben wird die **deklarierte Form**, und die ist je Feld verschieden:
+> volle URI bei sechs Skalen, nackte Ziffer bei `currentness`, `login` und
+> `relevancy_for_education`. Welche Stufe wie heißt, nennt
+> `lookup_wlo_vocabulary` mit `vocabulary="qualityScale"` — samt dem
+> Kuratier-Parameter je Feld. `ccm:containsAdvertisement` bleibt zu: es
+> deklariert 0–5, aber 69 628 von 69 688 gespeicherten Werten sind `yes`/`no`,
+> ein Stern wäre dort die dritte Schreibweise.
 
 ### Hintergrundtexte
 | Tool | Funktion | Bester Chat-Trigger |
@@ -256,7 +290,7 @@ Groß-/Kleinschreibung ist egal, deutsche Komposita treffen („Brechung" findet
 ### Vokabular & Anbieter
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `lookup_wlo_vocabulary` | Gültige Filterwerte (Stufe, Fach, Materialtyp, Zielgruppe) | *„Welche Bildungsstufen kann ich als Filter angeben?“* |
+| `lookup_wlo_vocabulary` | Gültige Werte eines Feldes — Filter (Stufe, Fach, Materialtyp, Zielgruppe, Lizenz) und Schreibfelder (`qualityScale`, `qualityFinding`) | *„Welche Bildungsstufen kann ich als Filter angeben?“*, *„Welche Stufen hat die Didaktik-Bewertung?“* |
 | `lookup_wlo_publishers` | Anbieter/Quellen mit Materialzahl | *„Welche Anbieter liefern die meisten Biologie-Materialien?“* |
 
 ### System & Skills
@@ -485,7 +519,7 @@ Drei Regeln gelten für **jedes** davon:
 ### Inhalte pflegen
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“* |
+| `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe, **Prüfergebnis einer maschinellen Qualitätsprüfung** (Sachrichtigkeit, Urheberrecht, Strafrecht, Persönlichkeitsrecht, Jugendschutz — nur die Maschinen-Werte, ein Mensch-Ergebnis wird abgelehnt) | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“*, *„Trage ein, dass die Sachrichtigkeitsprüfung keine Auffälligkeiten ergeben hat“* |
 | `wlo_create_content` | Neuen Datensatz anlegen — **zwei Wege**: `url` für Material, das woanders liegt (prüft vorher auf ein Duplikat und nennt den vorhandenen), oder `content`/`fileBase64`, wenn der Datensatz den Inhalt **selbst tragen** soll (im Chat erstelltes Markdown, erzeugtes Bild). Bleibt ein **Entwurf** | *„Leg für diese Seite einen WLO-Datensatz an“* · *„Speichere dieses Arbeitsblatt in WLO“* |
 | `wlo_submit_content` | Einen vorhandenen Datensatz zur redaktionellen Prüfung einreichen — ein eigener Schritt, nie automatisch | *„Reiche diesen Datensatz zur Prüfung ein“* |
 | `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen. Über die id einer **Sammlungs-Verknüpfung** verschwindet nur die Verknüpfung — der Datensatz bleibt; die Vorschau sagt, welcher Fall vorliegt | *„Lösche diesen Datensatz“* |

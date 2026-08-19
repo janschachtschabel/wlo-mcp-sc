@@ -20,6 +20,8 @@
 import { flattenText } from '../../text-sanitize.js';
 import { cutAtWordBoundary } from '../../text-cap.js';
 import { WRITABLE_FIELDS, type FieldRoute } from './fields.js';
+import { labelFromUri, type VocabKey } from '../../vocabs.js';
+import { scaleLabel } from '../../vocabs-quality-scale.js';
 
 export type ChangeKind = 'content' | 'collection' | 'compendium' | 'topic-page';
 
@@ -161,13 +163,53 @@ function previewValue(raw: string): string {
 }
 
 /**
+ * Which vocabulary a property's URIs come from, for the preview only.
+ *
+ * A separate map from `FIELD_VOCAB` in `fields.ts`, and deliberately so: that
+ * one decides what may be WRITTEN, this one only what a sentence says. Keeping
+ * them apart means a field can be shown readably without becoming writable.
+ */
+const PREVIEW_VOCAB: Record<string, VocabKey> = {
+  'ccm:educationalcontext': 'educationalContext',
+  'ccm:taxonid': 'discipline',
+  'ccm:educationalintendedenduserrole': 'userRole',
+  'ccm:oeh_quality_correctness': 'qualityFinding',
+  'ccm:oeh_quality_copyright_law': 'qualityFinding',
+  'ccm:oeh_quality_criminal_law': 'qualityFinding',
+  'ccm:oeh_quality_personal_law': 'qualityFinding',
+  'ccm:oeh_quality_protection_of_minors': 'qualityFinding',
+};
+
+/**
+ * One value as a person can check it.
+ *
+ * The confirmation preview is the sentence the token binds to, and this project
+ * already holds the rule elsewhere: a technical id is not something anyone can
+ * check (`nameOf` in `services/write/topic-page.ts`). Until 2026-08-19 every
+ * vocabulary field showed its raw URI — `Bildungsstufe: (leer) →
+ * "http://…/sekundarstufe_1"` — which was survivable while the values were
+ * subjects and school levels a reader could still decode, and stopped being so
+ * when quality RATINGS became writable: "…/quality_didactics/4" tells a curator
+ * nothing about what they are approving.
+ *
+ * A value no table names is shown exactly as it is. Nothing is invented, and
+ * the free-text fields (title, description) never enter either lookup.
+ */
+function displayValue(property: string, value: string): string {
+  const scale = scaleLabel(property, value);
+  if (scale) return scale;
+  const vocab = PREVIEW_VOCAB[property];
+  return vocab ? labelFromUri(value, vocab) : value;
+}
+
+/**
  * Quoted so the reader can see where a value begins and ends — trailing spaces
  * and commas are otherwise invisible. `(leer)` stays unquoted: it is a
  * statement about the field, not a value it holds.
  */
-function renderValues(values: string[] | null): string {
+function renderValues(property: string, values: string[] | null): string {
   if (!values || values.length === 0) return '(leer)';
-  return `„${previewValue(values.join(', '))}“`;
+  return `„${previewValue(values.map(v => displayValue(property, v)).join(', '))}“`;
 }
 
 /**
@@ -213,10 +255,10 @@ export function renderChangeSet(cs: ChangeSet): string {
     if (MERGED_PROPERTIES.has(c.property)) {
       const existing = new Set((c.before ?? []).map(v => v.toLowerCase()));
       const added = (c.after ?? []).filter(v => !existing.has(v.toLowerCase()));
-      lines.push(`${c.label}: + ${previewValue(added.join(', '))}`);
+      lines.push(`${c.label}: + ${previewValue(added.map(v => displayValue(c.property, v)).join(', '))}`);
       continue;
     }
-    lines.push(`${c.label}: ${renderValues(c.before)} → ${renderValues(c.after)}`);
+    lines.push(`${c.label}: ${renderValues(c.property, c.before)} → ${renderValues(c.property, c.after)}`);
   }
 
   if (lines.length === 0) return 'Keine Änderung — die gewünschten Werte stehen bereits so im Datensatz.';

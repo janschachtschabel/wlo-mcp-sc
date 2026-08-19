@@ -226,3 +226,34 @@ test('a write that was not redirected says nothing about redirection', () => {
   assert.doesNotMatch(renderChangeSet(cs), /Verknüpfung|Original/,
     'ein Satz über Umleitung, wo keine stattfand, ist eine Behauptung über den Datensatz');
 });
+
+
+// ── A preview names what a person can check (2026-08-19) ───────────────────
+
+test('a scale position is previewed by its caption, not by its URI', () => {
+  // The confirm token binds to this sentence, and the rule this project already
+  // holds for topic-page variants applies: a technical id is not something
+  // anyone can check. Writing quality ratings made it acute — the value a
+  // curator picked is "4", and what reached the preview was
+  // ".../quality_didactics/4".
+  const cs = buildChangeSet('n1', 'content', {}, {
+    'ccm:oeh_quality_didactics': ['http://w3id.org/openeduhub/vocabs/quality_didactics/4'],
+  });
+  const text = renderChangeSet(cs);
+  assert.match(text, /moderne, gute Methodik/, 'the caption is what the reader sees');
+  assert.doesNotMatch(text, /w3id\.org/, 'and the URI is not');
+});
+
+test('a vocabulary URI is previewed by its German label', () => {
+  const cs = buildChangeSet('n1', 'content', {}, {
+    'ccm:educationalcontext': ['http://w3id.org/openeduhub/vocabs/educationalContext/sekundarstufe_1'],
+  });
+  const text = renderChangeSet(cs);
+  assert.match(text, /Sekundarstufe I/);
+  assert.doesNotMatch(text, /w3id\.org/);
+});
+
+test('a value with no label is shown as it is — nothing is invented', () => {
+  const cs = buildChangeSet('n1', 'content', {}, { 'cclom:title': ['Brüche verstehen'] });
+  assert.match(renderChangeSet(cs), /Brüche verstehen/);
+});

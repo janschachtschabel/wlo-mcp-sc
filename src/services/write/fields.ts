@@ -21,6 +21,7 @@
  */
 
 import { resolveVocab, listVocab, type VocabKey } from '../../vocabs.js';
+import { scaleEntry, scaleKeys } from '../../vocabs-quality-scale.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { validateContentTypes } from './fields-lrt.js';
 
@@ -91,7 +92,86 @@ export const WRITABLE_FIELDS: Record<string, FieldSpec> = {
   // tools, which is what `CONTENT_FIELDS` decides.
   'cm:title': { label: 'Titel', route: 'mds' },
   'cm:description': { label: 'Beschreibung', route: 'mds' },
+  // The five quality FINDINGS fields, added 2026-08-18 after re-measuring what
+  // the 2026-08-17 survey had refused as one block. That survey was right about
+  // the seven STAR fields (didactics, language, …): 11 of 14 quality fields
+  // store values outside the vocabulary they declare, and a star rating is an
+  // editorial judgement besides. It was wrong about these five. They declare ONE
+  // vocabulary, fully captioned by the repository, that distinguishes a machine
+  // check from a human one — which is the slot an automatic check belongs in —
+  // and four of the five are already used with it (37/52 in copyright_law,
+  // 38/54 criminal_law, 35/50 personal_law). Only `correctness` holds star
+  // values throughout (41/41), and its declaration is identical to its four
+  // siblings, so the spelling to write is not in doubt.
+  'ccm:oeh_quality_correctness': { label: 'Sachrichtigkeit (Prüfergebnis)', route: 'mds' },
+  'ccm:oeh_quality_copyright_law': { label: 'Urheberrecht (Prüfergebnis)', route: 'mds' },
+  'ccm:oeh_quality_criminal_law': { label: 'Strafrecht (Prüfergebnis)', route: 'mds' },
+  'ccm:oeh_quality_personal_law': { label: 'Persönlichkeitsrecht (Prüfergebnis)', route: 'mds' },
+  'ccm:oeh_quality_protection_of_minors': { label: 'Jugendschutz (Prüfergebnis)', route: 'mds' },
+  // The seven 0–5 quality SCALES, added 2026-08-19 on the user's decision. Each
+  // position carries the repository's own caption ("✰✰✰ gute Methodik"), and the
+  // value written is the form the widget DECLARES — a full URI for six of them,
+  // a bare digit for `currentness`. `vocabs-quality-scale.ts` holds both, read
+  // out of the metadata set rather than assumed.
+  //
+  // Two fields that look like they belong and do not: `ccm:oeh_quality_login`
+  // and `ccm:oeh_quality_relevancy_for_education` declare 0–1 and are yes/no
+  // questions, not truncated scales; `ccm:containsAdvertisement` declares 0–5
+  // but 69 628 of its 69 688 stored values are `yes`/`no`, so writing a star
+  // would put a third spelling into a field that already carries two.
+  'ccm:oeh_quality_didactics': { label: 'Didaktik (Bewertung)', route: 'mds' },
+  'ccm:oeh_quality_language': { label: 'Sprache (Bewertung)', route: 'mds' },
+  'ccm:oeh_quality_medial': { label: 'Medien (Bewertung)', route: 'mds' },
+  'ccm:oeh_quality_neutralness': { label: 'Neutralität (Bewertung)', route: 'mds' },
+  'ccm:oeh_quality_transparentness': { label: 'Transparenz (Bewertung)', route: 'mds' },
+  'ccm:oeh_quality_data_privacy': { label: 'Datenschutz (Bewertung)', route: 'mds' },
+  'ccm:oeh_quality_currentness': { label: 'Aktualität (Bewertung)', route: 'mds' },
+  // The two BINARY quality fields, added 2026-08-19 after re-measuring them:
+  // both declare exactly 0 and 1 as bare digits, and `login` is the cleanest
+  // field of all fourteen — 71 459 × "1", 1 328 × "0", nothing outside its own
+  // declaration. They go through the same resolver; its range comes from the
+  // scale, so a rejection says "0 bis 1" here and "0 bis 5" there without any
+  // field-specific rule.
+  'ccm:oeh_quality_login': { label: 'Login', route: 'mds' },
+  'ccm:oeh_quality_relevancy_for_education': { label: 'Bildungsrelevanz', route: 'mds' },
 };
+
+/** The nine ordinal quality scales this server writes — seven 0–5, two 0–1. */
+export const QUALITY_SCALE_FIELDS = [
+  'ccm:oeh_quality_didactics',
+  'ccm:oeh_quality_language',
+  'ccm:oeh_quality_medial',
+  'ccm:oeh_quality_neutralness',
+  'ccm:oeh_quality_transparentness',
+  'ccm:oeh_quality_data_privacy',
+  'ccm:oeh_quality_currentness',
+  'ccm:oeh_quality_login',
+  'ccm:oeh_quality_relevancy_for_education',
+] as const;
+
+/** The five fields that draw from the findings vocabulary — see the block above. */
+export const QUALITY_FINDING_FIELDS = [
+  'ccm:oeh_quality_correctness',
+  'ccm:oeh_quality_copyright_law',
+  'ccm:oeh_quality_criminal_law',
+  'ccm:oeh_quality_personal_law',
+  'ccm:oeh_quality_protection_of_minors',
+] as const;
+
+/**
+ * The two verdicts this tool refuses to write.
+ *
+ * The value names WHO carried out the check, and the caller here is a model. A
+ * model writing "geprüft (Mensch)" would put an editorial seal on a record no
+ * person looked at — and unlike a wrong title, that claim cannot be checked by
+ * reading the record afterwards. The values stay in the vocabulary
+ * (`lookup_wlo_vocabulary` must not misreport what the repository holds); only
+ * writing them is closed.
+ */
+const HUMAN_VERDICTS = new Set([
+  'http://w3id.org/openeduhub/vocabs/quality/human_findings',
+  'http://w3id.org/openeduhub/vocabs/quality/no_human_findings',
+]);
 
 /**
  * Which controlled vocabulary a property draws its values from.
@@ -104,6 +184,7 @@ const FIELD_VOCAB: Record<string, VocabKey> = {
   'ccm:educationalcontext': 'educationalContext',
   'ccm:taxonid': 'discipline',
   'ccm:educationalintendedenduserrole': 'userRole',
+  ...Object.fromEntries(QUALITY_FINDING_FIELDS.map(f => [f, 'qualityFinding' as VocabKey])),
 };
 
 /**
@@ -241,8 +322,26 @@ export function validateField(property: string, input: string | string[]): Field
       break;
   }
 
+  if ((QUALITY_SCALE_FIELDS as readonly string[]).includes(property)) {
+    return scalePositions(values, property, spec.label);
+  }
+
   const vocab = FIELD_VOCAB[property];
-  if (vocab) return vocabularyUris(values, vocab, spec.label);
+  if (vocab) {
+    const resolved = vocabularyUris(values, vocab, spec.label);
+    if (resolved.ok && vocab === 'qualityFinding') {
+      const human = resolved.values.find(uri => HUMAN_VERDICTS.has(uri));
+      if (human) {
+        return reject(
+          `„${spec.label}“ nimmt hier nur ein MASCHINELLES Prüfergebnis entgegen — `
+          + '„Auffälligkeiten gefunden (Maschine)“, „keine Auffälligkeiten gefunden (Maschine)“ '
+          + 'oder „ungeprüft“. Ein Ergebnis, das eine Person geprüft hat (manuell), trägt die '
+          + 'Redaktion selbst ein; ein Modell kann nicht bezeugen, dass ein Mensch hingesehen hat.',
+        );
+      }
+    }
+    return resolved;
+  }
 
   return { ok: true, values };
 }
@@ -292,6 +391,34 @@ function licenceVersions(values: string[]): FieldValidation {
     }
   }
   return { ok: true, values };
+}
+
+/**
+ * Resolve a position on an ordinal quality scale to the value the metadata set
+ * declares for it.
+ *
+ * A caller may send the digit, the caption or the URI; what reaches the
+ * repository is always the declared form, which differs per field (URI for six
+ * scales, bare digit for `currentness`). A rejection lists the positions rather
+ * than saying "invalid": the scale is short, and a curator who mistyped needs to
+ * see what was available.
+ */
+function scalePositions(values: string[], property: string, label: string): FieldValidation {
+  const out: string[] = [];
+  for (const value of values) {
+    const entry = scaleEntry(property, value);
+    if (!entry) {
+      const keys = scaleKeys(property);
+      return reject(
+        `„${quote(value)}“ ist keine Position der Skala „${label}“. `
+        + `Erlaubt sind ${keys[0]} bis ${keys[keys.length - 1]} — `
+        + 'oder die Beschriftung der Stufe. Alle Stufen: lookup_wlo_vocabulary mit '
+        + 'vocabulary="qualityScale".',
+      );
+    }
+    out.push(entry.id);
+  }
+  return { ok: true, values: out };
 }
 
 /**

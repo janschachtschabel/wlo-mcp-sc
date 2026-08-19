@@ -33,7 +33,8 @@
 
 import { universitySubjectLabel } from './vocabs-hochschule.js';
 
-export type VocabKey = 'educationalContext' | 'discipline' | 'userRole' | 'lrt' | 'license' | 'targetGroup';
+export type VocabKey = 'educationalContext' | 'discipline' | 'userRole' | 'lrt' | 'license'
+  | 'targetGroup' | 'qualityFinding';
 
 interface VocabEntry {
   id: string;
@@ -108,6 +109,33 @@ const EDUCATIONAL_CONTEXT: VocabEntry[] = [
 
 // ── Target audience ──────────────────────────────────────────────────────────
 const UR_BASE = 'http://w3id.org/openeduhub/vocabs/intendedEndUserRole/';
+
+/**
+ * The verdict of a quality check, shared by the five `ccm:oeh_quality_*` FINDINGS
+ * fields (correctness, copyright_law, criminal_law, personal_law,
+ * protection_of_minors).
+ *
+ * This is one of the two families the metadata set puts under `oeh_quality`, and
+ * the only writable one. It says WHO checked and WHETHER anything was found —
+ * which is exactly the shape an automatic check needs. The other family is the
+ * star ratings (didactics, language, medial, …), and those stay closed: they are
+ * an editorial judgement, and the corpus stores a bare digit where the widget
+ * declares a URI.
+ *
+ * Labels are the repository's own captions, measured from `mds_oeh` on
+ * 2026-08-18; the aliases are ours, so a model does not have to quote a caption
+ * verbatim. `human_findings`/`no_human_findings` are listed because they ARE the
+ * vocabulary — `lookup_wlo_vocabulary` must not misreport it — while the write
+ * path refuses them separately (`services/write/fields.ts`).
+ */
+const QF_BASE = 'http://w3id.org/openeduhub/vocabs/quality/';
+const QUALITY_FINDING: VocabEntry[] = [
+  { id: QF_BASE + 'auto_findings',    labels: ['Auffälligkeiten gefunden (Maschine)', 'auto_findings', 'befund', 'auffälligkeiten', 'auffaelligkeiten', 'maschinell auffällig'] },
+  { id: QF_BASE + 'no_auto_findings', labels: ['keine Auffälligkeiten gefunden (Maschine)', 'no_auto_findings', 'kein befund', 'keine auffälligkeiten', 'keine auffaelligkeiten', 'maschinell unauffällig'] },
+  { id: QF_BASE + 'human_findings',    labels: ['Auffälligkeiten gefunden (Mensch)', 'human_findings'] },
+  { id: QF_BASE + 'no_human_findings', labels: ['keine Auffälligkeiten gefunden (Mensch)', 'no_human_findings'] },
+  { id: QF_BASE + 'unchecked',        labels: ['Ungeprüft', 'unchecked', 'ungeprüft', 'ungeprueft', 'nicht geprüft'] },
+];
 
 const USER_ROLE: VocabEntry[] = [
   { id: UR_BASE + 'author',      labels: ['autor/in', 'autor', 'autorin', 'author'] },
@@ -333,6 +361,7 @@ const VOCAB_MAP: Record<VocabKey, VocabEntry[]> = {
   lrt: LRT,
   license: LICENSE,
   targetGroup: TARGET_GROUP,
+  qualityFinding: QUALITY_FINDING,
 };
 
 /** Resolve a label or URI to a full URI. Returns null if nothing matches. */

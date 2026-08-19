@@ -52,7 +52,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 
 | Tool | Funktion |
 |---|---|
-| `lookup_wlo_vocabulary` | Nennt die gültigen Werte für Filter wie Fach, Bildungsstufe oder Inhaltstyp. |
+| `lookup_wlo_vocabulary` | Nennt die gültigen Werte eines Feldes — für Filter (Fach, Bildungsstufe, Inhaltstyp) und für die Qualitätsbewertungen beim Schreiben. |
 | `lookup_wlo_publishers` | Listet die Anbieter der Inhalte, je mit Anzahl. |
 
 ### Skills

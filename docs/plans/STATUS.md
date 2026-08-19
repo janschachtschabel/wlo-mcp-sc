@@ -8069,3 +8069,326 @@ lassen. Dieser Lauf, gegen `0b9431a` + Upload, ohne `CLAUDE.md`:
 | `npm test` | 0 — **2092 pass, 0 fail** |
 
 Nichts committet.
+
+### Live-Abnahme gegen den deployten Server ✅ 2026-08-18
+
+`https://wlo-mcp.87.106.195.152.nip.io/mcp`, anonym (der Server meldet
+„Zugriff ohne Anmeldung").
+
+**Deploy = Repository, vollständig abgeglichen:** 42 Werkzeuge auf beiden
+Seiten, keins nur hier oder nur dort, **keine abweichende Beschreibung und kein
+abweichender Parametersatz** — verglichen wurde jede der 42 Beschreibungen und
+jede Parameterliste gegen einen lokal registrierten Server.
+
+**Kompendium Optik (65 250 Zeichen Quelltext), Inhaltsverzeichnis in JEDER Antwort:**
+
+| Aufruf | Antwort | ms | nicht gefunden |
+|---|---|---|---|
+| ohne `query` | 20 802 Z., `truncated=true`, `charCount=65250` | 662 | — |
+| `Lehrplan Bayern` | 4 933 Z., 8 Passagen | 728 | **bayern** |
+| `Linsen` | 8 084 Z., 8 Passagen | 1 528 | — |
+| `Licht` | 8 097 Z., 8 Passagen | 379 | — |
+| `Brechung Totalreflexion` | 8 559 Z., 8 Passagen | 317 | — |
+| `Rheinland-Pfalz` | 4 926 Z., 8 Passagen | 352 | — |
+| `Was steht zur Wellenoptik?` | 7 004 Z., 8 Passagen | 410 | — |
+| `Photosynthese Zellatmung` | 2 067 Z. (nur Inhaltsverzeichnis), **kein** `isError` | 311 | photosynthese, zellatmung |
+
+Die beiden Zeilen, die den Review-Befund belegen: **`Rheinland-Pfalz`** (Bindestrich)
+und **`Was steht zur Wellenoptik?`** (Fragezeichen) melden nichts als fehlend —
+vor dem Fix hätten beide ihr Wort verloren. Und `Lehrplan Bayern` zeigt, wozu die
+Offenlegung da ist: Optik führt nur Lehrpläne aus Rheinland-Pfalz und Sachsen, die
+Antwort sagt „Nicht gefunden: bayern" statt acht RLP-Passagen als bayerische
+auszugeben.
+
+**Skillkatalog:** `get_skill_registry` liefert 3 freigegebene Skills;
+`context:"Redaktionsumgebung"` verengt auf 1 + „Gilt immer (2)"; ein unbekannter
+Kontext ist **kein Fehler**, nennt die vorhandenen (Browserplugin ·
+Redaktionsumgebung) und liefert den ganzen Katalog. Der Katalog hängt live an
+`get_collection_contents`, `search_wlo_within_collection`,
+`get_topic_page_content`, `get_node_details` und den Sammlungstreffern der Suche.
+
+**Zugangs-/Qualitätsmetadaten:** über sechs Materialien geprüft — `includeAccessInfo`
+liefert `Zugang: ohne Anmeldung` / `Kosten: nein`, ohne das Flag **null** solcher
+Zeilen (die opt-in-Zusage hält live), und der JSON-Zweig trägt
+`accessInfo: {conditionsOfAccess, price}`. Die Beschriftung „nein" stammt vom
+`_DISPLAYNAME` des Repositories, nicht von uns.
+
+**Drei Fehlschläge in diesem Durchlauf waren Fehler im TESTSKRIPT, nicht im
+Server** — und die Verwechslung ist lehrreich genug, um sie zu notieren:
+`get_skill_registry` nimmt `collectionId`, `search_wlo_within_collection` dagegen
+`nodeId`; und der Skillkatalog reist als **eigener Content-Block**, nicht in
+`content[0]`. Wer nur den ersten Block liest, sieht ihn nicht und hält das für
+eine Regression.
+
+### Nachprüfung Qualitätsmetadaten & Vokabulare — 1 Befund behoben ✅ 2026-08-18
+
+Auf die Frage, ob der Server mit den Qualitätsmetadaten ARBEITEN kann und ob die
+Vokabulare stimmen. Drei Antworten, alle gemessen.
+
+**1. Schreiben: nein, und zwar absichtlich.** `WRITABLE_FIELDS` hat 16 Einträge
+und **kein einziges** Qualitätsfeld; `validateField` lehnt
+`ccm:oeh_quality_correctness` (Sachrichtigkeit) und die vier Geschwister mit
+Begründung ab, und `wlo_suggest_metadata` geht durch dieselbe Prüfung — ein
+Qualitätswert kann also nicht einmal VORGESCHLAGEN werden. Der Grund steht seit
+dem 17.8. fest und wurde heute an einem echten Träger bestätigt:
+`ccm:oeh_quality_correctness_DISPLAYNAME` ist **leer**, `neutralness = ["4"]`
+ebenso — wir könnten den Wert, den wir schrieben, nicht benennen.
+
+**2. Vokabulare: korrekt.** Live gegen den Server geprüft: `CC BY` heißt `CC BY`
+(die „4.0"-Schreibweisen stehen nur noch als ALIAS, wie am 12.8. entschieden),
+`COPYRIGHT_FREE` heißt „Copyright, freier Zugang" und nicht mehr das Gegenteil,
+`cc_by_sa_nc` ist Alias von `CC_BY_NC_SA`, `COPYRIGHT_LICENSE` ist da. Die
+Verarbeitungsrichtung stimmt ebenfalls: „CC BY-SA" wird angenommen, „CC XY"
+abgelehnt mit Liste, „Arbeitsblatt" löst auf `new_lrt/36e68792…` auf, „Physik"
+auf `discipline/460`, und `ccm:oeh_lrt_aggregated` wird mit dem Hinweis
+abgelehnt, dass das Repository es ableitet.
+
+**3. Lesen: ein Befund, behoben.** Derselbe Datensatz trug
+`ccm:containsAdvertisement = ["5"]` mit leerem `_DISPLAYNAME` — die Sterne-Skala
+statt des yes/no-Vokabulars —, und die Antwort druckte **`Werbung: 5`**. Neben
+`Kosten: nein` liest sich das wie eine beschriftete Aussage, und die Richtung
+ist nicht rekonstruierbar. `labels()` verwirft jetzt einen rein numerischen
+Slug. Rot-grün eingespielt; am echten Datensatz bleibt
+`["Kosten: nein","Barrierefreiheit: A (am niedrigsten)"]` und die Werbezeile
+fällt weg. Verhältnismäßigkeit gemessen: 63 Wort-Werte gegen 1 Zahl, und
+`ccm:license_oer` (numerische Slugs) war auf beiden Trägern beschriftet.
+
+**Eine Messung von heute widerlegt eine Zwischenbehauptung von mir:** „die
+Qualitätsfelder sind unsichtbar" hatte ich zuerst an einem Datensatz geprüft,
+der anonym **403** antwortet — der Beleg war wertlos. Mit Dienstkonto gegen
+denselben Datensatz gelesen: 2 429 Zeichen, **keine** quality-Zeile. Erst das
+ist der Beleg.
+
+**Tore:** `npm test` → 2092 pass, 0 fail · `lint` → 0 · `typecheck` → 0.
+
+### Qualitätsmetadaten: Schreibfläche für die fünf Befundfelder ✅ 2026-08-18
+
+Auf die Rückfrage, warum das Schreiben nie umgesetzt wurde. Die Kette war: der
+Entwurf knüpfte den schreibenden Support an eine Bedingung („nur für die
+Teilmenge, die die Erhebung als vokabular-gestützt ausweist"), die Erhebung fand
+11 von 14 Qualitätsfeldern außerhalb ihrer eigenen Deklaration, also blieb
+scheinbar keine Teilmenge. **Der Schluss war zu weit** — nachgemessen am 18.8.
+sind die 14 Felder ZWEI Familien, und die Erhebung hat sie als eine behandelt.
+
+| Familie | Deklaration | Korpus | Entscheidung |
+|---|---|---|---|
+| **Befund (5)** — correctness, copyright_law, criminal_law, personal_law, protection_of_minors | ein Vokabular, vollständig beschriftet, unterscheidet **Maschine von Mensch** | 4 von 5 werden bereits so benutzt (52/97 · 54/98 · 50/92) | **schreibbar** |
+| **Sterne (7)** — didactics, language, medial, neutralness, transparentness, currentness, data_privacy | URI `quality_x/0…5`, „✰✰✰✰ moderne, gute Methodik" | nackte Ziffer statt URI | bleibt zu |
+
+`correctness` (Sachrichtigkeit) ist die Ausnahme in Familie A: 41 von 41 Werte
+sind Sterne. Seine Deklaration ist mit der seiner vier Geschwister identisch,
+die Zielschreibweise also nicht offen.
+
+**Gebaut:** `qualityFinding` in `vocabs.ts` (das VOLLE Vokabular, damit
+`lookup_wlo_vocabulary` es nicht falsch wiedergibt) · fünf Einträge in
+`WRITABLE_FIELDS` mit deutschen Beschriftungen für die Vorschau · ein Riegel
+gegen die beiden MENSCH-Werte in `validateField` · fünf Parameter an
+`wlo_create_content`/`wlo_update_content`, über `validateField` damit auch an
+`wlo_suggest_metadata`. Zwei-Schritt-Bestätigung, Fingerabdruck, Zurücklesen und
+Original-Umleitung gelten unverändert.
+
+**Zwei Lese-Befunde derselben Sitzung, behoben:** `Werbung: 5` (Sterne-Rest im
+`containsAdvertisement`-Feld, 28 Datensätze) und `Kosten: false` (4 Junk-Werte
+unter 339 687). Ein Wert, den weder das Repository noch unsere Rückfallebene
+beschriften kann, wird jetzt weggelassen statt als nackte Zahl oder Boolean
+ausgegeben — dieselbe Regel, aus der die Sternefelder gar nicht gelesen werden,
+angewandt je WERT.
+
+**Vokabular-Abgleich (`npm run sync:vocabs`):** alle sechs hinterlegten
+Vokabulare aktuell, kein fehlender Eintrag. Zugangsfelder gegen ihre Deklaration:
+`conditionsOfAccess`, `accessibilitySummary`, `license_oer` je **0** Abweichungen,
+`price` 4 von 339 687, `containsAdvertisement` 69 678 von 69 688 — dort
+deklariert das Widget die Sterne-Skala, während der Korpus `yes/no` speichert,
+und genau dafür existiert `VOCAB_FALLBACK`.
+
+**Offen, vorbestehend, nicht in diesem Paket behoben:** die Bestätigungsvorschau
+zeigt bei JEDEM Vokabularfeld die rohe URI (`Bildungsstufe: (leer) →
+http://…/sekundarstufe_1`). Eine Vorschau soll ein Mensch prüfen können.
+
+**Tore:** `npm test` → **2108 pass, 0 fail** · `lint` → 0 · `typecheck` → 0 ·
+`build` → 0.
+
+### Qualitätsskalen lesbar gemacht ✅ 2026-08-18 (Nutzeranstoß)
+
+Der Nutzer fragte nach, was „339 687" bei `ccm:price` zählt, und schloss daraus:
+Felder mit 0–5 haben vermutlich kein Vokabular, aber feste Skalen — also legen
+wir uns die Wertebereiche selbst an und lesen die Labels aus. **Beides hat
+gesessen.**
+
+**Die Zahl:** 339 687 sind BELEGUNGEN, nicht Werte. `ccm:price` hat **5**
+verschiedene Werte (`no` 338 017 · `yes_for_additional` 1 058 · `yes` 608 ·
+`false` 3 · `true` 1) bei 590 213 Datensätzen im Index. Keine freie Eingabe.
+
+**Die Skalen:** der Metadatensatz deklariert alle zehn **mit Beschriftungen**,
+je Feld eigen formuliert (`3` heißt bei Didaktik „✰✰✰ gute Methodik", bei
+Neutralität „✰✰✰ ideologisch eingefärbt, aber transparent"). Der Korpus
+speichert **beide Formen nebeneinander im selben Feld** — `…/quality_didactics/1`
+und eine nackte `"4"` —, und nur die URI-Form kommt mit `_DISPLAYNAME` zurück.
+Das ist die Lücke; die Beschriftung existierte, nur das Nachschlagen fehlte.
+
+**Gebaut:** `scripts/generate-quality-scales.mjs` → `src/vocabs-quality-scale.ts`
+(10 Skalen, 52 Beschriftungen, aus dem Metadatensatz erzeugt statt erfunden) ·
+`src/node-quality.ts` mit 13 Feldern (8 Skalen + 5 Befunde) ·
+`includeQualityInfo` an `get_node_details`/`get_nodes_details`, beide Formate.
+Reihenfolge der Beschriftung: Datensatz-eigenes `_DISPLAYNAME` → deklarierte
+Skala → Befundvokabular; was keine der drei benennt, wird weggelassen.
+
+**Das korrigiert meinen Fix vom selben Tag.** `includeAccessInfo` hatte
+`ccm:containsAdvertisement = ["5"]` als unbeschriftbare Zahl WEGGELASSEN. Sie ist
+beschriftbar: **5 heißt „✰✰✰✰✰ ohne Werbung"**. Das Weglassen verwarf eine
+Tatsache, und das vorherige „Werbung: 5" sagte ihr Gegenteil. Die Weglass-Regel
+bleibt für Werte, die keine Quelle benennt.
+
+**Am echten Datensatz** (`7affb314-3f66-4a86-955d-161239ec63b2`), der gestern
+gar nichts zeigte:
+
+```
+Werbung: ✰✰✰✰✰ ohne Werbung
+Didaktik: ✰✰✰ gute Methodik
+Sprache: ✰✰✰ angemessen
+Medien: ✰✰✰ Medial passend
+Neutralität: ✰✰✰✰ neutrale Formulierung
+Transparenz: ✰✰✰✰✰ renommierter Anbieter, korrekte Kontaktangaben
+Aktualität: ✰✰✰✰ 4- aktueller Wissensstand
+```
+
+**Tore:** `npm test` → **2119 pass, 0 fail** · `lint` → 0 · `typecheck` → 0.
+
+### 0–5-Qualitätsskalen schreibbar ✅ 2026-08-19 (Nutzerentscheidung)
+
+**Die verlangte Liste zuerst: es fehlt nichts.** Acht der zehn Skalen sind
+vollständig 0–5 deklariert. Die zwei mit nur 0–1 sind keine gekürzten Skalen,
+sondern echte Ja/Nein-Fragen — `ccm:oeh_quality_login` („Zugang nur mit Login" /
+„Ohne Login zugänglich") und `ccm:oeh_quality_relevancy_for_education` („Nein -
+ungeeignet" / „Ja - geeignet"). Nichts zum Nachtragen im Repository.
+
+**Geschrieben wird die DEKLARIERTE Form, und die ist je Feld verschieden:**
+sechs Skalen deklarieren die volle URI, `currentness` die nackte Ziffer. Deshalb
+führt `vocabs-quality-scale.ts` seit heute `{id, caption}` statt nur der
+Beschriftung — eine Ableitung aus dem Schlüssel wäre geraten. Aufrufer dürfen
+Ziffer, Beschriftung oder URI schicken; außerhalb 0–5 wird mit genanntem Bereich
+abgelehnt.
+
+**Schreibbar: sieben.** didactics · language · medial · neutralness ·
+transparentness · data_privacy · currentness. **Nicht schreibbar und warum:**
+`login`/`relevancy_for_education` (0–1, keine Skalen) und
+`ccm:containsAdvertisement` — es deklariert zwar 0–5, aber 69 628 seiner 69 688
+Werte sind `yes`/`no`; ein Stern dort wäre die dritte Schreibweise in dem einen
+Feld, das schon zwei trägt.
+
+**Die Bestätigungsvorschau beschriftet jetzt jeden Vokabularwert.** Vorher stand
+dort die rohe URI — `Bildungsstufe: (leer) → „http://…/sekundarstufe_1"` —, und
+der Bestätigungsschlüssel bindet an genau diesen Satz. Bei Fach und Stufe war das
+gerade noch entzifferbar, bei einer Bewertung nicht mehr: „…/quality_didactics/4"
+sagt einem Kurator nichts darüber, was er freigibt. Jetzt:
+
+```
+Bildungsstufe: (leer) → „Sekundarstufe I“
+Fach: (leer) → „Physik“
+Sachrichtigkeit (Prüfergebnis): (leer) → „keine Auffälligkeiten gefunden (Maschine)“
+Didaktik (Bewertung): (leer) → „✰✰✰✰ moderne, gute Methodik“
+Aktualität (Bewertung): (leer) → „✰✰✰✰✰ 5 - hochaktuell/neuester Wissensstand“
+```
+
+`PREVIEW_VOCAB` ist bewusst nicht `FIELD_VOCAB`: das eine entscheidet, was
+geschrieben werden darf, das andere nur, was ein Satz sagt — so kann ein Feld
+lesbar werden, ohne schreibbar zu werden.
+
+**Erlaubnisliste: 28 Felder** (16 → 21 mit den Befunden → 28 mit den Skalen).
+
+**Tore:** `npm test` → **2129 pass, 0 fail** · `lint` → 0 · `typecheck` → 0.
+
+### Die zwei binären Qualitätsfelder aufgenommen ✅ 2026-08-19
+
+Nachgemessen statt aus der Notiz zitiert. Beide deklarieren **genau 0 und 1, als
+nackte Ziffern**:
+
+| Feld | 0 | 1 | Korpus |
+|---|---|---|---|
+| `ccm:oeh_quality_login` | „Zugang nur mit Login" | „Ohne Login zugänglich" | 1 328 / 71 459 — **nichts** außerhalb der Deklaration |
+| `ccm:oeh_quality_relevancy_for_education` | „Nein - ungeeignet" | „Ja - geeignet" | 11 / 104, dazu 2 × `true` |
+
+`login` ist damit das sauberste der vierzehn Qualitätsfelder. Beide sind jetzt
+schreibbar (`qualityLogin`, `qualityRelevance`) und laufen durch **denselben**
+Resolver wie die 0–5-Skalen: der Bereich kommt aus der Skala, nicht aus einer
+Annahme, also meldet eine Ablehnung hier „0 bis 1" und dort „0 bis 5", ohne eine
+feldspezifische Regel.
+
+**`ccm:oeh_quality_login` wird jetzt auch GELESEN.** Es war bewusst draußen, weil
+`ccm:conditionsOfAccess` dieselbe Tatsache dreiwertig und auf 198 699 statt
+72 787 Datensätzen sagt. Das Schreiben kippt die Abwägung: ein Feld, das eine
+Aufruferin setzen und nicht zurücklesen kann, ist nicht prüfbar — und falls die
+beiden je auseinanderlaufen, ist das Verstecken des einen das schlechtere
+Ergebnis, nicht das ordentlichere. Es erscheint als `Login:`, die Zugangsfläche
+sagt `Zugang:`, damit ein Leser zwei Felder als zwei Felder sieht. Die
+Werkzeugbeschreibung von `qualityLogin` warnt vor dem möglichen Widerspruch.
+
+**Erlaubnisliste: 30 Felder.** **Tore:** `npm test` → **2131 pass, 0 fail** ·
+`lint` → 0 · `typecheck` → 0.
+
+### Review der Qualitätsmetadaten-Erweiterung — 8 Befunde behoben ✅ 2026-08-19
+
+`/better-coding-review` über den ganzen Änderungsumfang (Skalentabelle,
+`node-quality`, `node-access`, `write/fields`, `write/change-set`,
+`curation-fields`, `vocabulary`, `node-details`): 1 major, 5 minor, 2 nits. Alle
+behoben, jeder mit Test zuerst.
+
+**Der major-Befund war eine Sackgasse in der Fehlerbehandlung.** Zwei Texte —
+die Ablehnung einer ungültigen Stufe (`write/fields.ts`) und die Beschreibung
+jedes `quality*`-Parameters — verwiesen für die Beschriftungen auf
+`lookup_wlo_vocabulary`, und dessen Enum kannte **keine einzige Skala**. Ein
+Modell, das danebengreift, bekommt also die Empfehlung, ein Werkzeug zu rufen,
+das es mit einem zweiten Fehler abweist. Der zweite genannte Weg
+(`get_node_details` mit `includeQualityInfo`) zeigt nur, was ein Datensatz schon
+trägt — bei 30–120 bewerteten Datensätzen je Feld auf einem beliebigen Knoten
+nichts. Neu: `vocabulary="qualityScale"` nennt jede Stufe jeder schreibbaren
+Bewertung samt Beschriftung **und dem Kuratier-Parameter**, der sie setzt (eine
+Beschriftung ohne Parameter ist eine halbe Antwort). `ccm:containsAdvertisement`
+bleibt draußen, obwohl es eine Skala hat: es ist nicht schreibbar, und es hier
+anzubieten hieße, einen Schreibvorgang zu bewerben, der verweigert wird.
+
+Der Wächter dagegen nimmt den Werkzeugnamen aus der **Ablehnung selbst**, ruft
+ihn auf und prüft, dass eine der angebotenen Auswahlen die Beschriftung nennt —
+ein Verweis, der verrottet, wird damit rot.
+
+**Eine Beschriftung ließ sich überhaupt nicht zurückschreiben.** Das Repository
+speichert `quality_currentness/0` als `" 0-A veralteter Inhalt"` mit führendem
+Leerzeichen, `validateField` trimmt jede Eingabe — also wurde genau die
+Eingabeform abgelehnt, die Parameterbeschreibung und Ablehnung versprechen, von
+demselben Satz, der sie gerade gedruckt hatte. Gefixt an der Datenquelle
+(Generator trimmt), was nebenbei den doppelten Abstand in `Aktualität:  0-A …`
+beseitigt.
+
+Die übrigen: `node-access.ts` erklärte im Kopf weiterhin, warum die
+Qualitätsfelder weder lesbar noch schreibbar seien — in einer Datei, die seit
+dem Vortag `scaleLabel` importiert; zwei Doc-Blöcke waren beim Einfügen von
+ihrem Bezugsobjekt getrennt worden (`VOCAB_FALLBACK`, `renderValues`);
+`isScaleProperty` war exportiert und hatte keinen Aufrufer; beide
+Detail-Werkzeuge zählen ihre optionalen Anreicherungen auf und ließen die neueste
+weg; `qualityFinding` fehlte in der Parameterbeschreibung, in den Tests und in
+allen vier Doku-Dateien.
+
+**Nebenbefund beim Kürzen:** `get_node_details` riss dabei die 1024-Zeichen-Grenze,
+und der erste Schnitt entfernte die fünf `raw`-Feldnamen — was ein bestehender
+Test fing, weil genau diese Aufzählung verhindert, dass die Beschreibung breiter
+ist als das Verhalten. Budget stattdessen aus Prosa geholt, an der keine
+Zusicherung hängt.
+
+**Zweite Review-Runde, 5 Befunde (0 major):** Der Modulkopf von `vocabulary.ts`
+sprach weiter von „filter-value discovery" — dieselbe Klasse, die diese Runde in
+`node-access.ts` behoben hatte, im selben Durchgang neu erzeugt. Zwei Wächter
+saßen neben ihrem Fix statt darauf: der Caption-Test pinnte die EINE kaputte
+Beschriftung über den Renderpfad, obwohl der Fix im Generator sitzt (jetzt eine
+Invariante über alle 52 — Verletzung auf einem ANDEREN Feld eingespielt und rot
+gesehen), und der Parametertest prüfte zwei Namen stichprobenartig, statt zu
+verlangen, dass JEDE gelistete Skala einen Kuratier-Parameter nennt (Verletzung
+durch Entfernen von `qualityMedial` eingespielt, rot gesehen). Dazu zwei
+Wortlaute: „die niedrigste ist die schlechteste Bewertung" trägt über die beiden
+0/1-Felder nicht — das sind Ja/Nein-Fragen, keine Bewertungen —, und beim Kürzen
+war „**freigegebenen** Skills" verlorengegangen, das Wort, das eine Registry als
+Freigabeliste ausweist. Zeichenneutral zurückgeholt.
+
+**Tore:** `npm test` → **2141 pass, 0 fail** (10 neue Tests) · `lint` → 0 ·
+`typecheck` → 0 · `build` → 0. Beide Detail-Beschreibungen liegen bei 1015 von
+1024 Zeichen — das Budget ist aufgebraucht, die nächste Ergänzung muss anderswo
+kürzen.

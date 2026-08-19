@@ -108,10 +108,27 @@ test('the table is a fallback and never overrides the repository', () => {
   assert.equal(info.advertising, 'enthält Werbung');
 });
 
-test('an advertising value in neither source still shows its slug', () => {
-  // The corpus also holds star-scale leftovers in this field (28 × "5", 11 × "4",
-  // measured). They are not yes/no and must not be guessed at.
-  assert.equal(accessInfo({ 'ccm:containsAdvertisement': ['5'] }).advertising, '5');
+test('a star-scale value is LABELLED from the declared scale, not dropped', () => {
+  // Corrected on 2026-08-18, the same day the first version shipped. That one
+  // dropped the value, on the reasoning that a number whose direction nobody can
+  // recover is worse than silence. The reasoning was right and the premise was
+  // wrong: the metadata set DOES declare this scale, with captions —
+  // `quality_advertisement/5` is "✰✰✰✰✰ ohne Werbung". Only the URI form comes
+  // back with a `_DISPLAYNAME`, and the corpus stores both forms in the same
+  // field, so the label existed all along and only the lookup was missing.
+  //
+  // The measurement that settles which way it reads: 5 means NO advertising.
+  // "Werbung: 5" beside "Kosten: nein" says the opposite of what the record does.
+  assert.equal(accessInfo({ 'ccm:containsAdvertisement': ['5'] }).advertising,
+    '✰✰✰✰✰ ohne Werbung');
+  assert.equal(accessInfo({ 'ccm:containsAdvertisement': ['0'] }).advertising,
+    'Inhalt ist kaum von Werbung unterscheidbar');
+});
+
+test('the yes/no vocabulary still wins where the corpus uses it', () => {
+  // 69 628 of 69 688 values are yes/no, which the widget does NOT declare — the
+  // scale table must not shadow the fallback that covers them.
+  assert.equal(accessInfo({ 'ccm:containsAdvertisement': ['http://w3id.org/openeduhub/vocabs/containsAdvertisement/no'] }).advertising, 'Nein');
 });
 
 test('the two new lines read like the rest of the record', () => {
@@ -138,4 +155,45 @@ test('a value that names an Object property is not mistaken for a label', () => 
     const info = accessInfo({ 'ccm:containsAdvertisement': [`${ADS}${key}`] });
     assert.equal(info.advertising, key, `"${key}" muss der Slug bleiben, keine Object-Eigenschaft`);
   }
+});
+
+// ── A value we cannot label is not a value we hand over (2026-08-18) ────────
+
+test('a labelled number is kept — the label is what makes it readable', () => {
+  const info = accessInfo({
+    'ccm:containsAdvertisement': ['5'],
+    'ccm:containsAdvertisement_DISPLAYNAME': ['sehr viel Werbung'],
+  });
+  assert.equal(info.advertising, 'sehr viel Werbung');
+});
+
+test('the yes/no vocabulary is unaffected — it is a word, not a number', () => {
+  const info = accessInfo({ 'ccm:containsAdvertisement': ['http://w3id.org/openeduhub/vocabs/containsAdvertisement/yes'] });
+  assert.equal(info.advertising, 'Ja');
+});
+
+test('a number in a field with NO declared scale is still dropped', () => {
+  const info = accessInfo({
+    'ccm:accessibilitySummary': [
+      'http://w3id.org/openeduhub/vocabs/accessibilitySummary/a',
+      '3',
+    ],
+    'ccm:accessibilitySummary_DISPLAYNAME': ['A (am niedrigsten)', ''],
+  });
+  assert.deepEqual(info.accessibility, ['A (am niedrigsten)']);
+});
+
+test('a bare boolean is dropped for the same reason a bare number is', () => {
+  // Measured 2026-08-18 over the whole corpus: `ccm:price` holds `false` ×3 and
+  // `true` ×1 among 339 687 values, `ccm:oeh_quality_*` a handful more. They are
+  // not in the declared vocabulary (`yes`/`yes_for_additional`/`no`), so the
+  // repository does not label them either — and "Kosten: false" is exactly as
+  // unreadable as "Werbung: 5".
+  assert.equal(accessInfo({ 'ccm:price': ['false'] }).price, undefined);
+  assert.equal(accessInfo({ 'ccm:price': ['http://w3id.org/openeduhub/vocabs/price/true'] }).price, undefined);
+});
+
+test('a word that happens to look boolean-ish is kept', () => {
+  // The rule is narrow on purpose: only the two literals, not everything short.
+  assert.equal(accessInfo({ 'ccm:conditionsOfAccess': ['login'] }).conditionsOfAccess, 'login');
 });

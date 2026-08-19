@@ -12,15 +12,20 @@
  *  - `ccm:accessibilitySummary`   3 475 records — WCAG / BITV conformance
  *  - `ccm:license_oer`            1 121 records — is it OER at all
  *
- * The quality fields (`ccm:oeh_quality_*`) are deliberately absent, and the
- * reason is now measured rather than inferred (2026-08-18): `_DISPLAYNAME`
- * resolves exactly what the field's WIDGET declares — not the URI, not the
- * published vocabulary. One record carried seven of them and only
- * `ccm:oeh_quality_login` came back labelled, because its widget is the one that
- * declares the bare digits it stores; the star fields declare concept URIs while
- * the corpus holds `"3"`, so reading them would hand a model a digit whose
- * meaning nobody can state. They are also editorial verdicts, which is the
- * second and independent reason nothing here is writable.
+ * The quality fields (`ccm:oeh_quality_*`) are read by `node-quality.ts`, not
+ * here, and the split is what they ARE rather than where they came from: these
+ * five say how to get at the material, those fourteen judge it.
+ *
+ * They were in NEITHER module until 2026-08-19, on a measurement that has since
+ * been narrowed rather than overturned (2026-08-18): `_DISPLAYNAME` resolves
+ * exactly what the field's WIDGET declares — not the URI form, not the published
+ * vocabulary. One record carried seven of them and only `ccm:oeh_quality_login`
+ * came back labelled, because its widget is the one that declares the bare digits
+ * it stores. What was inferred from that, and was wrong, is that the rest could
+ * not be labelled at all: a bare digit is the same position on the same scale, so
+ * the caption existed and only the lookup was missing. `vocabs-quality-scale.ts`
+ * supplies it, generated from the metadata set — and it is also what labels the
+ * star-scale leftovers in `ccm:containsAdvertisement` below.
  *
  * **The repository labels four of the five itself** through
  * `<property>_DISPLAYNAME` — the same source `formatter.ts` prefers, and one
@@ -38,6 +43,8 @@
  */
 
 /** What a record says; a field the record does not carry is absent, never empty. */
+import { scaleLabel } from './vocabs-quality-scale.js';
+
 export interface AccessInfo {
   /** Whether using it needs a login. */
   conditionsOfAccess?: string;
@@ -50,6 +57,28 @@ export interface AccessInfo {
   /** "alles OER" / "teils OER" / "kein OER". */
   oerStatus?: string;
 }
+
+/**
+ * A slug that says nothing on its own, and so is worse than saying nothing.
+ *
+ * Two shapes, both measured against the whole corpus on 2026-08-18:
+ *
+ *  - **A bare number in a field this project has no scale for.** Where a scale
+ *    IS declared, `scaleLabel` names the value and this rule never sees it —
+ *    the usual case since 2026-08-18, and the better outcome:
+ *    `ccm:containsAdvertisement = ["5"]` means "✰✰✰✰✰ ohne Werbung", so dropping
+ *    it discarded a fact and printing "Werbung: 5" stated its opposite.
+ *  - **A bare boolean.** `ccm:price` holds `false` ×3 and `true` ×1 among
+ *    339 687 values; several quality fields hold a few more. Neither is in the
+ *    declared vocabulary, so the repository does not label them, and
+ *    "Kosten: false" is as unreadable as the line above.
+ *
+ * Deliberately narrow: only these two literal shapes. Dropping everything the
+ * declaration does not name would need the declaration at runtime — a third
+ * source that has to keep pace with an instance, which this module exists
+ * without (see `VOCAB_FALLBACK`).
+ */
+const MEANINGLESS_SLUG = /^(?:\d+|true|false)$/i;
 
 /**
  * Concept slug → label, for the one field the repository cannot resolve.
@@ -92,7 +121,25 @@ function labels(props: Record<string, string[]>, property: string): string[] {
       // function. `labelFromUri` (`vocabs.ts`) has no such hole because it
       // searches an array — this table is the only lookup of its shape here.
       const known = fallback && Object.hasOwn(fallback, slug) ? fallback[slug] : '';
-      return names[i]?.trim() || known || slug;
+      // The declared ordinal scale, for the half of the corpus that stores the
+      // bare digit. Only the URI form comes back with a `_DISPLAYNAME`, and both
+      // forms occur in the same field — so the caption existed all along and
+      // only the lookup was missing. Below the repository's own answer and above
+      // the fallback table, because it IS the repository's caption, read once
+      // from the metadata set (`scripts/generate-quality-scales.mjs`).
+      const label = names[i]?.trim() || scaleLabel(property, uri) || known;
+      if (label) return label;
+      // A slug that is nothing but a number carries no meaning on its own, and
+      // handing one over is worse than saying nothing: measured 2026-08-18,
+      // `7affb314-3f66-4a86-955d-161239ec63b2` stores
+      // `ccm:containsAdvertisement = ["5"]` with an EMPTY `_DISPLAYNAME` —
+      // the widget's star scale rather than the yes/no vocabulary that 69 628
+      // of 69 688 records use. It rendered as "Werbung: 5", a value whose
+      // DIRECTION a reader cannot know, on the one field where reading it
+      // backwards turns "werbefrei" into "voller Werbung". This is the same
+      // reason the quality fields are not read at all; the rule simply had a
+      // hole where a clean field occasionally holds a dirty value.
+      return MEANINGLESS_SLUG.test(slug) ? '' : slug;
     })
     .filter(Boolean);
 }

@@ -88,7 +88,7 @@ immer anonym.
 
 | Werkzeug | Zweck |
 |---|---|
-| `lookup_wlo_vocabulary` | Fächer, Bildungsstufen, Ressourcentypen, Zielgruppen, Lizenzen |
+| `lookup_wlo_vocabulary` | Fächer, Bildungsstufen, Ressourcentypen, Zielgruppen, Lizenzen, Qualitätsbewertungen |
 | `lookup_wlo_publishers` | Anbieter mit Trefferzahlen |
 
 **Skills (3)**

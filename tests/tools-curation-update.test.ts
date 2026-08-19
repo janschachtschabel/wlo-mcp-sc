@@ -444,3 +444,73 @@ test('a reference id is redirected to the original, and the preview says so firs
     setServiceCredentialForTest(null);
   }
 });
+
+
+// ── The quality verdict reaches the record (2026-08-18) ────────────────────
+
+test('a machine verdict is previewed with a readable label and then written', async () => {
+  // The point of the whole package: an automatic check has a slot on the node.
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const client = await curationClient();
+  try {
+    const preview = toolText(await client.callTool({
+      name: 'wlo_update_content',
+      arguments: { nodeId: NODE, qualityCorrectness: 'keine Auffälligkeiten gefunden (Maschine)' },
+    }));
+    assert.match(preview, /Sachrichtigkeit/, 'the preview names the field in German');
+    assert.doesNotMatch(preview, /ccm:oeh_quality/, 'and not by its property id');
+
+    const before = writeCalls(mock.calls).length;
+    assert.equal(before, 0, 'a preview writes nothing');
+
+    await client.callTool({
+      name: 'wlo_update_content',
+      arguments: { nodeId: NODE, qualityCorrectness: 'keine Auffälligkeiten gefunden (Maschine)',
+        confirmToken: tokenFrom(preview) },
+    });
+    const written = writeCalls(mock.calls);
+    assert.ok(written.length >= 1, 'the confirmed call writes');
+    const body = String(written[0]?.init?.body ?? '');
+    assert.match(body, /ccm:oeh_quality_correctness/, 'the property is in the body');
+    assert.match(body, /vocabs\/quality\/no_auto_findings/, 'as the vocabulary URI, not the caption');
+  } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
+});
+
+test('all five findings fields are reachable from the tool', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const client = await curationClient();
+  try {
+    const preview = toolText(await client.callTool({
+      name: 'wlo_update_content',
+      arguments: {
+        nodeId: NODE,
+        qualityCorrectness: 'auto_findings',
+        qualityCopyrightLaw: 'no_auto_findings',
+        qualityCriminalLaw: 'unchecked',
+        qualityPersonalLaw: 'no_auto_findings',
+        qualityProtectionOfMinors: 'no_auto_findings',
+      },
+    }));
+    for (const label of ['Sachrichtigkeit', 'Urheberrecht', 'Strafrecht',
+                         'Persönlichkeitsrecht', 'Jugendschutz']) {
+      assert.match(preview, new RegExp(label), `${label} is in the preview`);
+    }
+  } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
+});
+
+test('a human verdict is refused at the tool, before any preview token exists', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const client = await curationClient();
+  try {
+    const reply = toolText(await client.callTool({
+      name: 'wlo_update_content',
+      arguments: { nodeId: NODE, qualityCorrectness: 'keine Auffälligkeiten gefunden (Mensch)' },
+    }));
+    assert.match(reply, /Mensch|manuell/i, 'the refusal says whose verdict it is');
+    assert.doesNotMatch(reply, /confirmToken/, 'and offers no way to confirm it anyway');
+    assert.equal(writeCalls(mock.calls).length, 0);
+  } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
+});

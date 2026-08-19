@@ -17,6 +17,7 @@ import {
 } from '../wlo-api.js';
 import { formatNode, nodeIdLine, oneLine, registrySummaryLines } from '../formatter.js';
 import { accessInfo, accessInfoLines } from '../node-access.js';
+import { qualityInfo, qualityLines } from '../node-quality.js';
 import { getParentCollections } from '../services/node-collections.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { registerWloTool } from '../apps/register.js';
@@ -74,9 +75,9 @@ export function registerNodeDetailTools(server: McpServer, searchResultsWidgetUr
     name: 'get_node_details',
     title: 'WLO Knoten-Details',
     widgetUri: searchResultsWidgetUri,
-    description: `Die DETAILANSICHT eines WLO-Datensatzes: Titel, Fach, Bildungsstufe, Lizenz, Anbieter, Link — die Metadaten, nicht der Inhalt. Für ein Material schnell (~0,3 s); bei einer SAMMLUNG kommt einmalig der Abruf ihrer freigegebenen Skills dazu (~1 s), danach ist er gemerkt.
-Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung des Materials will, braucht get_wlo_content_text — nicht dieses Werkzeug. Dort kommt der Text notfalls auch von der verlinkten Seite und es wird gesagt, warum keiner da ist; \`includeTextContent\` hier ist nur die schnelle Variante ohne diesen Rückfall.
-Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: textContent, parents (in welcher Sammlung der Datensatz liegt), accessInfo (Login nötig? Kosten? Werbung? Barrierefreiheit? OER-Status) und raw — Letzteres genau fünf Vokabular-URIs plus den Lizenzschlüssel (ccm:taxonid, ccm:educationalcontext, ccm:educationalintendedenduserrole, ccm:oeh_lrt_aggregated, ccm:commonlicense_key), NICHT den ganzen Property-Bag.`,
+    description: `Die DETAILANSICHT eines WLO-Datensatzes: Titel, Fach, Bildungsstufe, Lizenz, Anbieter, Link — die Metadaten, nicht der Inhalt. Für ein Material schnell (~0,3 s); bei einer SAMMLUNG kommt einmalig der Abruf ihrer freigegebenen Skills dazu (~1 s), danach gemerkt.
+Wer „den Inhalt", „den ganzen Text" oder eine Zusammenfassung will, braucht get_wlo_content_text — nicht dieses Werkzeug. Dort kommt der Text notfalls von der verlinkten Seite und es wird gesagt, warum keiner da ist; \`includeTextContent\` hier ist die schnelle Variante ohne den Rückfall.
+Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: textContent, parents (Sammlungen des Datensatzes), accessInfo (Login nötig? Kosten? Werbung? Barrierefreiheit? OER-Status), qualityInfo (redaktionelle Bewertungen) und raw — Letzteres genau fünf Vokabular-URIs plus den Lizenzschlüssel (ccm:taxonid, ccm:educationalcontext, ccm:educationalintendedenduserrole, ccm:oeh_lrt_aggregated, ccm:commonlicense_key), NICHT den ganzen Property-Bag.`,
     inputSchema: {
       skillContext: z.string().max(120).optional().describe(
         'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
@@ -95,6 +96,12 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
       includeRaw: z.boolean().optional().default(false).describe(
         'Include the unresolved vocabulary URIs and the licence key alongside the resolved labels'
       ),
+      includeQualityInfo: z.boolean().optional().default(false).describe(
+        'Redaktionelle Qualitätsbewertung des Datensatzes mitgeben: Sachrichtigkeit, Didaktik, '
+        + 'Sprache, Medien, Neutralität, Transparenz, Aktualität, Datenschutz, Bildungsrelevanz, '
+        + 'Urheber-/Straf-/Persönlichkeitsrecht, Jugendschutz — als lesbare Bewertungen '
+        + '("✰✰✰ gute Methodik", "keine Auffälligkeiten gefunden (Maschine)"). Nur wenige '
+        + 'Datensätze sind bewertet; ein unbewertetes Feld fehlt in der Antwort. Standard: false.'),
       includeAccessInfo: z.boolean().optional().default(false).describe(
         'Also report access conditions (login? cost? advertising?), accessibility conformance '
         + '(WCAG/BITV) and OER status. Costs no extra request. Only what the record carries.'
@@ -149,6 +156,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         // of properties in hand, not a second request. Behind a flag anyway —
         // the point of opt-in here is that no existing answer grows.
         const access = params.includeAccessInfo ? accessInfo(props) : {};
+        const quality = params.includeQualityInfo ? qualityInfo(props) : {};
 
         // ── JSON output ───────────────────────────────────────────────────
         if (params.outputFormat === 'json') {
@@ -170,6 +178,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
             }
           }
           if (params.includeAccessInfo) payload['accessInfo'] = access;
+          if (params.includeQualityInfo) payload['qualityInfo'] = quality;
           if (params.includeRaw) {
             payload['raw'] = {
               disciplines: props['ccm:taxonid'] ?? [],
@@ -213,6 +222,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         // my pupils open it" is one question, and OER status is a statement
         // about the licence itself.
         lines.push(...accessInfoLines(access));
+        lines.push(...qualityLines(quality));
         if (formatted.publisher) lines.push(`Anbieter: ${formatted.publisher}`);
         if (formatted.url) lines.push(`URL: ${formatted.url}`);
         if (formatted.previewUrl) lines.push(`Vorschaubild: ${formatted.previewUrl}`);
@@ -289,16 +299,18 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
   server.tool(
     'get_nodes_details',
     `Bulk-fetch metadata for multiple node IDs in parallel.
-Saves N round-trips when callers need details for many nodes (e.g. resolve cards from a search).
-Returns the same FormattedNode shape as get_node_details (json mode), keyed by nodeId.
+Saves N round-trips (e.g. resolving cards from a search).
+Same FormattedNode shape as get_node_details (json mode), keyed by nodeId.
 
-Optionally enrich each entry (like get_node_details, but for the whole batch):
+Optionally enrich each entry, as in get_node_details:
 - includeTextContent: adds \`textContent\` (crawled/stored full text, capped) per node — the
   full text is the SLOW read, so it is fetched for at most the first ${TEXT_ENRICH_MAX} nodes;
   the rest are named in \`textContentSkipped\`. Ask for fewer ids, or use get_wlo_content_text.
 - includeParents: adds \`parents\` (the collections each node belongs to) per node
 - includeAccessInfo: adds \`accessInfo\` (login? cost? advertising? WCAG/BITV? OER status?)
-  per node — no extra request, and only what the record actually carries
+  per node — no extra request
+- includeQualityInfo: adds \`qualityInfo\` (editorial ratings: correctness, didactics,
+  law, protection of minors) per node — no extra request either
 
 Failed lookups (deleted node, network error) are returned in the \`failed\` array, not as
 overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
@@ -312,6 +324,12 @@ overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
       includeParents: z.boolean().optional().default(false).describe(
         'Also fetch the parent collections each node belongs to'
       ),
+      includeQualityInfo: z.boolean().optional().default(false).describe(
+        'Redaktionelle Qualitätsbewertung des Datensatzes mitgeben: Sachrichtigkeit, Didaktik, '
+        + 'Sprache, Medien, Neutralität, Transparenz, Aktualität, Datenschutz, Bildungsrelevanz, '
+        + 'Urheber-/Straf-/Persönlichkeitsrecht, Jugendschutz — als lesbare Bewertungen '
+        + '("✰✰✰ gute Methodik", "keine Auffälligkeiten gefunden (Maschine)"). Nur wenige '
+        + 'Datensätze sind bewertet; ein unbewertetes Feld fehlt in der Antwort. Standard: false.'),
       includeAccessInfo: z.boolean().optional().default(false).describe(
         'Also report access conditions (login, cost, advertising), accessibility conformance '
         + 'and OER status per node. '
@@ -339,6 +357,7 @@ overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
             // upstream call each, this is a projection of properties already in
             // hand (`getNodeMetadata` reads `-all-`).
             if (params.includeAccessInfo) results[id]['accessInfo'] = accessInfo(node.properties ?? {});
+            if (params.includeQualityInfo) results[id]['qualityInfo'] = qualityInfo(node.properties ?? {});
             resolvedIds.push(id);
             loaded.set(id, node);
           } else {

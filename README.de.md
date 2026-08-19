@@ -428,8 +428,12 @@ Hinweis zu `total`: `content.total` ist die tatsächliche Backend-Trefferzahl;
 liegt in `src/services/search.ts::searchAll` (geteilt mit REST-Schicht/Widgets).
 
 **6. `lookup_wlo_vocabulary`** — `vocabulary` (`educationalContext` | `discipline`
-| `userRole` | `lrt` | `license` | `targetGroup` | `universitySubject`). Listet
-Labels + URIs; rein lokal, kein API-Aufruf. `universitySubject` (Hochschulfächer,
+| `userRole` | `lrt` | `license` | `targetGroup` | `universitySubject` |
+`qualityScale` | `qualityFinding`). Listet Labels + URIs; rein lokal, kein
+API-Aufruf. Die letzten beiden bedienen die Schreibfläche statt eines Filters —
+diese Felder antworten als Suchkriterium mit HTTP 400: `qualityScale` nennt jede
+Stufe jeder schreibbaren Qualitätsbewertung samt Beschriftung und dem
+Kuratier-Parameter, der sie setzt, `qualityFinding` die Prüfergebnisse. `universitySubject` (Hochschulfächer,
 344 Konzepte) ist groß, daher mit einem freien `query` (z. B. `"Maschinenbau"`)
 eine kurze Fuzzy-Auswahlliste `{label, uri}` abrufen — die gewählte `uri` ist
 direkt als `discipline`-Filter nutzbar. Modellfrei (Levenshtein), nie automatisch aufgelöst.
@@ -870,7 +874,13 @@ Gespräch, das einen Titel dreimal korrigiert, drei Versionen.
 
 | Werkzeug | Was es tut |
 |---|---|
-| `wlo_update_content` | Ändert einen vorhandenen Datensatz: seine Metadaten und/oder **den Inhalt selbst** — `content`/`fileBase64` ERSETZT die hinterlegte Datei (überarbeitetes Arbeitsblatt, neues Bild); die bisherige Fassung bleibt in der Versionshistorie. Metadaten: Titel, Beschreibung, Schlagwörter (werden ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Bildungsstufe, Zielgruppe. |
+| `wlo_update_content` | Ändert einen vorhandenen Datensatz: seine Metadaten und/oder **den Inhalt selbst** — `content`/`fileBase64` ERSETZT die hinterlegte Datei (überarbeitetes Arbeitsblatt, neues Bild); die bisherige Fassung bleibt in der Versionshistorie. Metadaten: Titel, Beschreibung, Schlagwörter (werden ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Bildungsstufe, Zielgruppe — sowie das Ergebnis einer
+MASCHINELLEN Qualitätsprüfung (`qualityCorrectness`, `qualityCopyrightLaw`,
+`qualityCriminalLaw`, `qualityPersonalLaw`, `qualityProtectionOfMinors`) mit den
+Werten „keine Auffälligkeiten gefunden (Maschine)", „Auffälligkeiten gefunden
+(Maschine)" oder „ungeprüft". Ein Ergebnis, das ein MENSCH geprüft hat, wird
+abgelehnt: der Wert benennt, wer geprüft hat, und ein Modell kann nicht
+bezeugen, dass eine Person hingesehen hat. |
 | `wlo_create_content` | Legt einen neuen Datensatz an, auf **zwei Wegen**. `url` — das Material liegt woanders und wird verlinkt; gibt es zu dieser URL schon einen Datensatz, wird dieser genannt statt einen zweiten anzulegen. `content` / `fileBase64` — der Datensatz **traegt** das Material als Datei (im Chat geschriebenes Markdown, ein erzeugtes PNG/JPEG/GIF/WebP, als reines Base64 oder als `data:`-URL), fuer Inhalte ohne eigene URL. Genau eine Quelle. Der Upload steht mit Name, Typ, Groesse und Pruefsumme in der Bestaetigungs-Vorschau und wird danach zurueckgelesen. Der Datensatz ist ein Entwurf und geht NICHT in die redaktionelle Warteschlange. |
 | `wlo_submit_content` | Reicht einen vorhandenen Datensatz zur redaktionellen Pruefung ein. Ein eigener Schritt, nie automatisch — damit kein Entwurf bei der Redaktion landet, weil jemand noch am Schreiben war. |
 | `wlo_create_collection` | Legt eine Sammlung an (eine kuratierte Themenseite), auf oberster Ebene oder als Untersammlung. |

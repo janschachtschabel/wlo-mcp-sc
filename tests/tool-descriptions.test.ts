@@ -98,6 +98,11 @@ const REQUIRED: Record<string, string[]> = {
   search_wlo_within_collection: ['get_skill_registry'],
   get_skill_registry: ['get_skill'],
   search_skill: ['get_skill_registry'],
+  // Both detail tools enumerate their optional enrichments, and both listed
+  // every one except the newest — a list that presents itself as complete is
+  // where the next field gets forgotten too.
+  get_node_details: ['qualityInfo', 'accessInfo'],
+  get_nodes_details: ['qualityInfo', 'accessInfo'],
 };
 
 for (const [name, phrases] of Object.entries(REQUIRED)) {

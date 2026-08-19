@@ -458,6 +458,11 @@ Step 0: `/better-coding-workflow`
   eine Gruppe mit einem Feld ist ein Parameter, den niemand braucht.
   `src/node-access.ts` hält, was die Felder SIND (Projektion + Zeilen);
   Werkzeuge halten Schema und Verdrahtung.
+> **T4.3 aufgehoben am 2026-08-18 (Nutzerentscheidung).** Die fünf BEFUND-Felder
+> sind seither schreibbar; siehe den Nachtrag am Ende dieser Datei. Die Notiz
+> darunter bleibt als Beleg dafür stehen, was am 17.8. gemessen und geschlossen
+> wurde — sie war für die sieben STERNE-Felder richtig und für diese fünf zu weit.
+
 - [x] **T4.3 entfällt.** Kein neues Feld ist zum Schreiben empfohlen; die
   Begründung steht als Kopfkommentar in `node-access.ts`, nicht nur hier.
 
@@ -542,3 +547,59 @@ In derselben Sitzung mit erledigt, außerhalb dieses Plans:
    bleiben MÜSSEN.
 3. **Zwei übersehene `nodeId:`-Zeilen** aus Phase 2 (`get_node_details`,
    `get_subject_portals`) plus ein Wächter, der handgebaute Zeilen fängt.
+
+---
+
+## Nachtrag 2026-08-18 — die Schreibfläche kommt doch, für fünf Felder
+
+Der Entwurf hatte den schreibenden Support an eine Bedingung geknüpft: „nur für
+die Teilmenge, die die Erhebung als vokabular-gestützt und reversibel ausweist".
+Die Erhebung fand 11 von 14 Qualitätsfeldern außerhalb ihrer eigenen Deklaration
+und schloss daraus, dass keine Teilmenge übrig bleibt. **Dieser Schluss war zu
+weit**, und die Nachmessung vom 18.8. zeigt warum: die 14 Felder sind zwei
+Familien, und die Erhebung hat sie als eine behandelt.
+
+**Familie A — Befundfelder (5).** `correctness`, `copyright_law`,
+`criminal_law`, `personal_law`, `protection_of_minors` deklarieren EIN
+Vokabular, im Metadatensatz vollständig beschriftet:
+
+| Wert | Beschriftung des Repositories |
+|---|---|
+| `quality/auto_findings` | „Auffälligkeiten gefunden (Maschine)" |
+| `quality/no_auto_findings` | „keine Auffälligkeiten gefunden (Maschine)" |
+| `quality/human_findings` | „Auffälligkeiten gefunden (Mensch)" |
+| `quality/no_human_findings` | „keine Auffälligkeiten gefunden (Mensch)" |
+| `quality/unchecked` | „Ungeprüft" |
+
+Das Vokabular unterscheidet also ausdrücklich **Maschine von Mensch** — genau
+der Platz, den eine KI-Prüfung braucht. Und vier der fünf Felder werden im
+Korpus bereits so benutzt: `copyright_law` 52 von 97, `criminal_law` 54 von 98,
+`personal_law` 50 von 92 Belegungen liegen im deklarierten Vokabular.
+`correctness` ist die Ausnahme (41 von 41 Sternewerte) — seine Deklaration ist
+mit der seiner vier Geschwister identisch, die Zielschreibweise also nicht
+offen.
+
+**Familie B — Sternebewertungen (7).** `didactics`, `language`, `medial`,
+`neutralness`, `transparentness`, `currentness`, `data_privacy`. Sie bleiben
+geschlossen, aus zwei Gründen: eine Sternebewertung ist ein redaktionelles
+Urteil, und der Korpus speichert dort eine nackte Ziffer, wo das Widget eine URI
+deklariert.
+
+**Was gebaut wurde.** `qualityFinding` in `src/vocabs.ts` (das volle Vokabular,
+damit `lookup_wlo_vocabulary` es nicht falsch wiedergibt) · die fünf Felder in
+`WRITABLE_FIELDS` mit deutschen Beschriftungen für die Vorschau · ein Riegel
+gegen die beiden MENSCH-Werte in `validateField`, weil der Wert benennt, WER
+geprüft hat, und ein Modell nicht bezeugen kann, dass eine Person hingesehen hat
+· fünf Parameter an `wlo_create_content`/`wlo_update_content`, und über
+`validateField` damit auch an `wlo_suggest_metadata`.
+
+**Unverändert:** die Zwei-Schritt-Bestätigung, der Fingerabdruck über die
+Änderungsmenge, das Zurücklesen nach dem Schreiben, die Umleitung auf das
+Original. Ein Qualitätsurteil ist eine Kuratierung wie jede andere.
+
+**Nicht behoben, weil vorbestehend und außerhalb dieses Pakets:** die
+Bestätigungsvorschau zeigt bei JEDEM Vokabularfeld die rohe URI
+(`Bildungsstufe: (leer) → http://…/sekundarstufe_1`). Eine Vorschau soll ein
+Mensch prüfen können; das gilt für die drei bestehenden Felder ebenso wie für
+die fünf neuen.
+

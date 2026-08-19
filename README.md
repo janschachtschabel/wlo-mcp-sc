@@ -409,8 +409,12 @@ enrichments run bounded/parallel over the results. Note on `total`:
 `src/services/search.ts::searchAll` (shared with the REST layer and widgets).
 
 **6. `lookup_wlo_vocabulary`** — `vocabulary` (`educationalContext` | `discipline`
-| `userRole` | `lrt` | `license` | `targetGroup` | `universitySubject`). Lists
-labels + URIs; purely local, no API call. `universitySubject` (Hochschulfächer,
+| `userRole` | `lrt` | `license` | `targetGroup` | `universitySubject` |
+`qualityScale` | `qualityFinding`). Lists labels + URIs; purely local, no API
+call. The last two serve the WRITE surface rather than a filter — those fields
+answer HTTP 400 as a search criterion: `qualityScale` lists every position of
+every writable quality rating with its caption and the curation parameter that
+sets it, `qualityFinding` the verdicts of a quality check. `universitySubject` (Hochschulfächer,
 344 concepts) is large, so pass a free-text `query` (e.g. `"Maschinenbau"`) to get
 a short fuzzy pick-list of `{label, uri}` — the chosen `uri` is usable directly as
 a `discipline` filter. Model-free (Levenshtein), never auto-resolved.
@@ -834,7 +838,12 @@ three versions behind.
 
 | Tool | What it does |
 |---|---|
-| `wlo_update_content` | Change an existing record: its metadata, and/or **the content itself** — `content`/`fileBase64` REPLACES the stored file (a revised worksheet, a new image); the previous version stays in the version history. Metadata: title, description, keywords (added, not replaced), source URL, language, author, publisher, licence, content type, subject, educational level, target group. |
+| `wlo_update_content` | Change an existing record: its metadata, and/or **the content itself** — `content`/`fileBase64` REPLACES the stored file (a revised worksheet, a new image); the previous version stays in the version history. Metadata: title, description, keywords (added, not replaced), source URL, language, author, publisher, licence, content type, subject, educational level, target group — and the verdict of an
+AUTOMATIC quality check (`qualityCorrectness`, `qualityCopyrightLaw`,
+`qualityCriminalLaw`, `qualityPersonalLaw`, `qualityProtectionOfMinors`), which
+takes `"keine Auffälligkeiten gefunden (Maschine)"`, `"Auffälligkeiten gefunden
+(Maschine)"` or `"ungeprüft"`. A verdict a HUMAN reached is refused: the value
+names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_create_content` | Create a new record, in one of **two ways**. `url` — the material lives elsewhere and is linked; an existing record for that URL is named instead of creating a second. `content` / `fileBase64` — the record **carries** the material as a file (Markdown written in the conversation, a generated PNG/JPEG/GIF/WebP, as raw base64 or a `data:` URL), for content that has no URL of its own. Exactly one source. The upload is described in the confirmation preview (name, type, size, digest) and read back afterwards. The record is a draft — it does NOT enter the editorial queue. |
 | `wlo_submit_content` | Hand an existing record to the editorial review queue. A separate act, never automatic, so a draft cannot reach a reviewer because someone was still writing. |
 | `wlo_create_collection` | Create a collection (a curated topic page), top-level or as a sub-collection. |

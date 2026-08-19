@@ -9,6 +9,124 @@ to [Semantic Versioning](https://semver.org/).
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 
+### Fixed — the quality captions can now be looked up (2026-08-19)
+
+Review of the same day's work. `lookup_wlo_vocabulary` gained
+`vocabulary="qualityScale"`: every position of every writable quality rating with
+its caption, and the curation parameter that sets it. Two texts already pointed
+here for exactly that — the refusal of an out-of-range position and the
+description of each `quality*` parameter — and the tool had no scale vocabulary
+at all, so the one recovery path a model is offered after a wrong value ended in
+a second error. The other named route, `get_node_details` with
+`includeQualityInfo`, only ever shows what a record already carries. A test now
+takes the tool name out of the REFUSAL and calls it, so the pointer cannot rot
+again. `qualityFinding` — added the day before and until now untested and
+undocumented — is listed in the parameter description too.
+
+One caption could not be written back at all: the repository stores
+`quality_currentness/0` as `" 0-A veralteter Inhalt"` with a leading space, while
+`validateField` trims every incoming value. So the input form both the parameter
+description and the refusal promise — "oder die Beschriftung" — was refused for
+it, by the same sentence that had just printed it. Captions are trimmed at
+generation now, which also removes the stray double space from the rendered line.
+
+### Added — an AI can rate a record on the 0–5 quality scales (2026-08-19)
+
+The seven ordinal scales — didactics, language, media, neutrality, transparency,
+data privacy, currentness — are writable through `wlo_create_content`,
+`wlo_update_content` and `wlo_suggest_metadata`. A caller sends the digit (or the
+caption); what reaches the repository is **the form the widget declares**, which
+differs per field: a full URI for six of them, a bare digit for `currentness`.
+Out of range is refused with the range named.
+
+Two fields that look like they belong and do not, both measured:
+`ccm:oeh_quality_login` and `ccm:oeh_quality_relevancy_for_education` declare
+0–1 and are yes/no questions ("Ohne Login zugänglich", "Ja - geeignet"), not
+truncated scales. `ccm:containsAdvertisement` declares 0–5 but 69 628 of its
+69 688 stored values are `yes`/`no`, so writing a star would put a third
+spelling into the one field that already carries two — it stays read-only.
+
+### Fixed — the confirmation preview names what a person can check (2026-08-19)
+
+Every vocabulary field showed its raw URI: `Bildungsstufe: (leer) →
+"http://…/sekundarstufe_1"`. The confirm token binds to that sentence, and this
+project already holds the rule elsewhere — a technical id is not something
+anyone can check (`nameOf` for topic-page variants). It was survivable while the
+values were subjects and school levels, and stopped being so when quality
+RATINGS became writable: "…/quality_didactics/4" tells a curator nothing about
+what they are approving. The preview now reads
+`Didaktik (Bewertung): (leer) → "✰✰✰✰ moderne, gute Methodik"`. A value no table
+names is still shown exactly as it is.
+
+### Added — the quality ratings a record already carries can be read (2026-08-18)
+
+`get_node_details` and `get_nodes_details` take `includeQualityInfo`: thirteen
+fields — factual correctness, didactics, language, media, neutrality,
+transparency, currentness, data privacy, educational relevance, copyright,
+criminal law, personal rights, protection of minors — rendered as the captions
+the repository declares ("✰✰✰ gute Methodik", "keine Auffälligkeiten gefunden
+(Maschine)").
+
+The 2026-08-17 survey had written these off, and the correction is worth
+recording. It found the corpus storing values outside the declared vocabulary
+and stopped there. Re-measured, the corpus stores TWO forms side by side in the
+same field — `.../quality_didactics/1` and a bare `"4"` — and only the URI form
+comes back with a `_DISPLAYNAME`. The bare digit is not a broken value; it is the
+same position on the same fixed scale, so the caption existed all along and only
+the lookup was missing. `src/vocabs-quality-scale.ts` supplies it, generated from
+the metadata set by `scripts/generate-quality-scales.mjs` — 10 scales, 52
+captions — rather than invented here.
+
+That also corrects a fix from the same day. `includeAccessInfo` had started
+DROPPING `ccm:containsAdvertisement = ["5"]` as an unlabelable number. It is
+labelable: 5 means **"✰✰✰✰✰ ohne Werbung"**. Dropping it discarded a fact, and the
+"Werbung: 5" it replaced stated the opposite of one. The drop rule remains for
+values no source can name at all.
+
+`ccm:oeh_quality_login` stays unread although it is clean and set on 72 787
+records: `ccm:conditionsOfAccess` states the same fact three-valued and on
+198 699, and reading both would print one fact twice.
+
+### Added — an automatic quality check has a slot on the record (2026-08-18)
+
+The five `ccm:oeh_quality_*` FINDINGS fields — factual correctness, copyright,
+criminal law, personal rights, protection of minors — are writable through
+`wlo_create_content`, `wlo_update_content` and `wlo_suggest_metadata`, with the
+vocabulary the repository declares for them: "keine Auffälligkeiten gefunden
+(Maschine)", "Auffälligkeiten gefunden (Maschine)", "ungeprüft".
+
+This reverses half of a decision taken on 2026-08-17, and the correction is
+worth stating: that survey found 11 of 14 quality fields storing values outside
+the vocabulary they declare, and refused all 14 together. Re-measured, the 14
+are two families. The seven STAR fields (didactics, language, …) really are
+unusable — a bare digit where the widget declares a URI, and a star rating is an
+editorial judgement besides. The five FINDINGS fields are not: they declare one
+fully captioned vocabulary that distinguishes a machine check from a human one,
+and four of the five are already used with it in the corpus (52 of 97 values in
+copyright_law, 54 of 98 in criminal_law, 50 of 92 in personal_law).
+
+**The two HUMAN verdicts are refused.** The value names who carried out the
+check, and the caller here is a model; "geprüft (Mensch)" on a record no person
+looked at is the one claim in this vocabulary that cannot be corrected by
+reading the record afterwards. They stay in the vocabulary — `lookup_wlo_vocabulary`
+reports what the repository holds — and only writing them is closed.
+
+Everything else is unchanged: two-step confirmation, the fingerprint over the
+change set, the read-back after the write, the redirection onto the original. A
+quality verdict is a curation like any other.
+
+### Fixed — a value nobody can label is no longer handed over as if it meant something (2026-08-18)
+
+`includeAccessInfo` rendered `Werbung: 5` and could render `Kosten: false`: the
+star scale leaking into `ccm:containsAdvertisement` (28 records) and four junk
+booleans in `ccm:price` among 339 687 values. Neither is in the field's declared
+vocabulary, so the repository does not label them either — and beside
+`Kosten: nein` a bare "5" reads as a labelled statement whose direction nobody
+can recover, on the one field where reading it backwards turns "werbefrei" into
+"voller Werbung". Both shapes are now dropped. Measured: 63 word values against
+1 number in the sample, and `ccm:license_oer` (whose slugs are numeric too) was
+labelled on both of its carriers.
+
 ### Added — a compendium text answers a question instead of arriving whole (2026-08-18)
 
 `get_compendium_text` takes a `query`. With one it returns the passages that
