@@ -208,9 +208,12 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
           const d = formatted.description;
           lines.push(`Beschreibung: ${d.slice(0, DESCRIPTION_PREVIEW_CAP)}${d.length > DESCRIPTION_PREVIEW_CAP ? '…' : ''}`);
         }
-        if (formatted.compendiumText) {
-          const c = formatted.compendiumText;
-          lines.push(`Kompendium: ${c.slice(0, COMPENDIUM_PREVIEW_CAP)}${c.length > COMPENDIUM_PREVIEW_CAP ? '…' : ''}`);
+        // From props, not from FormattedNode: formatNode carries only the
+        // hasCompendium signal since 2026-08-20, and this detail view already
+        // holds the full property bag — the capped preview stays what it was.
+        const comp = props['ccm:oeh_collection_compendium_text']?.[0];
+        if (comp) {
+          lines.push(`Kompendium: ${comp.slice(0, COMPENDIUM_PREVIEW_CAP)}${comp.length > COMPENDIUM_PREVIEW_CAP ? '…' : ''}`);
         }
         if (formatted.keywords.length) lines.push(`Schlagworte: ${formatted.keywords.join(', ')}`);
         if (formatted.disciplines.length) lines.push(`Fach: ${formatted.disciplines.join(', ')}`);

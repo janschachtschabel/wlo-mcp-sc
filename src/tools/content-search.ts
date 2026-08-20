@@ -221,7 +221,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
 „ein Video zu Bruchrechnung", „Medien zum Klimawandel", „ein Arbeitsblatt zur Zellteilung", „Material für Klasse 7", „Übungen zu Photosynthese", „was gibt es zu Optik", „eine Unterrichtsstunde zur Eiszeit", „ein Erklärvideo", „ein Bild/eine Grafik/eine Simulation zu …".
 Auch OHNE die Wörter „Material" oder „Bildungsinhalt" — ein Thema aus Schule, Ausbildung oder Hochschule genügt.
 EIN Aufruf liefert Videos, Arbeitsblätter, Übungen, interaktive Medien, Sammlungen UND Themenseiten.
-DAS EINZIGE SUCHWERKZEUG MIT FILTERN: nennt die Anfrage ein Fach, eine Stufe, einen Medientyp („nur Videos") oder einen Anbieter, gehört sie hierher — als Filter, nicht in ein anderes Werkzeug. "search" nimmt nur einen bloßen Suchbegriff und ist für Belegstellen da.
+Filter: Fach, Stufe, Medientyp („nur Videos"), Anbieter, Lizenz. Will jemand NUR Einzelmaterialien eines Typs („Arbeitsblätter zu Bruchrechnung"), ist search_wlo_content die Verengung ohne Sammlungen/Themenseiten. "search" nimmt nur einen Suchbegriff (Belegstellen).
 Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Trefferzahl.`,
     inputSchema: {
       query: z.string().max(200).describe('Suchbegriff (Deutsch), z.B. "Bruchrechnung Klasse 7"'),
@@ -247,8 +247,9 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         'kann einem Schulfach gleichen, die uri unterscheidet sich — diese uri als `discipline` zurückgeben. Läuft parallel.'
       ),
       includeCompendium: z.boolean().optional().default(false).describe(
-        'Für Sammlungen/Themenseiten den vollständigen Kompendiumstext nachladen, falls nicht ' +
-        'bereits inline vorhanden (ein gebündelter Zusatzabruf).'
+        'Für Sammlungen/Themenseiten den vollständigen Kompendiumstext nachladen (Feld ' +
+        'compendiumText, ein gebündelter Zusatzabruf). Ohne diese Option tragen Treffer nur das ' +
+        'Signal hasCompendium; gezielte Absätze liefert get_compendium_text mit query.'
       ),
       includeTextContent: z.boolean().optional().default(false).describe(
         'Jeden Einzel-Inhalt zusätzlich mit seinem gespeicherten Volltext (gekürzt) anreichern ' +
@@ -393,14 +394,19 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           md.push(`# Wikipedia`);
           md.push(`**${oneLine(envelope.wikipedia.title)}**${notice ? `\n\n${notice}` : ''}\n\n${quoted}\n\n[Wikipedia](${envelope.wikipedia.url})`);
         }
-        // Gated on the envelope's own flag, not on the parameter: the operator's
-        // the background cache can answer without this call asking, and a
+        // Gated on the envelope's own flags, not on the parameter: the
+        // background cache can answer without this call asking, and a
         // collection with NO registry carries no field — so the results alone
-        // cannot tell "not checked" from "checked, none there".
-        if (!envelope.collections.registryChecked) {
-          md.push(...registryHintFor([
-            ...envelope.collections.results, ...envelope.topicPages.results,
-          ]).map(oneLine));
+        // cannot tell "not checked" from "checked, none there". Per bucket
+        // since 2026-08-19: the hint may only cover nodes whose question is
+        // actually open, and gating both buckets on ONE flag printed "nicht
+        // geprüft" beside a catalogue the same answer had just rendered.
+        const registryUnchecked = [
+          ...(envelope.collections.registryChecked ? [] : envelope.collections.results),
+          ...(envelope.topicPages.registryChecked ? [] : envelope.topicPages.results),
+        ];
+        if (registryUnchecked.length) {
+          md.push(...registryHintFor(registryUnchecked).map(oneLine));
         }
         return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: envelope };
       } catch (err) {

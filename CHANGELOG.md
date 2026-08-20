@@ -6,6 +6,87 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — search hits carry the compendium SIGNAL, never the text (2026-08-20)
+
+Measured live: one Optik topic-page hit shipped 37 428 chars of compendium
+inline — 75 % of a 50k JSON answer, in every search that returned it, in every
+format (structuredContent travels with markdown too). The raw property is
+uncapped, and the operator cap `WLO_COMPENDIUM_SECTION_MAX` never saw it.
+`formatNode` now turns the property into `hasCompendium: true` (declared in the
+output schema; the name deliberately matches the field the WLO chatbot's backend
+had been enriching client-side until now, so its prompts hold without changes)
+and drops the text; markdown renders one pointer line
+("Kompendium: vorhanden — … get_compendium_text"). The text itself travels only
+via `get_compendium_text` (TOC + targeted passages, the intended way) or the
+explicit `includeCompendium` enrichment. `get_node_details` keeps its capped
+markdown preview (read from the property directly) and its JSON carries the
+signal — the full text in every detail answer was the same defect.
+
+The change found its own would-be regression: `getCompendiumTexts` read the
+text THROUGH `formatNode`, so dropping it there silently emptied the delivery
+path itself — the gap-fill test caught it, and the service now reads the
+property directly.
+
+### Fixed — get_skill loads instructions whole (2026-08-20)
+
+Asked by the chatbot developers: yes, `get_skill` truncated — the anonymous
+download is byte-capped at 64 KiB for every ordinary file, and a SKILL.md past
+that came back cut, with the marker. An instruction that arrives half is worse
+than none: the model follows the half it got, and the cut half is where the
+guardrails tend to live. The skill text path is now UNBOUNDED (a first fix
+chose 1 MiB and was replaced the same day, on the user's decision: any bound is
+a size at which a skill silently stops being followed) — registry documents
+included, `readSkillText` serves both. The 64-KiB cap stays for every other
+anonymous download; the residual risk rests on what this path reads: curated
+records from the operator's own repository, never caller-supplied URLs.
+
+### Changed — tool descriptions match the chatbot's actual routing (2026-08-20)
+
+Reviewed against the WLO chatbot's master prompt, which encodes the intended
+use: `search_wlo_all` is the OVERVIEW entry; once a request names a specific
+single-content shape ("Arbeitsblätter zu Bruchrechnung"), `search_wlo_content`
+is the narrowing. Our description claimed the opposite ("als Filter, nicht in
+ein anderes Werkzeug") and fought that routing — reworded, and the
+cross-reference is now pinned by the description test.
+
+Four texts named `search_skill` unconditionally — on a registry-only deployment
+(`WLO_DISABLE_SKILL_SEARCH`) they pointed at a phantom tool, and the
+"no registry here" answer even RECOMMENDED it; the chatbot's prompt had to state
+"Ein Werkzeug `search_skill` existiert nicht" to fight our own wording. All
+skill descriptions and answers now name only tools the configuration registers
+(`skillFinderName`, pure and mode-tested).
+
+`get_node_collections` attached each collection's skill catalogue AFTER the
+JSON early-return — markdown carried it, JSON silently did not (the same class
+as the browse tools on 2026-08-15). Moved before the format branch; the
+description now names the chain material → collection → approved skills.
+
+`get_compendium_text` describes the editorial three-part structure (world
+knowledge · curriculum competencies per level and state · collection overview)
+and what the text is FOR: gap analysis, fact-checking baseline,
+curriculum-aligned learning paths.
+
+### Fixed — topic pages carry their collection's approved skills (2026-08-19)
+
+A Themenseite IS a `ccm:map` with a page layout, and the live Optik page holds
+three approved skills — but `search_wlo_all` attached the catalogue only to the
+plain-collection bucket, and a search's one hit for "Optik" named none of them
+(found live against staging). Both buckets now share ONE `ensureRegistries`
+call, so they also share the live-fallback cap: no extra upstream requests.
+`ensureRegistries`/`attachCachedRegistries` return the SET of answered nodeIds
+instead of a count, because each bucket reconciles its own `registryChecked`
+ledger against the shared call — 4 answered ids are not "2 of 2 collections",
+and a count-based union would have marked the normal (mixed) search unchecked
+while its catalogues were right there in the answer. `topicPages.registryChecked`
+is declared in the output schema (zod strips undeclared keys silently), and the
+"nicht geprüft" hint gates per bucket.
+
+`get_topic_page_content` additionally carries the catalogue INLINE in markdown
+mode — it travelled as a second content block, and at least one real client
+hands the model only the first, so the server had answered "which skills are
+approved here?" and the model never saw it. JSON mode keeps the second block:
+block 1 is pure JSON there, and prose inside it would break every parser.
+
 Hardening, tests, modularization, and a full documentation overhaul following the
 code audits.
 

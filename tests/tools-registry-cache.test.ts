@@ -122,6 +122,32 @@ for (const { tool, args } of CASES) {
   });
 }
 
+test('get_node_collections: the JSON format carries the catalogue too', async () => {
+  // The attachment ran AFTER the JSON early-return until 2026-08-20 — the same
+  // class as the browse tools on 2026-08-15: markdown carried the catalogue
+  // while JSON silently did not, with nothing failing anywhere. The chain a
+  // model actually walks (material → collection → its approved skills) reads
+  // whichever format it asked for, so both must carry it.
+  stopSkillRegistryCache();
+  const { mock, counts } = toolMock();
+  const client = await connectedClient();
+  try {
+    await warm();
+    const afterWarm = counts.children;
+    const text = toolText(await client.callTool({
+      name: 'get_node_collections',
+      arguments: { nodeId: 'c-1', outputFormat: 'json' },
+    }));
+    const parsed = JSON.parse(text) as { collections?: Array<{ skillRegistry?: { nodeId?: string } }> };
+    assert.equal(parsed.collections?.[0]?.skillRegistry?.nodeId, 'reg-1');
+    assert.equal(counts.children, afterWarm, 'and it stays free');
+  } finally {
+    await client.close();
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
 /**
  * The other half of the same rule, and the one that was missing until
  * 2026-08-15: a tool can be ABOUT a collection without ever returning it as a

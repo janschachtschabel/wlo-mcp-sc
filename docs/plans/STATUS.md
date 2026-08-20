@@ -8392,3 +8392,156 @@ Freigabeliste ausweist. Zeichenneutral zurückgeholt.
 `typecheck` → 0 · `build` → 0. Beide Detail-Beschreibungen liegen bei 1015 von
 1024 Zeichen — das Budget ist aufgebraucht, die nächste Ergänzung muss anderswo
 kürzen.
+
+### Themenseiten tragen den Skill-Katalog ihrer Sammlung ✅ 2026-08-19 (Freigabe des Nutzers)
+
+Live gegen den deployten Server gefunden: `search_wlo_all("Optik")` listete die
+Optik-Themenseite ohne einen ihrer drei freigegebenen Skills, während der
+Sammlungs-Topf daneben seinen Katalog trug — eine Themenseite IST ein `ccm:map`,
+wurde aber eine Zeile vor der Anreicherung bewusst in den anderen Topf gefiltert
+(`searchAll`, der Nachbar `enrichCompendium` nahm schon immer beide). Ein Test
+pinnte den Zustand („topic-page results are not enriched") als einziger im File
+ohne Begründung; er ist mit Begründung in sein Gegenteil umgeschrieben.
+
+**Der Kern der Lösung ist eine Rückgabetyp-Änderung.**
+`ensureRegistries`/`attachCachedRegistries` liefern die **Menge der
+beantworteten nodeIds** statt einer Zahl: beide Töpfe teilen sich EINEN Aufruf
+(und damit den Live-Fallback-Deckel von 10 — zwei Aufrufe hätten das Budget
+einer Suche verdoppelt), und jeder Topf rechnet sein eigenes `registryChecked`
+aus der Menge. Eine Zahl kann nicht sagen, zu welcher Seite eine Antwort gehört:
+4 beantwortete Ids sind nicht „2 von 2 Sammlungen", und die zählbasierte
+Vereinigung hätte die NORMALE (gemischte) Suche als ungeprüft markiert, während
+ihre Kataloge in der Antwort stehen — der „nicht geprüft"-Hinweis wäre direkt
+unter einem gedruckten Katalog gelandet. Der Hinweis in `content-search.ts`
+gattert deshalb jetzt je Topf. `topicPages.registryChecked` ist in
+`searchAllEnvelopeSchema` deklariert (zod verwirft Undeklariertes lautlos; ein
+Test parst den Envelope durch das Schema).
+
+**`get_topic_page_content` trägt den Katalog im Markdown-Modus INLINE.** Er
+reiste als zweiter Content-Block, und mindestens ein realer Client (der eigene
+MCP-Client dieser Sitzung) reicht dem Modell nur den ersten durch — der Server
+hatte „welche Skills gelten hier?" beantwortet und das Modell sah es nie. Das
+war der wahrscheinlichste Sitz des gemeldeten ChatGPT-Problems. JSON behält den
+zweiten Block: Block 1 ist dort reines JSON, Prosa darin bräche jeden Parser.
+Beide Pfade (Treffer und Leer-Fall) gleich behandelt.
+
+Sechs neue Tests, alle relevanten zuerst rot gesehen (4 rot in
+`search-skill-registry`, 1 rot in `tools-topic-page-content`; der
+Topf-Unabhängigkeits-Test ist als Regressionswächter gegen die zählbasierte
+Vereinigung bewusst vorher wie nachher grün). Ein vierter Test-Standort mit
+Zahl-Zusicherung (`skill-cache-disabled.test.ts`) tauchte erst im Vollsuiten-Lauf
+auf — grep über drei Dateien war keine Vollsuite.
+
+**Review-Runde (2 Befunde, beide behoben):** Die Kern-Kostenzusage — beide
+Töpfe teilen sich EINEN Live-Deckel — stand in drei Kommentaren und dem
+CHANGELOG, aber kein Test erzwang sie: zwei getrennte `ensureRegistries`-Aufrufe
+hätten jeden bestehenden Test grün gelassen und das Upstream-Budget einer Suche
+still auf 16 verdoppelt. Der neue Wächter nutzt 8+8 Sammlungen/Themenseiten
+(je Topf UNTER dem Deckel von 10, Vereinigung darüber — ein 5+5-Fixture könnte
+die beiden Formen nicht unterscheiden); Verletzung eingespielt: **16 statt 10,
+nur dieser Test rot**, danach wiederhergestellt. Dazu das veraltete
+Kontrastwort in der `cachedRegistriesFor`-Doc („count" → Id-Menge).
+
+### Master-Skill-Abgleich: Beschreibungen folgen dem gelebten Routing ✅ 2026-08-20
+
+Der Master-Skill des Chatbots wurde als Referenz für die realen Usecases
+gelesen; vier Werkzeugtexte und ein Verhaltensfehler folgten daraus, alle mit
+Test zuerst (rote Läufe gesehen: B1-JSON-Test, zwei Helfer-Testdateien am
+fehlenden Export, REQUIRED-Querverweis).
+
+**V1** `search_wlo_all` behauptete „als Filter, nicht in ein anderes Werkzeug"
+— und kämpfte damit gegen das gewollte Routing (Nutzerklärung: Überblick hier,
+`search_wlo_content` sobald NUR Einzelmaterialien eines Typs gewünscht sind).
+Umformuliert; der Querverweis ist als REQUIRED-Phrase gepinnt. **V2** Vier
+Stellen nannten `search_skill` bedingungslos — im Registry-only-Deployment ein
+Phantomwerkzeug, das die „keine Registry"-Antwort sogar EMPFAHL; der
+Master-Skill musste dagegenhalten („existiert nicht"). Jetzt eine pure Funktion
+(`skillFinderName`) über alle drei Modi getestet; Beschreibungen und Antworten
+nennen nur Registriertes. **B1** `get_node_collections` hängte den Katalog NACH
+dem JSON-Early-Return an — Markdown trug ihn, JSON nicht; dieselbe Klasse wie
+die Browse-Werkzeuge am 15.08. Vor den Format-Zweig gezogen. **V3/V4**
+Beschreibungen benennen die Kette Material→Sammlung→Skills bzw. die
+redaktionelle Dreiteilung des Kompendiums (Weltwissen · Lehrplan-Kompetenzen je
+Stufe/Bundesland · Inhaltsvorstellung) und seine Zwecke (Lückenanalyse,
+Sachrichtigkeits-Maßstab, Lernpfade).
+
+Dazu ein **Protokoll für die Chatbot-Entwickler** (Scratchpad, an den Nutzer
+übergeben): `hasCompendium` ist ein Phantomfeld, die Kompendium-`query` ist
+live, Skills laufen über Sammlungen (serverseitig jetzt auch so beschrieben),
+drei Deploy-Ankündigungen, `skillContext` spart einen Aufruf,
+`lookup_wlo_vocabulary` liefert keine Themen-Synonyme.
+
+**Nacharbeit Doku-Flächen (2026-08-20):** Die vier Flächen trugen die
+korrigierten Behauptungen nie — aber beide READMEs sagten an je drei Stellen
+noch „one-tool ersetzt search_skill+get_skill … 41 statt 42", den Stand vor dem
+2026-08-16 (der Tausch ist 1:1, heute live als 42 gemessen). Der
+docs-claims-Wächter prüfte MUSTER und kannte diese Schreibweise nicht; zwei
+Muster ergänzt („N tools instead of", „N statt M Werkzeuge"), rot auf beiden
+Altlasten gesehen, dann sechs Stellen korrigiert. Dazu die Kompendium-Dreiteilung
+in TOOLS.md (Deep-Dive) und TOOLS-KOMPAKT nachgezogen.
+
+**Review-Runde (1 minor, 1 nit):** Die puren Finder-Funktionen und die
+Werkzeug-Listen waren je Modus getestet, die VERDRAHTUNG dazwischen nicht — ein
+hartkodierter Finder in `registerGetSkill` hätte alles grün gelassen und den
+Phantom-Verweis zurückgebracht. Wächter ergänzt (durch das echte
+`registerSkillTools`), Verletzung eingespielt und rot gesehen. Der NIT bleibt
+als dokumentierte Grenze: `registerSkillRegistryTool` liest den Finder aus der
+Env auf Modulebene; Nicht-Standard-Modi sind dort über die exportierten puren
+Funktionen getestet, ein Opts-Durchstich nur für Testbarkeit wäre
+unverhältnismäßig.
+
+**Tore:** `npm test` → **2153 pass, 0 fail** (5 neue Tests) · `lint` → 0 ·
+`typecheck` → 0 · `build` → 0.
+
+### Kompendium-Signal statt Volltext + get_skill-Volltext-Garantie ✅ 2026-08-20 (Nutzerentscheidung)
+
+**Kompendium:** Live gemessen trug EIN Optik-Treffer 37 428 Zeichen Kompendium
+inline — 75 % einer 50k-JSON-Antwort, in jedem Format (structuredContent reist
+auch bei Markdown mit); der Betreiber-Deckel `WLO_COMPENDIUM_SECTION_MAX` sah
+diesen Pfad nie. Nutzerentscheidung: der Text darf nicht mitreisen — der Weg ist
+`get_compendium_text` (Inhaltsverzeichnis + gezielte Absätze mit `query`, sonst
+je Hauptabschnitt gekappt; genau die seit 18.08. gebaute Form). `formatNode`
+setzt jetzt `hasCompendium: true` (im Schema deklariert, Spread wie
+`originalId`) und den Text nie; Markdown rendert eine Verweiszeile; die
+`includeCompendium`-Anreicherung bleibt der Opt-in für den Volltext und füllt
+weiterhin JEDE Lücke (nicht nur signalisierte — der Gap-Fill-Test modelliert
+einen Treffer ohne Property trotz vorhandenem Text). `get_node_details` behält
+die gekappte Markdown-Vorschau (liest das Property direkt) und trägt im JSON das
+Signal. **Der Umbau fand seine eigene Beinahe-Regression:** `getCompendiumTexts`
+las den Text DURCH `formatNode` — der Drop hätte das Lieferwerkzeug selbst
+geleert; der Gap-Fill-Test wurde rot, der Dienst liest das Property jetzt
+direkt. Die alte Docstring am Feld behauptete zudem, DISPLAY_PROPS enthalte das
+Property nicht — von der Messung widerlegt, korrigiert.
+
+**get_skill:** Die Frage der Chatbot-Entwickler war berechtigt — der anonyme
+Download ist bei 64 KiB gedeckelt, ein größeres SKILL.md kam mit Marker gekürzt.
+Nutzerentscheidung: Anleitungen laden ganz. `readSkillText` liest jetzt bis
+1 MiB (größter echter Skill ~17 KB; die Schranke ist Speicherschutz, keine
+erwartbare Größe) — Registry-Dokumente eingeschlossen, weil beide durch
+`readSkillText` gehen. Test mit 90-KiB-Skill: Schwanz kommt an, kein Marker.
+
+Sechs Tests zuerst rot gesehen (u. a. der geflippte formatNode-Pin, der
+Envelope-Wächter samt Schema-Überleben, der 90-KiB-Skill); der Plural-Flip war
+zunächst nur am NAMEN getauscht — die Zusicherung selbst hatte einen anderen
+Wortlaut als vermutet und wurde nachgezogen, bevor Grün etwas bewiesen hätte.
+
+**Nachschärfung (Nutzerentscheidung, gleicher Tag):** Die 1-MiB-Schranke am
+Skill-Pfad ist ERSATZLOS entfernt — jede Schranke ist eine Größe, ab der eine
+Anleitung still nicht mehr befolgt wird. `readSkillText` liest jetzt unbegrenzt
+(`Number.POSITIVE_INFINITY` an `getNodeDownloadText`, dessen 64-KiB-Standard für
+alle anderen anonymen Downloads unverändert gilt); der `/textContent`-Rückfall
+hat keinen eigenen Deckel (geprüft). Das Restrisiko ist bewusst und ruht darauf,
+WAS dieser Pfad liest: kuratierte Datensätze aus dem eigenen Repository, nie
+Aufrufer-URLs. Test von 90 KiB auf 1,5 MiB gehoben — rot gegen die
+1-MiB-Schranke gesehen, grün nach der Entfernung.
+
+**Tore:** `npm test` → **2156 pass, 0 fail** · `lint` → 0 · `typecheck` → 0 ·
+`build` → 0. Live-Verifikation nach Deploy: `search_wlo_all("Optik")` JSON
+ohne `compendiumText`, mit `hasCompendium`; `get_compendium_text` liefert wie
+bisher; `get_skill` auf einem großen Dokument ungekürzt.
+
+**Tore (Vorgänger-Paket):** `npm test` → **2148 pass, 0 fail** · `lint` → 0 · `typecheck` → 0 ·
+`build` → 0. **Live-Verifikation steht aus** (braucht Upload + Deploy durch den
+Nutzer): danach muss `search_wlo_all("Optik")` im Themenseiten-Topf die drei
+Skills mit nodeIds zeigen, und `get_topic_page_content("Optik")` im Markdown nur
+noch EINEN Block.

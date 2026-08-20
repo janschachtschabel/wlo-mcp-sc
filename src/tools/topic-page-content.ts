@@ -111,18 +111,24 @@ Gib EINES an:
             swimlanes: [],
             ...(reason ? { reason } : {}),
           };
-          // Honour outputFormat here too: the success path emits JSON in this
-          // text block, so emitting prose only on the empty path broke every
-          // client that parses it (client report 2026-07-27).
-          const text = params.outputFormat === 'json'
-            ? JSON.stringify(empty)
-            : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
           // Still worth answering: the caller named a collection, and whether it
           // has approved skills does not depend on its page having swimlanes.
-          const emptyContent = [{ type: 'text' as const, text }];
           const emptyRegistry = await subjectRegistryText(empty.collectionId ?? '', params.skillContext);
-          if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
-          return { content: emptyContent, structuredContent: empty };
+          // Honour outputFormat here too: the success path emits JSON in this
+          // text block, so emitting prose only on the empty path broke every
+          // client that parses it (client report 2026-07-27). JSON keeps the
+          // catalogue as its own block; markdown carries it INLINE — same rule
+          // and same reason as the success path below.
+          if (params.outputFormat === 'json') {
+            const emptyContent = [{ type: 'text' as const, text: JSON.stringify(empty) }];
+            if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
+            return { content: emptyContent, structuredContent: empty };
+          }
+          const prose = `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
+          return {
+            content: [{ type: 'text' as const, text: emptyRegistry ? `${prose}\n\n${emptyRegistry}` : prose }],
+            structuredContent: empty,
+          };
         }
 
         // RENDER-READY Themenseiten content: the swimlane resolver executes each
@@ -133,12 +139,16 @@ Gib EINES an:
         // structure text below. topicPageUrl provides the jump-off point.
         const payload = await resolveTopicPageSwimlanes(struct, params.maxPerSwimlane ?? 3);
         // A Themenseite IS a collection, so its approved skills hang off the
-        // COLLECTION id — never the variant, which is one rendering of it. Its
-        // own content block in both formats: `text` is the payload in json mode,
-        // and the swimlane schema has nowhere to put a catalogue.
+        // COLLECTION id — never the variant, which is one rendering of it. In
+        // json mode it stays its OWN content block: block 1 is pure JSON there,
+        // and prose inside it would break every parser (the swimlane schema has
+        // nowhere to put a catalogue). Markdown carries it INLINE instead,
+        // since 2026-08-19: it travelled as a second block, and at least one
+        // real client hands the model only the first — the server had answered
+        // "which skills are approved here?" and the model never saw it.
         const registryText = await subjectRegistryText(struct.collectionId ?? '', params.skillContext);
-        const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
         if (params.outputFormat === 'json') {
+          const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(payload) }, ...registryBlock],
             structuredContent: payload,
@@ -169,8 +179,14 @@ Gib EINES an:
           lines.push('');
           lines.push(`Eingebettete nodeIds (${struct.referencedNodeIds.length}): ${struct.referencedNodeIds.join(', ')}`);
         }
+        if (registryText) {
+          lines.push('');
+          // Line-oriented like everything above it; each line was built through
+          // the shared registry renderer, so it is NOT oneLine'd again here.
+          lines.push(...registryText.split('\n'));
+        }
         return {
-          content: [{ type: 'text' as const, text: lines.join('\n') }, ...registryBlock],
+          content: [{ type: 'text' as const, text: lines.join('\n') }],
           structuredContent: payload,
         };
       } catch (err) {

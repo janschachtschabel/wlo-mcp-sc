@@ -287,6 +287,13 @@ test('no document states a tool count the server contradicts', async () => {
     [/\*\*(\d+) lesend\*\*/g, readTools, 'read tools (compact intro)'],
     [/\*\*(\d+) kuratierend\*\*/g, curation, 'curation tools (compact intro)'],
     [/dann (\d+) Werkzeuge/g, oneTool, 'one-tool mode drops exactly one tool'],
+    // The stale pre-2026-08-16 claim in its own words: both READMEs said the
+    // mode swaps TWO tools for one ("41 tools instead of 42" / "41 statt 42"),
+    // and none of the patterns above matched that spelling — so the suite
+    // stayed green over a number the server contradicts. The swap is 1:1;
+    // `get_skill` is registered in every mode.
+    [/(\d+)\s+tools instead of/gi, oneTool, 'one-tool count, English spelling'],
+    [/(\d+)\s+statt\s+\d+\s+Werkzeuge/g, oneTool, 'one-tool count, German spelling'],
     [/registers all (\d+) tools/gi, total, 'the factory registers every tool'],
     // The anonymous listing is the WHOLE list — this is a claim about
     // visibility, not a headcount, which is why a wrong number here is a lie

@@ -248,7 +248,12 @@ test('get_node_details (singular): json output surfaces compendiumText when pres
       arguments: { nodeId: 'coll-x', outputFormat: 'json' },
     });
     const payload = JSON.parse(toolText(result as any));
-    assert.equal(payload.compendiumText, 'Diese Sammlung behandelt die Optik.');
+    // FLIPPED 2026-08-20: the JSON detail shipped the FULL property while the
+    // markdown side previewed 500 chars — the format asymmetry this project
+    // hunts elsewhere, and a 37k text in every detail answer. The signal stays;
+    // the text is get_compendium_text's job.
+    assert.equal(payload.hasCompendium, true);
+    assert.equal(payload.compendiumText, undefined);
   } finally {
     await client.close();
     mock.restore();
@@ -278,7 +283,9 @@ test('get_node_details (singular): no compendium property → no compendiumText 
       name: 'get_node_details',
       arguments: { nodeId: 'plain', outputFormat: 'json' },
     });
-    assert.equal('compendiumText' in JSON.parse(toolText(jsonRes as any)), false);
+    const bare = JSON.parse(toolText(jsonRes as any));
+    assert.equal('compendiumText' in bare, false);
+    assert.equal('hasCompendium' in bare, false, 'no compendium, no signal');
 
     const mdRes = await client.callTool({
       name: 'get_node_details',
@@ -291,7 +298,7 @@ test('get_node_details (singular): no compendium property → no compendiumText 
   }
 });
 
-test('get_nodes_details (plural): results carry compendiumText when present', async () => {
+test('get_nodes_details (plural): results carry the compendium signal when present', async () => {
   const mock = installCompendiumMock('Kompendium Text');
   const client = await connectedClient();
   try {
@@ -300,7 +307,8 @@ test('get_nodes_details (plural): results carry compendiumText when present', as
       arguments: { nodeIds: ['c1'] },
     });
     const payload = JSON.parse(toolText(result as any));
-    assert.equal(payload.results.c1.compendiumText, 'Kompendium Text');
+    assert.equal(payload.results.c1.hasCompendium, true);
+    assert.equal(payload.results.c1.compendiumText, undefined);
   } finally {
     await client.close();
     mock.restore();

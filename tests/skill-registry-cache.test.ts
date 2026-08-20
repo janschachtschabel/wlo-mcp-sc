@@ -167,7 +167,7 @@ test('a listing cut short at the file cap is NOT an answer', async () => {
     assert.equal(report.resolved, 0, 'so it does not count among the answered');
 
     const nodes = [collNode('coll-1', 'Sammlung Optik')];
-    assert.equal(attachCachedRegistries(nodes), 0, 'and the caller keeps its "nicht geprüft" line');
+    assert.equal(attachCachedRegistries(nodes).size, 0, 'and the caller keeps its "nicht geprüft" line');
   } finally {
     mock.restore();
     stopSkillRegistryCache();
@@ -491,7 +491,10 @@ test('attach: a known collection gets its catalogue for free', async () => {
     const nodes = [collNode('coll-1', 'Sammlung Optik')];
     const answered = attachCachedRegistries(nodes);
 
-    assert.equal(answered, 1);
+    // The set carries WHICH id is settled — that is what a caller with two
+    // buckets reconciles against, and what a count could not say.
+    assert.ok(answered.has('coll-1'));
+    assert.equal(answered.size, 1);
     assert.equal(nodes[0]!.skillRegistry?.nodeId, 'reg-1');
     assert.equal(counts.children, before, 'not one extra request');
   } finally {
@@ -512,7 +515,8 @@ test('attach: a collection known to have none is answered, not asked again', asy
 
     // The question IS answered — the caller may say so — but there is no field
     // to set, because there is no registry.
-    assert.equal(answered, 1);
+    assert.ok(answered.has('coll-1'));
+    assert.equal(answered.size, 1);
     assert.equal(nodes[0]!.skillRegistry, undefined);
     assert.equal(queueLength(), 0, 'nothing to look up again');
   } finally {
@@ -528,7 +532,7 @@ test('attach: an unknown collection is queued, and reported as unanswered', () =
 
   // Cold is cold: nothing is claimed, the caller keeps its pointer line, and
   // the next tick makes the second call free.
-  assert.equal(answered, 0);
+  assert.equal(answered.size, 0);
   assert.equal(nodes[0]!.skillRegistry, undefined);
   assert.equal(queueLength(), 1, 'so it is warm next time');
   stopSkillRegistryCache();
@@ -539,7 +543,7 @@ test('attach: content nodes are neither touched nor queued', () => {
   const nodes = [formatNode(makeNode('c-1', 'Arbeitsblatt'))];
   const answered = attachCachedRegistries(nodes);
 
-  assert.equal(answered, 0);
+  assert.equal(answered.size, 0);
   assert.equal(queueLength(), 0, 'a material has no skill registry to look for');
   stopSkillRegistryCache();
 });
@@ -640,7 +644,7 @@ test('a collection the index never mentioned falls back to the children listing'
 
     // It appears in an answer → queued → the slow, authoritative path runs.
     const nodes = [collNode('coll-8', 'Andere Sammlung')];
-    assert.equal(attachCachedRegistries(nodes), 0, 'nothing known yet');
+    assert.equal(attachCachedRegistries(nodes).size, 0, 'nothing known yet');
     await runCacheTick();
 
     assert.equal(counts.children, afterSeed + 1, 'the fallback ran exactly once');
@@ -706,13 +710,14 @@ test('ensure: a cold collection is resolved live, and remembered', async () => {
 
     // The caller asked for a collection; the answer carries its catalogue,
     // cache or not. One children listing is the price of first contact.
-    assert.equal(answered, 1);
+    assert.ok(answered.has('coll-1'));
+    assert.equal(answered.size, 1);
     assert.equal(nodes[0]!.skillRegistry?.nodeId, 'reg-1');
     assert.equal(counts.children, 1);
 
     // And it is not paid twice.
     const again = [collNode('coll-1', 'Sammlung Optik')];
-    assert.equal(await ensureRegistries(again), 1);
+    assert.equal((await ensureRegistries(again)).size, 1);
     assert.equal(again[0]!.skillRegistry?.nodeId, 'reg-1');
     assert.equal(counts.children, 1, 'the second call is free');
   } finally {
@@ -726,7 +731,7 @@ test('ensure: a collection with no registry is answered too, and stays free', as
   const { mock, counts } = tickMock({ withRegistry: false });
   try {
     const nodes = [collNode('coll-1', 'Sammlung Optik')];
-    assert.equal(await ensureRegistries(nodes), 1, 'the question is settled');
+    assert.equal((await ensureRegistries(nodes)).size, 1, 'the question is settled');
     assert.equal(nodes[0]!.skillRegistry, undefined, 'there is simply none');
 
     await ensureRegistries([collNode('coll-1', 'Sammlung Optik')]);
@@ -746,7 +751,7 @@ test('ensure: a failed live lookup claims nothing and is tried again later', asy
 
     // Same asymmetry as the background tick: an outage must not turn into
     // "this collection has no approved skills".
-    assert.equal(answered, 0, 'so the caller keeps its pointer line');
+    assert.equal(answered.size, 0, 'so the caller keeps its pointer line');
     assert.equal(lookupCachedRegistry('coll-1'), undefined);
     assert.equal(queueLength(), 1);
   } finally {
@@ -760,7 +765,7 @@ test('ensure: a cut-short listing does not settle the question either', async ()
   const { mock, counts } = tickMock({ withRegistry: false, total: 400 });
   try {
     const nodes = [collNode('coll-1', 'Sammlung Optik')];
-    assert.equal(await ensureRegistries(nodes), 0, 'the caller keeps its pointer line');
+    assert.equal((await ensureRegistries(nodes)).size, 0, 'the caller keeps its pointer line');
     assert.equal(nodes[0]!.skillRegistry, undefined);
 
     await ensureRegistries([collNode('coll-1', 'Sammlung Optik')]);
@@ -783,8 +788,8 @@ test('ensure: two requests for the same cold collection share ONE lookup', async
     const [ansA, ansB] = await Promise.all([ensureRegistries(a), ensureRegistries(b)]);
 
     assert.equal(counts.children, 1, 'first contact is paid once, not once per concurrent caller');
-    assert.equal(ansA, 1);
-    assert.equal(ansB, 1);
+    assert.equal(ansA.size, 1);
+    assert.equal(ansB.size, 1);
     assert.equal(a[0]!.skillRegistry?.nodeId, 'reg-1');
     assert.equal(b[0]!.skillRegistry?.nodeId, 'reg-1', 'and both answers carry the catalogue');
   } finally {
@@ -828,7 +833,7 @@ test('ensure: the live fallback is bounded per request', async () => {
     // request. What did not fit is queued and reported as unanswered, so the
     // caller says "not checked" rather than implying it looked.
     assert.equal(counts.children, 10, 'LIVE_FALLBACK_MAX');
-    assert.equal(answered, 10);
+    assert.equal(answered.size, 10);
     assert.equal(queueLength(), 15, 'the rest waits for the background tick');
   } finally {
     mock.restore();

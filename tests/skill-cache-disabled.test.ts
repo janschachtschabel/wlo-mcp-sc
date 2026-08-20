@@ -45,7 +45,7 @@ test('the off switch stops the live fallback too, not only the background tick',
     const answered = await ensureRegistries(nodes);
 
     assert.equal(children, 0, 'no request pays for a cache the operator switched off');
-    assert.equal(answered, 0, 'and the answer says so, so the pointer line stands');
+    assert.equal(answered.size, 0, 'and the answer says so, so the pointer line stands');
     assert.equal(nodes[0]!.skillRegistry, undefined);
     assert.equal(queueLength(), 0, 'nothing piles up behind a tick that will never run');
   } finally {

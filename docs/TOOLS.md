@@ -247,7 +247,12 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 #### Kompendiumstext: Inhaltsverzeichnis immer, Absätze auf Wunsch
 
-Ein Kompendiumstext ist redaktionelle Prosa zu einer Sammlung und kann sehr lang
+Ein Kompendiumstext ist redaktionelle Prosa zu einer Sammlung — typischerweise
+dreiteilig: (1) Weltwissen zum Thema, (2) Kompetenzen und Lehrplanbezüge nach
+Bildungsstufe und Bundesland, (3) Vorstellung der Sammlungsinhalte. Er ist damit
+der Maßstab für Lückenanalysen (Soll gegen den Ist-Bestand), für
+Sachrichtigkeits-Prüfungen und für Lernpfade entlang der Lehrplan-Kompetenzen —
+und er kann sehr lang
 werden — der längste auf Staging hat **65 250 Zeichen**. Deshalb antwortet
 `get_compendium_text` in zwei Formen, und beide beginnen mit dem
 **Inhaltsverzeichnis** der Überschriften des Dokuments:

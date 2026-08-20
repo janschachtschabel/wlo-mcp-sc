@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { searchAll } from '../src/services/search.js';
+import { searchAllEnvelopeSchema } from '../src/apps/outputSchemas.js';
 import { WLO_ROOT_COLLECTION_ID } from '../src/wlo-api.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
@@ -83,6 +84,35 @@ test('searchAll: includeTextContent enriches content results (capped)', async ()
   try {
     const env = await searchAll({ query: 'x', include: ['content'], includeTextContent: true });
     assert.match(env.content.results[0].textContent ?? '', /Volltext c-1/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('searchAll: a hit never ships the inline compendium, however large', async () => {
+  // Live 2026-08-20: the Optik topic-page hit carried 37 428 chars inline —
+  // 75 % of a 50k JSON answer, in EVERY search that returned it, in every
+  // format (structuredContent travels with markdown too). The property stays in
+  // the projection because the SIGNAL needs it; the text does not pass
+  // formatNode. `includeCompendium` and get_compendium_text are the ways.
+  const big = 'K'.repeat(40_000);
+  const mock = installFetchMock((url) => {
+    if (url.includes('/collections')) {
+      return { json: { nodes: [makeNode('coll-1', 'Sammlung Optik', {
+        'ccm:oeh_collection_compendium_text': [big],
+      })] } };
+    }
+    if (url.includes('/ngsearch')) return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+    return { json: {} };
+  });
+  try {
+    const env = await searchAll({ query: 'optik', include: ['collections'] });
+    const hit = env.collections.results[0]!;
+    assert.equal(hit.compendiumText, undefined, 'the text must not ride along');
+    assert.equal(hit.hasCompendium, true, 'but the fact that one exists must');
+    const parsed = searchAllEnvelopeSchema.parse(env);
+    assert.equal(parsed.collections.results[0]?.hasCompendium, true,
+      'and the signal survives the output schema (zod strips undeclared keys)');
   } finally {
     mock.restore();
   }

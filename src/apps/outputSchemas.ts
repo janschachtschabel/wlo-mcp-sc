@@ -41,6 +41,9 @@ export const formattedNodeSchema = z.object({
   topicPageUrl: z.string(),
   textContent: z.string().optional(),
   compendiumText: z.string().optional(),
+  // The signal that replaced the inline text on search hits (2026-08-20) —
+  // undeclared, zod would strip it from structuredContent with nothing failing.
+  hasCompendium: z.literal(true).optional(),
   // Declared, not inferred: zod strips unknown keys, so a field missing here
   // disappears from structuredContent with nothing failing anywhere.
   skillRegistry: z.object({
@@ -148,7 +151,13 @@ export const searchAllEnvelopeSchema = z.object({
     total: z.number(), count: z.number(), results: z.array(formattedNodeSchema),
     registryChecked: z.literal(true).optional(),
   }),
-  topicPages: z.object({ total: z.number(), count: z.number(), results: z.array(topicPageResultSchema) }),
+  // `registryChecked` here too: a Themenseite IS a collection and carries the
+  // same disclosure since 2026-08-19 — undeclared, zod would strip it from
+  // structuredContent while the text kept it, with nothing failing anywhere.
+  topicPages: z.object({
+    total: z.number(), count: z.number(), results: z.array(topicPageResultSchema),
+    registryChecked: z.literal(true).optional(),
+  }),
   wikipedia: wikiSummarySchema.optional(),
 });
 

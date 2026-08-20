@@ -483,9 +483,11 @@ export const DISPLAY_PROPS: string[] = [
   'ccm:oeh_publisher_combined',
   'ccm:replicationsource', 'ccm:replicationsource_DISPLAYNAME', // source (e.g. Klexikon)
   'ccm:author_freetext',
-  // Collection editorial text (collections/portals only) — bundled so
-  // collection search/browse carry it inline for orientation without a second
-  // get_compendium_text call; renderToText caps the text output at 500 chars.
+  // Collection editorial text (collections/portals only). In the projection
+  // for the SIGNAL alone: `formatNode` turns it into `hasCompendium` and drops
+  // the text (user decision 2026-08-20 — the raw value is uncapped, and one
+  // Optik hit shipped 37 428 chars into every search answer). The text itself
+  // travels only via get_compendium_text or the includeCompendium enrichment.
   'ccm:oeh_collection_compendium_text',
   // Structure / IDs
   'ccm:page_config_ref',

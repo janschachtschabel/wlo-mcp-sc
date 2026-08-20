@@ -169,7 +169,9 @@ Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Bre
       'Sammlung, die es enthält. Gilt für Material-/Inhalts-Knoten; für die Einordnung einer SAMMLUNG im ' +
       'Themenbaum ist get_node_breadcrumb zuständig. Ein Material kann in mehreren Sammlungen liegen; in ' +
       'keiner ist ebenfalls ein normales Ergebnis und wird als solches benannt. Die nodeId aus einem ' +
-      'Sammlungs-Listing funktioniert genauso wie die aus einer Suche.',
+      'Sammlungs-Listing funktioniert genauso wie die aus einer Suche. Jede gefundene Sammlung nennt ' +
+      'ihren Katalog freigegebener Skills gleich mit — der Weg vom Material zur passenden Anleitung ' +
+      '(get_skill), ohne get_skill_registry eigens aufzurufen.',
     inputSchema: {
       nodeId: z.string().describe(
         'nodeId des Materials. Die ID aus einem Sammlungs-Listing funktioniert genauso wie die aus einer ' +
@@ -197,6 +199,13 @@ Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Bre
           };
         }
 
+        // Before EITHER format renders: the attachment sat after the JSON
+        // early-return until 2026-08-20, so markdown carried each collection's
+        // skill catalogue while JSON silently did not — the same defect the
+        // browse tools had on 2026-08-15, and this is the tool the chain
+        // "material → collection → its approved skills" runs through.
+        await ensureRegistries(result.collections);
+
         if ((params.outputFormat ?? 'markdown') === 'json') {
           return {
             content: [{
@@ -212,8 +221,6 @@ Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Bre
             }],
           };
         }
-
-        await ensureRegistries(result.collections);
 
         const heading = oneLine(`# ${result.title || result.nodeId}`);
         if (result.collections.length === 0) {

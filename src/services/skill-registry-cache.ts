@@ -265,28 +265,33 @@ export function queueLength(): number {
  * the caller nothing but the answer it would have had anyway; the next call for
  * the same collection gets it.
  *
- * @returns how many of `nodes` the cache could answer AUTHORITATIVELY, whether
- *   or not a registry was found — a remembered scan that was cut short at the
- *   file cap does NOT count. The caller turns that into `registryChecked`:
- *   a collection with no registry carries no field, so the nodes alone cannot
- *   tell "not looked up" from "looked up, none there".
+ * @returns the nodeIds the cache could answer AUTHORITATIVELY, whether or not
+ *   a registry was found — a remembered scan that was cut short at the file cap
+ *   is NOT in the set. The caller turns membership into `registryChecked`: a
+ *   collection with no registry carries no field, so the nodes alone cannot
+ *   tell "not looked up" from "looked up, none there". A SET rather than a
+ *   count since 2026-08-19, because one search reconciles TWO buckets
+ *   (collections and topic pages) against one shared call — and a count cannot
+ *   say which side an answer belongs to: 4 answered ids are not "2 of 2
+ *   collections", and treating them so printed a catalogue with "nicht
+ *   geprüft" beside it.
  */
-export function attachCachedRegistries(nodes: FormattedNode[]): number {
-  let answered = 0;
+export function attachCachedRegistries(nodes: FormattedNode[]): Set<string> {
+  const answered = new Set<string>();
   const cold: string[] = [];
   for (const node of nodes) {
     if (node.nodeType !== 'collection') continue;
     // A registry already on the node came from the live path, which read the
     // listing just now; this entry may be minutes old. Fresher wins.
-    if (node.skillRegistry) { answered++; continue; }
+    if (node.skillRegistry) { answered.add(node.nodeId); continue; }
     const entry = entries.get(node.nodeId);
     if (!entry) { cold.push(node.nodeId); continue; }
-    if (entry.registry) { node.skillRegistry = entry.registry; answered++; continue; }
+    if (entry.registry) { node.skillRegistry = entry.registry; answered.add(node.nodeId); continue; }
     // Held so the capped page is not read again, but it answered nothing: a
     // registry past the scan cap is invisible to it. Counting it would print
     // "geprüft" over a look that saw 50 of 400 files.
     if (entry.scanTruncated) continue;
-    answered++;
+    answered.add(node.nodeId);
   }
   if (cold.length) queueCollections(cold);
   return answered;
@@ -319,20 +324,21 @@ const LIVE_FALLBACK_MAX = 10;
  * must not become "this collection has no approved skills". A scan cut short at
  * the file cap is kept but does not count (see `CacheEntry.scanTruncated`).
  *
- * `WLO_SKILL_CACHE=off` short-circuits this to 0: the operator's switch covers
- * the request path as well as the background timer.
+ * `WLO_SKILL_CACHE=off` short-circuits this to an empty set: the operator's
+ * switch covers the request path as well as the background timer.
  *
- * @returns how many of `nodes` are now answered authoritatively. Anything short
- *   of the collection count means the caller keeps its pointer line.
+ * @returns the nodeIds now answered authoritatively (see
+ *   `attachCachedRegistries` for why ids rather than a count). A node missing
+ *   from the set means the caller keeps its pointer line for it.
  */
-export async function ensureRegistries(nodes: FormattedNode[]): Promise<number> {
+export async function ensureRegistries(nodes: FormattedNode[]): Promise<Set<string>> {
   // The operator's switch covers the REQUEST path too, not only the background
   // tick. It is flipped because of the cost, and a live fallback that kept
   // running would charge every request the full children listing while no tick
   // existed to expire anything or drain the queue it fed.
-  if (!WLO_SKILL_CACHE) return 0;
+  if (!WLO_SKILL_CACHE) return new Set();
 
-  let answered = attachCachedRegistries(nodes);
+  const answered = attachCachedRegistries(nodes);
   const cold = nodes.filter(n => n.nodeType === 'collection' && !n.skillRegistry
     && !entries.has(n.nodeId));
   if (!cold.length) return answered;
@@ -346,7 +352,7 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<number> 
     if (!entry) return;                        // nothing learned; stays queued
     remember(node.nodeId, entry);
     if (entry.registry) node.skillRegistry = entry.registry;
-    if (!entry.scanTruncated) answered++;
+    if (!entry.scanTruncated) answered.add(node.nodeId);
   });
   return answered;
 }
@@ -362,8 +368,8 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<number> 
  * them a children listing. Queued instead, so the tick answers it and the next
  * call is complete.
  *
- * It keeps no "answered" count, unlike `attachCachedRegistries`, and that is not
- * an oversight: these callers never print "geprüft, keine vorhanden". A marker
+ * It keeps no ledger of answered ids, unlike `attachCachedRegistries`, and that
+ * is not an oversight: these callers never print "geprüft, keine vorhanden". A marker
  * appears only where a registry was actually found, so there is no claim of
  * absence to qualify.
  */

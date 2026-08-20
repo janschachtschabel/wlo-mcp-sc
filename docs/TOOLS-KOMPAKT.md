@@ -38,7 +38,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 | Tool | Funktion |
 |---|---|
 | `get_wlo_content_text` | Der eigentliche Text eines Materials, nicht seine Metadaten. |
-| `get_compendium_text` | Der redaktionelle Kompendiumstext einer oder mehrerer Sammlungen — Inhaltsverzeichnis immer, mit `query` nur die passenden Absätze. |
+| `get_compendium_text` | Der redaktionelle Kompendiumstext einer oder mehrerer Sammlungen — typischerweise dreiteilig (Weltwissen · Lehrplan-Kompetenzen · Inhaltsvorstellung), der Maßstab für Lückenanalyse und Sachrichtigkeit. Inhaltsverzeichnis immer, mit `query` nur die passenden Absätze. |
 | `get_wikipedia_summary` | Wikipedia zu einem Begriff — Anriss oder ganzer Artikel. |
 | `get_url_text` | Der Text hinter einer beliebigen Web-Adresse (als unsicher deklariert, abschaltbar). |
 

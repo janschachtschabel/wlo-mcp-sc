@@ -62,7 +62,7 @@ stateless proxy in front of edu-sharing.
 
 ## Features
 
-- **28 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill`+`get_skill` for a single `get_skill_for_task`) — content search, collection search, combined search, topic
+- **28 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill` for `get_skill_for_task` — `get_skill` stays in every mode) — content search, collection search, combined search, topic
   pages and their swimlane content, subject portals, tree browsing, node
   details (single & bulk), vocabulary lookup, publisher lookup, health check,
   Wikipedia (lead extract or the FULL article via `fullText`), full compendium text, scoped in-collection search, related
@@ -156,7 +156,7 @@ else has sensible defaults.
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. **The default is STAGING; production must be named explicitly** (changed 2026-08-06 — a deployment whose `.env` lacked this line wrote into the live catalogue while everything around it said staging). Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. |
 | `WLO_ROOT_COLLECTION_ID` | per host | all | Root node of the collection hierarchy — **repository-bound**. The known WLO hosts (prod `redaktion.openeduhub.net`, staging `repository.staging.openeduhub.net`) get a per-host default automatically (the same id on both today, live-verified 2026-07-17, but maintained per host). Any **other** edu-sharing instance must set this explicitly — otherwise the server logs a startup warning and falls back to the WLO id, which will not exist there. |
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it, and `search_skill` narrows to that subtree. Unset → callers pass an explicit `?nodeId=`. |
-| `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` + `get_skill` with a single `get_skill_for_task` that ranks and loads in one call — 41 tools instead of 42. Fewer round-trips, less control over the choice. Anything else leaves both tools in place. |
+| `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` with `get_skill_for_task`, which ranks and loads in one call — the count stays 42, and `get_skill` stays in every mode: the registry and every collection result hand out nodeIds only it can load. Fewer round-trips, less control over the choice. Anything else leaves the search in place. |
 | `WLO_SKILL_CACHE` | _on_ | all | Keeps each collection's approved-skill catalogue warm in the background, so a collection result carries it for **0** extra requests. Set to `off` (or `0`/`false`/`no`) to switch off the background work **and** the per-request live fallback — the collection output then carries the free pointer to `get_skill_registry` again. See [the skill-registry cache](#skill-registry-cache). |
 | `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | all | How often the background tick drains its queue and renews entries past the TTL. Clamped to 60 000 – 3 600 000. |
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | all | How long a remembered answer stands before it is checked again. Never below the refresh interval. A registry created two minutes ago therefore appears with a delay — `get_skill_registry` and `includeSkillRegistry: true` read live and see it at once. |
@@ -344,10 +344,10 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 27 | `get_url_text` | **UNSAFE** — the text behind an ARBITRARY web URL, via the extraction service. Not for WLO material (use 24). Switchable off with `WLO_DISABLE_UNSAFE_TOOLS`; **not recommended in production** — see [Tools declared unsafe](#tools-declared-unsafe) | markdown / json |
 | 28 | `get_skill_registry` | Which skills ONE collection has approved — the registry document filed in it, its catalogue, and the editors' own notes | markdown / json |
 
-With `WLO_SKILL_TOOL_MODE=one-tool`, 22 and 23 are replaced by a single
-`get_skill_for_task`, which ranks and loads the best match itself. 28 is
-unaffected by that switch — it answers a different question (see
-[Working with skills](#working-with-skills)).
+With `WLO_SKILL_TOOL_MODE=one-tool`, 22 is replaced by a single
+`get_skill_for_task`, which ranks and loads the best match itself. 23 and 28
+are unaffected by that switch — the registry (28) hands out nodeIds, and 23 is
+the tool that loads them (see [Working with skills](#working-with-skills)).
 
 The display/search tools also return `structuredContent` (validated against a
 per-tool `outputSchema`) and carry `annotations` (`readOnlyHint`; `openWorldHint`

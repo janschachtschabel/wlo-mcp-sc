@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { searchAll } from '../src/services/search.js';
+import { searchAllEnvelopeSchema } from '../src/apps/outputSchemas.js';
 import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { queueCollections, queueLength, runCacheTick, stopSkillRegistryCache } from '../src/services/skill-registry-cache.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
@@ -48,7 +49,14 @@ function topicPageNode(id: string, title: string) {
  * portals — so a blanket count would measure that too and say nothing about
  * what this enrichment costs.
  */
-function searchMock(opts: { withRegistry?: boolean; childrenStatus?: number } = {}) {
+function searchMock(opts: {
+  withRegistry?: boolean;
+  childrenStatus?: number;
+  /** Serve a registry from the TOPIC PAGE's children too (id `reg-tp`). */
+  withTopicPageRegistry?: boolean;
+  /** Fail the topic page's children listing alone. */
+  tpChildrenStatus?: number;
+} = {}) {
   const counts = { children: 0, download: 0, metadata: 0 };
   const mock = installFetchMock((url) => {
     if (url.includes('/collections')) {
@@ -58,6 +66,11 @@ function searchMock(opts: { withRegistry?: boolean; childrenStatus?: number } = 
       return { json: { nodes: [makeNode('c-1', 'Arbeitsblatt')], pagination: { total: 1, from: 0, count: 1 } } };
     }
     if (url.includes('/children')) {
+      if (url.includes('/tp-1/children')) {
+        if (opts.tpChildrenStatus) return { status: opts.tpChildrenStatus, json: {} };
+        const nodes = opts.withTopicPageRegistry ? [registryDoc('reg-tp')] : [];
+        return { json: { nodes, pagination: { total: nodes.length, from: 0, count: nodes.length } } };
+      }
       if (!url.includes('/coll-1/children')) return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
       counts.children++;
       if (opts.childrenStatus) return { status: opts.childrenStatus, json: {} };
@@ -117,9 +130,11 @@ test('the enrichment costs exactly two upstream calls per collection', async () 
   try {
     await searchAll({ query: 'optik', includeSkillRegistry: true });
 
-    // One collection is enriched; the topic page is not. The whole point of the
-    // cheap tier: title and nodeId come out of the `:::` block, so no skill
-    // record is read at all, however many the registry declares.
+    // Both buckets are enriched since 2026-08-19; the topic page here simply
+    // holds no registry, so its listing answers empty and costs no download.
+    // The whole point of the cheap tier: title and nodeId come out of the
+    // `:::` block, so no skill record is read at all, however many the
+    // registry declares.
     assert.equal(counts.children, 1, 'one children listing for the one collection');
     assert.equal(counts.download, 1, 'one registry document read');
     assert.equal(counts.metadata, 0, 'no skill head is fetched during a search');
@@ -156,14 +171,117 @@ test('a failing registry lookup costs the field, never the search', async () => 
   }
 });
 
-test('topic-page results are not enriched', async () => {
-  const { mock } = searchMock();
+test('the union of both buckets shares ONE live-fallback budget', async () => {
+  // The claim lives in three comments and the changelog; this is the assertion
+  // they hang on. The numbers are the point: 8 per bucket is UNDER the cap of
+  // 10, the union of 16 is OVER it — so one shared call spends 10 listings
+  // while two per-bucket calls would spend 16. A 5+5 fixture could not tell
+  // the two apart, and every other test in this file stays green either way.
+  stopSkillRegistryCache();
+  let listings = 0;
+  const colls = Array.from({ length: 8 }, (_, i) => collectionNode(`cap-c-${i}`, `Optik Sammlung ${i}`));
+  const tps = Array.from({ length: 8 }, (_, i) => topicPageNode(`cap-t-${i}`, `Optik Themenseite ${i}`));
+  const mock = installFetchMock((url) => {
+    if (url.includes('/collections')) return { json: { nodes: [...colls, ...tps] } };
+    if (url.includes('/ngsearch')) return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+    if (url.includes('/children')) {
+      // Only the fixture's own collections: searchAll lists the root portals on
+      // its own account, and a blanket counter would measure that too.
+      if (url.includes('cap-')) listings++;
+      return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    await searchAll({ query: 'optik', maxCollections: 8 });
+    assert.equal(listings, 10, 'LIVE_FALLBACK_MAX is shared by the union, not granted per bucket');
+  } finally {
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('a topic page carries the catalogue of the collection it is', async () => {
+  // REWRITTEN 2026-08-19 — until then this test pinned the opposite ("topic-page
+  // results are not enriched"), as the only test in this file with no reason
+  // given, and the reason turned out not to exist: a Themenseite IS a `ccm:map`
+  // that happens to carry a page layout, and the live Optik collection holds
+  // three approved skills. Leaving the bucket out meant the ONE hit a search
+  // returned for "Optik" named none of them, while the plain-collection bucket
+  // named all of theirs (found live, 2026-08-19).
+  stopSkillRegistryCache();
+  const { mock } = searchMock({ withTopicPageRegistry: true });
   try {
     const env = await searchAll({ query: 'optik', includeSkillRegistry: true });
     assert.equal(env.topicPages.results.length, 1);
-    assert.equal((env.topicPages.results[0] as { skillRegistry?: unknown }).skillRegistry, undefined);
+    assert.equal(env.topicPages.results[0]?.skillRegistry?.nodeId, 'reg-tp');
+    assert.deepEqual(env.topicPages.results[0]?.skillRegistry?.entries.map(e => e.nodeId),
+      [SKILL_A, SKILL_B]);
   } finally {
     mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('each bucket reports its own registryChecked', async () => {
+  // The union shares ONE ensureRegistries call (and so the live-fallback cap),
+  // but each bucket reconciles its own ledger. A count cannot: 4 answered ids
+  // are not "2 of 2 collections", and the mixed search is the NORMAL search —
+  // a count-based union would print the catalogue with "nicht geprüft" beside it.
+  stopSkillRegistryCache();
+  const { mock } = searchMock({ withTopicPageRegistry: true });
+  try {
+    const env = await searchAll({ query: 'optik' });
+    assert.equal(env.collections.registryChecked, true);
+    assert.equal(env.topicPages.registryChecked, true);
+  } finally {
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('a failing topic-page listing is disclosed for that bucket alone', async () => {
+  stopSkillRegistryCache();
+  const { mock } = searchMock({ tpChildrenStatus: 503 });
+  try {
+    const env = await searchAll({ query: 'optik' });
+    assert.equal(env.collections.registryChecked, true, 'the collection bucket answered');
+    assert.equal(env.topicPages.registryChecked, undefined, 'the topic-page bucket claims nothing');
+  } finally {
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('a topic-pages-only search settles the question too', async () => {
+  stopSkillRegistryCache();
+  const { mock } = searchMock({ withTopicPageRegistry: true });
+  try {
+    const env = await searchAll({ query: 'optik', include: ['topicPages'] });
+    assert.equal(env.collections.results.length, 0);
+    assert.equal(env.collections.registryChecked, undefined, 'an empty bucket claims nothing');
+    assert.equal(env.topicPages.results[0]?.skillRegistry?.nodeId, 'reg-tp');
+    assert.equal(env.topicPages.registryChecked, true);
+  } finally {
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('the topic-page disclosure survives the output schema', async () => {
+  // zod strips undeclared keys: without the schema entry the new fields reach
+  // the TEXT and silently vanish from structuredContent, with nothing failing
+  // anywhere — the exact trap CLAUDE.md documents for skillRegistry itself.
+  stopSkillRegistryCache();
+  const { mock } = searchMock({ withTopicPageRegistry: true });
+  try {
+    const env = await searchAll({ query: 'optik' });
+    const parsed = searchAllEnvelopeSchema.parse(env);
+    assert.equal(parsed.topicPages.registryChecked, true);
+    assert.equal(parsed.topicPages.results[0]?.skillRegistry?.nodeId, 'reg-tp');
+  } finally {
+    mock.restore();
+    stopSkillRegistryCache();
   }
 });
 

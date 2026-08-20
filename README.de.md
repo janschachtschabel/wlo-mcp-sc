@@ -72,8 +72,8 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   Sammlungsstatistik, Node-Breadcrumb, Sammlungs-Zugehörigkeit eines Materials,
   Anmeldestatus, **WLO-Skill-Suche und Skill-Abruf** sowie die
   ChatGPT-`search`/`fetch`-Knowledge-Tools. Alle sind immer da;
-  `WLO_SKILL_TOOL_MODE=one-tool` ersetzt `search_skill`+`get_skill` durch das
-  einzelne `get_skill_for_task`. Dazu kommt
+  `WLO_SKILL_TOOL_MODE=one-tool` ersetzt `search_skill` durch
+  `get_skill_for_task` — `get_skill` bleibt in jedem Modus. Dazu kommt
   `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
   deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
 - **14 kuratierende MCP-Tools** — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
@@ -174,7 +174,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. **Die Vorgabe ist STAGING; die Produktion muss ausdrücklich hingeschrieben werden** (geändert am 2026-08-06 — eine `.env` ohne diese Zeile legte einen Datensatz in der Live-Instanz an, während alles drumherum „staging" sagte). Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. |
 | `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default, und `search_skill` grenzt auf diesen Teilbaum ein. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
-| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` + `get_skill` durch ein einziges `get_skill_for_task`, das in einem Aufruf auswählt und lädt — 41 statt 42 Werkzeuge. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt beide Werkzeuge stehen. |
+| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` durch `get_skill_for_task`, das in einem Aufruf auswählt und lädt — die Zahl bleibt 42, und `get_skill` bleibt in jedem Modus: Registry und Sammlungstreffer geben nodeIds aus, die nur es laden kann. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt die Suche stehen. |
 | `WLO_SKILL_CACHE` | _an_ | alle | Hält den Katalog freigegebener Skills je Sammlung im Hintergrund warm, damit ein Sammlungs-Ergebnis ihn für **0** Zusatzabrufe mitbringt. Auf `off` (oder `0`/`false`/`no`) gesetzt, entfällt die Hintergrundarbeit **und** der Live-Rückfall je Anfrage — die Ausgabe trägt dann wieder den kostenlosen Hinweis auf `get_skill_registry`. Siehe [Der Skill-Registry-Cache](#der-skill-registry-cache). |
 | `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | alle | Wie oft der Hintergrund-Takt die Warteschlange abarbeitet und abgelaufene Einträge erneuert. Begrenzt auf 60 000 – 3 600 000. |
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | alle | Wie lange eine gemerkte Antwort gilt, bevor sie neu geprüft wird. Nie kleiner als das Takt-Intervall. Eine vor zwei Minuten angelegte Registry erscheint also verzögert — `get_skill_registry` und `includeSkillRegistry: true` lesen live und kennen sie sofort. |
@@ -575,8 +575,9 @@ einem Markdown-Link herausklauben. Der Text ist kuratierter Inhalt, keine
 System-Anweisung — die Ausgabe sagt das dazu. Siehe
 [`docs/SKILLS.md`](docs/SKILLS.md).
 
-Mit `WLO_SKILL_TOOL_MODE=one-tool` treten 22 und 23 durch ein einzelnes
-`get_skill_for_task` ersetzt auf, das selbst rankt und den besten Treffer lädt.
+Mit `WLO_SKILL_TOOL_MODE=one-tool` tritt 22 durch ein einzelnes
+`get_skill_for_task` ersetzt auf, das selbst rankt und den besten Treffer lädt;
+23 und 28 bleiben unberührt — die Registry (28) gibt nodeIds aus, und 23 lädt sie.
 
 **24. `get_wlo_content_text`** — `nodeId`, `maxChars?` (500–50000, Standard 8000),
 `outputFormat?`. Liefert den **eigenen Text** des Materials, nicht dessen
@@ -660,8 +661,8 @@ Drei Werkzeuge, und der Unterschied liegt in der Frage, die sie beantworten:
 
 **Der Normalweg ist 22 → 23.** Nach Aufgabe suchen, Beschreibungen lesen, die
 passende laden. `WLO_SKILLS_COLLECTION_ID` grenzt die Suche auf einen Teilbaum
-ein; `WLO_SKILL_TOOL_MODE=one-tool` legt beide zu `get_skill_for_task` zusammen,
-das in einem Aufruf auswählt und lädt — weniger Roundtrips, weniger Kontrolle.
+ein; `WLO_SKILL_TOOL_MODE=one-tool` ersetzt die Suche (22) durch `get_skill_for_task`,
+das in einem Aufruf auswählt und lädt — weniger Roundtrips, weniger Kontrolle; 23 bleibt.
 
 **Zu 28 greifen, wenn die Frage der Sammlung gilt**, nicht der Aufgabe: „wie
 arbeite ich mit diesem Material", „was ist hier vorgesehen". Jedes

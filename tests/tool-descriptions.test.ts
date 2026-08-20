@@ -78,7 +78,11 @@ async function allDescriptions(): Promise<Map<string, string>> {
 const REQUIRED: Record<string, string[]> = {
   // The default entry point. A request naming a MEDIUM ("ein Video zu …") is the
   // commonest shape there is and must land here, not in a web search.
-  search_wlo_all: ['video', 'arbeitsblatt', 'medien', 'material'],
+  // 'search_wlo_content' since 2026-08-20: the entry point must NAME its own
+  // narrowing — the earlier wording ("als Filter, nicht in ein anderes
+  // Werkzeug") actively fought the chatbot's routing, which sends a request
+  // for a specific single-content shape to search_wlo_content.
+  search_wlo_all: ['video', 'arbeitsblatt', 'medien', 'material', 'search_wlo_content'],
   // The deliberate narrowing — it has to name the tool it defers to, or it
   // competes with search_wlo_all for every single-medium request.
   search_wlo_content: ['search_wlo_all'],

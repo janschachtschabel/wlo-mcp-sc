@@ -98,11 +98,17 @@ services:
       WLO_SERVICE_USER: "${WLO_SERVICE_USER:-}"
       WLO_SERVICE_PASSWORD: "${WLO_SERVICE_PASSWORD:-}"
       # Only for the SERVICE account: with a personal login, writing is always on.
-      #   WLO_ALLOW_SERVICE_WRITES – lets the shared account write; without it the
-      #     13 curation tools are not registered at all in service mode.
+      #   WLO_ALLOW_SERVICE_WRITES – lets the shared account write. Without it the
+      #     14 curation tools are still LISTED (deliberately, since 2026-08-05: a
+      #     model that never sees a write tool never asks the host to sign anyone
+      #     in) but every call is refused in service mode.
+      #   WLO_ALLOW_PREPARED_WRITES – lets a signed-in caller PREPARE a write for
+      #     an embedding to execute, instead of executing it. Grants no rights of
+      #     its own; off unless something is embedded.
       #   WLO_INBOX_ID             – where service-account creates are filed;
       #     required before that account can create anything.
       WLO_ALLOW_SERVICE_WRITES: "${WLO_ALLOW_SERVICE_WRITES:-}"
+      WLO_ALLOW_PREPARED_WRITES: "${WLO_ALLOW_PREPARED_WRITES:-}"
       WLO_INBOX_ID: "${WLO_INBOX_ID:-}"
 
       # ── 4 — which tools exist ───────────────────────────────────────────────

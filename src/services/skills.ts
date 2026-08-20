@@ -230,7 +230,16 @@ export async function searchSkills(opts: SearchSkillsOptions): Promise<SkillSumm
  * folder hangs off the original, and the text does not.
  */
 export async function readSkillText(nodeId: string): Promise<string | null> {
-  return (await getNodeDownloadText(nodeId)) ?? (await getNodeTextContent(nodeId));
+  // UNBOUNDED, and that is the user's decision (2026-08-20), not an oversight:
+  // an instruction must arrive whole — a model follows the half it got, and
+  // the cut half is where the guardrails tend to live. The ordinary anonymous
+  // download keeps its 64-KiB cap for every other file; a first fix raised
+  // this path to 1 MiB and was replaced the same day, because any bound is a
+  // size at which a skill silently stops being followed. The residual risk is
+  // deliberate and rests on what this path reads: curated records from the
+  // operator's own repository, not caller-supplied URLs. The /textContent
+  // fallback below carries no cap of its own.
+  return (await getNodeDownloadText(nodeId, Number.POSITIVE_INFINITY)) ?? (await getNodeTextContent(nodeId));
 }
 
 /**
@@ -270,9 +279,11 @@ export async function getSkill(
  * Markdown, plus the runners-up so a wrong pick stays visible to the caller.
  *
  * Goes through `getSkill` rather than fetching the text itself, so the companion
- * files come with it. Without them this mode cannot reach them AT ALL: it
- * registers no tool that takes a nodeId, so an unlisted companion is invisible
- * and unreachable at once. Costs one metadata read over the previous shape.
+ * files come with it — listed by name, which is what makes them reachable at all.
+ * The original reason was stronger and has expired: until 2026-08-16 this mode
+ * registered no tool taking a nodeId, so an unlisted companion was invisible and
+ * unreachable at once. `get_skill` is registered in every mode now, so the point
+ * is discoverability rather than reachability. Costs one metadata read.
  */
 export async function pickBestSkill(
   opts: SearchSkillsOptions,

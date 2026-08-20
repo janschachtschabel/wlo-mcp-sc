@@ -214,7 +214,13 @@ export interface SearchAllEnvelope {
      */
     registryChecked?: true;
   };
-  topicPages:  { total: number; count: number; results: TopicPageResult[] };
+  topicPages:  {
+    total: number;
+    count: number;
+    results: TopicPageResult[];
+    /** Same meaning as on `collections` — a Themenseite IS a collection. */
+    registryChecked?: true;
+  };
   wikipedia?:  WikiSummary;
 }
 
@@ -343,7 +349,7 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // condition re-derived per call site is the shape that has already let one
   // path drift from the rule twice in this codebase. Held in a variable because
   // the envelope has to report it too — see `collections.registryChecked`.
-  const forceLiveRegistry = Boolean(opts.includeSkillRegistry && collectionsFmt.length);
+  const forceLiveRegistry = Boolean(opts.includeSkillRegistry && (collectionsFmt.length || topicPagesFmt.length));
 
   // Enrichments run in parallel once the base results are known; each touches a
   // distinct field, so they cannot conflict on shared nodes. All are opt-in.
@@ -351,23 +357,36 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
     opts.includeTextContent ? enrichTextContent(contentFmt) : Promise.resolve(),
     opts.includeCompendium ? enrichCompendium([...collectionsFmt, ...topicPagesFmt]) : Promise.resolve(),
     opts.includeTopicPageContent ? enrichTopicPageContent(topicPagesFmt, opts.maxPerSwimlane ?? 3) : Promise.resolve(),
-    forceLiveRegistry ? enrichSkillRegistry(collectionsFmt) : Promise.resolve(),
+    forceLiveRegistry ? enrichSkillRegistry([...collectionsFmt, ...topicPagesFmt]) : Promise.resolve(),
   ]);
 
   // AFTER the forced pass, so a fresh answer is never overwritten. A cache hit
   // is a map lookup; a miss falls back to the children listing so the answer
   // carries the catalogue either way (bounded, pooled — one round-trip).
-  const cacheAnswered = await ensureRegistries(collectionsFmt);
-  // "Checked" means the CHILDREN listing answered for every collection here,
-  // live or remembered. Anything less and the caller keeps its pointer line:
-  // a collection without a registry carries no field, so the results alone
-  // cannot tell "not looked up" from "looked up, none there".
   //
-  // The live pass has to be its own term, not inferred from `cacheAnswered`: a
-  // live lookup that found NOTHING leaves no field behind either, so counting
+  // ONE call over BOTH buckets, since 2026-08-19: a Themenseite IS a `ccm:map`
+  // and can hold a registry like any collection (the live Optik page holds
+  // three approved skills), and leaving its bucket out meant the one hit a
+  // search returned for it named none of them. One call, not two, because the
+  // buckets then share the live-fallback cap — two calls would double the
+  // upstream budget a single search may spend.
+  const registriesAnswered = await ensureRegistries([...collectionsFmt, ...topicPagesFmt]);
+  // "Checked" means the CHILDREN listing answered for every node of THAT
+  // bucket, live or remembered. Anything less and the caller keeps its pointer
+  // line: a collection without a registry carries no field, so the results
+  // alone cannot tell "not looked up" from "looked up, none there".
+  //
+  // Per bucket over the ids, never a count over the union: 4 answered ids are
+  // not "2 of 2 collections", and a count-based union marks the NORMAL (mixed)
+  // search unchecked while its catalogues are right there in the answer.
+  //
+  // The forced pass has to be its own term, not inferred from the set: a live
+  // lookup that found NOTHING leaves no field behind either, so counting
   // fields would report a completed check as skipped.
-  const registryChecked = forceLiveRegistry
-    || (collectionsFmt.length > 0 && cacheAnswered === collectionsFmt.length);
+  const bucketChecked = (bucket: readonly FormattedNode[]): boolean =>
+    bucket.length > 0 && (forceLiveRegistry || bucket.every(n => registriesAnswered.has(n.nodeId)));
+  const registryChecked = bucketChecked(collectionsFmt);
+  const topicPagesChecked = bucketChecked(topicPagesFmt);
 
   const envelope: SearchAllEnvelope = {
     query,
@@ -389,7 +408,10 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
       results: collectionsFmt,
       ...(registryChecked ? { registryChecked: true as const } : {}),
     },
-    topicPages:  { total: topicPagesFmt.length, count: topicPagesFmt.length, results: topicPagesFmt },
+    topicPages:  {
+      total: topicPagesFmt.length, count: topicPagesFmt.length, results: topicPagesFmt,
+      ...(topicPagesChecked ? { registryChecked: true as const } : {}),
+    },
   };
   if (wiki) envelope.wikipedia = wiki;
   return envelope;

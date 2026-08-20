@@ -476,7 +476,24 @@ The current rebuild/extension is designed in:
   `search_wlo_topic_pages`) gets the head line via
   `registrySummaryLines(…, {entries:false})` and reads the cache ONLY
   (`cachedRegistriesFor`) — thirty portals or fifty branches paying a children
-  listing each is the crawl this cache exists to prevent. `get_related_content`
+  listing each is the crawl this cache exists to prevent. **Since 2026-08-19
+  the TOPIC-PAGE bucket of `searchAll` carries the catalogue too** — a
+  Themenseite IS a `ccm:map` and the live Optik page holds three approved
+  skills; only the plain-collection bucket was enriched, so a search's one hit
+  for "Optik" named none of them. Three rules bind the change: BOTH buckets go
+  into ONE `ensureRegistries` call (they share the live-fallback cap — two
+  calls would double a search's upstream budget); the function returns the SET
+  of answered nodeIds rather than a count, because each bucket reconciles its
+  own `registryChecked` against the shared call — a count cannot say which side
+  an answer belongs to, and the count-based union marked the NORMAL mixed
+  search unchecked while its catalogues stood in the answer; and
+  `topicPages.registryChecked` is declared in `searchAllEnvelopeSchema` (zod
+  strips undeclared keys with nothing failing). `get_topic_page_content`
+  additionally carries the catalogue INLINE in markdown — it was a second
+  content block, and at least one real client hands the model only the first,
+  so the server had answered and the model never saw it; JSON keeps the second
+  block, because block 1 is pure JSON there and prose inside breaks every
+  parser. `get_related_content`
   answers for the collection it TOUCHES, exposed as `registryCollectionId`, and
   which one that is depends on the SEED — the tool takes a material or a
   collection: a collection seed IS the collection in play (its own

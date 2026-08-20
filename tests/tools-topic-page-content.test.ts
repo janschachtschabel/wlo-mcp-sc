@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { connectedClient, installFetchMock, makeNode } from './fetchMock.js';
+import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
+import { stopSkillRegistryCache } from '../src/services/skill-registry-cache.js';
 
 // One-step topic path (2026-07-17): get_topic_page_content accepts a topic
 // `query`, resolves the best Themenseite internally (same Mode-B logic as
@@ -43,6 +45,73 @@ function topicPageHandler(url: string): { json: unknown } {
   }
   return { json: {} };
 }
+
+const REGISTRY_MD =
+  '::: ki-skill' + String.fromCharCode(10)
+  + '[Fragen generieren](https://repo.example/edu-sharing/components/render/00000001-0000-4000-8000-000000000000)'
+  + String.fromCharCode(10) + ':::';
+
+/** topicPageHandler plus a registry among the COLLECTION's children. */
+function registryTopicPageHandler(url: string): { json?: unknown; text?: string } {
+  if (url.includes('coll-1/children')) {
+    return { json: { nodes: [{
+      ...makeNode('reg-1', 'Skill Registry Optik', {
+        'cm:name': ['SKILL_REGISTRY.md'],
+        'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI],
+      }),
+      mimetype: 'text/x-web-markdown',
+      mediatype: 'file-markdown',
+    }], pagination: { total: 1, from: 0, count: 1 } } };
+  }
+  if (url.includes('/eduservlet/download')) return { text: REGISTRY_MD };
+  return topicPageHandler(url);
+}
+
+test('get_topic_page_content: markdown carries the catalogue in the SAME text block', async () => {
+  // Until 2026-08-19 the catalogue travelled as a SECOND content block, and at
+  // least one real client hands the model only the first — so the server had
+  // answered ("which skills are approved here?") and the model never saw it.
+  // Markdown is one line-oriented text; the catalogue joins it. JSON keeps its
+  // own block below, because block 1 is pure JSON there and prose inside it
+  // would break every parser.
+  stopSkillRegistryCache();
+  const mock = installFetchMock(registryTopicPageHandler);
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_topic_page_content',
+      arguments: { query: 'Optik' },
+    });
+    const content = result.content as Array<{ text: string }>;
+    assert.equal(content.length, 1, 'one block, nothing rides beside it');
+    assert.match(content[0]?.text ?? '', /freigegeben/);
+    assert.match(content[0]?.text ?? '', /Fragen generieren/);
+  } finally {
+    await client.close();
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('get_topic_page_content: json keeps the catalogue as its own block', async () => {
+  stopSkillRegistryCache();
+  const mock = installFetchMock(registryTopicPageHandler);
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_topic_page_content',
+      arguments: { query: 'Optik', outputFormat: 'json' },
+    });
+    const content = result.content as Array<{ text: string }>;
+    assert.equal(content.length, 2, 'JSON payload + catalogue');
+    JSON.parse(content[0]?.text ?? '');
+    assert.match(content[1]?.text ?? '', /freigegeben/);
+  } finally {
+    await client.close();
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
 
 test('get_topic_page_content: query resolves the Themenseite and returns swimlanes in ONE call', async () => {
   const mock = installFetchMock(topicPageHandler);

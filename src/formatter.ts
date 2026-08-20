@@ -75,14 +75,17 @@ export interface FormattedNode {
    */
   textContent?: string;
   /**
-   * Editorial compendium text (`ccm:oeh_collection_compendium_text`) — a
-   * curated prose summary of what a collection covers. The most authoritative
-   * source for a collection overview when present. Only carried on nodes that
-   * expose the property; search/list endpoints request DISPLAY_PROPS (which
-   * omits it), so this stays empty there and is populated on the `-all-`
-   * detail path (get_node_details / get_nodes_details).
+   * Editorial compendium text (`ccm:oeh_collection_compendium_text`) — filled
+   * ONLY by the opt-in `includeCompendium` enrichment. `formatNode` never sets
+   * it (user decision 2026-08-20): the property is UNCAPPED and rides in
+   * DISPLAY_PROPS — the earlier claim here that DISPLAY_PROPS omits it was
+   * false, measured live when one Optik search hit shipped 37 428 chars
+   * inline, 75 % of the whole answer, in every format. The text itself is
+   * `get_compendium_text`'s job (TOC + targeted passages).
    */
   compendiumText?: string;
+  /** The record HAS a compendium — the signal that the tool call is worth it. */
+  hasCompendium?: true;
   /**
    * The skill registry this COLLECTION declares — which skills are approved for
    * it (`services/skill-registry.ts`). Present only when the collection carries
@@ -250,9 +253,10 @@ export function formatNode(node: WloNode): FormattedNode {
     publisher:            first(p['ccm:oeh_publisher_combined']) || '',
     nodeType:             (node.type === 'ccm:map' || node.isDirectory === true) ? 'collection' : 'content',
     topicPageUrl:         buildTopicPageUrl(nodeId, pageConfigRef) ?? '',
-    // Undefined when the property is absent (search/list nodes) so the field
-    // simply doesn't appear in JSON output — only detail nodes carry it.
-    compendiumText:       p['ccm:oeh_collection_compendium_text']?.[0],
+    // The SIGNAL, never the text: the raw property is uncapped (largest on
+    // staging: 65 250 chars) and used to ship inline with every search hit.
+    // Spread like `originalId`, so an absent compendium leaves no key at all.
+    ...(p['ccm:oeh_collection_compendium_text']?.[0] ? { hasCompendium: true as const } : {}),
   };
 }
 
@@ -680,6 +684,7 @@ export function renderToText(
     if (n.publisher)                   parts.push(`Anbieter: ${n.publisher}`);
     if (n.topicPageUrl)                parts.push(`Themenseite: ${n.topicPageUrl}`);
     if (n.compendiumText)              parts.push(`Kompendium: ${n.compendiumText.slice(0, 500)}${n.compendiumText.length > 500 ? '…' : ''}`);
+    else if (n.hasCompendium)          parts.push('Kompendium: vorhanden — Inhaltsverzeichnis und gezielte Absätze über get_compendium_text (optional mit query).');
     if (n.textContent)                 parts.push(`Volltext (Auszug): ${n.textContent.slice(0, 500)}${n.textContent.length > 500 ? '…' : ''}`);
     parts.push(...registryLines(n));
     parts.push(`Typ: ${n.nodeType === 'collection' ? 'Sammlung' : 'Inhalt'}`);

@@ -116,7 +116,13 @@ test('formatNode: surfaces compendium text from ccm:oeh_collection_compendium_te
       'ccm:oeh_collection_compendium_text': ['Die Optik ist ein Teilgebiet der Physik.'],
     },
   });
-  assert.equal(f.compendiumText, 'Die Optik ist ein Teilgebiet der Physik.');
+  // FLIPPED 2026-08-20 (user decision): the raw property is UNCAPPED, and a
+  // live search for "Optik" shipped 37 428 chars of compendium inline — 75 % of
+  // the whole JSON answer. A hit now carries the fact that a compendium exists;
+  // the text itself is get_compendium_text's job (TOC + passages), or the
+  // explicit includeCompendium enrichment.
+  assert.equal(f.hasCompendium, true);
+  assert.equal(f.compendiumText, undefined);
 });
 
 test('formatNode: no compendium property → compendiumText undefined', () => {
@@ -133,17 +139,26 @@ test('DISPLAY_PROPS includes the compendium property so collection search/browse
   assert.ok(DISPLAY_PROPS.includes('ccm:oeh_collection_compendium_text'));
 });
 
+test('renderToText: a hit with hasCompendium points at the tool, without the text', () => {
+  const formatted = formatNode(makeNode('c1', 'Sammlung Optik'));
+  formatted.hasCompendium = true;
+  const text = renderToText([formatted]);
+  assert.match(text, /Kompendium: vorhanden/);
+  assert.match(text, /get_compendium_text/);
+});
+
 test('renderToText: renders a capped Kompendium line when compendiumText is present', () => {
+  // Since 2026-08-20 only the includeCompendium enrichment fills the field —
+  // formatNode carries the signal alone — so the fixture sets it the way the
+  // enrichment does, and the 500-char cap is what this test still pins.
   const long = 'K'.repeat(600);
   const f = formatNode({
     ref: { id: 'coll-3', repo: '-home-' },
     type: 'ccm:map',
     isDirectory: true,
-    properties: {
-      'cm:name': ['Optik'],
-      'ccm:oeh_collection_compendium_text': [long],
-    },
+    properties: { 'cm:name': ['Optik'] },
   });
+  f.compendiumText = long;
   const text = renderToText([f]);
   assert.match(text, /Kompendium: K+…/);
   // capped, not the full 600 chars

@@ -9,7 +9,7 @@ import { registerSkillTools } from '../src/tools/skills.js';
 import { DESCRIPTIONS_ONLY_NOTE } from '../src/formatter.js';
 import { SKILL_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
-import { installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
+import { connectedClient, installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
 
 async function skillClient(
   opts: { collectionId?: string; mode?: 'two-tool' | 'one-tool' } = {},
@@ -718,5 +718,68 @@ test('no skill tool describes a skill as a KI-Prompt any more', async () => {
     } finally {
       await client.close();
     }
+  }
+});
+import { skillFinderName, getSkillDescription } from '../src/tools/skills.js';
+import { TRUNCATION_MARKER } from '../src/text-cap.js';
+
+
+// ── V2 (2026-08-20): descriptions may only name tools that exist ─────────────
+// The chatbot's master prompt had to state "Ein Werkzeug `search_skill`
+// existiert nicht" to fight our own descriptions — in a deployment with
+// WLO_DISABLE_SKILL_SEARCH they pointed at a phantom tool, and the no-registry
+// answer even RECOMMENDED it.
+
+test('the finder pointer names only tools that exist in the mode', () => {
+  assert.equal(skillFinderName('two-tool', false), 'search_skill');
+  assert.equal(skillFinderName('two-tool', true), null);
+  // In one-tool mode the flag does not apply: get_skill_for_task IS the search.
+  assert.equal(skillFinderName('one-tool', false), 'get_skill_for_task');
+  assert.equal(skillFinderName('one-tool', true), 'get_skill_for_task');
+});
+
+test('get_skill never advertises a finder that is not registered', () => {
+  assert.match(getSkillDescription('search_skill'), /search_skill/);
+  assert.match(getSkillDescription('get_skill_for_task'), /get_skill_for_task/);
+  assert.doesNotMatch(getSkillDescription(null), /search_skill/);
+  // The always-true sources lead in every mode: the registry hands out the
+  // nodeIds, and collection results carry the catalogue.
+  assert.match(getSkillDescription(null), /get_skill_registry/);
+  assert.match(getSkillDescription('search_skill'), /get_skill_registry/);
+});
+
+
+// ── the full-text guarantee (2026-08-20, user decision) ─────────────────────
+// The chatbot developers asked whether get_skill truncates. It did: the
+// anonymous download is byte-capped at 64 KiB for every ordinary file, and a
+// SKILL.md past that came back cut, with the marker. An instruction that
+// arrives half is worse than none — the model follows the half it got.
+
+test('get_skill loads an instruction of ANY size, uncut', async () => {
+  // 1.5 MiB — deliberately past the 1-MiB bound the first fix chose, because
+  // the user's decision replaced it: there is NO length limit on the skill
+  // path. The ordinary 64-KiB download cap stays for every other file read.
+  const body = '# Grosser Skill' + String.fromCharCode(10)
+    + 'x'.repeat(1536 * 1024) + String.fromCharCode(10) + 'LETZTE ZEILE DES SKILLS';
+  const mock = installFetchMock((url) => {
+    if (url.includes('/metadata')) {
+      return { json: { node: makeNode('big-1', 'Grosser Skill', {
+        'ccm:oeh_extendedType': ['http://w3id.org/openeduhub/vocabs/contentTypes/ai_skill'],
+      }) } };
+    }
+    if (url.includes('/eduservlet/download')) return { text: body };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const text = toolText(await client.callTool({
+      name: 'get_skill',
+      arguments: { nodeId: 'big-1', includeFiles: false },
+    }));
+    assert.ok(text.includes('LETZTE ZEILE DES SKILLS'), 'the tail must arrive');
+    assert.ok(!text.includes(TRUNCATION_MARKER), 'and nothing may be cut');
+  } finally {
+    await client.close();
+    mock.restore();
   }
 });

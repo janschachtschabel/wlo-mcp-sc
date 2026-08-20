@@ -12,6 +12,7 @@ import { REGISTRY_CONTEXT_MAX, REGISTRY_MAX } from '../src/services/skill-regist
 import { DESCRIPTIONS_ONLY_NOTE } from '../src/formatter.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
+import { registryToolDescription, noRegistryText } from '../src/tools/skill-registry.js';
 
 async function registryClient(opts: { disableSearch?: boolean } = {}): Promise<Client> {
   const server = new McpServer({ name: 'test', version: '0.0.0' });
@@ -266,6 +267,31 @@ test('get_skill_registry answers JSON when asked', async () => {
 });
 
 // ── WLO_DISABLE_SKILL_SEARCH ─────────────────────────────────────────────────
+
+test('the registry description and the no-registry answer name only existing tools', () => {
+  assert.match(registryToolDescription('search_skill'), /search_skill/);
+  assert.doesNotMatch(registryToolDescription(null), /search_skill/);
+  assert.match(registryToolDescription(null), /get_skill/);
+  assert.match(noRegistryText('search_skill'), /search_skill/);
+  assert.match(noRegistryText('get_skill_for_task'), /get_skill_for_task/);
+  assert.doesNotMatch(noRegistryText(null), /search_skill|get_skill_for_task/);
+  // Whatever the mode, the miss itself is stated the same way.
+  assert.match(noRegistryText(null), /keine Skill-Registry/);
+});
+
+test('the registered get_skill description matches the mode — wiring, not just the pure fn', async () => {
+  // The pure functions are mode-tested, the tool LISTS are mode-tested — this
+  // pins the joint between them: a hardcoded finder in registerGetSkill would
+  // keep both green while reintroducing the phantom pointer.
+  const on = (await (await registryClient()).listTools()).tools
+    .find(t => t.name === 'get_skill')?.description ?? '';
+  assert.match(on, /search_skill/, 'default mode names the search that exists');
+
+  const off = (await (await registryClient({ disableSearch: true })).listTools()).tools
+    .find(t => t.name === 'get_skill')?.description ?? '';
+  assert.doesNotMatch(off, /search_skill/, 'registry-only mode must not point at a phantom tool');
+  assert.match(off, /get_skill_registry/, 'the always-true source still leads');
+});
 
 test('search_skill is offered unless the operator switched it off', async () => {
   const names = (await (await registryClient()).listTools()).tools.map(t => t.name);

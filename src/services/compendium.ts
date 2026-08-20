@@ -3,9 +3,9 @@
  * Bulk retrieval of the FULL editorial compendium text
  * (`ccm:oeh_collection_compendium_text`) for one or more collection nodes.
  *
- * Unlike collection search/browse (which carry the compendium via DISPLAY_PROPS
- * and truncate it to 500 chars in markdown), this returns the untruncated text
- * — the authoritative prose overview of a collection. Backed by
+ * Search hits carry only the `hasCompendium` signal (2026-08-20); this is the
+ * bulk delivery path behind `includeCompendium` and `/api/compendium`, and it
+ * returns the untruncated text — the authoritative prose overview. Backed by
  * `getNodesMetadata` (`-all-`, parallel, bounded), reused by REST + search
  * bundling.
  */
@@ -38,7 +38,12 @@ export async function getCompendiumTexts(nodeIds: string[]): Promise<CompendiumE
   return nodeIds.map(id => {
     const node = byId.get(id);
     if (!node) return { nodeId: id, title: '', compendiumText: null };
-    const f = formatNode(node);
-    return { nodeId: id, title: f.title, compendiumText: f.compendiumText ?? null };
+    // The property directly, not FormattedNode: since 2026-08-20 `formatNode`
+    // carries only the `hasCompendium` signal — this service IS the delivery
+    // path the signal points at, so it must not read through the type that
+    // deliberately dropped the text (found by the gap-fill test the moment the
+    // drop landed: the tool would have answered null for every collection).
+    const text = node.properties?.['ccm:oeh_collection_compendium_text']?.[0];
+    return { nodeId: id, title: formatNode(node).title, compendiumText: text ?? null };
   });
 }
