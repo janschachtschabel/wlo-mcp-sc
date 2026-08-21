@@ -11,7 +11,9 @@
 
 import { renderReading, readingFollowUpPrompt, type ReadingAction, type ReadingPayload } from './render.js';
 import { resolveLocale } from '../shared/strings.js';
+import { announceArrival } from '../shared/announce.js';
 import { createHost } from '../shared/host.js';
+import { renderLoading } from '../shared/loading.js';
 
 const host = createHost();
 
@@ -22,10 +24,18 @@ function payload(): ReadingPayload | undefined {
 function paint(): void {
   const root = document.getElementById('wlo-root');
   if (!root) return;
-  document.documentElement.lang = resolveLocale(host.locale());
-  root.innerHTML = renderReading(payload(), resolveLocale(host.locale()), {
-    canFollowUp: host.canFollowUp(),
-  });
+  const locale = resolveLocale(host.locale());
+  document.documentElement.lang = locale;
+  // Live region first: the innerHTML swap below destroys any in-root status
+  // text (see shared/announce.ts).
+  const awaiting = host.awaitingOutput();
+  announceArrival(awaiting, host.toolOutput() != null, locale);
+  // The worst of the four empty states: with no payload the miss-reason falls
+  // back to "Zu diesem Material ist kein Text hinterlegt." — a claim about the
+  // material, asserted before it was read (see shared/loading.ts).
+  root.innerHTML = awaiting
+    ? renderLoading(locale)
+    : renderReading(payload(), locale, { canFollowUp: host.canFollowUp() });
 }
 
 document.addEventListener('click', event => {

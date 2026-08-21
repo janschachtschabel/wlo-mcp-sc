@@ -20,9 +20,41 @@ import { parseInbound, rpcToolCall, settleCallResponse } from './host-bridge.js'
  *  widget can show its error state instead of spinning forever. */
 const CALL_TIMEOUT_MS = 15_000;
 
+/**
+ * How long a widget waits for its FIRST tool result before it gives up and lets
+ * the renderer speak (ms).
+ *
+ * Same reasoning as CALL_TIMEOUT_MS: a host that never delivers must not leave
+ * the widget in a skeleton for ever — and a tool that FAILS delivers nothing
+ * either (`toolError` returns `isError` with no structuredContent), so this is
+ * also how long a failed call would show a skeleton before falling back to what
+ * the widget showed before this existed.
+ *
+ * Both directions therefore matter, and the number is measured rather than
+ * guessed. Live against the deployed server, 2026-08-21, every widget-bound
+ * tool: `get_topic_page_content` 2 240 ms is the slowest, `get_url_text` on a
+ * heavy Wikipedia page 1 568 ms, a full `search_wlo_all` 1 287 ms. 30 s is
+ * ~13× the slowest observed call and still comfortably inside one upstream
+ * budget (`WLO_FETCH_TIMEOUT_MS`, 20 s), so it cannot expire mid-call — which
+ * would put the false "Keine Treffer gefunden." back on screen for exactly the
+ * slow calls the loading state exists for.
+ */
+const OUTPUT_GRACE_MS = 30_000;
+
 export interface WidgetHost {
   /** Latest tool output (structuredContent) — from window.openai or the standard bridge. */
   toolOutput(): unknown;
+  /**
+   * Whether a first tool result is still expected — the shells' cue to render
+   * the loading state rather than a renderer's empty state.
+   *
+   * "A result arrived" is a term of its own, never inferred from the payload
+   * being empty: under the standard bridge it is the `tool-result` notification
+   * (a result whose structuredContent is empty has still arrived). ChatGPT
+   * offers no such event — `window.openai.toolOutput` is null until the call
+   * completes — so there the value IS the only available signal.
+   */
+  awaitingOutput(): boolean;
   /** Persisted widget state (window.openai only; undefined under the standard bridge). */
   widgetState(): unknown;
   /** Host locale hint, if any. */
@@ -57,6 +89,10 @@ export function createHost(): WidgetHost {
 
   // Standard-bridge state, only used when window.openai is absent.
   let stdOutput: unknown;
+  /** Explicit "a tool-result notification arrived", independent of its value. */
+  let stdReceived = false;
+  /** Set once the grace window closes, so the wait cannot last for ever. */
+  let graceExpired = false;
   let nextId = 0;
   let hostOrigin: string | undefined; // pinned from the first accepted message
   const pending = new Map<number, { resolve: (result: unknown) => void; reject: (reason: unknown) => void }>();
@@ -89,7 +125,7 @@ export function createHost(): WidgetHost {
         for (const m of outbox.splice(0)) rawPost(m); // origin known → flush held messages
       }
       const inbound = parseInbound(event.data);
-      if (inbound.kind === 'tool-result') { stdOutput = inbound.output; notify(); }
+      if (inbound.kind === 'tool-result') { stdOutput = inbound.output; stdReceived = true; notify(); }
       else if (inbound.kind === 'call-response') {
         const entry = pending.get(inbound.id);
         if (entry) { pending.delete(inbound.id); settleCallResponse(inbound, entry); }
@@ -99,8 +135,26 @@ export function createHost(): WidgetHost {
     postToParent({ jsonrpc: '2.0', method: 'ui/initialize', params: {} }, true);
   }
 
+  /**
+   * Has NOTHING arrived yet? `!= null` on purpose: ChatGPT reports a pending
+   * call as null and an absent property as undefined, and both mean "nothing
+   * yet". The standard bridge answers from its explicit arrival flag instead.
+   */
+  const nothingArrived = (): boolean => (oai() ? oai()?.toolOutput == null : !stdReceived);
+
+  // Close the wait even if nothing ever arrives. The repaint, however, only
+  // when it changes something: notifying unconditionally rebuilt every widget's
+  // DOM (innerHTML) 30 s after EVERY mount, destroying keyboard focus and any
+  // selection on a screen that had long since rendered its results.
+  setTimeout(() => {
+    const wasWaiting = nothingArrived();
+    graceExpired = true;
+    if (wasWaiting) notify();
+  }, OUTPUT_GRACE_MS);
+
   return {
     toolOutput: () => oai()?.toolOutput ?? stdOutput,
+    awaitingOutput: () => !graceExpired && nothingArrived(),
     widgetState: () => oai()?.widgetState,
     locale: () => oai()?.locale,
     onUpdate: (cb) => { updateCbs.push(cb); },

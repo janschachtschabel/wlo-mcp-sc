@@ -6,6 +6,235 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — the arrival of a result is now announced to screen readers (2026-08-21)
+
+The loading state said "WLO-Inhalte werden geladen …" through `role="status"` —
+and then `paint()` replaced `#wlo-root`'s innerHTML wholesale, live region
+included, so the ARRIVAL was never announced (WCAG 4.1.3): a screen-reader user
+heard "loading" and then silence for ever, while sighted users watched the
+skeleton become content. Pre-existing for every repaint, but the loading state
+made it a promise that was never kept.
+
+`shared/announce.ts` owns the fix, and its two rules are the reason it works:
+the live region lives OUTSIDE `#wlo-root`, appended to `document.body`, so the
+repaint cannot destroy it; and it is created EMPTY on the first paint — a live
+region inserted together with its text is unreliably picked up by AT, one that
+already exists when the text lands fires dependably. Only the loading→result
+transition speaks ("WLO-Inhalte geladen." / "WLO content loaded."): a grace
+window that expires with nothing stays silent (announcing "geladen" over an
+empty view would be false), output already present at mount was never "loading"
+to the user, and later repaints (theme, selection) never re-announce.
+
+### Closed without code — no educationalContext derivation from "Klasse 6" (2026-08-21)
+
+The natural follow-up to the medium derivation was measured and rejected:
+summing Primarstufe + Sek I + Sek II per topic, only 36 % (Bruchrechnung,
+454/1269) to 72 % (Photosynthese) of content records carry ANY level. A derived
+level filter would HIDE the unset majority rather than narrow — the same trap
+the topic-page filters documented on 2026-08-07 ("a record without the field is
+not 'wrong level', it is 'level unknown'"). Unlike the medium case, nobody asked
+for it. The framing words `klasse`/`sekundarstufe` stay stripped-only.
+
+
+### Fixed — the words a teacher says no longer delete the result set (2026-08-21)
+
+Reported from Claude: for content questions the model answered with counts
+instead of recommending anything. It was doing exactly the right thing with what
+it got. The repository ANDs every word of a query, and the nouns that FRAME a
+request are absent from virtually every record — so one of them empties the
+answer. Measured against staging:
+
+    "Französische Revolution"                        480 records
+    "Unterrichtsstunde Französische Revolution"        0
+    "Optik"                                          825
+    "Bildungsinhalte zur Optik"                        4
+    "Photosynthese"                                  211
+    "Erklärvideo Photosynthese"                        1
+
+Inflection is not the cause ("Französischen Revolution" still answers 450) — one
+framing noun is enough. With 0–4 records in hand a model reports a number, and
+in Claude no widget hides how thin that is; in ChatGPT the tiles made the same
+answer look substantial.
+
+`expandQuery` now emits a `topic:` variant with the framing dropped, weighted
+0.92 — above the keyword variant so `MAX_VARIANTS` cannot trim away the one
+variant that returns anything, below the exact-phrase variants so a record
+matching the full wording still ranks first. It is emitted only when something
+was removed AND something remains: an unchanged query would repeat `full`, an
+emptied one would match everything. Nothing is taken away — the existing
+variants are untouched and the reranker merges.
+
+The word list is not invented. It is the vocabulary this server's own
+instructions and `docs/TOOLS.md` put in the user's mouth ("ein Video zu
+Bruchrechnung", "ein Arbeitsblatt zur Zellteilung", "eine Unterrichtsstunde
+zu …", "Ich suche Bildungsinhalte für eine Mathestunde …", "Zeig mir ein Video
+zur Eiszeit"), plus plurals. The request VERBS had to join the nouns: with
+`suche` left in, the Optik request narrowed to a single record — worse than the
+nouns alone achieved.
+
+A/B over one entry point, same repository, same queries:
+
+    Unterrichtsstunde zur Französischen Revolution     0 → 9
+    Zeig mir ein Video zur Eiszeit                     0 → 10
+    Arbeitsblatt zur Zellteilung                       3 → 10
+    Ich suche Bildungsinhalte zur Optik …              2 → 5
+    Erklärvideo Photosynthese                          1 → 4
+    "Französische Revolution" / "Optik" (controls)    10 → 10
+
+No query got worse; the controls are unchanged. The server instructions gained
+the matching sentence — topic in `query`, medium/level/subject in the filters —
+so a model narrows on purpose rather than by accident. It went there and not
+into the `search_wlo_all` description, which sits at 1017 of the 1024 characters
+a host truncates at.
+
+**The medium is no longer thrown away, it becomes the filter.** "Arbeitsblatt KI"
+asks two things — KI as the subject, worksheets as the type — and stripping the
+medium recovered the hits while losing the constraint. `withDerivedResourceType`
+fills in `learningResourceType` when the caller named none, in the two search
+TOOL handlers rather than in `searchAll`: that is where `labeled` is built, so
+the filter is disclosed in `_queryMeta` instead of narrowing a search silently.
+An explicit parameter always wins.
+
+The mapping is CURATED, and that is a measurement, not taste: `resolveVocab`
+fuzzy-matches, so `material` resolves to Übungsmaterial and `bildungsinhalte`
+resolves to **Bild** — deriving from whatever resolves would turn
+"Bildungsinhalte zur Optik" into a search for pictures. Only words naming one
+medium and nothing else are mapped (Video, Arbeitsblatt, Übung, Bild,
+Simulation, Podcast); the generic and framing words stay stripped-only. Words
+that resolve to nothing (`aufgabe`, `grafik`, `film`) are absent for the second
+reason: a filter built from them would match no record at all. "Unterrichtsstunde"
+is the case that proves the rule — mapping it to Unterrichtsplanung took
+"Französische Revolution" from 480 records to 0.
+
+A review of the change found the derivation's own disclosure gap and it is
+closed: the derived filter was visible only in `_queryMeta` — the trailing
+block a measured real client never hands to the model (2026-08-19) — so
+"Podcast zur Französischen Revolution" with zero podcasts would have read as a
+bare "Keine Inhalte gefunden." over a topic holding 480 records, the exact
+misreport class the licence filter got its sentences for. The disclosure now
+follows the licence pattern's two channels and goes one step further: a
+sentence from `derivedResourceTypeNotice` lands INSIDE block 0 in markdown
+(a JSON block 0 cannot take prose, so there it rides as its own block), and
+`derivedResourceType` travels declared in `structuredContent` — top-level in
+`nodeListSchema`, beside `licenseFilter` in the search_wlo_all envelope,
+because both describe the content leg. Never set for an explicit
+`learningResourceType`: reporting the caller's own choice back as a discovery
+is noise. Both parameter descriptions and TOOLS.md now name the derivation;
+the REST surface deliberately does not derive (its callers set explicit
+parameters) and TOOLS.md says so.
+
+
+### Changed — the compendium answer goes to the model, not onto the screen (2026-08-21)
+
+`get_compendium_text` answers with editorial prose cut into paragraph chunks —
+with `query` the BM25 passages, without it the per-section capped text. Read
+straight off the screen those are disjointed fragments, and the reader is meant
+to see what the model made of them. User decision: the reading widget now shows
+a handover line instead of the text ("12 Passagen an die KI übergeben ·
+4.812 Zeichen"), for BOTH shapes of the answer.
+
+What the model receives is deliberately untouched — the `content` block and
+`structuredContent.text` still carry everything, because the whole point is that
+it has the full material to work from. The payload gains `forModel: true` and,
+for a query answer, `passageCount` (both declared in `contentTextSchema`, or zod
+would strip them). `get_wlo_content_text` shares that widget and that schema and
+sets neither: a material's own text still renders as a document.
+
+Two things the widget change alone would not fix. The model could still paste
+the chunks into its answer, so the tool description asks for synthesis in its
+own words and says the chunks are deliberately not displayed. And the
+description had to be TIGHTENED to fit: it had grown to 1175 characters, and
+`tests/tool-descriptions.test.ts` caught it — a host truncates at 1024 from the
+END, which is exactly where the new instruction sat. It now stands ahead of the
+mechanics, so a stricter host still delivers it.
+
+The follow-up buttons stay: with the material out of sight, asking the model
+about it is the only thing left to do in that panel.
+
+A review of the same change caught one more, and it is the reason `truncated` is
+now computed ABOVE both branches rather than inside the document one: the
+handover branch had silently dropped it. `WLO_COMPENDIUM_SECTION_MAX` caps each
+main section — the biggest staging text goes 65 250 → 18 744 characters — and
+without that line the model's answer reads as a statement about the whole
+compendium. The disclosure matters MORE here than in the document view, because
+the reader can no longer check for themselves.
+
+The same argument then applied to a second disclosure, and it had been waved
+through with a reason that does not survive contact with the first one:
+`unmatchedTerms` ("Nicht gefunden: thüringen, regelschule") lived only in the
+markdown hint, and the handover renders no markdown. Dismissing it as "the model
+gets it anyway" was inconsistent — the model gets the truncation notice too. It
+now travels as a field beside `passageCount`, for a `query` answer only. Over a
+bulk fetch it is the INTERSECTION, never the union: a term absent from one
+collection but present in another has been found, and reporting it as missing
+would tell the caller its search word does not occur while the answer in front
+of it contains that very word.
+
+
+### Fixed — a widget no longer reports "Keine Treffer gefunden." while it is still loading (2026-08-21)
+
+User report from ChatGPT: every widget claimed an empty result for the whole
+duration of the tool call. One line, repeated in all four shells, was the cause
+— `render(host.toolOutput(), …)` painted at mount time, and `toolOutput` is null
+until the host delivers the result, so each renderer correctly rendered its
+EMPTY-payload state over a payload that had not arrived. The reading widget was
+the worst: its miss-reason fallback asserts "Zu diesem Material ist kein Text
+hinterlegt." — a claim about the material, made before anything was read.
+
+"A result arrived" is now a term of its own (`host.awaitingOutput()`) and is
+never inferred from the payload being empty — the same rule the server side
+already follows for `registryChecked` and `content.licenseFilter`. Under the
+standard bridge the term is the `tool-result` notification (a result whose
+structuredContent is empty has still arrived); ChatGPT offers no such event, so
+there the value is the only available signal. While a result is outstanding the
+widgets render `shared/loading.ts`: a localized `role="status"` line plus a
+decorative skeleton. The wait is bounded (`OUTPUT_GRACE_MS`, 30 s) so neither a host
+that never delivers nor a tool that FAILS (`toolError` returns `isError` with no
+structuredContent) can leave the frame in a skeleton for ever. The number is
+measured, not guessed: live over every widget-bound tool on 2026-08-21 the
+slowest is `get_topic_page_content` at 2 240 ms (`get_url_text` on a heavy
+Wikipedia page 1 568 ms, a full `search_wlo_all` 1 287 ms), so 30 s is ~13× the
+slowest observed call and cannot expire mid-call — which would put the false
+sentence back on screen for exactly the slow calls the loading state exists for.
+The timer repaints only when it changes something: a review of this change
+caught it notifying unconditionally, which rebuilt every widget's DOM 30 s after
+EVERY successful mount and destroyed keyboard focus (WCAG 2.4.3) and any
+selection on a screen that had long since rendered.
+
+### Fixed — preview images blocked by the widget's own CSP (2026-08-21)
+
+Same report: many cards showed no image although the repository's anonymous web
+UI shows one. Measured against staging over 92 unique materials from 12 queries
+— 3 of 78 resolvable previews are answered by the repository with a `302` to
+`https://img.youtube.com` (YouTube-sourced records). A browser re-checks the CSP
+host on every redirect hop, and the widget policy named the repository origin
+alone, so those were blocked and the card kept a broken-image box over a preview
+that exists.
+
+`WLO_WIDGET_IMAGE_DOMAINS` (new env, default `https://img.youtube.com`) widens
+`resource_domains` by the measured thumbnail hosts. `connect_domains` stays the
+repository alone — the widget issues no requests of its own, so a third-party
+origin would gain a channel it has no use for. `none` switches it off for an
+operator who does not want a viewer's browser contacting a third party at all;
+that word rather than an empty value, because `docker-compose.yml` passes every
+setting as `"${VAR:-}"` and an unconfigured container therefore always presents
+an empty string — reading that as "off" would drop the default on every
+deployment while looking like a choice.
+
+Independently, a preview that fails anyway (an unmeasured redirect target, a
+dead publisher URL, a 404) now degrades to the glyph the card would have shown
+without a preview, instead of a broken-image box: the glyph travels on the
+element as `data-fallback` and `shared/image-fallback.ts` performs the swap, so
+neither side needs a copy of the other's decision. It listens in the CAPTURE
+phase because `error` does not bubble — a delegated listener without that flag
+never fires at all.
+
+Not changed, and measured: 14 of 92 records carry `previewIsIcon: true`. The
+repository never rendered a preview for those and answers with a generic
+`link.svg`; no image field is set on them either (0 of 8 sampled). The widget
+keeps suppressing the placeholder — there is nothing to show, and saying so with
+the card's own icon is the honest rendering.
+
 ### Changed — full-text delivery raised to 200 000 chars, ceiling AND default (2026-08-20)
 
 `maxChars` on the three full-text tools (`get_wlo_content_text`, `get_url_text`,

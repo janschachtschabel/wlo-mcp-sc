@@ -8647,3 +8647,351 @@ bis 200 000 Zeichen sind durchgängig frei, mit und ohne `maxChars` je mit
 157k-Fixtur getestet. Tore: `npm test` → **2166 pass, 0 fail** ·
 lint/typecheck/build → 0. Upload-Liste + `tests/tool-descriptions.test.ts`
 (jetzt zwölf Dateien).
+
+**Live nach Deploy bestätigt (2026-08-20), ausgelöst durch eine Meldung der
+Browser-Plugin-Entwickler („irgendwo bei 50 000 gekappt"):** Alle drei
+Werkzeuge melden am laufenden Server `default=200000 min=500 max=200000`.
+Gegen `en.wikipedia.org/wiki/Experimental_physics`: **ohne** `maxChars`
+59 398 Zeichen, `truncated=false` — die ganze Seite. Mit `maxChars: 50000`
+schneidet derselbe Server bei 50 003 (`charCount` 59 398). **Die 50 000 sind
+also ein Wert des AUFRUFERS, keine Serverschranke** — im Quellcode existiert
+kein 50 000er mehr. Vor diesem Deploy war 50 000 die Decke, ein
+hartkodierter Wert dort war damals notwendig und ist jetzt veraltet.
+`fetch` auf die Optik-Sammlung liefert **100 005** Zeichen MIT Kürzungsmarker
+und beginnt mit dem Kompendium — der stille Regressions-Fix wirkt live.
+Nebenbefund, nicht verfolgt: das Optik-Kompendium ist roh **352 919** Zeichen
+(`charCount` von `get_compendium_text`), während ein Suchtreffer am
+2026-08-20 nur 37 428 inline trug — Suchindex und Knotenspeicher liefern
+dieselbe Eigenschaft offenbar unterschiedlich lang. Betrifft keine
+ausgelieferte Zusicherung, wäre aber vor einer Aussage über
+Kompendiumslängen neu zu messen.
+
+---
+
+## 2026-08-21 — Zwei Widget-Befunde aus dem ChatGPT-Betrieb (Ladezustand, Vorschaubilder)
+
+**Meldung des Nutzers:** Die Apps-SDK-Widgets zeigen „während sie Infos
+abrufen" durchgehend „Keine Inhalte gefunden", und viele Kacheln bleiben ohne
+Vorschaubild, obwohl das Repository anonym fast überall eines liefert.
+
+**Befund 1 — der Leerzustand war der Ladezustand.** Eine Zeile, viermal
+wiederholt: `render(host.toolOutput(), …)` malt beim Mount, und `toolOutput`
+ist `null`, bis der Host das Ergebnis liefert. Jeder Renderer tat also genau
+das Richtige mit einer leeren Nutzlast — über eine Nutzlast, die noch gar
+nicht da war. Das Lesetext-Widget war der schlimmste Fall: sein
+Fallback-Grund behauptet „Zu diesem Material ist kein Text hinterlegt", eine
+Aussage über das Material, bevor irgendetwas gelesen wurde.
+`host.awaitingOutput()` ist jetzt ein **eigener Begriff** und wird nie aus
+einer leeren Nutzlast erschlossen — dieselbe Regel wie serverseitig bei
+`registryChecked` und `content.licenseFilter`. Am Standard-Bridge ist der
+Begriff die `tool-result`-Meldung (ein Ergebnis mit leerem
+`structuredContent` ist trotzdem angekommen); ChatGPT bietet kein solches
+Ereignis, dort ist der Wert das einzige verfügbare Signal. Die Wartezeit ist
+mit `OUTPUT_GRACE_MS` = **30 s** gedeckelt, und die Zahl ist gemessen statt
+geschätzt: der Deckel wirkt in beide Richtungen, denn ein FEHLGESCHLAGENES
+Werkzeug liefert ebenfalls nichts (`toolError` gibt `isError` ohne
+`structuredContent`) — zu großzügig heißt also unnötig langes Skelett im
+Fehlerfall. Live über alle widget-gebundenen Werkzeuge (2026-08-21) ist
+`get_topic_page_content` mit **2 240 ms** das langsamste
+(`get_url_text` auf einer schweren Wikipedia-Seite 1 568 ms, ein volles
+`search_wlo_all` 1 287 ms). 30 s sind das ~13-fache und liegen innerhalb
+eines Upstream-Budgets (`WLO_FETCH_TIMEOUT_MS`, 20 s), können also nicht
+mitten im Aufruf ablaufen — das brächte den falschen Satz genau bei den
+langsamen Aufrufen zurück, für die der Ladezustand da ist.
+
+**Review derselben Sitzung, ein MAJOR und drei kleinere — alle behoben.** Der
+Gnadenfrist-Timer meldete **bedingungslos**: 30 s nach *jedem* erfolgreichen
+Mount baute jedes Widget sein DOM per `innerHTML` neu und zerstörte dabei
+Tastaturfokus (WCAG 2.4.3) und jede Textmarkierung — auf einem Bildschirm, der
+längst gerendert war. Er meldet jetzt nur noch, wenn es etwas ändert. Dazu
+kam: `imageDomains()` warnte **pro Aufruf**, und `widgetResourceMeta` läuft je
+Anfrage einmal pro Widget (`mcp-transport.ts` baut Server und Transport pro
+Anfrage neu) — ein Tippfehler in `WLO_WIDGET_IMAGE_DOMAINS` erzeugte damit vier
+Logzeilen je Anfrage; jetzt wird nur beim Wechsel des Rohwerts geparst und
+gewarnt. Beides ist als Verhaltenstest festgenagelt, nicht als Quelltextmuster:
+`createHost` wird mit einer `window`-Attrappe wirklich ausgeführt und der
+Zeitgeber abgefangen (statt Nodes noch experimenteller `mock.timers`), die
+Warnung wird über `log.warn` gezählt. Der schwache Wächter, der nur die
+*Existenz* von `OUTPUT_GRACE_MS` prüfte, ist dadurch ersetzt — er hätte den
+Befund nie gefunden.
+
+**Befund 2 — die eigene CSP blockierte vorhandene Vorschaubilder.** Gemessen
+gegen Staging über **92** eindeutige Materialien aus 12 Suchen:
+
+| Lage | Anzahl | Folge |
+|---|---|---|
+| Vorschau löst auf der Repository-Origin auf | 75/78 | wird angezeigt |
+| Repository antwortet `302` → `https://img.youtube.com` | **3/78** | **war blockiert** |
+| `previewIsIcon: true` (Repository hat kein Bild) | **14/92** | Symbol statt Bild |
+
+Die CSP nannte allein die Repository-Origin, und ein Browser prüft den Host
+bei **jeder** Weiterleitungsstufe neu — die drei YouTube-Fälle wurden also
+verworfen, obwohl die Vorschau existiert. Neu: `WLO_WIDGET_IMAGE_DOMAINS`
+(Vorgabe `https://img.youtube.com`) erweitert **nur** `resource_domains`;
+`connect_domains` bleibt allein das Repository, weil das Widget selbst keine
+Anfragen stellt. Abschaltwort ist `none` und **nicht** der Leerwert:
+`docker-compose.yml` reicht jede Einstellung als `"${VAR:-}"` durch, ein nicht
+konfigurierter Container zeigt also immer einen Leerstring — als „aus" gelesen
+hätte das die Vorgabe in jedem Deployment stillschweigend gestrichen. Das fiel
+beim Verdrahten der Compose-Seite auf, nicht im Test.
+
+Unabhängig davon fällt ein Bild, das trotzdem nicht lädt (unvermessenes
+Weiterleitungsziel, tote Anbieter-URL, 404), auf **das Zeichen zurück, das die
+Kachel ohne Vorschau ohnehin zeigt** — `data-fallback` am Element,
+`shared/image-fallback.ts` tauscht. Der Listener hört in der **Capture-Phase**,
+weil `error` nicht aufsteigt; ohne dieses Flag feuert ein delegierter Listener
+nie. Genau das ist der Wächter: die DOM-Attrappe im Test registriert nur bei
+`capture === true`, ein entferntes Flag macht den Test rot (eingespielt und
+belegt).
+
+**Nicht geändert, weil gemessen:** die 14 Datensätze mit `previewIsIcon` haben
+im Repository kein Bild (`…/mime-types/previews/link.svg`) und auch kein
+Bildfeld (0 von 8 Stichproben). Die Unterdrückung des Platzhalters bleibt.
+
+**Tore:** `npm test` → **2185 pass, 0 fail** (19 neu) · lint 0 · typecheck 0 ·
+`build` grün. Beide neuen Wächter wurden durch eingespielte Verletzung als rot
+nachgewiesen. Neue Widget-Hashes (Host-Cache-Key rollt):
+`search-results b54ffd82 · topic-page 79014cd5 · browse cd3adcda · reading 60e4e12f`
+(Stand nach dem Kompendiums-Paket weiter unten — `strings.ts` steckt in allen
+vier Bündeln, beide Pakete gehen zusammen hoch).
+
+**Offen:** visuelle Abnahme im echten Host. Der Browser-Pane rendert lokale
+Dateien nur als statischen Snapshot (`script-src 'none'`) und blockiert
+`127.0.0.1` per Richtlinie, das Widget-JS läuft dort also nicht — die
+Ladeansicht und der Bildtausch sind über Markup- und Verhaltenstests belegt,
+nicht über einen Screenshot.
+
+---
+
+## 2026-08-21 — Kompendiumstext geht ans Modell, nicht auf den Bildschirm
+
+**Nutzerentscheidung.** `get_compendium_text` antwortet mit redaktioneller Prosa
+in Absatz-Abschnitten — mit `query` die BM25-Passagen, ohne sie der je
+Hauptabschnitt gekappte Text. Vom Bildschirm gelesen sind das
+zusammenhanglose Schnipsel; gesehen werden soll, was das Modell daraus macht.
+Gewählt wurde: **alle** Kompendiums-Antworten (nicht nur die Passagen-Form) und
+**mit** kurzer Übergabe-Zeile statt gar nichts.
+
+**Wo der Hebel sitzt, und wo nicht.** Die Widget-Bindung steht im
+Tool-Deskriptor (`apps/register.ts`), wird also einmal bei `tools/list` gesetzt —
+pro Aufruf abschaltbar ist sie nicht, und ob ein Host ein `_meta` am *Ergebnis*
+beachtet, ist ungemessen. Geändert wird deshalb, was das Widget **rendert**, was
+vollständig in unserer Hand liegt: `contentTextSchema` trägt `forModel` und
+(nur bei `query`) `passageCount`, das Lese-Widget zeigt darauf hin eine
+Übergabe-Zeile. `get_wlo_content_text` teilt Widget und Schema, setzt beides
+nicht und rendert unverändert als Dokument.
+
+Drei Regeln binden jede Änderung hier. (1) **Was das Modell bekommt, bleibt
+unangetastet** — `content[0].text` und `structuredContent.text` tragen weiter
+alles; die Verengung ist eine Anzeige-Entscheidung, keine Inhaltsentscheidung.
+(2) Die Zeichenzahl der Übergabe-Zeile ist `text.length`, **nicht** `charCount`:
+letzteres ist die QUELL-Länge und benennte hier etwas, das niemand bekommen hat.
+(3) Die Folgeaktionen bleiben stehen — mit dem Material außer Sicht ist das
+Modell danach zu fragen das Einzige, was in der Ansicht noch zu tun ist.
+
+**Ein Wächter hat dabei einen echten Fehler gefangen.** Die Werkzeugbeschreibung
+war durch den neuen Verarbeitungs-Hinweis auf **1175 Zeichen** gewachsen;
+`tests/tool-descriptions.test.ts` kappt bei 1024, und ein Host kürzt **von
+hinten** — genau dort stand die neue Anweisung. Sie steht jetzt **vor** den
+Mechanik-Sätzen (1006/1024), damit auch ein strenger kürzender Host sie liefert.
+Das Widget allein hätte den Fall ohnehin nicht gedeckt: es verhindert die
+*sofortige* Anzeige, nicht dass ein Modell die Schnipsel wörtlich in seine
+Antwort kopiert.
+
+**Tore:** `npm test` → **2198 pass, 0 fail** (13 neu: 8 Widget, 5 Werkzeug) ·
+lint 0 · typecheck 0 · build grün. Rot-zuerst belegt: 3 von 5 Widget-Tests und
+3 von 3 Werkzeug-Tests waren vor der Umsetzung rot, die übrigen sind
+Regressions-Pins (Folgeaktionen, unveränderte Ansicht ohne die Fahne).
+
+**Review desselben Pakets, ein MAJOR und drei kleinere — alle behoben.** Der
+Übergabe-Zweig ließ die **Kürzungs-Offenlegung** fallen: `truncated` wurde nur
+im Dokument-Zweig gerendert, obwohl `get_compendium_text` die Fahne setzt, sobald
+`WLO_COMPENDIUM_SECTION_MAX` greift — und das trifft ausgerechnet den größten
+Text (Optik, 65 250 → 18 744 Zeichen). Ohne die Zeile liest sich die
+Modell-Antwort wie eine Aussage über das ganze Kompendium; die Angabe wiegt hier
+**schwerer** als in der Leseansicht, weil niemand mehr selbst nachsehen kann.
+Dieselbe Form, die dieses Projekt schon einmal als Fehler behandelt hat: ein Feld
+im Envelope ist keine Offenlegung, wenn der Renderer es fallen lässt. `truncated`
+steht deshalb jetzt **über** beiden Zweigen — eine Definition, damit die Ansichten
+nicht erneut auseinanderlaufen. Dazu: der Klammersatz der Beschreibung („die
+Oberfläche zeigt sie bewusst nicht an") galt nur für Widget-Hosts und heißt jetzt
+host-unabhängig „sie sind nicht zur direkten Anzeige gedacht" (1008/1024);
+`docs/TOOLS.md` ist nachgezogen (es beschrieb beide Antwortformen, ohne die
+Anzeige-Entscheidung zu erwähnen); und die tote Modifier-Klasse
+`wlo-reading--handover` ist raus.
+
+**Eine abgelehnte Beobachtung war falsch abgelehnt.** `unmatchedTerms` hatte ich
+mit „das Modell bekommt sie ja" durchgewunken — dasselbe Argument gilt aber für
+`truncated` (die Hinweiszeile trägt es ebenfalls ans Modell), und dort wurde es
+zu Recht als MAJOR gewertet. Zwei gleiche Fälle, zwei Urteile. Die Terme reisen
+jetzt als Feld neben `passageCount`, nur bei einer `query`-Antwort. Über einen
+Sammelabruf ist es die **Schnittmenge**, nie die Vereinigung: ein Term, der in
+einer Sammlung fehlt und in einer anderen steht, IST gefunden — als „nicht
+gefunden" gemeldet stünde die Aussage neben einer Antwort, die genau dieses Wort
+enthält. Merksatz: wer eine Offenlegung aus der Prosa in ein Feld verschiebt,
+muss auch entscheiden, was sie über MEHRERE Quellen bedeutet.
+
+Bewusst NICHT geändert, mit Grund: der Sammelabruf trägt keine Folgeaktionen
+(`nodeId` ist dort leer, und ein Knopf mit der id der ersten von 25 Sammlungen
+wäre eine falsche Aussage statt einer fehlenden), und „0 Passagen an die KI
+übergeben" bleibt stehen — es ist sachlich richtig, und mit der neuen
+`Nicht gefunden`-Zeile daneben erklärt sich der Fall jetzt von selbst.
+
+**Offen:** die optische Abnahme im echten Host, wie beim Ladezustand — der
+Browser-Pane führt lokales Widget-JS nicht aus.
+
+---
+
+## 2026-08-21 — Rahmenwörter löschten das Suchergebnis (Meldung aus Claude)
+
+**Symptom:** Bei Inhaltsfragen antwortete das Modell mit Statistiken statt mit
+konkreten Vorschlägen. **Es tat das Richtige mit dem, was es bekam.**
+
+**Ursache, gemessen gegen Staging:** Das Repository verundet jedes Wort einer
+Anfrage, und die Substantive, die eine Frage RAHMEN, stehen in praktisch keinem
+Datensatz — eines davon leert die Antwort.
+
+| Anfrage | Treffer |
+|---|---|
+| `Französische Revolution` | **480** |
+| `Unterrichtsstunde Französische Revolution` | **0** |
+| `Optik` | 825 |
+| `Bildungsinhalte zur Optik` | 4 |
+| `Photosynthese` | 211 |
+| `Erklärvideo Photosynthese` | 1 |
+
+Die Beugung ist NICHT die Ursache (`Französischen Revolution` liefert weiter
+450) — ein Rahmenwort genügt. Mit 0–4 Datensätzen meldet ein Modell eine Zahl;
+in Claude verdeckt kein Widget, wie dünn das ist, in ChatGPT ließen die Kacheln
+dieselbe Antwort gehaltvoll aussehen. Die bestehende Stoppwortliste konnte das
+nicht fangen: sie hält Funktionswörter (`der`, `zur`, `für`), und
+„Unterrichtsstunde" ist ein Substantiv.
+
+**Lösung:** `expandQuery` gibt eine `topic:`-Variante ohne Rahmenwörter aus,
+Gewicht **0.92** — über der Schlagwort-Variante, damit `MAX_VARIANTS` nicht
+ausgerechnet die einzige Variante wegschneidet, die etwas liefert, und unter den
+Phrasen-Varianten, damit ein exakt passender Datensatz weiter vorn steht. Sie
+entsteht nur, wenn etwas entfernt wurde UND etwas übrig bleibt: unverändert wäre
+sie eine Dublette von `full`, leer träfe sie alles.
+
+**Die Wortliste ist belegt, nicht erfunden:** es ist das Vokabular, das die
+Server-Anweisung und `docs/TOOLS.md` den Nutzenden selbst in den Mund legen.
+Die Anfrage-VERBEN mussten zu den Substantiven dazu — mit `suche` verengte sich
+die Optik-Anfrage auf einen einzigen Datensatz, schlechter als die Substantive
+allein erreichten. Gefunden hat das die Messung, nicht der Test.
+
+**A/B über EINEN Einstiegspunkt** (der erste Vergleich war schief: „vorher" lief
+über `search_wlo_all`, „nachher" über `enhancedSearch`):
+
+| Anfrage | ohne | mit |
+|---|---|---|
+| Unterrichtsstunde zur Französischen Revolution | 0 | **9** |
+| Zeig mir ein Video zur Eiszeit | 0 | **10** |
+| Arbeitsblatt zur Zellteilung | 3 | **10** |
+| Ich suche Bildungsinhalte zur Optik … | 2 | **5** |
+| Erklärvideo Photosynthese | 1 | **4** |
+| `Französische Revolution` · `Optik` (Kontrollen) | 10 | 10 |
+
+Keine Anfrage wurde schlechter. Dazu ein Satz in `instructions.ts` (Thema in
+`query`, Medium/Stufe/Fach in die Filter) — dort und nicht in der Beschreibung
+von `search_wlo_all`, die bei 1017 von 1024 Zeichen steht.
+
+**Tore:** `npm test` → **2205 pass, 0 fail** (7 neu) · lint 0 · typecheck 0.
+
+**Nachtrag am selben Tag (Nutzerhinweis): das Medium gehört in den FILTER, nicht
+in den Papierkorb.** „Arbeitsblatt KI" fragt zweierlei — KI als Thema,
+Arbeitsblatt als Inhaltstyp. Die Themen-Variante rettete die Treffer, warf die
+Einschränkung aber weg. `withDerivedResourceType` (`filter-criteria.ts`) füllt
+`learningResourceType`, wenn der Aufrufer keinen nennt; ein ausdrücklicher
+Parameter gewinnt immer. Sie sitzt in den beiden Such-WERKZEUGEN, nicht in
+`searchAll`: dort entsteht `labeled`, der Filter wird also im `_queryMeta`
+offengelegt statt still zu verengen.
+
+**Die Zuordnung ist kuratiert, und das ist eine Messung, keine Vorliebe.**
+`resolveVocab` gleicht unscharf ab: `material` → Übungsmaterial,
+`bildungsinhalte` → **Bild**. Aus „was auflöst" einen Filter zu bauen machte aus
+„Bildungsinhalte zur Optik" eine Bildersuche. Aufgenommen sind nur Wörter, die
+genau ein Medium benennen (Video, Arbeitsblatt, Übung, Bild, Simulation,
+Podcast). `aufgabe`/`grafik`/`film` fehlen aus dem zweiten Grund: sie lösen gar
+nicht auf, ein Filter daraus träfe keinen Datensatz. „Unterrichtsstunde" ist der
+Fall, der die Regel beweist — als Unterrichtsplanung zugeordnet fiel
+„Französische Revolution" von 480 auf 0 Treffer.
+
+**Messfalle, teuer bezahlt:** die Abnahme-Sonde rief `searchAll` DIREKT auf und
+ging damit an der Ableitung vorbei — „Arbeitsblatt zur Zellteilung" lieferte
+Videos, was wie ein Fehler aussah und keiner war. Wer eine Schicht prüft, muss
+sie auch durchlaufen; festgenagelt ist es jetzt über den Werkzeug-Aufruf.
+
+**Review derselben Runde (1 MAJOR, 1 MINOR, 1 NIT — alle behoben).** Der
+abgeleitete Filter VERENGT, war aber nur in `_queryMeta` offengelegt — dem
+letzten Textblock, den ein gemessener realer Client dem Modell nie übergibt
+(2026-08-19). „Podcast zur Französischen Revolution" ohne Podcast hätte als
+nacktes „Keine Inhalte gefunden." über einem Thema mit 480 Datensätzen gelesen —
+die Fehlerklasse, für die der Lizenzfilter seine Sätze bekam, hier durch eine
+neue Tür. Die Offenlegung folgt jetzt dem Lizenz-Muster und geht einen Schritt
+weiter: der Satz (`derivedResourceTypeNotice`, wohnt neben den Lizenz-Hinweisen
+in `filter-criteria.ts`) steht im Markdown IN Block 0 (ein JSON-Block-0 verträgt
+keine Prosa — dort eigener Block, Test parst Block 0), und
+`derivedResourceType` reist deklariert im `structuredContent`: top-level in
+`nodeListSchema`, im searchAll-Envelope neben `licenseFilter` im content-Eimer,
+weil beide dasselbe Leg beschreiben. Nie gesetzt bei explizitem Parameter — die
+eigene Wahl des Aufrufers als Entdeckung zurückzumelden wäre Rauschen. Envelope
+wird GESPREADET, nicht mutiert (der Service-Typ kennt das Feld nicht), und vor
+dem JSON-Zweig angereichert, damit Text-Envelope und structuredContent nicht
+auseinanderfallen. Dazu: beide Parameter-Beschreibungen und TOOLS.md benennen
+die Ableitung samt REST-Abweichung (REST leitet bewusst nicht ab); der
+Auflösungs-Test deckt jetzt alle 6 Ziel-Labels (vorher 4 — `Übung`/`Bild`
+ungedeckt, `seen.size === 6` erzwingt Vollständigkeit).
+
+**Tore:** `npm test` → **2218 pass, 0 fail** (20 neu gegenüber Paketbeginn) ·
+lint 0 · typecheck 0.
+
+---
+
+## 2026-08-21 — Offene Punkte der Sitzung geschlossen (A11y-Ansage, Stufen-Messung, Doku-Paar)
+
+**Inventur statt Neubau:** fünf Kandidaten aus den Reviews der Sitzung, drei mit
+Substanz, einer per Messung geschlossen, einer bleibt Deploy-Check.
+
+**(A) Screenreader hörten „wird geladen …" — und dann für immer nichts.** Der
+Ladezustand versprach per `role="status"` eine Fortsetzung, die nie kam:
+`paint()` ersetzt `#wlo-root` per innerHTML **mitsamt** der Live-Region, das
+Eintreffen wurde also nie angesagt (WCAG 4.1.3). `shared/announce.ts` mit zwei
+Regeln, die beide der Grund sind, warum es funktioniert: die Region lebt
+AUSSERHALB von `#wlo-root` an `document.body` (der Repaint kann sie nicht
+zerstören) und wird beim ERSTEN Paint LEER angelegt — eine Live-Region, die
+zusammen mit ihrem Text eingefügt wird, feuert in AT unzuverlässig; eine, die
+schon existiert, wenn der Text landet, zuverlässig. Nur der Übergang
+laden→Ergebnis spricht: eine ohne Ergebnis abgelaufene Gnadenfrist bleibt stumm
+(„geladen" über einer leeren Ansicht wäre falsch), beim Mount schon vorhandene
+Ausgabe war nie „ladend", und spätere Repaints (Theme, Auswahl) sagen nichts
+erneut an. Verhaltenstest mit DOM-Attrappe + Quell-Pins in allen vier Shells;
+Wächter durch eingespielte Verletzung als rot belegt.
+
+**(D) Stufen-Ableitung aus „Klasse 6" — gemessen und NICHT gebaut.** Je Thema
+tragen nur 36 % (Bruchrechnung, 454/1269) bis 72 % (Photosynthese) der
+Datensätze überhaupt eine Stufe; ein abgeleiteter Filter würde die ungesetzte
+Mehrheit VERBERGEN statt eingrenzen — dieselbe Falle, die am 2026-08-07 die
+Themenseiten-Filter lokal statt serverseitig machte. Anders als beim Medienwort
+hat es auch niemand verlangt. `klasse`/`sekundarstufe` bleiben reine
+Streichwörter der Themen-Variante; die Messung steht als Schließungsgrund im
+CHANGELOG und in MCP-REFERENZ.md.
+
+**(B/C) Doku-Paar wieder deckungsgleich.** MCP-REFERENZ.md kannte die
+Medienwort-Ableitung noch nicht (nur TOOLS.md) — nachgezogen, samt dem
+Nicht-gebaut-Satz zur Stufe. Die HTML-Fassung (Artefakt
+`670d9a7a…`, Label `widgets-suche-2026-08-21`) trug **null** der
+Sitzungs-Deltas und hat jetzt alle sechs: `WLO_WIDGET_IMAGE_DOMAINS`-Zeile,
+Kompendiums-Übergabe (`forModel`/`passageCount`/`unmatchedTerms`),
+Lese-Widget-Zeile, Rahmenwort/Ableitungs-Kasten, Widget-Verhaltenskasten
+(Ladezustand + Bild-Rückfall + Ansage), Fußzeile („Änderungen vom 21.08.
+warten auf den nächsten Deploy"). Merksatz: die HTML-Fassung ist ein
+Doku-PAAR-Partner von MCP-REFERENZ.md — wer die MD ändert, zieht sie nach.
+
+**(E) bleibt:** optische Abnahme im echten Host nach dem Deploy — der
+Browser-Pane führt lokales Widget-JS nicht aus.
+
+**Tore:** `npm test` → **2224 pass, 0 fail** (6 neu) · lint 0 · typecheck 0 ·
+build grün. Widget-Hashes (alle vier rollen — `strings.ts`/`base.css` stecken in
+jedem Bündel): `search-results 089b68ed · topic-page 4fd139cc ·
+browse 6b7d964b · reading 862cf11d`.

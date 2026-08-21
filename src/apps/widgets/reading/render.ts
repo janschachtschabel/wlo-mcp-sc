@@ -26,6 +26,12 @@ export interface ReadingPayload {
   charCount?: number;
   truncated?: boolean;
   reason?: string;
+  /** Working material for the model — render a handover line, not the text. */
+  forModel?: boolean;
+  /** Passages a `query` answer carried; absent ⇒ it was the whole text. */
+  passageCount?: number;
+  /** Search terms the text does not contain — named, never swallowed. */
+  unmatchedTerms?: string[];
 }
 
 export interface ReadingRenderOptions {
@@ -102,6 +108,11 @@ export function renderReading(
     );
   }
 
+  // Above BOTH branches on purpose. A capped source is a disclosure, and the
+  // handover branch silently dropped it when it was written separately — with
+  // the text out of sight the reader cannot check for themselves, so the model's
+  // answer would read as a statement about the whole document (review
+  // 2026-08-21). One definition, so the two views cannot drift apart again.
   const truncated = payload.truncated
     ? `<p class="wlo-reading__note">${escapeHtml(t(locale, 'truncatedNote'))}</p>`
     : '';
@@ -117,6 +128,35 @@ export function renderReading(
       ).join('') +
       `</ul></div>`
     : '';
+
+  // Material for the model, not a document for a person: `get_compendium_text`
+  // answers with editorial prose cut into paragraph chunks, and read straight
+  // off the screen those are disjointed fragments. Say what went over and let
+  // the model's answer be the thing that gets read (user decision 2026-08-21).
+  // The follow-up buttons above are deliberately kept — with the material out
+  // of sight, asking the model about it is the ONLY thing left to do here.
+  if (payload.forModel) {
+    const number = (n: number): string => new Intl.NumberFormat(locale).format(n);
+    const headline = typeof payload.passageCount === 'number'
+      ? t(locale, 'handoverPassages').replace('{n}', number(payload.passageCount))
+      : t(locale, 'handoverWhole');
+    // The length actually handed over, not `charCount` — that one is the SOURCE
+    // size, which here would name something nobody received.
+    const size = `${number(payload.text.length)} ${t(locale, 'handoverChars')}`;
+    // Styled like the truncation notice, because it is the same kind of
+    // statement: something about this answer the reader must know before
+    // trusting it. The terms are the CALLER's own text, hence escaped.
+    const missed = payload.unmatchedTerms?.length
+      ? `<p class="wlo-reading__note">${escapeHtml(t(locale, 'handoverUnmatched'))}: ` +
+        `${escapeHtml(payload.unmatchedTerms.join(', '))}</p>`
+      : '';
+    return (
+      `<article class="wlo-reading">${head}${origin}` +
+      `<p class="wlo-handover">${escapeHtml(headline)}</p>` +
+      `<p class="wlo-handover__note">${escapeHtml(size)} · ${escapeHtml(t(locale, 'handoverNote'))}</p>` +
+      `${missed}${truncated}${actions}</article>`
+    );
+  }
 
   return (
     `<article class="wlo-reading">${head}${origin}${truncated}` +

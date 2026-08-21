@@ -17,6 +17,12 @@ const STRINGS = {
     sectionCollections: 'Sammlungen',
     sectionContent: 'Inhalte',
     moreOnTopicPage: 'Mehr auf der Themenseite',
+    // Shown while the tool call is still running. It must not name a result of
+    // any kind — that was the whole defect (see widgets-loading.test.ts).
+    loading: 'WLO-Inhalte werden geladen …',
+    // Spoken by the live region on the loading→result transition; the visible
+    // completion is the content itself (see shared/announce.ts).
+    resultsLoaded: 'WLO-Inhalte geladen.',
     noResults: 'Keine Treffer gefunden.',
     // Split from the count so the number can be composed in without an
     // interpolating `t()`; both halves are one sentence in the rendering.
@@ -40,6 +46,13 @@ const STRINGS = {
     originRepository: 'WLO-Repository',
     originExternal: 'verlinkte Seite',
     truncatedNote: 'Gekürzt — der vollständige Text ist länger.',
+    // Handover instead of a document: the compendium answer is chunked prose,
+    // i.e. material the model works from (see shared/types.ts `forModel`).
+    handoverPassages: '{n} Passagen an die KI übergeben',
+    handoverWhole: 'Kompendiumstext an die KI übergeben',
+    handoverChars: 'Zeichen',
+    handoverNote: 'Die Absätze sind Arbeitsmaterial — die Antwort des Modells steht darunter im Chat.',
+    handoverUnmatched: 'Nicht gefunden',
     actionsTitle: 'Weiterarbeiten',
     actionLabel_summarize: 'Zusammenfassen',
     actionLabel_simplify: 'Einfacher formulieren',
@@ -78,6 +91,8 @@ const STRINGS = {
     sectionCollections: 'Collections',
     sectionContent: 'Content',
     moreOnTopicPage: 'More on the topic page',
+    loading: 'Loading WLO content …',
+    resultsLoaded: 'WLO content loaded.',
     noResults: 'No results found.',
     noResultsLicense: 'Nothing carries exactly the licence you asked for.',
     licenseCandidatesChecked: 'candidates checked',
@@ -99,6 +114,11 @@ const STRINGS = {
     originRepository: 'WLO repository',
     originExternal: 'linked page',
     truncatedNote: 'Shortened — the full text is longer.',
+    handoverPassages: '{n} passages handed to the model',
+    handoverWhole: 'Compendium text handed to the model',
+    handoverChars: 'characters',
+    handoverNote: 'The paragraphs are working material — the model’s answer follows below in the chat.',
+    handoverUnmatched: 'Not found',
     actionsTitle: 'Work with this',
     actionLabel_summarize: 'Summarize',
     actionLabel_simplify: 'Simplify wording',

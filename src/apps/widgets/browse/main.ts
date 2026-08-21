@@ -14,7 +14,9 @@
 import { renderBrowse, askFollowUpPrompt } from './render.js';
 import { browseReducer, initialBrowseState, type BrowseState } from './state.js';
 import { resolveLocale, t } from '../shared/strings.js';
+import { announceArrival } from '../shared/announce.js';
 import { createHost } from '../shared/host.js';
+import { renderLoading } from '../shared/loading.js';
 import type { BrowseNode } from '../shared/types.js';
 
 const host = createHost();
@@ -34,6 +36,17 @@ function paint(): void {
   const root = document.getElementById('wlo-root');
   if (!root) return;
   const locale = resolveLocale(host.locale());
+  // Live region first: the repaint below destroys any in-root status text
+  // (see shared/announce.ts).
+  const awaiting = host.awaitingOutput();
+  announceArrival(awaiting, host.toolOutput() != null, locale);
+  // An empty tree and a tree that has not arrived look identical from `state`
+  // alone, and only one of them is "Keine Treffer" (see shared/loading.ts).
+  if (awaiting) {
+    root.innerHTML = renderLoading(locale);
+    focusNodeId = null; // nothing to focus in a skeleton
+    return;
+  }
   root.innerHTML = renderBrowse(state, locale, { canFollowUp: host.canFollowUp() });
   if (focusNodeId) {
     const buttons = root.querySelectorAll('.wlo-tree__toggle');

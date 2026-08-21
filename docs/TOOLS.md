@@ -43,6 +43,19 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `search_wlo_collections` | Sammlungen/Themenseiten zu einem Thema | *„Gibt es eine WLO-Sammlung zum Klimawandel?“* |
 | `search_wlo_topic_pages` | Themenseiten suchen (liefert deren URLs/Varianten) | *„Welche WLO-Themenseiten gibt es zu Optik?“* |
 
+> **Medienwort in der Anfrage wird zum Filter (seit 2026-08-21).** Nennt die
+> `query` ein eindeutiges Medium — Video, Arbeitsblatt, Übung, Bild, Simulation,
+> Podcast — und ist `learningResourceType` nicht gesetzt, wird der Typ daraus
+> abgeleitet: „Arbeitsblatt KI" sucht nach *KI* und filtert auf *Arbeitsblätter*.
+> Grund: das Repository verundet jedes Wort, und Rahmenwörter stehen in fast
+> keinem Datensatz („Unterrichtsstunde Französische Revolution" fand 0 von 480).
+> Die Ableitung wird in der Antwort **offengelegt** (Satz im Text + Feld
+> `derivedResourceType`), ein explizit gesetzter Parameter gewinnt immer, und
+> generische Wörter (Material, Bildungsinhalte, Unterrichtsstunde) leiten
+> bewusst **nichts** ab — sie werden nur aus der Themen-Suchvariante entfernt.
+> Die REST-Fläche (`/api/search`) leitet **nicht** ab: dort setzen Aufrufer ihre
+> Parameter selbst.
+
 > **Praxis-Hinweis zum Lizenzfilter:** `license` nimmt ein Label („CC BY 4.0“,
 > „gemeinfrei“) oder den Repository-Schlüssel (`CC_BY`) — und zusätzlich den
 > Sammelwert **`OER`** für alles frei Nachnutzbare (CC0, gemeinfrei, CC BY,
@@ -275,6 +288,15 @@ zweite, genauere Frage nicht stellen.
 Regelschule" wirken besser als ein ganzer Satz. Gewichtet wird mit **BM25**;
 Groß-/Kleinschreibung ist egal, deutsche Komposita treffen („Brechung" findet
 „Lichtbrechung"), und Füllwörter zählen nicht mit.
+
+> **Die Antwort ist Arbeitsmaterial, keine Anzeige.** Die Absätze kommen als
+> Chunks und sind für die Verarbeitung durch das Modell gedacht, nicht zum
+> Mitlesen. Wo das Lese-Widget rendert (ChatGPT), zeigt es deshalb **statt des
+> Textes** eine Übergabe-Zeile — „12 Passagen an die KI übergeben · 4.812
+> Zeichen", dazu die Hinweise, die man vor dem Vertrauen kennen muss: nicht
+> getroffene Suchwörter und eine Kürzung, falls der Deckel unten gegriffen hat.
+> Was das Modell bekommt, ist unverändert vollständig; gesehen werden soll, was
+> es daraus macht.
 
 > **Was die Antwort über sich selbst sagt.** Suchwörter, die im Text **gar nicht**
 > vorkommen, werden benannt: „Lehrplan Thüringen Regelschule" auf der Sammlung

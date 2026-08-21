@@ -60,6 +60,13 @@ export const nodeListSchema = z.object({
   total: z.number(),
   count: z.number(),
   results: z.array(formattedNodeSchema),
+  /**
+   * Content type derived from a medium word in the query (never set for an
+   * explicit `learningResourceType`). Declared here because zod strips unknown
+   * keys — and this is the machine-readable half of the disclosure whose prose
+   * half is `derivedResourceTypeNotice`.
+   */
+  derivedResourceType: z.string().optional(),
 });
 
 /** Mirrors `ResolvedSwimlane` (services/topic-page.ts). */
@@ -97,6 +104,24 @@ export const contentTextSchema = z.object({
   truncated: z.boolean(),
   /** Only when there is no text: which of the three causes it was. */
   reason: z.string().optional(),
+  /**
+   * This payload is working MATERIAL for the model, not a document a person is
+   * meant to read. `get_compendium_text` sets it: its answer is editorial prose
+   * cut into paragraph chunks, and read straight off the screen those are
+   * disjointed fragments (user decision 2026-08-21). The reading widget shows
+   * a handover line instead; what the model receives is unchanged.
+   */
+  forModel: z.boolean().optional(),
+  /** How many passages a `query` answer carried. Absent ⇒ it was the whole text. */
+  passageCount: z.number().int().optional(),
+  /**
+   * Search terms the text does not contain at all. Present only for a `query`
+   * answer, and only alongside `forModel`: the document view carries this in
+   * its prose, but a handover renders no prose — and "Lehrplan Thüringen
+   * Regelschule" answered with Rheinland-Pfalz plans reads as an answer to the
+   * question that was asked unless the miss is named.
+   */
+  unmatchedTerms: z.array(z.string()).optional(),
 });
 
 /** Mirrors `UrlText` (services/url-text.ts). */
@@ -143,6 +168,9 @@ export const searchAllEnvelopeSchema = z.object({
      * decide whether to explain an empty or shortened result.
      */
     licenseFilter: z.object({ checked: z.number(), kept: z.number() }).optional(),
+    /** Same placement rule as `licenseFilter`: a content-leg disclosure lives
+     *  in the content bucket. See `nodeListSchema.derivedResourceType`. */
+    derivedResourceType: z.string().optional(),
   }),
   // `registryChecked` declared for the same reason as `skillRegistry` above:
   // zod strips unknown keys, so an undeclared field vanishes from

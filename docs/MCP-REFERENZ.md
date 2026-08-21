@@ -178,6 +178,21 @@ lief, sagen `collections.registryChecked` bzw. `topicPages.registryChecked`),
 |---|---|---|
 | `search_wlo_all` | **Der Standard-Einstieg** für den Überblick: ein Aufruf liefert Materialien, Sammlungen und Themenseiten. Steht fest, dass NUR Einzelmaterialien eines Typs gewünscht sind, ist `search_wlo_content` die Verengung. | `query*` · discipline · educationalContext · userRole · learningResourceType · publisher · license · maxContent`=8` · maxCollections`=5` · include · excludeNodeIds · skipCount · includeFacets · includeCompendium · includeTextContent · includeSkillRegistry · includeWikipedia · includeTopicPageContent · maxPerSwimlane`=3` · outputFormat |
 | `search_wlo_content` | Nur Einzelmaterialien, ohne Sammlungen und Themenseiten — die bewusste Verengung für „ausschließlich Videos zu …". | `query*` · dieselben Filter · maxResults`=8` · skipCount · excludeNodeIds · includeTextContent · includeFacets · outputFormat |
+
+> **Rahmenwörter und Medienwörter (seit 2026-08-21, beide Suchwerkzeuge).** Das
+> Repository verundet jedes Wort der `query`, und Anfrage-Rahmenwörter stehen in
+> fast keinem Datensatz — „Unterrichtsstunde Französische Revolution" fand 0 von
+> 480 Treffern. Die Suche bildet deshalb intern eine zusätzliche Themen-Variante
+> ohne diese Wörter. Nennt die `query` dabei ein **eindeutiges Medium** (Video,
+> Arbeitsblatt, Übung, Bild, Simulation, Podcast) und ist `learningResourceType`
+> nicht gesetzt, wird es als Inhaltstyp-Filter übernommen — „Arbeitsblatt KI"
+> sucht nach *KI* und filtert auf *Arbeitsblätter*. Die Ableitung wird
+> offengelegt: als Satz in der Antwort und als Feld `derivedResourceType`
+> (top-level bzw. im `content`-Eimer neben `licenseFilter`). Ein explizit
+> gesetzter Parameter gewinnt immer; generische Wörter (Material,
+> Bildungsinhalte) leiten nichts ab. Eine Bildungsstufe wird bewusst **nicht**
+> abgeleitet: 30–64 % der Datensätze tragen keine (gemessen 2026-08-21), ein
+> Stufenfilter würde sie verbergen statt eingrenzen.
 | `search` | Belegstellen-Suche nach der ChatGPT-Knowledge-Konvention. Minimal: ein Suchbegriff, keine Filter. | `query*` |
 | `fetch` | Ein Datensatz per id als vollständiges Dokument (`{id, title, text, url, metadata}`) — die zweite Hälfte derselben Konvention. | `id*` |
 
@@ -213,7 +228,7 @@ NC- oder ND-Material.
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
 | `get_wlo_content_text` | Der eigentliche Text eines Materials. Notfalls von der verlinkten Seite — und wenn keiner da ist, wird gesagt warum. | `nodeId*` · maxChars`=200000` · outputFormat |
-| `get_compendium_text` | Redaktionelle Prosa einer Sammlung, typischerweise dreiteilig: Weltwissen · Lehrplan-Kompetenzen je Stufe/Bundesland · Vorstellung der Inhalte — der Maßstab für Lückenanalyse, Sachrichtigkeit und Lernpfade. **Mit** `query` kommen per BM25 nur die passenden Absätze, **ohne** der ganze Text mit je Hauptabschnitt gekapptem Umfang. Das Inhaltsverzeichnis geht in beiden Fällen mit (gerendert als `## Inhalt`) — sonst weiß ein Modell nicht, was es *nicht* gesehen hat. Nicht getroffene Suchwörter werden benannt. | nodeId · nodeIds · query · outputFormat |
+| `get_compendium_text` | Redaktionelle Prosa einer Sammlung, typischerweise dreiteilig: Weltwissen · Lehrplan-Kompetenzen je Stufe/Bundesland · Vorstellung der Inhalte — der Maßstab für Lückenanalyse, Sachrichtigkeit und Lernpfade. **Mit** `query` kommen per BM25 nur die passenden Absätze, **ohne** der ganze Text mit je Hauptabschnitt gekapptem Umfang. Das Inhaltsverzeichnis geht in beiden Fällen mit (gerendert als `## Inhalt`) — sonst weiß ein Modell nicht, was es *nicht* gesehen hat. Nicht getroffene Suchwörter werden benannt. **Die Antwort wird im Chat nicht angezeigt:** die Absätze sind Arbeitsmaterial für das Modell, das Lese-Widget zeigt nur eine Übergabe-Zeile (`forModel`/`passageCount` in `structuredContent`). Das Modell erhält unverändert alles. | nodeId · nodeIds · query · outputFormat |
 | `get_wikipedia_summary` | Anriss oder ganzer Artikeltext. Ein danebenliegender Treffer liefert lieber gar keinen Artikel als den nächstähnlichen String. | `query*` · language`=de` · sections`=1` · fullText · maxChars`=200000` · outputFormat |
 | `get_url_text` ⚠️ **unsafe** | Text einer beliebigen Webseite über den Extraktionsdienst. **Nicht für den Produktivbetrieb:** die Seite wird nicht von uns geholt, sondern im Dienst — eine Umleitung ins private Netz ist auf dieser Ebene nicht sichtbar. Abschaltbar über `WLO_DISABLE_UNSAFE_TOOLS`. | `url*` · method (browser\|simple) · maxChars`=200000` · outputFormat |
 
@@ -332,7 +347,7 @@ Konfigurationsänderung nicht in einem veralteten Host-Cache hängen bleibt.
 | `search-results` | Sammlungs-Kacheln und Material-Karten mit aufklappbarer Detailansicht. | `search_wlo_all` · `search_wlo_content` · `search_wlo_collections` · `get_collection_contents` · `search_wlo_within_collection` · `get_node_details` · `search_wlo_topic_pages` · `get_related_content` · `search` und `fetch` *(nur unter `WLO_SEARCH_OUTPUT_MODE=rich`)* |
 | `topic-page` | Titel und Beschreibung über den Schwimmlinien mit ihren Inhalten. | `get_topic_page_content` |
 | `browse` | Interaktiver Sammlungsbaum zum Stöbern. | `get_subject_portals` · `browse_collection_tree` |
-| `reading` | Volltext eines Materials mit Herkunftsangabe und Schaltflächen zum Weiterarbeiten. | `get_compendium_text` · `get_wlo_content_text` |
+| `reading` | Volltext eines Materials mit Herkunftsangabe und Schaltflächen zum Weiterarbeiten. Trägt die Nutzlast `forModel: true`, zeigt es **statt des Textes** eine Übergabe-Zeile („N Passagen an die KI übergeben") — nur `get_compendium_text` setzt das. | `get_compendium_text` · `get_wlo_content_text` |
 
 ---
 
@@ -378,6 +393,7 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 | `WLO_COMPENDIUM_SECTION_MAX` | 2 000 | Kappung je Hauptabschnitt des Kompendiumstexts. Betreiber-Einstellung, kein Aufrufparameter. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | Notventil, falls ein Host noch `text/html+skybridge` erwartet. |
 | `WLO_WIDGET_DOMAIN` | — | Nur wenn gesetzt, wird eine Widget-Domain in `_meta` ausgewiesen. |
+| `WLO_WIDGET_IMAGE_DOMAINS` | `https://img.youtube.com` | Zusätzliche Origins für **Vorschaubilder** in der Widget-CSP (kommagetrennt). Nur `resource_domains`, nie `connect_domains`. Grund: das Repository leitet manche Vorschauen per `302` auf den Thumbnail-Host des Anbieters weiter, und die CSP prüft den Host bei jeder Weiterleitung neu. `none` schaltet es ab (Kachel zeigt dann ihr Symbol). |
 
 ---
 

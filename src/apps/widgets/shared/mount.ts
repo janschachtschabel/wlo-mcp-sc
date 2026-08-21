@@ -24,7 +24,10 @@
 
 import type { Locale } from './strings.js';
 import { resolveLocale } from './strings.js';
+import { announceArrival } from './announce.js';
 import { createHost } from './host.js';
+import { installImageFallback } from './image-fallback.js';
+import { renderLoading } from './loading.js';
 import { followUpPrompt, type FollowUpAction } from './follow-up.js';
 
 /** What the render callback needs to know about the shell's state. */
@@ -49,7 +52,15 @@ export function mountTileWidget(
     if (!root) return;
     const locale = resolveLocale(host.locale());
     document.documentElement.lang = locale;
-    root.innerHTML = render(host.toolOutput(), locale, { selectedId, canFollowUp: host.canFollowUp() });
+    // Live region first: the innerHTML swap below destroys any in-root status
+    // text (see shared/announce.ts).
+    const awaiting = host.awaitingOutput();
+    announceArrival(awaiting, host.toolOutput() != null, locale);
+    // Before the renderer, not after: with no result yet its empty state is a
+    // claim about content nobody has fetched (see shared/loading.ts).
+    root.innerHTML = awaiting
+      ? renderLoading(locale)
+      : render(host.toolOutput(), locale, { selectedId, canFollowUp: host.canFollowUp() });
 
     // preventScroll: keep the focus move without the default scroll-into-view,
     // which jerks the host iframe.
@@ -97,6 +108,7 @@ export function mountTileWidget(
     if (event.key === 'Escape' && selectedId) select(null);
   });
 
+  installImageFallback();
   host.onUpdate(paint);
   paint();
 }

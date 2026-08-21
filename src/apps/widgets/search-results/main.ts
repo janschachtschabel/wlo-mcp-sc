@@ -14,7 +14,10 @@ import { renderSearchResults } from './render.js';
 import { selectionFollowUpPrompt, type SelectedMaterial } from './selection.js';
 import { followUpPrompt, type FollowUpAction } from '../shared/follow-up.js';
 import { resolveLocale } from '../shared/strings.js';
+import { announceArrival } from '../shared/announce.js';
 import { createHost } from '../shared/host.js';
+import { installImageFallback } from '../shared/image-fallback.js';
+import { renderLoading } from '../shared/loading.js';
 import type { SearchAllPayload } from '../shared/types.js';
 
 const host = createHost();
@@ -37,6 +40,17 @@ function paint(): void {
   if (!root) return;
   const locale = resolveLocale(host.locale());
   document.documentElement.lang = locale;
+  // The live region hears the loading→result transition; the repaint below
+  // destroys any in-root status text, so this is the only reliable channel.
+  const awaiting = host.awaitingOutput();
+  announceArrival(awaiting, host.toolOutput() != null, locale);
+  // "Keine Treffer gefunden." over a search that has not answered yet is a
+  // statement about the corpus, not about the call (see shared/loading.ts).
+  if (awaiting) {
+    root.innerHTML = renderLoading(locale);
+    focusTarget = null; // nothing to focus in a skeleton
+    return;
+  }
   root.innerHTML = renderSearchResults(host.toolOutput() as SearchAllPayload | undefined, locale, {
     selectedId,
     selectedIds: [...picked.keys()],
@@ -129,5 +143,6 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && selectedId) select(null);
 });
 
+installImageFallback();
 host.onUpdate(paint);
 paint();

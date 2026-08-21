@@ -202,6 +202,9 @@ services:
       # see the README env table.
       WLO_WIDGET_DOMAIN: "${WLO_WIDGET_DOMAIN:-}"
       WLO_WIDGET_MIME: "${WLO_WIDGET_MIME:-}"
+      # Extra CSP image hosts. Empty here means "keep the built-in default" —
+      # `none` is the word that switches them off (see .env.example).
+      WLO_WIDGET_IMAGE_DOMAINS: "${WLO_WIDGET_IMAGE_DOMAINS:-}"
     # Resource + privilege hardening. The server is a DoS/amplification surface,
     # so cap memory/CPU (a spike can't OOM the host, only the container), drop all
     # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege

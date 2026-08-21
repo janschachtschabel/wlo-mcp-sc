@@ -12,7 +12,7 @@ import { WLO_REPOSITORY_URL, getNodeTextContent, ngsearch } from '../wlo-api.js'
 import { enhancedSearch } from '../reranker.js';
 import { formatNodes, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
-import { buildFilterCriteria, filterByExactLicense, licenseFilterNotice, licensePagingNotice, pageSizeForLicense, formatUnresolvedHint } from '../filter-criteria.js';
+import { buildFilterCriteria, withDerivedResourceType, derivedResourceTypeNotice, filterByExactLicense, licenseFilterNotice, licensePagingNotice, pageSizeForLicense, formatUnresolvedHint } from '../filter-criteria.js';
 import { queryMetaContent, toolError, wikiResolutionNotice } from './shared.js';
 import { mapPool } from '../concurrency.js';
 import { dedupeByUrl } from '../result-dedupe.js';
@@ -49,7 +49,9 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         'Target audience: e.g. "Lehrer/in", "Lerner/in", or URI'
       ),
       learningResourceType: z.string().optional().describe(
-        'Resource type: e.g. "Arbeitsblatt", "Video", "Unterrichtsplan", "Interaktives Medium", or URI'
+        'Resource type: e.g. "Arbeitsblatt", "Video", "Unterrichtsplan", "Interaktives Medium", or URI. ' +
+        'If omitted and the query names an unambiguous medium (Video, Arbeitsblatt, Übung, Bild, Simulation, Podcast), ' +
+        'that type is derived automatically and disclosed in the answer.'
       ),
       publisher: z.string().optional().describe(
         'Filter by content publisher/source, e.g. "Klexikon", "ZUM", "Serlo", "Khan Academy". ' +
@@ -87,7 +89,15 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
     },
     outputSchema: nodeListSchema,
     annotations: { readOnlyHint: true },
-    handler: async (params) => {
+    handler: async (rawParams) => {
+      // "Arbeitsblatt KI" asks for two things: KI as the subject and worksheets
+      // as the type. `query-expand.ts` strips the medium so it stops emptying
+      // the result set; this is where the constraint it carried comes back —
+      // as a real filter, and therefore visible in _queryMeta.
+      const params = withDerivedResourceType(rawParams);
+      // Set exactly when the filter came from the QUERY, not the caller — the
+      // gate for both halves of the disclosure (notice + envelope field).
+      const derivedType = !rawParams.learningResourceType ? params.learningResourceType : undefined;
       const { criteria: filters, labeled: labeledFilters, unresolved } = buildFilterCriteria(params);
       const maxResults = params.maxResults ?? 8;
       const skipCount = params.skipCount ?? 0;
@@ -169,9 +179,17 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
           });
         }
 
-        const text = (params.outputFormat ?? 'markdown') === 'json'
+        const isJson = (params.outputFormat ?? 'markdown') === 'json';
+        // In markdown the notice goes INTO block 0: a measured real client
+        // hands the model only the first content block (2026-08-19), and a
+        // narrowing nobody asked for must not be invisible exactly there. A
+        // JSON block 0 cannot take prose, so there it rides as its own block
+        // below — the same split the licence notice could not have.
+        const derivedNotice = derivedResourceTypeNotice(derivedType, formatted.length);
+        let text = isJson
           ? renderToJson(formatted, response.pagination.total)
           : (renderToText(formatted, response.pagination.total) || 'Keine Inhalte gefunden.');
+        if (!isJson && derivedNotice) text += `\n\n${derivedNotice}`;
 
         const facets = await facetPromise;
         const facetsArg = Object.keys(facets).length ? facets : undefined;
@@ -195,10 +213,16 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         // Rides as its own block for the same reason as `hint`: appending it to
         // a json `text` would corrupt the payload.
         if (licenceNotice) content.push({ type: 'text' as const, text: licenceNotice });
+        if (isJson && derivedNotice) content.push({ type: 'text' as const, text: derivedNotice });
         content.push(meta);
         return {
           content,
-          structuredContent: { total: response.pagination.total, count: formatted.length, results: formatted },
+          structuredContent: {
+            total: response.pagination.total,
+            count: formatted.length,
+            results: formatted,
+            ...(derivedType ? { derivedResourceType: derivedType } : {}),
+          },
         };
       } catch (err) {
         return toolError('Fehler bei der Inhaltssuche', err);
@@ -228,7 +252,9 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
       educationalContext: z.string().optional().describe('Bildungsstufe: "Primarstufe", "Sekundarstufe I", … oder URI'),
       discipline: z.string().optional().describe('Fach: "Mathematik", "Biologie", … oder URI'),
       userRole: z.string().optional().describe('Zielgruppe: "Lehrer/in", "Lerner/in", … oder URI'),
-      learningResourceType: z.string().optional().describe('Ressourcentyp: "Arbeitsblatt", "Video", … oder URI'),
+      learningResourceType: z.string().optional().describe(
+        'Ressourcentyp: "Arbeitsblatt", "Video", … oder URI. Ohne Angabe wird ein eindeutiges Medienwort '
+        + 'aus der query abgeleitet (Video, Arbeitsblatt, Übung, Bild, Simulation, Podcast) und in der Antwort offengelegt.'),
       publisher: z.string().optional().describe('Anbieter, z.B. "Klexikon", "Serlo"'),
       license: z.string().optional().describe('Lizenz: "CC BY 4.0", "gemeinfrei", … oder "OER" für alle frei nachnutzbaren (CC0/gemeinfrei/CC BY/CC BY-SA)'),
       maxContent: z.number().int().min(1).max(50).optional().default(8).describe('Max. Einzel-Inhalte (Default 8)'),
@@ -276,9 +302,19 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
     outputSchema: searchAllEnvelopeSchema,
     annotations: { readOnlyHint: true },
     widgetUri: searchResultsWidgetUri,
-    handler: async (params) => {
+    handler: async (rawParams) => {
+      // Same derivation as search_wlo_content: the medium named in the query
+      // becomes a real filter (see withDerivedResourceType). FIRST thing in the
+      // handler, so the search and its _queryMeta disclosure see one params.
+      const params = withDerivedResourceType(rawParams);
       const query = params.query.trim();
       const want = new Set(params.include ?? ['content', 'collections', 'topicPages']);
+      // Only the content leg applies the filter (searchCollections takes the
+      // bare query), so the disclosure follows licenseFilter's gate: content
+      // leg ran, and the type came from the query rather than the caller.
+      const derivedType = want.has('content') && !rawParams.learningResourceType
+        ? params.learningResourceType
+        : undefined;
       const maxContent = params.maxContent ?? 8;
       const maxColl = params.maxCollections ?? 5;
       // buildFilterCriteria here is for the MCP-only concerns (labeled/
@@ -365,19 +401,33 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         ].filter(Boolean).join('\n');
         const licenceBlock = licenceNotice ? [{ type: 'text' as const, text: licenceNotice }] : [];
 
+        // The derived-type disclosure, same two-channel shape as the licence
+        // one: a sentence for the reader, a field beside `licenseFilter` for
+        // machines. Spread rather than mutated — the service's envelope type
+        // does not carry the field, and enriching BEFORE the json branch keeps
+        // the text envelope and structuredContent from disagreeing.
+        const derivedNotice = derivedResourceTypeNotice(derivedType, envelope.content.count);
+        const enriched = derivedType
+          ? { ...envelope, content: { ...envelope.content, derivedResourceType: derivedType } }
+          : envelope;
+        const derivedBlock = derivedNotice ? [{ type: 'text' as const, text: derivedNotice }] : [];
+
         // Markdown is the token-lean default (audit T-1): the full envelope
         // always rides in structuredContent, so the model-facing text does not
         // need to duplicate it. Explicit outputFormat="json" keeps the envelope
         // in the text for clients that only read content blocks.
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify(envelope) }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: envelope };
+          return { content: [{ type: 'text' as const, text: JSON.stringify(enriched) }, ...hintBlock, ...licenceBlock, ...derivedBlock, ...metas], structuredContent: enriched };
         }
         const md: string[] = [];
         // One ANSWER out of three rendered lists, so the registry pointer is
         // suppressed per list and appended once below. Topic pages are `ccm:map`
         // and format as collections, so a per-list hint fired twice.
         const noHint = { registryHint: false };
-        if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);        md.push(renderToText(envelope.content.results, envelope.content.total, noHint) || 'Keine Inhalte gefunden.'); }
+        if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);        md.push(renderToText(envelope.content.results, envelope.content.total, noHint) || 'Keine Inhalte gefunden.');
+          // Into block 0, right under the list it explains — the trailing
+          // blocks never reach at least one measured client (2026-08-19).
+          if (derivedNotice) md.push(derivedNotice); }
         if (want.has('collections')) { md.push(`# Sammlungen (${envelope.collections.count})`);  md.push(renderToText(envelope.collections.results, undefined, noHint) || 'Keine Sammlungen gefunden.'); }
         if (want.has('topicPages'))  { md.push(`# Themenseiten (${envelope.topicPages.count})`); md.push(renderToText(envelope.topicPages.results, undefined, noHint) || 'Keine Themenseiten gefunden.'); }
         if (envelope.wikipedia) {
@@ -408,7 +458,9 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         if (registryUnchecked.length) {
           md.push(...registryHintFor(registryUnchecked).map(oneLine));
         }
-        return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: envelope };
+        // `enriched`, not `envelope`: the derived-type field must reach
+        // structuredContent in BOTH formats (the notice already sits in md).
+        return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: enriched };
       } catch (err) {
         return toolError('Fehler bei der kombinierten Suche', err);
       }

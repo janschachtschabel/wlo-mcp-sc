@@ -26,6 +26,89 @@ export interface UnresolvedFilter {
   suggestions?: string[];
 }
 
+/**
+ * Words that unambiguously name a MEDIUM → the vocabulary label to filter on.
+ *
+ * "Arbeitsblatt KI" means "search KI, restrict to worksheets": stripping the
+ * medium (which `query-expand.ts` does, to stop it emptying the result set)
+ * recovers the hits but throws the constraint away. This puts it back where it
+ * belongs.
+ *
+ * CURATED on purpose — `resolveVocab` cannot be used to decide membership,
+ * because it fuzzy-matches. Measured 2026-08-21: `material` resolves to
+ * Übungsmaterial and `bildungsinhalte` resolves to **Bild**, so deriving from
+ * whatever resolves would silently turn "Bildungsinhalte zur Optik" into a
+ * search for pictures. A word only appears here if it names one medium and
+ * nothing else; generic words (Material, Medien, Bildungsinhalte, Inhalt,
+ * Beispiel) and framing words (Unterrichtsstunde, Klasse) deliberately do not,
+ * and are merely stripped from the topic variant.
+ *
+ * `aufgabe`/`grafik`/`film` are absent for a different reason: they resolve to
+ * nothing at all, so a filter built from them would silently match no records.
+ */
+const MEDIUM_TO_LRT: ReadonlyMap<string, string> = new Map([
+  ['video', 'Video'], ['videos', 'Video'],
+  ['erklärvideo', 'Video'], ['erklärvideos', 'Video'],
+  ['lernvideo', 'Video'], ['lernvideos', 'Video'],
+  ['arbeitsblatt', 'Arbeitsblatt'], ['arbeitsblätter', 'Arbeitsblatt'],
+  ['übung', 'Übung'], ['übungen', 'Übung'],
+  ['bild', 'Bild'], ['bilder', 'Bild'],
+  ['simulation', 'Simulation'], ['simulationen', 'Simulation'],
+  ['podcast', 'Podcast'], ['podcasts', 'Podcast'],
+]);
+
+/**
+ * The content type a free-text query asks for, or `undefined`.
+ *
+ * Whole words only: "Videokonferenz" is a subject, not a request for a video.
+ * The first medium word wins — a query naming two is asking something this
+ * single-valued filter cannot express, and picking one beats guessing a
+ * combination.
+ */
+export function deriveResourceTypeFromQuery(query: string): string | undefined {
+  for (const word of query.toLowerCase().split(/[^\wäöüß]+/)) {
+    const label = MEDIUM_TO_LRT.get(word);
+    if (label) return label;
+  }
+  return undefined;
+}
+
+/**
+ * Fill in the content type the QUERY asks for, when the caller named none.
+ *
+ * An explicit `learningResourceType` always wins — the caller said what it
+ * wants, and second-guessing that from prose would be worse than useless. The
+ * derived value is returned in the params, so it flows through
+ * `buildFilterCriteria` like any other filter and is therefore DISCLOSED in
+ * `_queryMeta` rather than narrowing a search silently.
+ */
+export function withDerivedResourceType<T extends { query?: string; learningResourceType?: string }>(params: T): T {
+  if (params.learningResourceType) return params;
+  const derived = deriveResourceTypeFromQuery(params.query ?? '');
+  return derived ? { ...params, learningResourceType: derived } : params;
+}
+
+/**
+ * The sentence a DERIVED content-type filter owes the answer — same rule and
+ * same home as `licenseFilterNotice` below: a filter the caller never asked for
+ * must be visible where the reader looks, and `_queryMeta` is the trailing
+ * block a measured real client never hands to the model (2026-08-19). Without
+ * it, "Podcast zur Französischen Revolution" with zero podcasts reads as a bare
+ * "Keine Inhalte gefunden." over a topic holding 480 records.
+ *
+ * Empty for an explicit filter: the caller chose it, and reporting their own
+ * choice back as a discovery is noise.
+ */
+export function derivedResourceTypeNotice(derivedType: string | undefined, kept: number): string {
+  if (!derivedType) return '';
+  if (kept === 0) {
+    return `Hinweis: Der Inhaltstyp „${derivedType}" wurde aus der Anfrage abgeleitet und hat das Ergebnis geleert — `
+      + `ohne diesen Filter kann es Treffer geben. Query nur mit dem Thema stellen oder learningResourceType explizit setzen.`;
+  }
+  return `Hinweis: Inhaltstyp „${derivedType}" aus der Anfrage abgeleitet und als Filter angewandt (learningResourceType). `
+    + `Für alle Materialarten die query nur mit dem Thema stellen.`;
+}
+
 export function buildFilterCriteria(params: {
   educationalContext?: string;
   discipline?: string;

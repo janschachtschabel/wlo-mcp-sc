@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 
+import { log } from '../logger.js';
 import { WLO_REPOSITORY_URL } from '../wlo-api.js';
 
 /**
@@ -98,29 +99,112 @@ function widgetDomain(): string | undefined {
 }
 
 /**
+ * Thumbnail hosts the widget CSP allows IMAGES from, beyond the repository.
+ *
+ * The repository does not always serve the preview itself: for YouTube-sourced
+ * records `/preview` answers `302` to the publisher's thumbnail host (measured
+ * 2026-08-21 against staging — 3 of 78 resolvable previews land on
+ * `https://img.youtube.com`). A browser re-checks the CSP host on every
+ * redirect hop, so a policy naming the repository alone blocks those and the
+ * card keeps a broken-image box over a preview that exists.
+ *
+ * Only what is measured is listed. An operator extends it — or empties it —
+ * with `WLO_WIDGET_IMAGE_DOMAINS`, no code change.
+ */
+const DEFAULT_IMAGE_DOMAINS = ['https://img.youtube.com'];
+
+/**
+ * Turning the list OFF needs a word, not an empty value: `docker-compose.yml`
+ * writes every setting as `"${VAR:-}"`, so in the documented deployment the
+ * variable is always PRESENT and empty. Reading that as "no extra hosts" would
+ * silently drop the default on every container while looking like a choice.
+ */
+const IMAGE_DOMAINS_OFF = 'none';
+
+/**
+ * Parse the raw setting into origins. Unset or empty keeps the measured
+ * default; `none` means "repository only", which is the pre-2026-08-21
+ * behaviour and the setting for an operator who does not want a viewer's
+ * browser contacting a third party at all (the cost is that those cards show
+ * their icon instead of a thumbnail).
+ */
+function parseImageDomains(raw: string): string[] {
+  if (raw === '') return DEFAULT_IMAGE_DOMAINS;
+  if (raw.toLowerCase() === IMAGE_DOMAINS_OFF) return [];
+  const out: string[] = [];
+  for (const entry of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(entry);
+    } catch {
+      // Named, not silently dropped: a CSP entry that matches nothing looks
+      // exactly like a working one from the outside.
+      log.warn('WLO_WIDGET_IMAGE_DOMAINS: ignoring an entry that is not a URL', { entry });
+      continue;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      log.warn('WLO_WIDGET_IMAGE_DOMAINS: ignoring a non-http(s) entry', { entry });
+      continue;
+    }
+    out.push(parsed.origin);
+  }
+  return out;
+}
+
+/** Last raw value parsed, and its result. `undefined` = nothing parsed yet. */
+let imageDomainsRaw: string | undefined;
+let imageDomainsParsed: string[] = [];
+
+/**
+ * The configured extra image hosts. Still read from the environment at call
+ * time — per-request servers and tests must see the current value — but parsed
+ * only when that value CHANGES.
+ *
+ * The memo is not about speed: `widgetResourceMeta` runs once per widget on
+ * every MCP request (`mcp-transport.ts` builds a fresh server and transport per
+ * request), so warning inside the parse turned a single typo into four log
+ * lines per request. A warning that repeats at request rate is one nobody
+ * reads, which is the one thing it exists for.
+ */
+function imageDomains(): string[] {
+  const raw = (process.env['WLO_WIDGET_IMAGE_DOMAINS'] ?? '').trim();
+  if (raw !== imageDomainsRaw) {
+    imageDomainsRaw = raw;
+    imageDomainsParsed = parseImageDomains(raw);
+  }
+  return imageDomainsParsed;
+}
+
+/**
  * Resource `_meta` for a widget: the MCP-Apps standard `ui.*` keys plus the
- * ChatGPT `openai/widget*` aliases. The CSP whitelists exactly the edu-sharing
- * origin (preview images + any widget-side fetch) so the sandboxed iframe can
- * load OER thumbnails but nothing else.
+ * ChatGPT `openai/widget*` aliases.
+ *
+ * The two CSP lists are deliberately NOT the same. `connect` stays the
+ * edu-sharing origin alone — the widget issues no requests of its own, so a
+ * third-party origin would gain a channel it has no use for. `resource` adds
+ * the thumbnail hosts above, because that is where some previews actually come
+ * from.
  */
 export function widgetResourceMeta(name?: string): Record<string, unknown> {
   const origin = eduSharingOrigin();
   const domain = widgetDomain();
-  const domains = origin ? [origin] : [];
+  const connectDomains = origin ? [origin] : [];
+  // Set: an operator who also lists the repository must not double it.
+  const resourceDomains = [...new Set([...connectDomains, ...imageDomains()])];
   const description = name ? WIDGET_DESCRIPTIONS[name] : undefined;
   return {
     ui: {
       prefersBorder: true,
       // Both domain keys only when explicitly configured (see widgetDomain).
       ...(domain ? { domain } : {}),
-      csp: { connectDomains: domains, resourceDomains: domains, frameDomains: [] },
+      csp: { connectDomains, resourceDomains, frameDomains: [] },
       ...(description ? { description } : {}),
     },
     'openai/widgetPrefersBorder': true,
     ...(domain ? { 'openai/widgetDomain': domain } : {}),
     'openai/widgetCSP': {
-      connect_domains: domains,
-      resource_domains: domains,
+      connect_domains: connectDomains,
+      resource_domains: resourceDomains,
       frame_domains: [],
     },
     ...(description ? { 'openai/widgetDescription': description } : {}),

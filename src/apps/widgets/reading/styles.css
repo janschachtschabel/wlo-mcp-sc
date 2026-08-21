@@ -29,6 +29,21 @@
   line-height: 1.6;
 }
 
+/* Handover instead of a document (see render.ts): the panel exists to say the
+   material went to the model, so it stays small and quiet — the answer below it
+   in the chat is the thing to read. */
+.wlo-handover {
+  margin: 2px 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.wlo-handover__note {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--wlo-muted);
+  max-width: 60ch;
+}
+
 /* ── Markdown subset ─────────────────────────────────────────────────────── */
 
 .wlo-md__h {

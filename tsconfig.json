@@ -17,5 +17,14 @@
   // (shared/host.ts) use DOM globals (window/document/postMessage) and are
   // bundled by esbuild (build.mjs), not tsc. The pure render/state/escape/
   // host-bridge modules they import stay type-checked.
-  "exclude": ["node_modules", "dist", "src/apps/widgets/**/main.ts", "src/apps/widgets/shared/host.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/apps/widgets/**/main.ts",
+    // DOM glue: needs `lib: DOM`, which the src build project does not carry.
+    // The CI type gate (tsconfig.typecheck.json) covers both with DOM libs.
+    "src/apps/widgets/shared/host.ts",
+    "src/apps/widgets/shared/image-fallback.ts",
+    "src/apps/widgets/shared/announce.ts"
+  ]
 }

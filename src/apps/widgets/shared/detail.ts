@@ -14,16 +14,19 @@
 
 import { escapeHtml } from './escape.js';
 import { safeHref } from './safe-url.js';
-import { followUpButton } from './tile.js';
+import { followUpButton, previewIcon, PREVIEW_GLYPH } from './tile.js';
 import { t, type Locale } from './strings.js';
 import type { WidgetNode } from './types.js';
 
 export function renderDetail(node: WidgetNode, locale: Locale, canFollowUp: boolean): string {
   const title = escapeHtml(node.title || '');
   const previewSrc = (!!node.previewUrl && !node.previewIsIcon) ? safeHref(node.previewUrl) : '';
+  // Same `data-fallback` contract as the tile: a preview that never loads must
+  // land on the very glyph this node would show without one.
+  const fallbackGlyph = node.nodeType === 'collection' ? PREVIEW_GLYPH.collection : PREVIEW_GLYPH.content;
   const thumb = previewSrc
-    ? `<img class="wlo-detail__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" />`
-    : `<span class="wlo-tile__icon" aria-hidden="true">${node.nodeType === 'collection' ? '⧉' : '📄'}</span>`;
+    ? `<img class="wlo-detail__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" data-fallback="${fallbackGlyph}" />`
+    : previewIcon(node.nodeType);
 
   const chips = [...(node.disciplines ?? []), ...(node.educationalContexts ?? []), ...(node.learningResourceTypes ?? [])]
     .filter(Boolean)

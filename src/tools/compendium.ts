@@ -57,6 +57,20 @@ function hintLine(view: CompendiumView, query: string): string {
   return `_${found} aus ${size} Gesamttext.${missing} Ohne query kommt der ganze Text._`;
 }
 
+/**
+ * Terms missing from EVERY text of a bulk fetch.
+ *
+ * The intersection, deliberately not the union: a term absent from one
+ * collection but present in another HAS been found, and reporting it as missing
+ * would tell the caller its search word does not occur while the answer in
+ * front of it contains that very word.
+ */
+function unmatchedEverywhere(views: Array<CompendiumView | undefined>): string[] {
+  const present = views.filter((v): v is CompendiumView => !!v);
+  if (present.length === 0) return [];
+  return present[0]!.unmatchedTerms.filter(term => present.every(v => v.unmatchedTerms.includes(term)));
+}
+
 /** The document half of the answer: passages under their heading path, or the capped sections. */
 function bodyText(view: CompendiumView): string {
   if (view.passages.length) {
@@ -102,7 +116,10 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
     name: 'get_compendium_text',
     title: 'WLO Kompendiumstext',
     widgetUri: readingWidgetUri,
-    description: `Hole den redaktionellen Kompendiumstext einer oder mehrerer WLO-Sammlungen. Die Redaktion gliedert ihn typischerweise in drei Teile: (1) Weltwissen zum Thema in seinen Facetten, (2) Kompetenzen und Lehrplanbezüge nach Bildungsstufe und Bundesland, (3) kurze Vorstellung der Sammlungsinhalte. Er ist damit der MASSSTAB: für Lückenanalysen (Soll gegen get_collection_contents als Ist), für Sachrichtigkeits-Prüfungen und für Lernpfade entlang der Lehrplan-Kompetenzen. Jede Antwort beginnt mit dem Inhaltsverzeichnis der Überschriften. Mit "query" (z. B. "Lehrplan Thüringen Regelschule") kommen nur die dazu passenden Absätze zurück — deutlich kürzer und die bevorzugte Form bei einer konkreten Frage; ohne "query" der ganze Text, je Hauptabschnitt gekürzt. Gib eine "Sammlung-nodeId" (oder mehrere). NICHT für Dateien/Materialien — gilt nur für Sammlungen mit redaktionellem Text.`,
+    // Kept under MAX_DESCRIPTION (tests/tool-descriptions.test.ts) — a host
+    // truncates from the END, and the WICHTIG sentence is the one instruction
+    // that must survive, so it sits ahead of the mechanics rather than last.
+    description: `Hole den redaktionellen Kompendiumstext einer oder mehrerer WLO-Sammlungen. Die Redaktion gliedert ihn typischerweise in drei Teile: (1) Weltwissen zum Thema in seinen Facetten, (2) Kompetenzen und Lehrplanbezüge nach Bildungsstufe und Bundesland, (3) kurze Vorstellung der Sammlungsinhalte. Er ist damit der MASSSTAB: für Lückenanalysen (Soll gegen get_collection_contents als Ist), für Sachrichtigkeits-Prüfungen und für Lernpfade. WICHTIG: Die Absätze sind Arbeitsmaterial, keine fertige Ausgabe — verarbeite sie und antworte in eigenen Worten; gib sie nicht wörtlich als Zitat aus (sie sind nicht zur direkten Anzeige gedacht). Jede Antwort beginnt mit dem Inhaltsverzeichnis. Mit "query" (z. B. "Lehrplan Thüringen Regelschule") kommen nur die passenden Absätze zurück — kürzer und die bevorzugte Form bei einer konkreten Frage; ohne "query" der ganze Text, je Hauptabschnitt gekürzt. Gib eine "Sammlung-nodeId" (oder mehrere). NICHT für Dateien/Materialien — nur für Sammlungen mit redaktionellem Text.`,
     inputSchema: {
       nodeId: z.string().optional().describe('A single collection nodeId.'),
       nodeIds: z.array(z.string()).max(25).optional().describe('Up to 25 collection nodeIds for a bulk fetch.'),
@@ -147,6 +164,24 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
           // missing, not what it received.
           charCount: views.reduce((sum, v) => sum + (v?.charCount ?? 0), 0),
           truncated: views.some(v => v?.truncated),
+          // This answer is working MATERIAL, not a document to read: the prose
+          // arrives as paragraph chunks (BM25 passages with `query`, capped
+          // sections without), and off the screen those are disjointed
+          // fragments. The reading widget shows a handover line instead, and
+          // the reader sees what the model made of it (user decision
+          // 2026-08-21). Nothing about the model's copy changes.
+          forModel: true,
+          // Only a query answer HAS passages; absent means the whole text went
+          // over, and the widget must not be able to print "0 Passagen" for it.
+          ...(query
+            ? {
+              passageCount: views.reduce((sum, v) => sum + (v?.passages.length ?? 0), 0),
+              // The handover renders no prose, so the "not found" statement the
+              // markdown hint carries has to travel as a field or the reader
+              // never learns their term was absent (review 2026-08-21).
+              unmatchedTerms: unmatchedEverywhere(views),
+            }
+            : {}),
           // No `reason`: the schema reserves it for "there is no text", and
           // there always is one here — a collection without prose still yields
           // the "_Kein Kompendiumstext hinterlegt._" line, which says so in the

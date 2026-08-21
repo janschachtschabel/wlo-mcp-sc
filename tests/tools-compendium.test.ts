@@ -293,3 +293,114 @@ test('a collection without a compendium text still answers, and says nothing is 
     assert.match(text, /Kein Kompendiumstext/);
   } finally { mock.restore(); }
 });
+
+/**
+ * Compendium prose is chunked working material, not a document a person is
+ * meant to read off the screen (user decision 2026-08-21). The tool therefore
+ * marks its payload so the reading widget shows a handover line instead — while
+ * what the MODEL gets stays whole, which is the entire point.
+ */
+test('get_compendium_text: the payload is marked as material for the model', async () => {
+  const mock = metadataMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_compendium_text', arguments: { nodeId: 'coll-1' } });
+    const sc = result.structuredContent as Record<string, unknown>;
+
+    assert.equal(sc['forModel'], true, 'the widget must not render this as a document');
+    assert.equal(sc['passageCount'], undefined, 'no query ⇒ whole text ⇒ no passage count');
+    // The model's copy is untouched — both the content block and the payload.
+    assert.match(String(sc['text']), /Licht und Sehen/);
+    assert.match((result.content as Array<{ text: string }>)[0]!.text, /Licht und Sehen/);
+
+    // And the field survives the declared schema (zod strips what it does not
+    // declare, so a text-only assertion would pass over a lost field).
+    assert.equal(contentTextSchema.parse(sc).forModel, true);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_compendium_text: a query answer reports how many passages went over', async () => {
+  const mock = metadataMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_compendium_text',
+      arguments: { nodeId: 'coll-1', query: 'Licht' },
+    });
+    const sc = result.structuredContent as Record<string, unknown>;
+    assert.equal(sc['forModel'], true);
+    assert.equal(typeof sc['passageCount'], 'number', 'a query answer counts its passages');
+    assert.ok((sc['passageCount'] as number) >= 1, 'the fixture text matches "Licht"');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_compendium_text: its description tells the model to process, not to quote', async () => {
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    const description = tools.find(t => t.name === 'get_compendium_text')?.description ?? '';
+    // Removing the widget's rendering only stops the IMMEDIATE display; the
+    // model could still paste the chunks into its answer.
+    assert.match(description, /eigenen Worten|zusammenfass/i, 'must ask for synthesis');
+    assert.match(description, /nicht wörtlich|nicht als Zitat/i, 'and say what not to do');
+  } finally {
+    await client.close();
+  }
+});
+
+/**
+ * A term missing from ONE collection but present in another is not "not found".
+ * Over a bulk fetch the honest aggregation is therefore the intersection, not
+ * the union — a union would tell the caller its search word is absent while the
+ * answer in front of it contains that very word.
+ */
+test('get_compendium_text: unmatched terms are those missing from EVERY text', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/metadata') && url.includes('coll-1')) {
+      return { json: { node: makeNode('coll-1', 'Optik', {
+        'cm:name': ['Optik'],
+        'ccm:oeh_collection_compendium_text': ['Lichtbrechung und Spiegel im Unterricht.'],
+      }) } };
+    }
+    if (url.includes('/metadata') && url.includes('coll-2')) {
+      return { json: { node: makeNode('coll-2', 'Akustik', {
+        'cm:name': ['Akustik'],
+        'ccm:oeh_collection_compendium_text': ['Schall und Spiegel der Frequenz.'],
+      }) } };
+    }
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_compendium_text',
+      arguments: { nodeIds: ['coll-1', 'coll-2'], query: 'spiegel lichtbrechung thueringen' },
+    });
+    const terms = (result.structuredContent as Record<string, unknown>)['unmatchedTerms'] as string[];
+
+    assert.ok(terms.includes('thueringen'), 'in neither text');
+    assert.ok(!terms.includes('spiegel'), 'in both texts');
+    assert.ok(!terms.includes('lichtbrechung'), 'in one text — so it WAS found');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_compendium_text: no query ⇒ no unmatched-terms field at all', async () => {
+  const mock = metadataMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_compendium_text', arguments: { nodeId: 'coll-1' } });
+    assert.equal((result.structuredContent as Record<string, unknown>)['unmatchedTerms'], undefined);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

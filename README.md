@@ -179,7 +179,8 @@ else has sensible defaults.
 | `PORT` | `3000` | HTTP mode | Port for the standalone HTTP server. |
 | `MCP_SSE` | `false` | HTTP mode | When truthy (`1`/`true`/`yes`), serve `POST /mcp` as a real Server-Sent-Events stream (required by ChatGPT developer mode). Default is single-JSON responses (maximal client compatibility). Behind a reverse proxy, buffering **must** be disabled for the `/mcp` location — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). The Docker image defaults this to `1`. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | all | MIME type for the inlined Apps-SDK widget resources. Default is the MCP-Apps standard (portable). Set to `text/html+skybridge` if a legacy ChatGPT runtime does not render the widgets with the standard value. |
-| `WLO_WIDGET_DOMAIN` | unset | all | App identity domain for the ChatGPT plugin submission (required + unique per app there; widgets render under `<domain>.web-sandbox.oaiusercontent.com`). When set, it is emitted on `_meta.ui.domain` **and** its `openai/widgetDomain` alias; **when unset, on neither** — a host validates the domain against its own sandbox format and rejects the whole widget (aborting the bound tool call) for a foreign value: Claude expects `{hash}.claudemcpcontent.com` and normalises the vendor alias onto the standard key, so dropping only one is not enough. Leave unset for Claude and every non-ChatGPT host. The widget CSP allowlist stays the edu-sharing origin regardless. |
+| `WLO_WIDGET_DOMAIN` | unset | all | App identity domain for the ChatGPT plugin submission (required + unique per app there; widgets render under `<domain>.web-sandbox.oaiusercontent.com`). When set, it is emitted on `_meta.ui.domain` **and** its `openai/widgetDomain` alias; **when unset, on neither** — a host validates the domain against its own sandbox format and rejects the whole widget (aborting the bound tool call) for a foreign value: Claude expects `{hash}.claudemcpcontent.com` and normalises the vendor alias onto the standard key, so dropping only one is not enough. Leave unset for Claude and every non-ChatGPT host. The widget CSP's *connect* allowlist stays the edu-sharing origin regardless — for the image list see the next row. |
+| `WLO_WIDGET_IMAGE_DOMAINS` | `https://img.youtube.com` | all | Extra origins the widget CSP may load **preview images** from, comma separated. Widens `resource_domains` only; `connect_domains` stays the repository alone, because the widget issues no requests of its own. The default is measured, not guessed: the repository does not always serve the preview itself — for YouTube-sourced records `/preview` answers `302` to the publisher's thumbnail host (2026-08-21: 3 of 78 resolvable previews), and a browser re-checks the CSP host on every redirect hop, so without the entry those cards showed a broken image while the repository's own web UI showed the thumbnail. **Privacy:** an allowed host receives the viewer's IP when such a card renders — set the value to `none` to forbid it entirely (those cards then show their document icon). It has to be that word rather than an empty value: `docker-compose.yml` passes every setting as `"${VAR:-}"`, so an unconfigured container always presents an empty string. |
 | `MAX_BODY_BYTES` | `4194304` (4 MB) | HTTP mode | Max request-body size **in bytes**; larger POSTs get `413`. Caps a memory-exhaustion vector. Plain digits only — `1MB` is refused with a warning and the default is kept, rather than read as `1` byte (which would answer every request with `413`). |
 | `RATE_LIMIT_RPM` | `120` | HTTP mode | Requests/minute **per client IP** on the MCP endpoint; over the limit returns `429`. `/health` is exempt. Set `0` to disable (e.g. behind a WAF/platform limiter). |
 | `API_RATE_LIMIT_RPM` | `30` | HTTP mode | Requests/minute **per client IP** on the public REST endpoints (`GET /api/*`); over the limit returns `429`. Tighter than `RATE_LIMIT_RPM` because it is an anonymous public surface. Set `0` to disable. |
@@ -1229,11 +1230,16 @@ the code), grouped by module.
 - `npm test` — offline test suite (`node:test`), no network required.
 - CI (`.github/workflows/ci.yml`) runs build + test on Node 20 with a production
   `npm audit` gate.
+- See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for how the server is put
+  together: the layer model and its dependency rule, the registration seam every
+  tool passes through, the write pipeline, the tests that enforce the
+  architecture, and how to add a tool.
 - See **[CONTRIBUTING.md](CONTRIBUTING.md)** for conventions (comment language,
   test discipline, commit style, security rules).
 
 ## Further documents
 
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the developer's map: layers, seams, invariants, and the measured constraints a change must respect.
 - **[CHANGELOG.md](CHANGELOG.md)** — notable changes.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — contribution guide.
 - **[PERFORMANCE.md](PERFORMANCE.md)** — performance design notes.

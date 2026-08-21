@@ -43,6 +43,19 @@ export interface TileOptions {
 
 const DESC_MAX = 160;
 
+/**
+ * The glyph a card shows in place of a picture — for a record the repository
+ * has no preview for, and (via `data-fallback`) for a preview that fails to
+ * load. Both cases must look the same, so both read it from here.
+ */
+export const PREVIEW_GLYPH = { content: '📄', collection: '⧉' } as const;
+
+/** The decorative stand-in for a missing preview. Never announced. */
+export function previewIcon(nodeType?: string): string {
+  const glyph = nodeType === 'collection' ? PREVIEW_GLYPH.collection : PREVIEW_GLYPH.content;
+  return `<span class="wlo-tile__icon" aria-hidden="true">${glyph}</span>`;
+}
+
 /** Action label per follow-up type — the button's visible text. */
 const ACTION_LABEL: Readonly<Record<ToolFollowUpAction, StringKey>> = {
   contents: 'actionContents',
@@ -112,9 +125,12 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
   const previewSrc = (!!node.previewUrl && !node.previewIsIcon) ? safeHref(node.previewUrl) : '';
 
   // Collections returned above — from here on this is always a content card.
+  // `data-fallback` carries the glyph to swap in if the image never loads: the
+  // repository redirects some previews to a publisher's thumbnail host, and a
+  // blocked or dead one must leave the card clean, not broken (image-fallback.ts).
   const thumb = previewSrc
-    ? `<img class="wlo-tile__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" />`
-    : `<span class="wlo-tile__icon" aria-hidden="true">📄</span>`;
+    ? `<img class="wlo-tile__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" data-fallback="${PREVIEW_GLYPH.content}" />`
+    : previewIcon(node.nodeType);
 
   const titleHtml = href
     ? `<a class="wlo-tile__link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${title}</a>`
