@@ -19,7 +19,7 @@ import { toolError, wikiResolutionNotice } from './shared.js';
  * context of every caller. Same figure `get_wlo_content_text` uses, so a text
  * reads the same length whichever tool produced it.
  */
-const DEFAULT_MAX_CHARS = 8000;
+const DEFAULT_MAX_CHARS = 200000;
 
 export function registerWikipediaTool(server: McpServer): void {
   server.tool(
@@ -39,7 +39,7 @@ NICHT zum Suchen von Unterrichtsmaterial: dafür search_wlo_all.`,
         .describe('Leading paragraphs of the LEAD EXTRACT (1-3, default 1). Ignored when fullText=true.'),
       fullText: z.boolean().optional().default(false)
         .describe('true = the whole article as plain text instead of the lead extract. Costs one extra request, because the title is resolved and relevance-checked first.'),
-      maxChars: z.number().int().min(500).max(100000).optional().default(DEFAULT_MAX_CHARS)
+      maxChars: z.number().int().min(500).max(200000).optional().default(DEFAULT_MAX_CHARS)
         .describe(`Only with fullText: cap on the returned text (default ${DEFAULT_MAX_CHARS}). Cut at a word boundary; the full length is disclosed. Real articles run to ~120.000 characters.`),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown')
         .describe('"markdown" (default) or "json" ({query, found, summary}).'),

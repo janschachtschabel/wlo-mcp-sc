@@ -20,8 +20,14 @@ import {
 } from '../apps/outputSchemas.js';
 import { nodeLookupMiss, toolError } from './shared.js';
 
-/** Cap the fetched document text so a single result cannot flood the context. */
-const FETCH_TEXT_CAP = 10000;
+/**
+ * Cap on the fetched document text. 100 000 (user decision 2026-08-20 — 10 000
+ * "klingt zu wenig") rather than unbounded, because this answer has no dial:
+ * the convention allows only `id`, ChatGPT calls fetch on its own after
+ * `search`, and the document travels TWICE (content[0].text and
+ * structuredContent), so the cap is the only bound the chat's context has.
+ */
+const FETCH_TEXT_CAP = 100000;
 
 /**
  * How many content hits `search` asks for. Higher than `search_wlo_all`'s
@@ -151,7 +157,12 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
         const f = formatNode(node);
         // Prefer the curated compendium text, then the stored full text, then
         // the description — whichever is the richest available document body.
-        let text = f.compendiumText ?? '';
+        // Off the RAW property: `formatNode` carries only the `hasCompendium`
+        // signal since 2026-08-20, and reading the field from it silently
+        // demoted every collection fetch to its description (found red-first
+        // here — the same rule `getCompendiumTexts` and the detail preview
+        // already follow).
+        let text = node.properties?.['ccm:oeh_collection_compendium_text']?.[0] ?? '';
         if (!text) text = (await getNodeTextContent(params.id)) ?? '';
         if (!text) text = f.description ?? '';
         text = capText(text, FETCH_TEXT_CAP).text;

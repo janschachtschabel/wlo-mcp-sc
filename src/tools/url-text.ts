@@ -17,7 +17,7 @@ import { registerWloTool } from '../apps/register.js';
 import { urlTextSchema } from '../apps/outputSchemas.js';
 import { toolError } from './shared.js';
 
-const DEFAULT_MAX_CHARS = 8000;
+const DEFAULT_MAX_CHARS = 200000;
 
 /** What each refusal means, in the words a model should pass on. */
 const REASON_TEXT: Record<string, string> = {
@@ -43,7 +43,7 @@ UNSICHER (unsafe): ruft eine vom Aufrufer gewählte Adresse über einen fremden 
         '"browser" rendert JavaScript (Standard, langsamer); "simple" holt nur das HTML. ' +
         'Scheitert der eine Weg, ist der andere der sinnvolle zweite Versuch.'
       ),
-      maxChars: z.number().int().min(500).max(50000).optional().default(DEFAULT_MAX_CHARS).describe(
+      maxChars: z.number().int().min(500).max(200000).optional().default(DEFAULT_MAX_CHARS).describe(
         `Maximale Zeichenzahl (Standard ${DEFAULT_MAX_CHARS}). Längere Texte werden an einer Wortgrenze gekürzt und über "truncated" gemeldet.`
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
@@ -82,6 +82,10 @@ UNSICHER (unsafe): ruft eine vom Aufrufer gewählte Adresse über einen fremden 
 
         return {
           content: [{ type: 'text' as const, text: lines.join('\n') }],
+          // The FULL result, text included, in the markdown branch too:
+          // structuredContent is the machine contract (urlTextSchema) whatever
+          // the outputFormat — stripping the text there would hand JSON-first
+          // clients an empty answer (review 2026-08-20).
           structuredContent: result,
         };
       } catch (err) {

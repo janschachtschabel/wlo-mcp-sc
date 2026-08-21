@@ -8545,3 +8545,105 @@ bisher; `get_skill` auf einem großen Dokument ungekürzt.
 Nutzer): danach muss `search_wlo_all("Optik")` im Themenseiten-Topf die drei
 Skills mit nodeIds zeigen, und `get_topic_page_content("Optik")` im Markdown nur
 noch EINEN Block.
+
+### Live-Verifikation nach Deploy ✅ 2026-08-20 (31 Proben, alle grün)
+
+Beide ausstehenden Live-Läufe (Themenseiten-Katalog · Kompendium-Signal +
+get_skill) am Draht verifiziert — rohes MCP über Streamable HTTP gegen den
+deployten Server, nicht durch einen Client (der eigene verschluckt zweite
+Content-Blöcke, gemessen am Vortag). 31 Zusicherungen, alle PASS:
+
+- **Modus:** 41 Werkzeuge (registry-only: `search_skill` weg, `get_skill` und
+  `get_skill_registry` da); Beschreibungen tragen die Master-Skill-Abgleiche
+  (`search_wlo_all` nennt `search_wlo_content`, Kompendium-Dreiteilung,
+  `get_node_collections` nennt den Katalog); `skillContext` an allen fünf
+  Sammlungs-Werkzeugen sichtbar.
+- **`search_wlo_all("Optik")`:** Optik im Themenseiten-Topf MIT Katalog
+  (3 Skills, alle mit nodeId), `topicPages.registryChecked: true`,
+  `hasCompendium: true`, **kein** `compendiumText` irgendwo im Envelope;
+  Markdown trägt die Verweiszeile „Kompendium: vorhanden" und ist 15 209
+  statt >50k Zeichen.
+- **`get_topic_page_content("Optik")`:** Markdown = **1** Content-Block mit dem
+  Katalog inline; JSON = 2 Blöcke (Block 1 reines JSON), wie entworfen.
+- **`get_compendium_text`:** liefert 28 855 Zeichen samt `## Inhalt`
+  (die Beinahe-Regression am Lieferwerkzeug ist live widerlegt); mit
+  `query: "Lehrplan Thüringen"` 1 868 Zeichen Passagen, Inhaltsverzeichnis
+  ebenfalls dabei. Eine Probe war zunächst rot, weil sie das WORT
+  „Inhaltsverzeichnis" suchte — gerendert wird `## Inhalt`; Probe korrigiert,
+  kein Server-Befund.
+- **`get_skill`:** Registry-Eintrag geladen, 6 351 Zeichen, kein
+  Kürzungsmarker. Ehrlich benannt: der größte echte Skill liegt unter dem alten
+  64-KiB-Deckel, „ungekürzt jenseits des Deckels" beweist live also nur der
+  Offline-Test (1,5 MiB, rot→grün); live beweisbar ist „vollständig, ohne
+  Marker", und das gilt.
+- **`get_node_details`:** Markdown-Vorschau gekappt bei 509 Zeichen mit `…`,
+  JSON trägt `hasCompendium: true` und kein `compendiumText`.
+
+Probe-Skript: `verify-deploy.mjs` (Scratchpad, nicht im Repo).
+
+### Volltext-Decken auf 200 000 Zeichen ✅ 2026-08-20 (Nutzerentscheidung)
+
+Gemessen vor dem Bauen: die einzigen Längengrenzen auf dem Volltext-Pfad sind
+die drei Schema-Obergrenzen — `get_wlo_content_text` und `get_url_text` je
+50 000, `get_wikipedia_summary` 100 000. Die Quellen kappen NICHT
+(`/textContent` liefert ganz, der Extraktionsdienst auch, und der
+64-KiB-Download-Deckel liegt auf einem anderen Pfad). Alle drei Decken auf
+**200 000** gehoben; die Vorgabe bleibt 8 000, keine bestehende Antwort wächst.
+Drei Tests zuerst rot gesehen (`not ok … maxChars 200000`), grün nach den drei
+Einzeilern. Bewusst NICHT angefasst: `fetch` behält seinen festen
+10 000-Deckel — kein Parameter, Antwort reist doppelt (Text +
+`structuredContent`), ein 200k-Zwang ohne Opt-in wäre die falsche Richtung;
+dem Nutzer benannt. Referenz (Markdown + Web-Artefakt) trägt den Absatz.
+
+**Tore:** `npm test` → **2159 pass, 0 fail** (3 neue Tests) · `lint` → 0 ·
+`typecheck` → 0 · `build` → 0.
+Hochzuladen: `src/tools/content-text.ts` · `src/tools/url-text.ts` ·
+`src/tools/wikipedia.ts` · `tests/tools-content-text.test.ts` ·
+`tests/tools-url-text.test.ts` · `tests/tools-wikipedia.test.ts` ·
+`CHANGELOG.md` · `docs/MCP-REFERENZ.md` · `docs/plans/STATUS.md`.
+
+**Nachschärfung (Nutzerentscheidung, gleicher Tag):** die VORGABE ist ebenfalls
+200 000 — ein Aufruf ohne `maxChars` liefert den ganzen Text. Gemessen vorab:
+`DEFAULT_MAX_CHARS` lebt je Datei (drei Konstanten, kein REST-Import), beide
+Beschreibungen interpolieren die Konstante, und KEIN Test nagelte den alten
+Standard fest — die Vorgabe war ungetestetes Verhalten, jetzt nicht mehr. Drei
+weitere Tests zuerst rot gesehen (Aufruf ohne `maxChars` auf 150k-Text ×2, dazu
+der tools/list-Vertrag: alle drei Beschreibungen nennen 200000), grün nach den
+drei Konstanten. `fetch` (fester 10 000-Deckel, kein Parameter, Antwort reist
+doppelt) bleibt unverändert. CHANGELOG in place editiert (unreleased). Tore
+erneut: `npm test` → **2162 pass, 0 fail** · lint/typecheck/build → 0.
+Upload-Liste unverändert (dieselben neun Dateien).
+
+**Zweite Nachschärfung (Nutzerentscheidung, gleicher Tag): `fetch` auf
+100 000** — „10 000 klingt zu wenig". Fest statt Parameter, aus den bekannten
+Gründen (Konvention erlaubt nur `id`, Antwort reist doppelt, der Deckel ist
+die einzige Schranke des Chat-Kontexts). **Dabei eine echte Regression des
+Kompendium-Pakets gefunden:** `fetch` bevorzugte `f.compendiumText` als
+Dokumentkörper — das Feld setzt `formatNode` seit dem Signal-Umbau nie mehr,
+also lieferte jeder Sammlungs-`fetch` still nur die Beschreibung; die dritte
+Stelle derselben Krankheit (nach `getCompendiumTexts` und der
+Detail-Vorschau), und die einzige OHNE Test. Beides rot-zuerst gebaut (60k-Text
+ungekürzt · Sammlungs-`fetch` liefert das Kompendium), grün nach Konstante +
+Property-Read. Tore: `npm test` → **2164 pass, 0 fail** · lint/typecheck/build
+→ 0. Upload-Liste + `src/tools/knowledge.ts` · `tests/tools-knowledge.test.ts`
+(jetzt elf Dateien).
+
+**Review-Runde (1 minor, 2 nits — alle behoben, 2026-08-20):** Der Minor
+(Text reist im Markdown-Modus doppelt: Content-Block + `structuredContent`)
+ist als BEHALTEN + Begründung im Code aufgelöst, nicht durch Streichen —
+gemessen: das Reading-Widget rendert aus `structuredContent`
+(`widgetUri` an `get_wlo_content_text`), der Streich-Fix hätte es geleert;
+bei `get_url_text` ist `structuredContent` der Maschinenvertrag. Beide
+Rückgaben tragen jetzt den Kommentar, damit niemand die Hälfte
+„wegoptimiert". Die Nits: der Drei-Werkzeuge-Vertragstest ist von
+`tools-content-text.test.ts` nach `tool-descriptions.test.ts` umgezogen
+(dorthin gehören Beschreibungs-Verträge) und um einen Abweisungs-Test ergänzt
+(alle drei verweigern `maxChars` 250 000 — vor jedem Upstream-Aufruf, netguard
+bewacht die Richtung); `fetch` hat einen Grenz-Test (120k-Dokument → Schnitt
+bei 100k MIT Marker, Schwanz weg). Auch geprüft: kein verstecktes
+20 000-ZEICHEN-Limit existiert auf dem `get_url_text`-Pfad (die einzigen
+20 000er im Code sind ein Timeout in ms und Schreibfeld-Grenzen) — Webseiten
+bis 200 000 Zeichen sind durchgängig frei, mit und ohne `maxChars` je mit
+157k-Fixtur getestet. Tore: `npm test` → **2166 pass, 0 fail** ·
+lint/typecheck/build → 0. Upload-Liste + `tests/tool-descriptions.test.ts`
+(jetzt zwölf Dateien).

@@ -146,3 +146,50 @@ test('the description tells the model WHEN to reach for the full text', async ()
     await client.close();
   }
 });
+
+// ── the widened ceiling (2026-08-20, user decision) ──────────────────────────
+// Full-text retrieval was schema-capped at 50 000 chars, so a long document
+// could not be fetched whole no matter what the caller asked for. The ceiling
+// is now 200 000; the DEFAULT stays 8 000, so no existing answer grows.
+
+test('get_wlo_content_text: maxChars 200000 is accepted and delivers the text uncut', async () => {
+  const big = 'Wort '.repeat(30_000) + 'LETZTES WORT DES DOKUMENTS';
+  const mock = installMock(big);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1', maxChars: 200_000, outputFormat: 'json' },
+    });
+    assert.notEqual(res.isError, true, 'the ceiling must admit 200000');
+    const sc = res.structuredContent as { text: string; truncated: boolean };
+    assert.equal(sc.truncated, false);
+    assert.ok(sc.text.endsWith('LETZTES WORT DES DOKUMENTS'), 'the tail must arrive');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+// ── the DEFAULT is the ceiling (2026-08-20, user decision, same day) ─────────
+// First the ceiling went to 200 000 with the default left at 8 000; the user
+// then decided the default itself is 200 000 — a call that names no maxChars
+// gets the whole text.
+
+test('get_wlo_content_text: a call WITHOUT maxChars delivers a long text uncut', async () => {
+  const big = 'Wort '.repeat(30_000) + 'LETZTES WORT DES DOKUMENTS';
+  const mock = installMock(big);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1', outputFormat: 'json' },
+    });
+    const sc = res.structuredContent as { text: string; truncated: boolean };
+    assert.equal(sc.truncated, false, 'the default must not cut a 150k text');
+    assert.ok(sc.text.endsWith('LETZTES WORT DES DOKUMENTS'));
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

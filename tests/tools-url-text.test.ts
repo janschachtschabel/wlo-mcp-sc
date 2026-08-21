@@ -119,3 +119,38 @@ test('a URL the schema rejects never reaches the handler', async () => {
     assert.equal(rejected, true);
   } finally { await client.close(); mock.restore(); }
 });
+
+// Same widened ceiling as get_wlo_content_text (2026-08-20): 50 000 → 200 000,
+// default unchanged. The extraction service itself never caps (measured), so
+// the schema bound was the only thing between a caller and the whole page.
+test('maxChars 200000 is accepted and the page text arrives uncut', async () => {
+  const big = 'Absatz ueber Photosynthese und Lichtenergie. '.repeat(3_500) + 'LETZTER SATZ DER SEITE';
+  const mock = extractionMock(big);
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_url_text',
+      arguments: { url: 'https://de.wikipedia.org/wiki/Photosynthese', maxChars: 200_000 },
+    });
+    assert.notEqual(result.isError, true, 'the ceiling must admit 200000');
+    const sc = urlTextSchema.parse(result.structuredContent);
+    assert.equal(sc.truncated, false);
+    assert.ok((sc.text ?? '').endsWith('LETZTER SATZ DER SEITE'), 'the tail must arrive');
+  } finally { await client.close(); mock.restore(); }
+});
+
+// The DEFAULT is the ceiling too (2026-08-20, user decision): no maxChars → whole page.
+test('a call without maxChars delivers a long page uncut', async () => {
+  const big = 'Absatz ueber Photosynthese und Lichtenergie. '.repeat(3_500) + 'LETZTER SATZ DER SEITE';
+  const mock = extractionMock(big);
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_url_text',
+      arguments: { url: 'https://de.wikipedia.org/wiki/Photosynthese' },
+    });
+    const sc = urlTextSchema.parse(result.structuredContent);
+    assert.equal(sc.truncated, false, 'the default must not cut a 150k page');
+    assert.ok((sc.text ?? '').endsWith('LETZTER SATZ DER SEITE'));
+  } finally { await client.close(); mock.restore(); }
+});

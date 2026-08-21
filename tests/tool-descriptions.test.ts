@@ -178,3 +178,53 @@ test('the server instructions answer to the repository’s other names', async (
     );
   }
 });
+
+/**
+ * ── The full-text bounds are ONE contract across three tools (2026-08-20) ────
+ *
+ * Ceiling and default are both 200 000 (user decision). The description is how
+ * a model learns the default; the schema is how the ceiling is enforced. Both
+ * are pinned here for all three tools together, so changing one alone fails.
+ */
+
+const FULLTEXT_TOOLS = ['get_wlo_content_text', 'get_url_text', 'get_wikipedia_summary'];
+
+test('all three full-text tools advertise 200000 as their default', async () => {
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    for (const name of FULLTEXT_TOOLS) {
+      const tool = tools.find(t => t.name === name);
+      assert.ok(tool, name);
+      const prop = (tool!.inputSchema as { properties?: Record<string, { description?: string }> }).properties?.maxChars;
+      assert.match(prop?.description ?? '', /200000/, `${name} must advertise the 200000 default`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test('all three full-text tools refuse maxChars above 200000', async () => {
+  const client = await connectedClient();
+  try {
+    for (const name of FULLTEXT_TOOLS) {
+      // Refused at validation, BEFORE any upstream call — so no mock is needed,
+      // and netguard would loudly catch a validation that stopped validating.
+      const args = name === 'get_url_text'
+        ? { url: 'https://example.org/x', maxChars: 250_000 }
+        : name === 'get_wikipedia_summary'
+          ? { query: 'Optik', maxChars: 250_000 }
+          : { nodeId: 'n1', maxChars: 250_000 };
+      let refused = false;
+      try {
+        const res = await client.callTool({ name, arguments: args });
+        refused = res.isError === true;
+      } catch {
+        refused = true;
+      }
+      assert.ok(refused, `${name} must refuse 250000`);
+    }
+  } finally {
+    await client.close();
+  }
+});

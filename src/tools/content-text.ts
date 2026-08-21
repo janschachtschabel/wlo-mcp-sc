@@ -15,7 +15,7 @@ import { contentTextSchema } from '../apps/outputSchemas.js';
 import { toolError } from './shared.js';
 
 /** Default cap: enough for a worksheet, far below a context-flooding 41k text. */
-const DEFAULT_MAX_CHARS = 8000;
+const DEFAULT_MAX_CHARS = 200000;
 
 /**
  * @param readingWidgetUri – the W5 (reading) `ui://` resource, when built;
@@ -33,7 +33,7 @@ Der Text kommt aus dem Repository (~0,3 s) oder, bei extern verlinktem Material,
 Gibt es keinen Text, kommt \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_url\`, \`extraction_failed\`, \`node_not_found\`). Das ist kein Fehler, sondern die Auskunft, dass es wirklich keinen Text gibt: dann sag das — und **erfinde keinen Inhalt**.`,
     inputSchema: {
       nodeId: z.string().describe('nodeId of the material (from any WLO search result).'),
-      maxChars: z.number().int().min(500).max(50000).optional().default(DEFAULT_MAX_CHARS)
+      maxChars: z.number().int().min(500).max(200000).optional().default(DEFAULT_MAX_CHARS)
         .describe(`Max characters returned (default ${DEFAULT_MAX_CHARS}). Longer texts are cut at a word boundary and flagged via "truncated".`),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown')
         .describe('"markdown" (default, the text with a short provenance header) or "json" (structured).'),
@@ -70,6 +70,11 @@ Gibt es keinen Text, kommt \`source: "none"\` mit \`reason\` (\`access_denied\`,
 
         return {
           content: [{ type: 'text' as const, text: lines.join('\n') }],
+          // The FULL result, text included, in the markdown branch too: the
+          // reading widget renders from structuredContent (widgetUri above),
+          // and JSON-first clients read nothing else. The text travelling
+          // twice is the price of serving both consumers — do not "optimize"
+          // it out of this branch (review 2026-08-20).
           structuredContent: result,
         };
       } catch (err) {

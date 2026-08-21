@@ -15,7 +15,8 @@ KI-Skills — und, nach Anmeldung, das Kuratieren von Datensätzen.
 
 Erhoben aus dem Quellcode, nicht aus dem Gedächtnis: Werkzeugliste und
 Parameter stammen aus `tools/list` des laufenden Servers, die Trefferzahlen aus
-einem echten Aufruf gegen Staging (2026-08-19).
+einem echten Aufruf gegen Staging (zuletzt 2026-08-20, nach dem Deploy mit
+31 Proben am laufenden Server verifiziert).
 
 ---
 
@@ -96,7 +97,8 @@ Suche als `get_skill_for_task` zurückbringen) und `WLO_SKILL_CACHE` ebenfalls �
 er ist an, solange man ihn nicht abschaltet. `WLO_SKILLS_COLLECTION_ID` wird
 gegenstandslos, weil es nur die Suche verengt.
 
-Gemessen 2026-08-19 über `tools/list`:
+Gemessen 2026-08-19 über `tools/list`, nach dem Deploy am 2026-08-20 live
+bestätigt (41 Werkzeuge im Registry-Modus):
 
 | Konfiguration | Skill-Werkzeuge | Gesamt |
 |---|---|---:|
@@ -138,8 +140,10 @@ Gemessen an einem echten Treffer: **898 Zeichen JSON je Datensatz**, davon
 (nur das Signal — der Text selbst kommt über `get_compendium_text` oder
 `includeCompendium`; bis 2026-08-20 reiste er ungekappt mit, gemessen 37 428
 Zeichen in einem einzigen Optik-Treffer), `compendiumText` (nur nach
-`includeCompendium`), `textContent` (500 Z.), `skillRegistry`, `originalId`
-(nur wenn der Datensatz eine Verknüpfung ist).
+`includeCompendium`), `textContent` (500 Z.), `skillRegistry` (der
+Freigabekatalog — an Sammlungs- **und** Themenseiten-Treffern; ob die Prüfung
+lief, sagen `collections.registryChecked` bzw. `topicPages.registryChecked`),
+`originalId` (nur wenn der Datensatz eine Verknüpfung ist).
 
 ### Wie viele Treffer, und welche Zahl dazu
 
@@ -198,20 +202,31 @@ NC- oder ND-Material.
 
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
-| `get_node_details` | Die Detailansicht: Metadaten als lesbare Labels. `includeQualityInfo` ergänzt die 14 redaktionellen Bewertungen, `includeAccessInfo` Zugang, Kosten, Werbung, Barrierefreiheit und OER-Status — beides **ohne zusätzlichen Abruf**. | `nodeId*` · includeTextContent · includeParents · includeRaw · includeQualityInfo · includeAccessInfo · skillContext · outputFormat |
+| `get_node_details` | Die Detailansicht: Metadaten als lesbare Labels. `includeQualityInfo` ergänzt die 14 redaktionellen Bewertungen, `includeAccessInfo` Zugang, Kosten, Werbung, Barrierefreiheit und OER-Status — beides **ohne zusätzlichen Abruf**. Kompendium: Markdown zeigt eine 500-Zeichen-Vorschau, JSON nur das Signal `hasCompendium`. | `nodeId*` · includeTextContent · includeParents · includeRaw · includeQualityInfo · includeAccessInfo · skillContext · outputFormat |
 | `get_nodes_details` | Dasselbe für bis zu 50 ids parallel. Fehlschläge kommen in `failed` zurück, nicht als Gesamtfehler. | `nodeIds*` · includeTextContent · includeParents · includeQualityInfo · includeAccessInfo |
 | `get_related_content` | „Mehr wie dieses" — ähnliche Materialien nach einer Suche oder Detailansicht. | `nodeId*` · maxResults`=8` · includeSiblings · skillContext · outputFormat |
 | `get_node_breadcrumb` | Wo eine Sammlung im Themenbaum sitzt — der Pfad von der Wurzel. | `nodeId*` · outputFormat |
-| `get_node_collections` | In welchen Sammlungen ein Material geführt wird. | `nodeId*` · outputFormat |
+| `get_node_collections` | In welchen Sammlungen ein Material geführt wird — jede gefundene Sammlung nennt ihren Katalog freigegebener Skills gleich mit, in beiden Formaten. | `nodeId*` · outputFormat |
 
 ### 5.4 Texte — ohne Anmeldung
 
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
-| `get_wlo_content_text` | Der eigentliche Text eines Materials. Notfalls von der verlinkten Seite — und wenn keiner da ist, wird gesagt warum. | `nodeId*` · maxChars`=8000` · outputFormat |
-| `get_compendium_text` | Redaktionelle Prosa einer Sammlung, typischerweise dreiteilig: Weltwissen · Lehrplan-Kompetenzen je Stufe/Bundesland · Vorstellung der Inhalte — der Maßstab für Lückenanalyse, Sachrichtigkeit und Lernpfade. **Mit** `query` kommen per BM25 nur die passenden Absätze, **ohne** der ganze Text mit je Hauptabschnitt gekapptem Umfang. Das Inhaltsverzeichnis geht in beiden Fällen mit — sonst weiß ein Modell nicht, was es *nicht* gesehen hat. Nicht getroffene Suchwörter werden benannt. | nodeId · nodeIds · query · outputFormat |
-| `get_wikipedia_summary` | Anriss oder ganzer Artikeltext. Ein danebenliegender Treffer liefert lieber gar keinen Artikel als den nächstähnlichen String. | `query*` · language`=de` · sections`=1` · fullText · maxChars`=8000` · outputFormat |
-| `get_url_text` ⚠️ **unsafe** | Text einer beliebigen Webseite über den Extraktionsdienst. **Nicht für den Produktivbetrieb:** die Seite wird nicht von uns geholt, sondern im Dienst — eine Umleitung ins private Netz ist auf dieser Ebene nicht sichtbar. Abschaltbar über `WLO_DISABLE_UNSAFE_TOOLS`. | `url*` · method (browser\|simple) · maxChars`=8000` · outputFormat |
+| `get_wlo_content_text` | Der eigentliche Text eines Materials. Notfalls von der verlinkten Seite — und wenn keiner da ist, wird gesagt warum. | `nodeId*` · maxChars`=200000` · outputFormat |
+| `get_compendium_text` | Redaktionelle Prosa einer Sammlung, typischerweise dreiteilig: Weltwissen · Lehrplan-Kompetenzen je Stufe/Bundesland · Vorstellung der Inhalte — der Maßstab für Lückenanalyse, Sachrichtigkeit und Lernpfade. **Mit** `query` kommen per BM25 nur die passenden Absätze, **ohne** der ganze Text mit je Hauptabschnitt gekapptem Umfang. Das Inhaltsverzeichnis geht in beiden Fällen mit (gerendert als `## Inhalt`) — sonst weiß ein Modell nicht, was es *nicht* gesehen hat. Nicht getroffene Suchwörter werden benannt. | nodeId · nodeIds · query · outputFormat |
+| `get_wikipedia_summary` | Anriss oder ganzer Artikeltext. Ein danebenliegender Treffer liefert lieber gar keinen Artikel als den nächstähnlichen String. | `query*` · language`=de` · sections`=1` · fullText · maxChars`=200000` · outputFormat |
+| `get_url_text` ⚠️ **unsafe** | Text einer beliebigen Webseite über den Extraktionsdienst. **Nicht für den Produktivbetrieb:** die Seite wird nicht von uns geholt, sondern im Dienst — eine Umleitung ins private Netz ist auf dieser Ebene nicht sichtbar. Abschaltbar über `WLO_DISABLE_UNSAFE_TOOLS`. | `url*` · method (browser\|simple) · maxChars`=200000` · outputFormat |
+
+`maxChars` liegt bei allen drei Volltext-Werkzeugen auf **200 000** Zeichen —
+als Obergrenze **und** als Vorgabe (seit 2026-08-20; vorher Vorgabe 8 000,
+Decken 50 000 bzw. 100 000): ein Aufruf ohne `maxChars` liefert den ganzen
+Text, wer weniger will, sagt es. Die Quellen selbst kappen nicht:
+`/textContent` und der Extraktionsdienst liefern ungekürzt. Das
+Konventions-Werkzeug `fetch` hat einen festen Deckel von **100 000** Zeichen —
+fest, weil es keinen Parameter hat und seine Antwort doppelt reist (Text
+**und** `structuredContent`): der Deckel ist die einzige Schranke, die der
+Chat-Kontext dort hat. Als Dokumentkörper liefert `fetch` das Kompendium der
+Sammlung, sonst den Volltext, sonst die Beschreibung.
 
 ### 5.5 Themenseiten — ohne Anmeldung
 
@@ -227,6 +242,13 @@ Zielgruppe und Bildungsstufe werden **lokal** gefiltert, und ein nicht gesetzter
 Wert schließt nie aus: rund 90 % der Varianten tragen keinen von beiden, ein
 serverseitiger Filter würde Seiten verstecken statt eingrenzen.
 
+Eine Themenseite hängt an einer Sammlung, und deren Freigabekatalog reist mit
+(seit 2026-08-20): Themenseiten-Treffer in `search_wlo_all` tragen den Katalog
+wie Sammlungstreffer, und `get_topic_page_content` antwortet im Markdown in
+**einem** Content-Block mit dem Katalog inline — mindestens ein realer
+MCP-Client reicht dem Modell nur den ersten Block durch. Im JSON bleibt der
+Katalog ein zweiter Block, weil Block 1 dort reines JSON ist.
+
 ### 5.6 Skills — ohne Anmeldung
 
 Ein Skill ist ein Datensatz mit angehängter `SKILL.md` — eine kuratierte
@@ -235,11 +257,11 @@ Anleitung, die ein Modell laden kann.
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
 | `search_skill` | Skills im Repository suchen. Entfällt mit `WLO_DISABLE_SKILL_SEARCH`; unter `WLO_SKILL_TOOL_MODE=one-tool` ersetzt `get_skill_for_task` dieses Werkzeug. | query · maxResults · collectionId · includeSubcollections · discipline · educationalContext · outputFormat |
-| `get_skill` | Die Anleitung per nodeId laden — der Markdown-Volltext, wortgetreu. In **jedem** Modus registriert. | `nodeId*` · includeFiles · outputFormat |
+| `get_skill` | Die Anleitung per nodeId laden — der Markdown-Volltext, wortgetreu und **ohne Längenlimit** (seit 2026-08-20; der 64-KiB-Deckel gewöhnlicher Datei-Downloads gilt auf dem Skill-Pfad nicht — eine halbe Anleitung ist schlimmer als keine). In **jedem** Modus registriert. | `nodeId*` · includeFiles · outputFormat |
 | `get_skill_registry` | Welche Skills für **eine** Sammlung freigegeben sind. Mit `context` nur der eine Arbeitszusammenhang samt Anleitung der Redaktion. | `collectionId*` · context · outputFormat |
 
-Der Freigabekatalog reist **kostenlos** an jeder Sammlungs-Antwort mit (aus dem
-Cache). Ein *benannter* `skillContext` kostet einen Live-Abruf von rund
+Der Freigabekatalog reist **kostenlos** an jeder Sammlungs- und
+Themenseiten-Antwort mit (aus dem Cache). Ein *benannter* `skillContext` kostet einen Live-Abruf von rund
 1,0–1,4 s, weil die Prosa der Redaktion nicht im Cache liegt. Ein Fehlgriff
 liefert die vollständige Antwort und nennt die vorhandenen Kontexte — nie einen
 Fehler.
@@ -378,4 +400,4 @@ exakt dieser Pfad, damit `/auth/ticket-irgendwas` sie nicht erbt.
 
 ---
 
-*Stand: 2026-08-19*
+*Stand: 2026-08-20 — nach dem Deploy live verifiziert (31 Proben am laufenden Server, alle grün).*

@@ -134,3 +134,20 @@ test('ohne fullText bleibt es beim Anriss und bei EINEM Aufruf', async () => {
     await client.close();
   }
 });
+
+// The widened full-text ceiling (2026-08-20): 100 000 → 200 000, default unchanged.
+test('get_wikipedia_summary: maxChars 200000 passes the schema', async () => {
+  const mock = articleMock();
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({
+      name: 'get_wikipedia_summary',
+      arguments: { query: 'Photosynthese', maxChars: 200_000 },
+    });
+    assert.notEqual(result.isError, true, 'the ceiling must admit 200000');
+    assert.match(toolText(result), /Photosynthese/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

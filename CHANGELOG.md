@@ -6,6 +6,18 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — full-text delivery raised to 200 000 chars, ceiling AND default (2026-08-20)
+
+`maxChars` on the three full-text tools (`get_wlo_content_text`, `get_url_text`,
+`get_wikipedia_summary`) is now 200 000 characters as both the ceiling and the
+default — a call that names no `maxChars` gets the whole text (was: ceilings of
+50 000/50 000/100 000 with an 8 000 default). The sources themselves never
+capped — `/textContent` and the extraction service deliver whole, so the schema
+was the only thing between a caller and a long document. The convention tool
+`fetch` goes to a fixed 100 000-char cap (was 10 000): fixed, because it has no
+parameter and its answer travels twice (text and `structuredContent`) — the cap
+is the only bound the chat's context has there.
+
 ### Changed — search hits carry the compendium SIGNAL, never the text (2026-08-20)
 
 Measured live: one Optik topic-page hit shipped 37 428 chars of compendium
@@ -25,7 +37,10 @@ signal — the full text in every detail answer was the same defect.
 The change found its own would-be regression: `getCompendiumTexts` read the
 text THROUGH `formatNode`, so dropping it there silently emptied the delivery
 path itself — the gap-fill test caught it, and the service now reads the
-property directly.
+property directly. A third site had the same disease and no test to catch it:
+`fetch` preferred `f.compendiumText` as its document body, which silently
+demoted every collection fetch to its description — found red-first while
+raising the fetch cap, fixed the same way (read the raw property).
 
 ### Fixed — get_skill loads instructions whole (2026-08-20)
 

@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { connectedClient, installFetchMock, makeNode } from './fetchMock.js';
+import { TRUNCATION_MARKER } from '../src/text-cap.js';
 
 test('search returns {results:[{id,title,url}]} and duplicates the JSON in content[0].text', async () => {
   const mock = installFetchMock((url) => {
@@ -102,5 +103,64 @@ test('fetch on an unknown id returns an error result', async () => {
   try {
     const result = await client.callTool({ name: 'fetch', arguments: { id: 'nope' } });
     assert.equal(result.isError, true);
+  } finally { await client.close(); mock.restore(); }
+});
+
+// ── the fetch document budget + the compendium regression (2026-08-20) ───────
+// The user raised the fixed cap to 100 000 ("10 000 klingt zu wenig"). And
+// while touching the site, the preference "curated compendium first" turned out
+// to be DEAD since the hasCompendium change: `f.compendiumText` is never set by
+// formatNode any more, so a collection fetch silently served its description.
+
+test('fetch delivers a long document text uncut up to 100000 chars', async () => {
+  const big = 'Satz ueber Optik und Lichtbrechung. '.repeat(1_600) + 'ENDE DES LANGEN DOKUMENTS';
+  const mock = installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { content: big } };
+    if (url.includes('/metadata')) return { json: { node: makeNode('x2', 'Langes Dokument') } };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'fetch', arguments: { id: 'x2' } });
+    const sc = result.structuredContent as { text: string };
+    assert.ok(sc.text.endsWith('ENDE DES LANGEN DOKUMENTS'), 'the tail must arrive');
+    assert.ok(!sc.text.includes(TRUNCATION_MARKER), 'nothing may be cut');
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('fetch on a collection serves the COMPENDIUM as the document body', async () => {
+  const compendium = 'KOMPENDIUM-ANFANG. ' + 'Weltwissen und Lehrplanbezug der Sammlung. '.repeat(500);
+  const mock = installFetchMock((url) => {
+    if (url.includes('/textContent')) return { status: 404, json: {} };
+    if (url.includes('/metadata')) {
+      return { json: { node: makeNode('coll-1', 'Sammlung Optik', {
+        'ccm:oeh_collection_compendium_text': [compendium],
+      }) } };
+    }
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'fetch', arguments: { id: 'coll-1' } });
+    const sc = result.structuredContent as { text: string };
+    assert.ok(sc.text.startsWith('KOMPENDIUM-ANFANG.'),
+      'the richest body is the compendium, not the description');
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('fetch cuts at the 100000 cap with the marker, never silently', async () => {
+  const big = 'Wort '.repeat(24_000) + 'ENDE HINTER DEM DECKEL';
+  const mock = installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { content: big } };
+    if (url.includes('/metadata')) return { json: { node: makeNode('x3', 'Sehr langes Dokument') } };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'fetch', arguments: { id: 'x3' } });
+    const sc = result.structuredContent as { text: string };
+    assert.ok(sc.text.includes(TRUNCATION_MARKER), 'the cut is disclosed');
+    assert.ok(!sc.text.includes('ENDE HINTER DEM DECKEL'), 'the tail past the cap is gone');
+    assert.ok(sc.text.length <= 100_000 + TRUNCATION_MARKER.length, 'cut at the cap');
   } finally { await client.close(); mock.restore(); }
 });
