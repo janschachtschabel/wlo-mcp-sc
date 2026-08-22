@@ -6,6 +6,28 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — a collection card with a Themenseite offers BOTH actions; the Volltext chain relays an honest "no text" (2026-08-22)
+
+Two live findings from the first day with the widgets in real use. First: a
+collection that also has a Themenseite showed only "Themenseite öffnen" — the
+deliberate one-action rule hid "Inhalte anzeigen" on exactly the richest
+collections. User decision: both buttons, curated view first; a plain
+collection keeps its single contents action.
+
+Second: clicking "Volltext anzeigen" on an SWR video produced the surrounding
+COLLECTION's compendium passages instead. Measured: the material is a
+`video/mp4` whose `/textContent` is empty and whose `ccm:wwwurl` points at a
+raw `.mp4` — `get_wlo_content_text` answered an honest "kein Text", and the
+model substituted the nearest interesting text rather than relaying the
+negative. Not a routing bug, but two of our sentences invited it: the no-text
+result was a slug in parentheses (`no_text_no_url`), and the injected click
+message said nothing about the empty case. Both now carry the rule — the
+result states the reason in words plus "keinen Ersatztext aus anderen Quellen
+liefern", and the Volltext click message closes with "Wenn kein Volltext
+hinterlegt ist, sage das kurz — hole keinen anderen Text als Ersatz"
+(localized). Model compliance cannot be enforced; both ends of the chain now
+state the rule at the moment it applies.
+
 ### Fixed — restricted records no longer render the repository's permission shield (2026-08-22)
 
 User report with screenshots: the same signed-in person sees preview images in

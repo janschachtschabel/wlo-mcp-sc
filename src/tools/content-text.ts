@@ -8,7 +8,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { getContentText } from '../services/content-text.js';
+import { getContentText, type ContentTextMiss } from '../services/content-text.js';
 import { oneLine } from '../formatter.js';
 import { registerWloTool } from '../apps/register.js';
 import { contentTextSchema } from '../apps/outputSchemas.js';
@@ -16,6 +16,19 @@ import { toolError } from './shared.js';
 
 /** Default cap: enough for a worksheet, far below a context-flooding 41k text. */
 const DEFAULT_MAX_CHARS = 200000;
+
+/**
+ * The no-text reasons in words. The result is the sentence the model acts on,
+ * and a slug in parentheses (`no_text_no_url`) is what it paraphrased AROUND on
+ * 2026-08-22 — substituting the collection's compendium text for a video that
+ * honestly has none.
+ */
+const NO_TEXT_REASONS: Record<ContentTextMiss, string> = {
+  access_denied: 'der Abruf wurde verweigert',
+  no_text_no_url: 'es gibt keinen gespeicherten Text und keine auswertbare verlinkte Seite',
+  extraction_failed: 'die verlinkte Seite ließ sich nicht als Text lesen',
+  node_not_found: 'das Material wurde nicht gefunden',
+};
 
 /**
  * @param readingWidgetUri – the W5 (reading) `ui://` resource, when built;
@@ -66,7 +79,10 @@ Gibt es keinen Text, kommt \`source: "none"\` mit \`reason\` (\`access_denied\`,
           .map(oneLine);
         if (result.truncated) lines.push(`Hinweis: gekürzt auf ${params.maxChars ?? DEFAULT_MAX_CHARS} von ${result.charCount} Zeichen.`);
         lines.push('');
-        lines.push(result.text || `_Kein Volltext verfügbar (${result.reason ?? 'unbekannt'})._`);
+        lines.push(result.text || [
+          `Dieses Material hat keinen hinterlegten Volltext — ${result.reason ? NO_TEXT_REASONS[result.reason] : 'Grund unbekannt'}.`,
+          'Bitte genau das kurz weitergeben und keinen Ersatztext aus anderen Quellen (z. B. dem Kompendium einer Sammlung) liefern.',
+        ].join(' '));
 
         return {
           content: [{ type: 'text' as const, text: lines.join('\n') }],

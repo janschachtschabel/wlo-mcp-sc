@@ -73,6 +73,7 @@ const STRINGS = {
     selectionPromptTail: 'Rufe dazu {tool} mit diesen {param} auf.',
     // Folgeaktionen auf Kacheln und in der Einzelansicht
     followUpTool: 'Rufe dazu {tool} mit dieser {param} auf.',
+    followUpTextNone: 'Wenn kein Volltext hinterlegt ist, sage das kurz — hole keinen anderen Text als Ersatz.',
     followUp_contents: 'Zeige mir die Inhalte der WLO-Sammlung',
     followUp_topicPage: 'Zeige mir die WLO-Themenseite',
     followUp_text: 'Zeige mir den Volltext von',
@@ -141,6 +142,7 @@ const STRINGS = {
     selectionPromptTail: 'Call {tool} with these {param}.',
     // Follow-up actions on tiles and in the detail view
     followUpTool: 'Call {tool} with this {param}.',
+    followUpTextNone: 'If there is no full text stored, say so briefly — do not fetch another text as a substitute.',
     followUp_contents: 'Show me the contents of the WLO collection',
     followUp_topicPage: 'Show me the WLO topic page',
     followUp_text: 'Show me the full text of',

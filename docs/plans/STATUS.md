@@ -9109,3 +9109,47 @@ auf Zählung umgestellt.
 typecheck 0 · build grün · Bundles zweimal identisch gebaut (deterministisch):
 `search-results 35a4a337 · topic-page 97e284e2 · browse 166f1c4b · reading
 544540c7`.
+
+**Nachtrag 3 (erster Live-Tag der Widgets, 2026-08-22).** Der Nutzer bestätigt:
+**die Inline-Vorschauen laufen in ChatGPT** — echte Bilder auf gesperrten
+Kacheln; die Sandbox reicht `toolResponseMetadata` durch und rendert
+`data:`-Bilder. Damit ist die letzte Nur-live-Frage des Pakets beantwortet.
+Zwei Befunde aus derselben Nutzung, beide behoben:
+
+(1) **Sammlungs-Karte mit Themenseite bietet BEIDE Aktionen**
+(Nutzerentscheidung, dreht die Ein-Aktions-Regel vom 2026-07 zurück):
+„Themenseite öffnen" zuerst (die kuratierte Sicht), daneben „Inhalte anzeigen"
+— die alte Regel verbarg die Inhalte genau der reichsten Sammlungen. Eine
+Sammlung ohne Themenseite behält ihren einen Knopf. `tile.ts`, Test-Pin
+umgedreht (`widgets-followup.test.ts`), `docs/TOOLS.md` angepasst.
+
+(2) **„Volltext anzeigen" auf einem SWR-Video lieferte die Kompendiumspassagen
+der SAMMLUNG.** Gemessen (Staging): das Material ist `video/mp4`,
+`/textContent` hat 0 Zeichen, `ccm:wwwurl` zeigt auf eine rohe `.mp4` — der
+Server antwortete also ehrlich „kein Text", und das MODELL ersetzte die
+Negativ-Auskunft durch den nächstliegenden interessanten Text (die
+Optik-Lehrplan-Anfrage aus dem früheren Verlauf; daher „Nicht gefunden:
+thüringen, regelschule"). Kein Routing-Fehler — aber beide Enden der Kette
+luden dazu ein und tragen jetzt die Regel an der Stelle, wo sie gilt: die
+Kein-Text-ANTWORT ist ein Satz in Worten statt eines Slugs in Klammern
+(`NO_TEXT_REASONS`, `content-text.ts`) und schließt mit „keinen Ersatztext aus
+anderen Quellen (z. B. dem Kompendium einer Sammlung) liefern"; die
+Klick-NACHRICHT (`followUpTextNone`, nur die text-Aktion) schließt mit „Wenn
+kein Volltext hinterlegt ist, sage das kurz — hole keinen anderen Text als
+Ersatz." Befolgung ist nicht erzwingbar — derselbe Stand wie bei der
+Skill-Aktivierungszeile.
+
+**Tore (Nachtrag 3):** `npm test` → **2254 pass, 0 fail** (2 neu, 1 Pin bewusst
+umgedreht — alle rot-zuerst) · lint 0 · typecheck 0 · build grün.
+
+Die Review-Runde dazu (1 Minor, 2 Nits, alle behoben): die Doppelaktion riss
+per doppeltem `margin-top: auto` eine gedehnte Lücke ZWISCHEN die beiden
+Knöpfe — die Regel war für EINEN Knopf je Karte geschrieben, und bei zweien
+verteilt Flexbox die Resthöhe auf beide Auto-Margins; eine Geschwisterregel
+(`.wlo-tile__followup + .wlo-tile__followup { margin-top: 0 }`, base.css)
+lässt nur den ersten schieben, gepinnt im Both-Buttons-Test (rot bewiesen),
+weil kein String-Test Layout sieht. `NO_TEXT_REASONS` ist als
+`Record<ContentTextMiss, string>` typisiert — ein fünfter Grund scheitert am
+Build statt still als „Grund unbekannt" im modellgerichteten Satz zu landen.
+Hashes (final): `search-results b074e4f2 · topic-page a52cc7ea · browse
+039b0ec6 · reading a46efde5`.

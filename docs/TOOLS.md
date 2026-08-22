@@ -665,7 +665,9 @@ festgeschrieben).
 | **browse** | `get_subject_portals`, `browse_collection_tree` | *„Zeig mir den Themenbaum zu Mathematik“* | Statisch vor-aufgeklappter Baum; Auf-/Zuklappen lokal; „Inhalte anzeigen“ an **jedem** Knoten (auch solchen mit Unterordnern) lädt dessen Inhalte als neue Karte |
 
 > **Klicken statt tippen:** Jede Kachel trägt die Aktion, die den Ablauf
-> fortsetzt — Sammlung → „Inhalte anzeigen“, Themenseite → „Themenseite öffnen“,
+> fortsetzt — Sammlung → „Inhalte anzeigen“, Themenseite → „Themenseite öffnen“
+> **und** „Inhalte anzeigen“ (beides, seit 22.08. — vorher verbarg die
+> Ein-Aktions-Regel die Inhalte genau der reichsten Sammlungen),
 > Einzelansicht → „Volltext anzeigen“ und „Ähnliche Inhalte“. Jeder Button
 > schickt eine Nachricht in den Chat, die den **passenden Parameternamen des
 > Zielwerkzeugs** trägt (meist `nodeId`, bei `get_topic_page_content`

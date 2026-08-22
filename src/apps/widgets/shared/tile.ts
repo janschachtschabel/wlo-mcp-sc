@@ -132,11 +132,14 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
     const collDesc = node.description
       ? `<p class="wlo-tile__desc">${escapeHtml(truncate(node.description, 90))}</p>`
       : '';
-    // ONE clear primary action per card: a collection with a Themenseite opens
-    // that (the curated view); a plain one lists its contents. Offering both
-    // would make the card ask a question instead of answering one.
+    // BOTH actions when the collection has a Themenseite (user decision
+    // 2026-08-22): the earlier one-action rule hid "Inhalte anzeigen" on
+    // exactly the richest collections. The curated view leads; a plain
+    // collection keeps its single contents action.
     const collAction = options.followUp
-      ? followUpButton(node.topicPageUrl ? 'topicPage' : 'contents', node, locale)
+      ? node.topicPageUrl
+        ? followUpButton('topicPage', node, locale) + followUpButton('contents', node, locale)
+        : followUpButton('contents', node, locale)
       : '';
     return (
       `<li class="wlo-tile wlo-tile--coll">` +

@@ -96,7 +96,12 @@ export function followUpPrompt(
   const id = `(${param}: ${nodeId})`;
   const what = clean ? `${t(locale, 'quoteOpen')}${clean}${t(locale, 'quoteClose')} ${id}` : id;
   const ask = `${t(locale, ASK_KEY[action])} ${what}`;
+  // The text action alone carries a no-substitution clause: a material without
+  // a stored full text (a video, say) gets an honest "kein Text" from the tool,
+  // and without this sentence a model has substituted the surrounding
+  // COLLECTION's compendium text for it (live 2026-08-22).
+  const fallback = action === 'text' ? ` ${t(locale, 'followUpTextNone')}` : '';
   return tool
-    ? `${ask}. ${t(locale, 'followUpTool').replace('{tool}', tool).replace('{param}', param)}`
+    ? `${ask}. ${t(locale, 'followUpTool').replace('{tool}', tool).replace('{param}', param)}${fallback}`
     : ask;
 }

@@ -243,6 +243,10 @@ a.wlo-tile__link { display: inline-block; min-height: 24px; }
   cursor: pointer;
 }
 .wlo-tile__followup:hover { filter: brightness(1.08); }
+/* Two actions on one card (collection + Themenseite): only the FIRST button
+   keeps the push-to-bottom auto margin — on both, flexbox splits the card's
+   leftover height into a stray gap between the pair. The body's gap spaces them. */
+.wlo-tile__followup + .wlo-tile__followup { margin-top: 0; }
 
 .wlo-detail__actions {
   margin: 10px 0 0;

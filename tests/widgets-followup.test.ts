@@ -115,6 +115,21 @@ test('the prompts are localized', () => {
   assert.match(en, /get_collection_contents/, 'but both still name the tool');
 });
 
+test('the Volltext prompt says what to do when there IS no text', () => {
+  // Live 2026-08-22: "Volltext anzeigen" on an SWR video (0 chars in
+  // /textContent, wwwurl → raw .mp4) got the model an honest "kein Text" — and
+  // the model substituted the COLLECTION's compendium text instead of relaying
+  // the negative. The click message itself now closes that door.
+  for (const locale of ['de', 'en'] as const) {
+    const prompt = followUpPrompt('text', 'Mit Eis Feuer machen', 'n1', locale);
+    assert.match(prompt, locale === 'de' ? /kein Volltext/i : /no full text/i, `${locale} names the empty case`);
+  }
+  assert.doesNotMatch(
+    followUpPrompt('contents', 'Optik', 'n1', 'de'), /kein Volltext/i,
+    'the fallback sentence belongs to the text action alone',
+  );
+});
+
 // ── The buttons themselves ──────────────────────────────────────────────────
 
 const coll = (over: Record<string, unknown> = {}) => ({
@@ -132,10 +147,29 @@ test('a collection tile offers "show contents" when the host can take a follow-u
   assert.match(html, /<button/, 'a real button, keyboard-operable');
 });
 
-test('a tile that HAS a topic page offers to open it instead', () => {
+test('a tile that HAS a topic page offers BOTH — the curated view first, then its contents', () => {
+  // User decision 2026-08-22 ("fehlen mir anklick optionen wie inhalte
+  // anzeigen"): the earlier one-action rule hid the contents of exactly the
+  // richest collections — the ones that also have a Themenseite. The curated
+  // view stays first; the contents action is no longer suppressed.
   const html = renderTile(coll({ topicPageUrl: 'https://example.org/tp' }), { locale: 'de', followUp: true });
   assert.match(html, /data-follow-up="topicPage"/);
-  assert.doesNotMatch(html, /data-follow-up="contents"/, 'one clear primary action, not two');
+  assert.match(html, /data-follow-up="contents"/, 'the contents action is offered too');
+  assert.ok(
+    html.indexOf('data-follow-up="topicPage"') < html.indexOf('data-follow-up="contents"'),
+    'the curated view leads',
+  );
+  // The layout half of the pair, which no string assertion can see: every
+  // .wlo-tile__followup carries `margin-top: auto` (push-to-bottom in the
+  // card's flex column), and with TWO sibling buttons flexbox splits the
+  // leftover height across both auto margins — a stray gap BETWEEN the pair
+  // on every card shorter than its tallest row neighbour. The sibling rule
+  // keeps the push on the first button only.
+  const css = readFileSync('src/apps/widgets/shared/base.css', 'utf8');
+  assert.match(
+    css, /\.wlo-tile__followup\s*\+\s*\.wlo-tile__followup\s*\{[^}]*margin-top:\s*0/,
+    'the second of two follow-up buttons must drop the auto margin',
+  );
 });
 
 test('no action button without host support — never a dead control', () => {

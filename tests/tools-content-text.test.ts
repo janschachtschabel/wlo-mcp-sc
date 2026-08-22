@@ -62,6 +62,25 @@ test('get_wlo_content_text: markdown output carries the text and names its sourc
   }
 });
 
+test('get_wlo_content_text: the markdown no-text answer is a sentence with the rule, not a slug', async () => {
+  // Live 2026-08-22: the model read `_Kein Volltext verfügbar (no_text_no_url)._`
+  // and answered with the collection's COMPENDIUM instead of relaying the
+  // negative. The sentence the model acts on is the RESULT, so the result now
+  // carries the reason in words and the no-substitution rule.
+  const mock = installMock('');
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({ name: 'get_wlo_content_text', arguments: { nodeId: 'n1' } });
+    const text = (res.content as Array<{ text: string }>)[0]!.text;
+    assert.match(text, /keinen hinterlegten Volltext/i, 'a sentence a model can relay');
+    assert.doesNotMatch(text, /no_text_no_url/, 'not a reason slug in parentheses');
+    assert.match(text, /keinen Ersatztext/i, 'the no-substitution rule rides with the answer');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
 test('get_wlo_content_text: no text anywhere is a stated reason, not an error', async () => {
   const mock = installMock('');
   const client = await connectedClient();
