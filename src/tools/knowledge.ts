@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { buildRenderUrl, getNodeTextContent, readNodeMetadata } from '../wlo-api.js';
 import { formatNode } from '../formatter.js';
 import { searchAll } from '../services/search.js';
+import { inlineRestrictedPreviews } from '../services/preview-inline.js';
 import { registerWloTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
 import {
@@ -128,7 +129,15 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
               topicPages:  { ...envelope.topicPages,  results: stripCompendium(envelope.topicPages.results) },
             }
           : { results };
-        return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent: payload };
+        // Rich renders the results widget, so restricted previews travel the
+        // same widget-only channel as on search_wlo_all; lean has no widget to
+        // read them, so the fetches are not paid there.
+        const inlined = rich ? await inlineRestrictedPreviews(envelope.content.results) : {};
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+          ...(Object.keys(inlined).length ? { _meta: { 'wlo/previewData': inlined } } : {}),
+        };
       } catch (err) {
         return toolError('Fehler bei der Wissenssuche', err);
       }
@@ -186,7 +195,13 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
         // longer poorer than get_node_details on the very fields a reader needs
         // (preview image, download link, description).
         const payload = rich ? { ...doc, total: 1, count: 1, results: [f] } : doc;
-        return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent: payload };
+        // Same rule as `search`: only rich renders a widget that could show it.
+        const inlined = rich ? await inlineRestrictedPreviews([f]) : {};
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+          ...(Object.keys(inlined).length ? { _meta: { 'wlo/previewData': inlined } } : {}),
+        };
       } catch (err) {
         return toolError('Fehler beim Dokumentabruf', err);
       }

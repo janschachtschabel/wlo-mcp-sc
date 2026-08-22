@@ -20,6 +20,10 @@ export interface WidgetNode {
   contentUrl: string;
   previewUrl: string;
   previewIsIcon: boolean;
+  /** Present exactly when the record is NOT publicly readable: an anonymous
+   *  <img> would fetch the repository's permission shield, so the card must
+   *  not attempt the image at all (see tile.ts). */
+  isPublic?: false;
   license: string;
   publisher: string;
   nodeType: 'collection' | 'content';

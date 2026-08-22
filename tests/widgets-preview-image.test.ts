@@ -231,3 +231,103 @@ test('a preview that fails to load becomes the card icon — and nothing else is
     dom.restore();
   }
 });
+
+/**
+ * A restricted record's preview is ALWAYS the permission shield for a browser:
+ * the <img> is an anonymous request, and no header can carry the user's MCP
+ * login into it (measured 2026-08-22 — anonymous /preview of an
+ * `isPublic: false` node answers the same 19 590-byte shield SVG every time,
+ * HTTP 200, so the image-error fallback never fires either). The tile
+ * therefore must not attempt the image at all: a lock glyph plus a visibility
+ * row say the true thing the shield tried to say, without reading as breakage.
+ */
+test('a restricted record renders a lock, never the shield-fetching img', () => {
+  const html = renderTile(node({ isPublic: false }), { locale: 'de' });
+  assert.doesNotMatch(html, /<img/, 'the img would fetch the permission shield');
+  assert.match(html, /🔒/);
+  assert.match(html, /nicht öffentlich/, 'the fact is stated, not colour- or icon-only');
+});
+
+test('the detail view of a restricted record does the same', () => {
+  const html = renderDetail(node({ isPublic: false }), 'de', false);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /🔒/);
+  assert.match(html, /nicht öffentlich/);
+});
+
+test('a public record is untouched by the restriction branch', () => {
+  assert.match(renderTile(node(), { locale: 'de' }), /<img/);
+  assert.doesNotMatch(renderTile(node(), { locale: 'de' }), /nicht öffentlich/);
+});
+
+/**
+ * The signed-in half of the restriction story (user question 2026-08-22): the
+ * SERVER can fetch the preview under the caller's login and ship it as a
+ * `data:` URI in the result's `_meta` (widget-only, never the model). Where
+ * that arrived, the card shows the real picture — and still says "nicht
+ * öffentlich", because the fact matters MORE once the picture looks ordinary.
+ */
+test('an inlined data URI beats the lock — and keeps the visibility row', () => {
+  const data = 'data:image/jpeg;base64,AAAA';
+  const html = renderTile(node({ isPublic: false }), { locale: 'de', previewData: { n1: data } });
+  assert.match(html, /<img[^>]*src="data:image\/jpeg;base64,AAAA"/);
+  assert.match(html, /data-fallback="🔒"/, 'a blocked data: render must fall back to the lock, not 📄');
+  assert.match(html, /nicht öffentlich/, 'the picture does not make the record public');
+
+  const detail = renderDetail(node({ isPublic: false }), 'de', false, { n1: data });
+  assert.match(detail, /<img[^>]*src="data:image\/jpeg;base64,AAAA"/);
+  assert.match(detail, /nicht öffentlich/);
+});
+
+test('only data:image/* is accepted from the map — anything else stays the lock', () => {
+  // The map arrives through host _meta; the widget trusts no scheme it did not
+  // expect, same rule as safeHref for ordinary URLs.
+  const html = renderTile(node({ isPublic: false }), {
+    locale: 'de',
+    previewData: { n1: 'javascript:alert(1)' },
+  });
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /🔒/);
+});
+
+test('an SVG data URI stays the lock — the widget accepts exactly the raster set the server emits', () => {
+  // The server inlines only jpeg/png/webp/gif (the shield self-guard). The
+  // widget guard names the SAME list, so the two cannot drift apart on what an
+  // inline preview may be.
+  const html = renderTile(node({ isPublic: false }), {
+    locale: 'de',
+    previewData: { n1: 'data:image/svg+xml;base64,PHN2Zz4=' },
+  });
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /🔒/);
+});
+
+test('a restricted COLLECTION tile says so — badge with text, not silence', () => {
+  // The collection branch renders no thumbnail, so the lock-instead-of-image
+  // rule cannot carry the fact there; the prose (NOT_PUBLIC_LINE) states it in
+  // every text answer, and the tile must not contradict that by looking open.
+  const restricted = renderTile(node({ nodeType: 'collection', isPublic: false }), { locale: 'de' });
+  assert.match(restricted, /🔒/);
+  assert.match(restricted, /nicht öffentlich/);
+  const open = renderTile(node({ nodeType: 'collection' }), { locale: 'de' });
+  assert.doesNotMatch(open, /nicht öffentlich/);
+});
+
+test('the search-results state threads the preview map through to the tiles', async () => {
+  const { renderSearchResults } = await import('../src/apps/widgets/search-results/render.js');
+  const payload = {
+    query: 'SUPRA',
+    content: { total: 1, count: 1, results: [node({ isPublic: false })] },
+    collections: { total: 0, count: 0, results: [] },
+    topicPages: { total: 0, count: 0, results: [] },
+  };
+  const html = renderSearchResults(payload as never, 'de', { previewData: { n1: 'data:image/jpeg;base64,BBBB' } });
+  assert.match(html, /src="data:image\/jpeg;base64,BBBB"/);
+});
+
+test('the shell reads the widget-only result meta', () => {
+  const host = read('../src/apps/widgets/shared/host.ts');
+  assert.match(host, /toolMeta\s*\(\s*\)/, 'part of the WidgetHost contract');
+  assert.match(host, /toolResponseMetadata/, 'the Apps-SDK carrier for result _meta');
+  assert.match(read('../src/apps/widgets/search-results/main.ts'), /toolMeta\s*\(\s*\)/);
+});

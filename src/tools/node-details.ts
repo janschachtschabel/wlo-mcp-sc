@@ -15,7 +15,7 @@ import {
   readNodeTextContent,
   type WloNode,
 } from '../wlo-api.js';
-import { formatNode, nodeIdLine, oneLine, registrySummaryLines } from '../formatter.js';
+import { formatNode, nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines } from '../formatter.js';
 import { accessInfo, accessInfoLines } from '../node-access.js';
 import { qualityInfo, qualityLines } from '../node-quality.js';
 import { getParentCollections } from '../services/node-collections.js';
@@ -229,6 +229,9 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         if (formatted.publisher) lines.push(`Anbieter: ${formatted.publisher}`);
         if (formatted.url) lines.push(`URL: ${formatted.url}`);
         if (formatted.previewUrl) lines.push(`Vorschaubild: ${formatted.previewUrl}`);
+        // The inspection tool is where an editor decides whether to SHARE a
+        // record — same sentence as the search lists, one exported constant.
+        if (formatted.isPublic === false) lines.push(NOT_PUBLIC_LINE);
         lines.push(`WLO-URL: ${renderUrl}`);
         if (formatted.topicPageUrl) lines.push(`Themenseite: ${formatted.topicPageUrl}`);
         // Hand-built format, so `renderToText`'s registry lines do not arrive on

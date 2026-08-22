@@ -45,6 +45,14 @@ export interface WidgetHost {
   /** Latest tool output (structuredContent) — from window.openai or the standard bridge. */
   toolOutput(): unknown;
   /**
+   * The result's widget-only `_meta` (Apps-SDK `toolResponseMetadata`) — the
+   * channel a host hands to the widget and never to the model. Carries the
+   * server-inlined previews for restricted records. ChatGPT surface only:
+   * the standard `ui/*` bridge defines no metadata notification, so there it
+   * answers undefined and the widget degrades to the lock glyph.
+   */
+  toolMeta(): unknown;
+  /**
    * Whether a first tool result is still expected — the shells' cue to render
    * the loading state rather than a renderer's empty state.
    *
@@ -73,6 +81,7 @@ export interface WidgetHost {
 
 interface OpenAi {
   toolOutput?: unknown;
+  toolResponseMetadata?: unknown;
   widgetState?: unknown;
   locale?: string;
   callTool?: (name: string, args: Record<string, unknown>) => Promise<{ structuredContent?: unknown; results?: unknown }>;
@@ -154,6 +163,7 @@ export function createHost(): WidgetHost {
 
   return {
     toolOutput: () => oai()?.toolOutput ?? stdOutput,
+    toolMeta: () => oai()?.toolResponseMetadata,
     awaitingOutput: () => !graceExpired && nothingArrived(),
     widgetState: () => oai()?.widgetState,
     locale: () => oai()?.locale,

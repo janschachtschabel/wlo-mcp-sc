@@ -33,6 +33,10 @@ export const formattedNodeSchema = z.object({
   contentUrl: z.string(),
   previewUrl: z.string(),
   previewIsIcon: z.boolean(),
+  /** Present exactly when the record is NOT publicly readable — the widget's
+   *  cue that an anonymous <img> would fetch the permission shield. Literal
+   *  false: the formatter never emits true (absence is the public case). */
+  isPublic: z.literal(false).optional(),
   mimeType: z.string(),
   fileSize: z.number(),
   license: z.string(),

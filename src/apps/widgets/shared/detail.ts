@@ -14,19 +14,32 @@
 
 import { escapeHtml } from './escape.js';
 import { safeHref } from './safe-url.js';
-import { followUpButton, previewIcon, PREVIEW_GLYPH } from './tile.js';
+import { followUpButton, inlinePreview, previewIcon, PREVIEW_GLYPH } from './tile.js';
 import { t, type Locale } from './strings.js';
 import type { WidgetNode } from './types.js';
 
-export function renderDetail(node: WidgetNode, locale: Locale, canFollowUp: boolean): string {
+export function renderDetail(
+  node: WidgetNode,
+  locale: Locale,
+  canFollowUp: boolean,
+  previewData?: Record<string, string>,
+): string {
   const title = escapeHtml(node.title || '');
   const previewSrc = (!!node.previewUrl && !node.previewIsIcon) ? safeHref(node.previewUrl) : '';
   // Same `data-fallback` contract as the tile: a preview that never loads must
-  // land on the very glyph this node would show without one.
+  // land on the very glyph this node would show without one. And the same
+  // restriction rule: an anonymous <img> for an isPublic:false record fetches
+  // the permission shield, so it is never attempted (see tile.ts).
+  const restricted = node.isPublic === false;
+  const inline = restricted ? inlinePreview(node, previewData) : '';
   const fallbackGlyph = node.nodeType === 'collection' ? PREVIEW_GLYPH.collection : PREVIEW_GLYPH.content;
-  const thumb = previewSrc
-    ? `<img class="wlo-detail__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" data-fallback="${fallbackGlyph}" />`
-    : previewIcon(node.nodeType);
+  const thumb = restricted
+    ? inline
+      ? `<img class="wlo-detail__img" src="${escapeHtml(inline)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" data-fallback="${PREVIEW_GLYPH.restricted}" />`
+      : `<span class="wlo-tile__icon" aria-hidden="true">${PREVIEW_GLYPH.restricted}</span>`
+    : previewSrc
+      ? `<img class="wlo-detail__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" data-fallback="${fallbackGlyph}" />`
+      : previewIcon(node.nodeType);
 
   const chips = [...(node.disciplines ?? []), ...(node.educationalContexts ?? []), ...(node.learningResourceTypes ?? [])]
     .filter(Boolean)
@@ -45,6 +58,7 @@ export function renderDetail(node: WidgetNode, locale: Locale, canFollowUp: bool
   const facts = [
     `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'licenseLabel'))}</dt><dd>${escapeHtml(node.license || t(locale, 'licenseUnknown'))}</dd></div>`,
     node.publisher ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'sourceLabel'))}</dt><dd>${escapeHtml(node.publisher)}</dd></div>` : '',
+    restricted ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'visibilityLabel'))}</dt><dd>${escapeHtml(t(locale, 'visibilityRestricted'))}</dd></div>` : '',
   ].join('');
   const factsHtml = facts ? `<dl class="wlo-tile__facts">${facts}</dl>` : '';
 

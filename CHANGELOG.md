@@ -6,6 +6,75 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — restricted records no longer render the repository's permission shield (2026-08-22)
+
+User report with screenshots: the same signed-in person sees preview images in
+the edu-sharing UI, while the ChatGPT widget shows "Keine ausreichenden Rechte /
+insufficient permissions" cards. Measured on the user's own two nodeIds
+(staging): the records are `isPublic: false` — an AUTHENTICATED search returns
+them ("SUPRA Licht Schatten": 0 anonymous, 13 authenticated), anonymous
+metadata answers 403, and the anonymous `/preview` answers HTTP **200** with the
+same 19 590-byte shield SVG every time. A widget `<img>` is always an anonymous
+request — no header can carry the MCP login into it, and a token in the image
+URL would put a credential into structuredContent, chat logs and history, which
+this project's rules forbid. So the shield was the permission model working
+correctly, rendered in the most alarming possible way; the HTTP 200 also means
+the image-error fallback never fires.
+
+The cheap signal exists and costs nothing: `isPublic` is a top-level field of
+every search DTO regardless of `propertyFilter` (measured). `formatNode` now
+carries `isPublic: false` — only the remarkable case, spread like `originalId`,
+declared in `formattedNodeSchema` (zod strips undeclared keys) and in the REST
+`fields` allowlist. The widgets never attempt the image for such a record: tile
+and detail render a lock glyph plus a visibility fact row ("Sichtbarkeit: nicht
+öffentlich — Anmeldung erforderlich", localized, text not icon-only). The
+markdown surfaces say the same sentence — `renderToText` on every search list
+and `get_node_details` — via one exported constant (`NOT_PUBLIC_LINE`), because
+a model that recommends a record its audience cannot open is the same mistake
+in prose.
+
+And the signed-in caller DOES get the pictures — the user's follow-up question
+named the right lever: metadata reaches the widget because the SERVER fetches
+it under the caller's login, so the server now fetches the restricted previews
+the same way. `services/preview-inline.ts` runs inside the same request context
+(`wloFetch` carries the per-request credential), inlines up to 8 raster images
+(≤300 KB each) as `data:` URIs, and ships them in the result's `_meta`
+(`wlo/previewData`) — the Apps-SDK channel a host hands to the WIDGET and never
+the model. Inlining into `structuredContent` would be the compendium disease
+with pictures: 8 × ~40 KB of base64 read by the model on every editorial
+search; a pinned test asserts structuredContent stays base64-free. The widget
+reads `window.openai.toolResponseMetadata`, accepts only `data:image/*`, keeps
+the visibility row (the picture does not make the record public), and falls
+back to the lock — including via `data-fallback="🔒"` if a sandbox CSP refuses
+data: images, which only a live ChatGPT run can confirm. Self-guarding by
+content type: an anonymous/expired session gets the shield SVG back, and SVG
+is never inlined, so the alarming image cannot return through this path.
+
+What stays deliberately NOT built: a credential or ticket in the image URL —
+that would put a login into structuredContent, logs and chat history. And
+publishing the record remains the honest fix for "students should see the
+picture": the inline path serves the signed-in editor, not the public.
+
+A review round on the same patch (6 minor, 2 nits — all fixed) tightened the
+edges. The preview fetch accepts only repository URLs, decided by the SAME
+boundary the credential attach uses — `isRepositoryUrl`, extracted from
+`wlo-fetch.ts` and shared, because two near-copies of a security boundary is
+how one of them drifts; any other host serves an anonymous `<img>` just as
+well, so inlining those would only move the fetch vantage to the server.
+Materials only: a collection tile renders no thumbnail at all, so its bytes
+were fetched and never drawn — a restricted collection now carries a 🔒 badge
+with the visibility text instead of looking open. Each preview fetch gets its
+own 4 s budget (`PREVIEW_FETCH_TIMEOUT_MS`) instead of inheriting the 20 s
+upstream default, and a declared Content-Length over the cap is skipped
+without buffering the body. Under `WLO_SEARCH_OUTPUT_MODE=rich`, `search` and
+`fetch` render the same widget and now ship the same `_meta` channel (lean
+never pays the fetches). The widget-side guard names the exact raster set the
+server emits. Verified end-to-end against staging: the DTO's `preview.url`
+sits inside the credential boundary, the credentialed fetch answers
+`image/jpeg` (6 036 bytes, JPEG magic), the anonymous one the 19 590-byte
+shield SVG.
+
+
 ### Fixed — the arrival of a result is now announced to screen readers (2026-08-21)
 
 The loading state said "WLO-Inhalte werden geladen …" through `role="status"` —

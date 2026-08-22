@@ -15,6 +15,13 @@ export interface WloNode {
   name?: string;
   title?: string;
   isDirectory?: boolean;
+  /**
+   * Whether GROUP_EVERYONE can read the node. Present in every search DTO
+   * regardless of `propertyFilter` (top-level field, measured 2026-08-22).
+   * `false` means an ANONYMOUS request — a widget's `<img>`, an unauthenticated
+   * metadata read — gets 403 resp. the repository's permission-shield image.
+   */
+  isPublic?: boolean;
   /** edu-sharing object type — `ccm:io` (file) or `ccm:map` (collection). */
   type?: string;
   /**

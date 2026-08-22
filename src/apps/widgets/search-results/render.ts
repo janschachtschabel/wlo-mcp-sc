@@ -24,6 +24,8 @@ export interface SearchResultsState {
   selectedIds?: string[];
   /** Host can inject a follow-up message; without it selection is pointless. */
   canSelect?: boolean;
+  /** Server-inlined previews for restricted records (result `_meta`). */
+  previewData?: Record<string, string>;
 }
 
 interface SectionOptions {
@@ -32,6 +34,7 @@ interface SectionOptions {
   selectable?: boolean;
   selectedIds?: string[];
   followUp?: boolean;
+  previewData?: Record<string, string>;
 }
 
 function section(titleKey: StringKey, nodes: WidgetNode[], locale: Locale, opts: SectionOptions = {}): string {
@@ -47,6 +50,7 @@ function section(titleKey: StringKey, nodes: WidgetNode[], locale: Locale, opts:
     selectable: opts.selectable,
     selected: picked.has(n.nodeId),
     followUp: opts.followUp,
+    previewData: opts.previewData,
   })).join('');
   return (
     `<section class="${cls}">` +
@@ -110,7 +114,7 @@ export function renderSearchResults(
   // must never go blank after a data refresh.
   if (state.selectedId) {
     const node = allNodes(payload).find(n => n.nodeId === state.selectedId);
-    if (node) return `<div class="wlo-results">${renderDetail(node, locale, !!state.canSelect)}</div>`;
+    if (node) return `<div class="wlo-results">${renderDetail(node, locale, !!state.canSelect, state.previewData)}</div>`;
   }
 
   const topicPages = payload?.topicPages?.results ?? [];
@@ -170,6 +174,7 @@ export function renderSearchResults(
       detail: true,
       selectable: state.canSelect,
       selectedIds: state.selectedIds,
+      previewData: state.previewData,
     }) +
     `</div>`
   );

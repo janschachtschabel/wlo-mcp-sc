@@ -31,13 +31,24 @@ export function wloFetch(url: string, init: RequestInit = {}): Promise<Response>
 }
 
 /**
+ * Whether ``url`` addresses the configured repository. The ONE definition of
+ * that boundary: the credential attach below and the inline-preview fetch
+ * (``services/preview-inline.ts``) both decide on it, and two near-copies of a
+ * security boundary is how one of them drifts. Prefix + boundary, so a
+ * look-alike host (`https://repo.example.evil.test`) cannot match.
+ */
+export function isRepositoryUrl(url: string): boolean {
+  const base = WLO_REPOSITORY_URL;
+  return url === base || url.startsWith(`${base}/`) || url.startsWith(`${base}?`);
+}
+
+/**
  * Attach the configured credential — and ONLY to the repository.
  *
  * The single place the server's identity is applied, and the single place it
  * is bounded. Wikipedia and the text-extraction service go through the same
  * `wloFetch`, so without this guard the operator's password would be sent to
- * third-party hosts. The check is prefix + boundary, so a look-alike host
- * (`https://repo.example.evil.test`) cannot match.
+ * third-party hosts.
  *
  * An `Authorization` header the caller set explicitly always wins — the login
  * probe in `auth/identity.ts` relies on being able to test a credential other
@@ -46,8 +57,7 @@ export function wloFetch(url: string, init: RequestInit = {}): Promise<Response>
 function withCredential(url: string, headers: HeadersInit | undefined): HeadersInit | undefined {
   const cred = currentCredential();
   if (!cred) return headers;
-  const base = WLO_REPOSITORY_URL;
-  if (!(url === base || url.startsWith(`${base}/`) || url.startsWith(`${base}?`))) return headers;
+  if (!isRepositoryUrl(url)) return headers;
   const merged = new Headers(headers ?? {});
   if (merged.has('authorization')) return headers;
   merged.set('Authorization', cred.header);

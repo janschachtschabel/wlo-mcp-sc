@@ -820,3 +820,37 @@ test('registrySummaryLines: the outline phrase is grammatical, and absent when n
     'a narrowed answer claims no context count at all');
 });
 
+
+/**
+ * A record only an authenticated caller can see must SAY so. Measured
+ * 2026-08-22 on the user's own two nodeIds (SUPRA staging): metadata anonymous
+ * → 403, `isPublic: false` in every search DTO (any propertyFilter), and the
+ * anonymous /preview answers the repository's permission shield — the same
+ * 19 590-byte SVG for every restricted node. A widget <img> is always an
+ * anonymous request, so the field is the ONE cheap signal that the picture the
+ * browser would fetch is the shield, not the preview.
+ */
+test('formatNode carries isPublic only when the repository says false', () => {
+  const restricted = formatNode({ ref: { id: 'r1' }, isPublic: false, properties: { 'cclom:title': ['SUPRA'] } } as never);
+  assert.equal(restricted.isPublic, false);
+
+  const open = formatNode({ ref: { id: 'r2' }, isPublic: true, properties: { 'cclom:title': ['Frei'] } } as never);
+  assert.ok(!('isPublic' in open), 'true is the unremarkable case and stays absent, like originalId');
+
+  const unknown = formatNode({ ref: { id: 'r3' }, properties: { 'cclom:title': ['Alt'] } } as never);
+  assert.ok(!('isPublic' in unknown), 'an instance that never sends the field must not look restricted');
+});
+
+test('renderToText names the restriction — and stays silent for public records', () => {
+  const restricted = formatNode({ ref: { id: 'r1' }, isPublic: false, properties: { 'cclom:title': ['SUPRA'] } } as never);
+  assert.match(renderToText([restricted]), /nicht öffentlich/);
+
+  const open = formatNode({ ref: { id: 'r2' }, properties: { 'cclom:title': ['Frei'] } } as never);
+  assert.doesNotMatch(renderToText([open]), /nicht öffentlich/);
+});
+
+test('the schema declares isPublic — zod strips what is not declared', async () => {
+  const { formattedNodeSchema } = await import('../src/apps/outputSchemas.js');
+  const restricted = formatNode({ ref: { id: 'r1' }, isPublic: false, properties: { 'cclom:title': ['SUPRA'] } } as never);
+  assert.equal(formattedNodeSchema.parse(restricted).isPublic, false, 'the field must survive structuredContent');
+});

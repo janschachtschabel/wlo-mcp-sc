@@ -39,6 +39,15 @@ export interface TileOptions {
    * follow-up message, otherwise the button could do nothing.
    */
   followUp?: boolean;
+  /**
+   * Server-inlined previews for RESTRICTED records (`nodeId → data: URI`),
+   * from the result's widget-only `_meta`: the server fetched them under the
+   * caller's login, so the card can show the real picture where a browser
+   * `<img>` would only ever get the permission shield. Only `data:image/*`
+   * values are used — the map crosses the host bridge, and the widget trusts
+   * no scheme it did not expect.
+   */
+  previewData?: Record<string, string>;
 }
 
 const DESC_MAX = 160;
@@ -48,7 +57,19 @@ const DESC_MAX = 160;
  * has no preview for, and (via `data-fallback`) for a preview that fails to
  * load. Both cases must look the same, so both read it from here.
  */
-export const PREVIEW_GLYPH = { content: '📄', collection: '⧉' } as const;
+export const PREVIEW_GLYPH = { content: '📄', collection: '⧉', restricted: '🔒' } as const;
+
+/**
+ * The server-inlined preview for a restricted node, or '' when there is none
+ * or the value is not the one shape we accept. Shared by tile and detail so
+ * the scheme check cannot drift between the two.
+ */
+export function inlinePreview(node: WidgetNode, previewData?: Record<string, string>): string {
+  const value = previewData?.[node.nodeId] ?? '';
+  // Exactly the raster set the server emits (services/preview-inline.ts): a
+  // value outside it did not come from there, whatever the bridge claims.
+  return /^data:image\/(jpeg|png|webp|gif);base64,/.test(value) ? value : '';
+}
 
 /** The decorative stand-in for a missing preview. Never announced. */
 export function previewIcon(nodeType?: string): string {
@@ -102,6 +123,12 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
     const badge = node.topicPageUrl
       ? `<span class="wlo-badge"><span aria-hidden="true">🌐</span> ${escapeHtml(t(locale, 'badgeTopicPage'))}</span>`
       : '';
+    // The collection card has no thumbnail to carry the lock, so the fact a
+    // reader cannot open this without signing in rides as a badge — text plus
+    // icon, never icon-only, matching the prose NOT_PUBLIC_LINE.
+    const restrictedBadge = node.isPublic === false
+      ? `<span class="wlo-badge"><span aria-hidden="true">🔒</span> ${escapeHtml(t(locale, 'visibilityRestricted'))}</span>`
+      : '';
     const collDesc = node.description
       ? `<p class="wlo-tile__desc">${escapeHtml(truncate(node.description, 90))}</p>`
       : '';
@@ -115,7 +142,7 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
       `<li class="wlo-tile wlo-tile--coll">` +
       `<div class="wlo-coll__block"><span class="wlo-coll__glyph" aria-hidden="true">⧉</span></div>` +
       `<div class="wlo-tile__body">` +
-      `<h3 class="wlo-tile__title">${titleHtml}</h3>${badge}${collDesc}${collAction}` +
+      `<h3 class="wlo-tile__title">${titleHtml}</h3>${badge}${restrictedBadge}${collDesc}${collAction}` +
       `</div>` +
       `</li>`
     );
@@ -125,12 +152,26 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
   const previewSrc = (!!node.previewUrl && !node.previewIsIcon) ? safeHref(node.previewUrl) : '';
 
   // Collections returned above — from here on this is always a content card.
+  // A record only the signed-in caller can read never gets an <img>: the tag is
+  // an ANONYMOUS request and no header can carry the login, so the repository
+  // answers its permission-shield image every time (measured 2026-08-22, HTTP
+  // 200 — the error fallback never fires). The lock says the same thing without
+  // reading as breakage; the facts row below states it in words.
+  const restricted = node.isPublic === false;
+  // A server-inlined data: URI lets a SIGNED-IN caller's card show the real
+  // picture; its fallback glyph is the LOCK, because a data: image a sandbox
+  // CSP refuses must degrade to the restricted rendering, not to 📄.
+  const inline = restricted ? inlinePreview(node, options.previewData) : '';
   // `data-fallback` carries the glyph to swap in if the image never loads: the
   // repository redirects some previews to a publisher's thumbnail host, and a
   // blocked or dead one must leave the card clean, not broken (image-fallback.ts).
-  const thumb = previewSrc
-    ? `<img class="wlo-tile__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" data-fallback="${PREVIEW_GLYPH.content}" />`
-    : previewIcon(node.nodeType);
+  const thumb = restricted
+    ? inline
+      ? `<img class="wlo-tile__img" src="${escapeHtml(inline)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" data-fallback="${PREVIEW_GLYPH.restricted}" />`
+      : `<span class="wlo-tile__icon" aria-hidden="true">${PREVIEW_GLYPH.restricted}</span>`
+    : previewSrc
+      ? `<img class="wlo-tile__img" src="${escapeHtml(previewSrc)}" alt="${escapeHtml(`${t(locale, 'previewAlt')} ${node.title || ''}`)}" loading="lazy" data-fallback="${PREVIEW_GLYPH.content}" />`
+      : previewIcon(node.nodeType);
 
   const titleHtml = href
     ? `<a class="wlo-tile__link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${title}</a>`
@@ -157,6 +198,9 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
   const facts = [
     `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'licenseLabel'))}</dt><dd>${escapeHtml(licenseText)}</dd></div>`,
     node.publisher ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'sourceLabel'))}</dt><dd>${escapeHtml(node.publisher)}</dd></div>` : '',
+    // Text, not the lock glyph alone — never icon-only for a fact that changes
+    // what a reader may do with the hit.
+    restricted ? `<div class="wlo-facts__row"><dt>${escapeHtml(t(locale, 'visibilityLabel'))}</dt><dd>${escapeHtml(t(locale, 'visibilityRestricted'))}</dd></div>` : '',
   ].join('');
   const factsHtml = facts ? `<dl class="wlo-tile__facts">${facts}</dl>` : '';
 

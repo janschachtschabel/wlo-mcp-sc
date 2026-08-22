@@ -8995,3 +8995,117 @@ Browser-Pane führt lokales Widget-JS nicht aus.
 build grün. Widget-Hashes (alle vier rollen — `strings.ts`/`base.css` stecken in
 jedem Bündel): `search-results 089b68ed · topic-page 4fd139cc ·
 browse 6b7d964b · reading 862cf11d`.
+
+---
+
+## 2026-08-22 — Das Rechte-Schild in den Widgets: Diagnose und ehrliche Darstellung
+
+**Meldung mit Screenshots:** dieselbe angemeldete Person sieht im
+edu-sharing-Web Vorschaubilder, im ChatGPT-Widget dagegen Karten mit „Keine
+ausreichenden Rechte / insufficient permissions".
+
+**Diagnose, an den zwei nodeIds des Nutzers gemessen (Staging):** Die
+Datensätze sind `isPublic: false`. Eine ANGEMELDETE Suche findet sie („SUPRA
+Licht Schatten": anonym 0, angemeldet 13), der anonyme Metadaten-Abruf
+antwortet 403, und die anonyme `/preview` antwortet **HTTP 200** mit jedes Mal
+demselben 19 590-Byte-Schild-SVG. Ein Widget-`<img>` ist immer ein anonymer
+Abruf — kein Header trägt die MCP-Anmeldung hinein, und ein Token in der
+Bild-URL wäre ein Credential in structuredContent, Chatverlauf und Logs
+(verboten, und zwar aus gutem Grund). Das Schild war also die Rechteprüfung des
+Repositories in ihrer alarmierendsten Darstellung; wegen der 200 feuert auch
+der Bildfehler-Rückfall nie. **Drei Sackgassen wurden gemessen, bevor die
+Ursache stand:** Browser-Header (Sec-Fetch/Referer/UA) kippen nichts; die
+Datensätze fehlen im anonymen Index BEIDER Instanzen; ein drittes Repository
+(`repository.openeduhub.net`) existiert nicht.
+
+**Der billige Signalweg:** `isPublic` ist ein Top-Level-Feld JEDES Such-DTOs,
+unabhängig vom `propertyFilter` (gemessen) — null Zusatzabfragen. Regeln, die
+jede Änderung binden: `formatNode` trägt NUR den bemerkenswerten Fall
+(`isPublic: false`, gespreadet wie `originalId`; `true` und „Feld nie gesendet"
+bleiben abwesend, sonst sähe eine Instanz ohne das Feld eingeschränkt aus);
+deklariert in `formattedNodeSchema` (zod!) und in `PROJECTABLE_FIELDS`
+(`rest/validate.ts`); die Widgets versuchen das Bild GAR NICHT ERST (Schloss
+🔒 + Faktenzeile „Sichtbarkeit: nicht öffentlich — Anmeldung erforderlich",
+Text, nie nur Symbol); und die EINE Satz-Konstante `NOT_PUBLIC_LINE`
+(formatter.ts) speist `renderToText` UND `get_node_details` — ein Modell, das
+einen Datensatz empfiehlt, den das Publikum nicht öffnen kann, ist derselbe
+Fehler in Prosa. Beim Verdrahten gefunden: die Anker-Prüfung des Edit-Skripts
+fand die EIGENE Einfügung statt des Imports — `NOT_PUBLIC_LINE is not defined`
+zur Laufzeit, vom Test gefangen.
+
+**Bewusst NICHT gebaut:** authentifizierte Vorschaubilder im Widget. Der
+ehrliche Weg zu „alle sehen das Bild" ist das Veröffentlichen des Datensatzes —
+eine redaktionelle Entscheidung, keine Server-Änderung.
+
+**Tore:** `npm test` → **2231 pass, 0 fail** (7 neu) · lint 0 · typecheck 0 ·
+build grün. Widget-Hashes: `search-results bbe0fa87 · topic-page f37262a5 ·
+browse 093e9b62 · reading fff52b73`.
+
+**Nachtrag am selben Tag — die Rückfrage des Nutzers hat den Hebel benannt:
+„die Metadaten kommen auch durch."** Stimmt, und zwar weil der SERVER sie mit
+der Anmeldung des Aufrufers holt — also holt er jetzt auch die gesperrten
+Vorschaubilder so. `services/preview-inline.ts` läuft im selben Anfragekontext
+(`wloFetch` trägt das per-Request-Credential über `runWithCredential`), bettet
+bis zu **8** Rasterbilder (je ≤300 KB) als `data:`-URIs ein und liefert sie im
+`_meta` des Ergebnisses (`wlo/previewData`) — dem Apps-SDK-Kanal, den ein Host
+dem WIDGET übergibt und nie dem Modell. Vier Regeln binden jede Änderung:
+(1) **Nie in `structuredContent`** — das wäre die Kompendiums-Krankheit mit
+Bildern, 8×~40 KB Base64 im Modellkontext jeder Redaktionssuche; ein Test
+prüft, dass dort kein `base64` auftaucht. (2) **Nur Rasterbilder** — SVG ist
+entweder das Rechte-Schild (die anonyme Antwort) oder ein Platzhalter; damit
+ist der Pfad selbstsichernd: erreicht das Credential den Abruf nicht, kommt
+das Schild, und das wird nie eingebettet. (3) Das Widget akzeptiert aus der
+Karte **nur `data:image/*`** (`inlinePreview`, geteilt von Kachel und
+Detailansicht, damit die Schema-Prüfung nicht auseinanderdriftet) und behält
+die Sichtbarkeits-Zeile — das Bild macht den Datensatz nicht öffentlich.
+(4) Rückfall-Glyphe des eingebetteten Bilds ist das **Schloss** (nicht 📄):
+verweigert eine Sandbox-CSP `data:`-Bilder, degradiert die Karte zur
+Gesperrt-Darstellung. Öffentliche Treffer kosten **nichts** (kein Abruf).
+Messfalle im Test-Helfer: `Content-Type` + `content-type` als zwei Schlüssel
+im Header-Init ergeben "a, b" — der Mock normalisiert jetzt auf Kleinschreibung.
+**Nur live prüfbar bleibt:** ob die ChatGPT-Sandbox `data:`-Bilder und
+`toolResponseMetadata` durchreicht — bei Nein bleibt es beim Schloss von P1.
+
+**Tore (Nachtrag):** `npm test` → **2242 pass, 0 fail** (11 neu) · lint 0 ·
+typecheck 0 · build grün. Hashes: `search-results bb447a4b · topic-page
+5687b92b · browse 82fb2876 · reading 1def31e6`.
+
+**Nachtrag 2 (Review-Runde, 2026-08-22): 6 Minor + 2 Nits, alle behoben — zwei
+Regeln kommen dazu.** (5) **Die Abruf-Grenze IST die Credential-Grenze:**
+`isRepositoryUrl` (aus `withCredential` extrahiert und exportiert,
+`wlo-fetch.ts`) entscheidet beide Fragen. Nur eine Repository-Adresse wird
+geholt, denn nur dort kann die Antwort für den Angemeldeten anders ausfallen —
+jeder andere Host bedient ein anonymes `<img>` genauso gut, Inlining verschöbe
+nur den Abruf-Standpunkt auf den Server. Zwei Fast-Kopien einer
+Sicherheitsgrenze sind der Weg, auf dem eine driftet. (6) **Nur Materialien:**
+die Sammlungs-Kachel rendert gar kein Bild (Early-Return in `tile.ts`), also
+wurden Bytes geholt, die kein Pixel je zeichnet — der Dienst filtert
+`nodeType !== 'collection'`, die Aufrufstellen übergeben nur den
+content-Bucket, und eine nicht-öffentliche Sammlung trägt stattdessen ein
+🔒-Abzeichen mit dem Sichtbarkeits-Text (sonst sah die Kachel offen aus,
+während die Prosa `NOT_PUBLIC_LINE` sagt). Ferner: jedes Vorschaubild hat sein
+EIGENES Budget (`PREVIEW_FETCH_TIMEOUT_MS` = 4 s statt der 20-s-Voreinstellung
+— 8 Bilder über Pool 4 hätten einer fertigen Antwort zwei volle
+Upstream-Timeouts anhängen können); eine deklarierte Übergröße
+(`content-length`) wird übersprungen, ohne den Körper zu puffern;
+`search`/`fetch` im rich-Modus rendern dasselbe Widget und liefern jetzt
+denselben `_meta`-Kanal (lean bezahlt die Abrufe nicht); der Widget-Wächter
+nennt exakt die vier Raster-Typen des Servers. Je FORMAT zugesichert:
+`search_wlo_all` trägt das `_meta` in Markdown UND JSON — der Wächter wurde
+rot bewiesen, indem nur der Markdown-Return den Spread verlor
+(`'markdown: the map rides along'`).
+
+**End-zu-End live bewiesen (Staging, 2026-08-22):** die `preview.url` des DTOs
+liegt unter `{WLO_REPOSITORY_URL}/preview?…`, also innerhalb der
+Credential-Grenze; der Abruf MIT Anmeldung antwortet `image/jpeg` (6 036
+Bytes, Magic `ffd8ffe0`), ohne Anmeldung das Schild-SVG (19 590 Bytes). Der
+Pfad ist damit gemessen, nicht nur gemockt. Mess-Lektion der Runde: ein
+WERFENDER Mock beweist hier nichts — der Dienst fängt Fetch-Fehler bewusst ab,
+„nicht geholt" ist von „geholt und verschluckt" nur über die ZÄHLUNG
+(`mock.calls.length === 0`) zu unterscheiden; drei so grün-gerippte Tests sind
+auf Zählung umgestellt.
+
+**Tore (Nachtrag 2):** `npm test` → **2252 pass, 0 fail** (10 neu) · lint 0 ·
+typecheck 0 · build grün · Bundles zweimal identisch gebaut (deterministisch):
+`search-results 35a4a337 · topic-page 97e284e2 · browse 166f1c4b · reading
+544540c7`.

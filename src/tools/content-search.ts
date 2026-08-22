@@ -18,6 +18,7 @@ import { mapPool } from '../concurrency.js';
 import { dedupeByUrl } from '../result-dedupe.js';
 import { searchWithLicense } from '../services/license-search.js';
 import { searchAll, searchFacets } from '../services/search.js';
+import { inlineRestrictedPreviews } from '../services/preview-inline.js';
 import { registerWloTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
 import { nodeListSchema, searchAllEnvelopeSchema } from '../apps/outputSchemas.js';
@@ -193,6 +194,9 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
 
         const facets = await facetPromise;
         const facetsArg = Object.keys(facets).length ? facets : undefined;
+        // Restricted hits only (public ones never fetch): the picture the
+        // browser cannot get travels in the widget-only _meta channel.
+        const inlinedPreviews = await inlineRestrictedPreviews(formatted);
 
         const meta = queryMetaContent({
           toolName: 'search_wlo_content',
@@ -223,6 +227,9 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
             results: formatted,
             ...(derivedType ? { derivedResourceType: derivedType } : {}),
           },
+          // Widget-only: hosts hand result _meta to the widget, never the
+          // model — the base64 must not spend the chat's context.
+          ...(Object.keys(inlinedPreviews).length ? { _meta: { 'wlo/previewData': inlinedPreviews } } : {}),
         };
       } catch (err) {
         return toolError('Fehler bei der Inhaltssuche', err);
@@ -411,13 +418,20 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           ? { ...envelope, content: { ...envelope.content, derivedResourceType: derivedType } }
           : envelope;
         const derivedBlock = derivedNotice ? [{ type: 'text' as const, text: derivedNotice }] : [];
+        // Materials only: a collection tile renders no thumbnail (block glyph,
+        // early return in tile.ts), so the service would discard those anyway.
+        // Public hits cost nothing here.
+        const inlinedPreviews = await inlineRestrictedPreviews(envelope.content.results);
+        const previewMeta = Object.keys(inlinedPreviews).length
+          ? { _meta: { 'wlo/previewData': inlinedPreviews } }
+          : {};
 
         // Markdown is the token-lean default (audit T-1): the full envelope
         // always rides in structuredContent, so the model-facing text does not
         // need to duplicate it. Explicit outputFormat="json" keeps the envelope
         // in the text for clients that only read content blocks.
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify(enriched) }, ...hintBlock, ...licenceBlock, ...derivedBlock, ...metas], structuredContent: enriched };
+          return { content: [{ type: 'text' as const, text: JSON.stringify(enriched) }, ...hintBlock, ...licenceBlock, ...derivedBlock, ...metas], structuredContent: enriched, ...previewMeta };
         }
         const md: string[] = [];
         // One ANSWER out of three rendered lists, so the registry pointer is
@@ -460,7 +474,7 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         }
         // `enriched`, not `envelope`: the derived-type field must reach
         // structuredContent in BOTH formats (the notice already sits in md).
-        return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: enriched };
+        return { content: [{ type: 'text' as const, text: md.join('\n\n') }, ...hintBlock, ...licenceBlock, ...metas], structuredContent: enriched, ...previewMeta };
       } catch (err) {
         return toolError('Fehler bei der kombinierten Suche', err);
       }

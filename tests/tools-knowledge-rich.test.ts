@@ -237,6 +237,58 @@ test('rich fetch keeps the convention shape, adds the full node and the widget',
   } finally { await client.close(); mock.restore(); }
 });
 
+/** A restricted hit whose repository preview answers a JPEG when asked with credit. */
+function restrictedMock() {
+  const locked = {
+    ...makeNode('locked', 'SUPRA Einheit', { 'cclom:general_description': ['Redaktionsbestand.'] }),
+    isPublic: false,
+    preview: { url: 'https://repository.staging.openeduhub.net/edu-sharing/preview?nodeId=locked', isIcon: false },
+  };
+  return installFetchMock((url): MockResult => {
+    if (url.includes('/preview?nodeId=locked')) {
+      return { body: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2]), headers: { 'content-type': 'image/jpeg' } };
+    }
+    if (url.includes('/textContent')) return { json: { content: 'Text.' } };
+    if (url.includes('/metadata')) return { json: { node: locked } };
+    if (url.includes('/collections') || url.includes('/children')) return { json: { nodes: [] } };
+    return { json: { nodes: [locked], pagination: { total: 1, from: 0, count: 1 } } };
+  });
+}
+
+test('rich search ships the restricted preview in result _meta — same widget, same rule as search_wlo_all', async () => {
+  const mock = restrictedMock();
+  const client = await knowledgeClient({ mode: 'rich', widgetUri: WIDGET });
+  try {
+    const result = await client.callTool({ name: 'search', arguments: { query: 'SUPRA' } });
+    const map = (result as { _meta?: Record<string, unknown> })._meta?.['wlo/previewData'] as
+      Record<string, string> | undefined;
+    assert.match(map?.['locked'] ?? '', /^data:image\/jpeg;base64,/);
+    assert.ok(!JSON.stringify(result.structuredContent).includes('base64'), 'the model-facing payload stays clean');
+    assertConventionShape(result.structuredContent);   // the enrichment never bends the convention
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('lean search fetches no preview at all — no widget exists to read the channel', async () => {
+  const mock = restrictedMock();
+  const client = await knowledgeClient();
+  try {
+    const result = await client.callTool({ name: 'search', arguments: { query: 'SUPRA' } });
+    assert.equal((result as { _meta?: Record<string, unknown> })._meta?.['wlo/previewData'], undefined);
+    assert.ok(!mock.calls.some(c => c.url.includes('/preview?')), 'the fetches are not paid in lean mode');
+  } finally { await client.close(); mock.restore(); }
+});
+
+test('rich fetch ships the restricted preview for the detail view', async () => {
+  const mock = restrictedMock();
+  const client = await knowledgeClient({ mode: 'rich', widgetUri: WIDGET });
+  try {
+    const result = await client.callTool({ name: 'fetch', arguments: { id: 'locked' } });
+    const map = (result as { _meta?: Record<string, unknown> })._meta?.['wlo/previewData'] as
+      Record<string, string> | undefined;
+    assert.match(map?.['locked'] ?? '', /^data:image\/jpeg;base64,/);
+  } finally { await client.close(); mock.restore(); }
+});
+
 test('an unknown WLO_SEARCH_OUTPUT_MODE falls back to lean', () => {
   // Rich is the unmeasured option; a typo must not silently enable it.
   assert.equal(resolveSearchOutputMode('rich'), 'rich');

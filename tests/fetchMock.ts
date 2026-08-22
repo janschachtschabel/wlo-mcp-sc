@@ -32,10 +32,14 @@ export async function connectedClient(): Promise<Client> {
 
 export interface MockResult {
   status?: number;
-  /** JSON body (default). Ignored when `text` is given. */
+  /** JSON body (default). Ignored when `text` or `body` is given. */
   json?: unknown;
   /** Raw text body — for non-JSON endpoints (e.g. the eduservlet file download). */
   text?: string;
+  /** Binary body — for image endpoints (the inline-preview fetch). */
+  body?: Uint8Array;
+  /** Extra/override response headers (e.g. an image content-type). */
+  headers?: Record<string, string>;
 }
 
 export interface InstalledMock {
@@ -57,12 +61,19 @@ export function installFetchMock(
   globalThis.fetch = (async (input: any, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : String(input?.url ?? input);
     calls.push({ url, init });
-    const { status = 200, json, text } = handler(url, init);
+    const { status = 200, json, text, body, headers } = handler(url, init);
     const isRaw = text !== undefined;
-    return new Response(isRaw ? text : JSON.stringify(json), {
-      status,
-      headers: { 'Content-Type': isRaw ? 'text/markdown; charset=utf-8' : 'application/json' },
-    });
+    const payload = body !== undefined ? body : isRaw ? text : JSON.stringify(json);
+    // Lower-cased and merged BEFORE the Headers object is built: an init object
+    // holding both 'Content-Type' and 'content-type' appends both, and the
+    // resulting "a, b" value fails every equality check downstream.
+    const merged: Record<string, string> = {
+      'content-type': body !== undefined
+        ? 'application/octet-stream'
+        : isRaw ? 'text/markdown; charset=utf-8' : 'application/json',
+    };
+    for (const [k, v] of Object.entries(headers ?? {})) merged[k.toLowerCase()] = v;
+    return new Response(payload as BodyInit, { status, headers: merged });
   }) as typeof fetch;
   return { calls, restore: () => { globalThis.fetch = real; } };
 }

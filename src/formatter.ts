@@ -60,6 +60,13 @@ export interface FormattedNode {
    * subdued vs. featuring a true thumbnail prominently.
    */
   previewIsIcon: boolean;
+  /**
+   * Present exactly when the repository says the node is NOT readable by
+   * GROUP_EVERYONE — an authenticated search returns such records, and every
+   * anonymous fetch of their preview answers the permission-shield image.
+   * Absent for public records and for instances that never send the field.
+   */
+  isPublic?: false;
   /** MIME type if the node has a binary attachment, e.g. `application/pdf`. */
   mimeType: string;
   /** File size in bytes (0 for nodes without binary content). */
@@ -257,8 +264,21 @@ export function formatNode(node: WloNode): FormattedNode {
     // staging: 65 250 chars) and used to ship inline with every search hit.
     // Spread like `originalId`, so an absent compendium leaves no key at all.
     ...(p['ccm:oeh_collection_compendium_text']?.[0] ? { hasCompendium: true as const } : {}),
+    // Only the remarkable case travels: an AUTHENTICATED search returns records
+    // anonymous callers cannot read (measured 2026-08-22 — "SUPRA Licht
+    // Schatten": 0 anonymous, 13 authenticated), and for those every anonymous
+    // fetch of the preview answers the repository's permission-shield image.
+    // `true` and "field never sent" both stay absent, like `originalId`.
+    ...(node.isPublic === false ? { isPublic: false as const } : {}),
   };
 }
+
+/**
+ * The one sentence for an `isPublic: false` record, shared by every renderer
+ * (search lists, `get_node_details`): a hit only the signed-in caller can see
+ * must say so, or the model recommends material the audience cannot open.
+ */
+export const NOT_PUBLIC_LINE = 'Sichtbarkeit: nicht öffentlich — Abruf nur mit Anmeldung';
 
 export function formatNodes(nodes: WloNode[]): FormattedNode[] {
   return nodes.map(formatNode);
@@ -681,6 +701,8 @@ export function renderToText(
     // fact for a teacher (do NOT treat as free to reuse), and an absent line
     // reads like an unremarkable one. Matches the tile and the REST page.
     parts.push(`Lizenz: ${n.license || 'nicht angegeben'}`);
+    // Only for the remarkable case: a hit the audience cannot open must say so.
+    if (n.isPublic === false) parts.push(NOT_PUBLIC_LINE);
     if (n.publisher)                   parts.push(`Anbieter: ${n.publisher}`);
     if (n.topicPageUrl)                parts.push(`Themenseite: ${n.topicPageUrl}`);
     if (n.compendiumText)              parts.push(`Kompendium: ${n.compendiumText.slice(0, 500)}${n.compendiumText.length > 500 ? '…' : ''}`);

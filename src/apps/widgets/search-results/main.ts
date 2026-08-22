@@ -51,10 +51,14 @@ function paint(): void {
     focusTarget = null; // nothing to focus in a skeleton
     return;
   }
+  // The widget-only result meta carries the server-inlined previews for
+  // restricted records (see services/preview-inline.ts).
+  const meta = host.toolMeta() as { 'wlo/previewData'?: Record<string, string> } | undefined;
   root.innerHTML = renderSearchResults(host.toolOutput() as SearchAllPayload | undefined, locale, {
     selectedId,
     selectedIds: [...picked.keys()],
     canSelect: host.canFollowUp(),
+    previewData: meta?.['wlo/previewData'],
   });
 
   // Widget state carries only the ids, so a selection restored after a host

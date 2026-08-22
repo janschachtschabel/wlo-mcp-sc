@@ -491,3 +491,24 @@ test('get_nodes_details: without the flag no node carries accessInfo', async () 
     mock.restore();
   }
 });
+
+test('get_node_details states the restriction of an isPublic:false record', async () => {
+  // The record inspection tool is where an editor decides whether to SHARE a
+  // hit — recommending a record students cannot open is the mistake this line
+  // prevents. Same sentence as the search lists (one exported constant).
+  const mock = installFetchMock((url) => {
+    if (url.includes('/metadata') && url.includes('locked-1')) {
+      return { json: { node: { ...makeNode('locked-1', 'SUPRA Einheit 1'), isPublic: false } } };
+    }
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'locked-1' } });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
+    assert.match(text, /nicht öffentlich/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

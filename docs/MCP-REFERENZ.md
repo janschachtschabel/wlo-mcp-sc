@@ -193,6 +193,20 @@ lief, sagen `collections.registryChecked` bzw. `topicPages.registryChecked`),
 > Bildungsinhalte) leiten nichts ab. Eine Bildungsstufe wird bewusst **nicht**
 > abgeleitet: 30–64 % der Datensätze tragen keine (gemessen 2026-08-21), ein
 > Stufenfilter würde sie verbergen statt eingrenzen.
+
+> **Angemeldete Suche und nicht-öffentliche Treffer (seit 22.08.2026).** Eine
+> per OAuth/Block angemeldete Suche findet auch Datensätze, die anonym nicht
+> lesbar sind. Solche Treffer tragen `isPublic: false`, die Textausgabe sagt
+> „Sichtbarkeit: nicht öffentlich — Abruf nur mit Anmeldung", und die Widgets
+> zeigen ein Schloss statt des Vorschaubilds — der Bildabruf eines Browsers ist
+> immer anonym und bekäme vom Repository nur dessen Rechte-Schild. Für die
+> ANGEMELDETE Person holt der Server die gesperrten Vorschauen selbst (mit
+> ihrer Anmeldung; bis zu 8 je Antwort, nur Material-Kacheln, nur
+> Repository-Adressen, je Bild ein eigenes 4-s-Budget) und liefert sie als
+> eingebettete Bilder im widget-eigenen `_meta`-Kanal mit — auch bei
+> `search`/`fetch` im rich-Modus. Die Kachel zeigt dann das echte Bild samt
+> Sichtbarkeits-Zeile; eine nicht-öffentliche Sammlung trägt ein 🔒-Abzeichen
+> (ihre Kachel hat kein Bild). Das Modell bekommt die Bilddaten nie zu sehen.
 | `search` | Belegstellen-Suche nach der ChatGPT-Knowledge-Konvention. Minimal: ein Suchbegriff, keine Filter. | `query*` |
 | `fetch` | Ein Datensatz per id als vollständiges Dokument (`{id, title, text, url, metadata}`) — die zweite Hälfte derselben Konvention. | `id*` |
 
