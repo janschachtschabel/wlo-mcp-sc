@@ -72,7 +72,7 @@ const STRINGS = {
     selectionPrompt: 'Arbeite mit diesen WLO-Materialien weiter:',
     selectionPromptTail: 'Rufe dazu {tool} mit diesen {param} auf.',
     // Folgeaktionen auf Kacheln und in der Einzelansicht
-    followUpTool: 'Rufe dazu {tool} mit dieser {param} auf.',
+    followUpTool: 'Rufe dazu {tool} mit dieser {param} auf und zeige das Ergebnis direkt an — keine Rückfrage nötig.',
     followUpTextNone: 'Wenn kein Volltext hinterlegt ist, sage das kurz — hole keinen anderen Text als Ersatz.',
     followUp_contents: 'Zeige mir die Inhalte der WLO-Sammlung',
     followUp_topicPage: 'Zeige mir die WLO-Themenseite',
@@ -141,7 +141,7 @@ const STRINGS = {
     selectionPrompt: 'Continue working with these WLO materials:',
     selectionPromptTail: 'Call {tool} with these {param}.',
     // Follow-up actions on tiles and in the detail view
-    followUpTool: 'Call {tool} with this {param}.',
+    followUpTool: 'Call {tool} with this {param} and show the result right away — no need to ask back.',
     followUpTextNone: 'If there is no full text stored, say so briefly — do not fetch another text as a substitute.',
     followUp_contents: 'Show me the contents of the WLO collection',
     followUp_topicPage: 'Show me the WLO topic page',

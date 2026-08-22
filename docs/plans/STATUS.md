@@ -9153,3 +9153,19 @@ weil kein String-Test Layout sieht. `NO_TEXT_REASONS` ist als
 Build statt still als „Grund unbekannt" im modellgerichteten Satz zu landen.
 Hashes (final): `search-results b074e4f2 · topic-page a52cc7ea · browse
 039b0ec6 · reading a46efde5`.
+
+**Nachtrag 4 (2026-08-22): der Klick kommt an, das Modell plaudert.** Live
+beobachtet: „Inhalte anzeigen" injizierte die Nachricht korrekt (das Modell
+zitiert Titel UND nodeId — die reisen nur über den Button), aber ChatGPT
+antwortete „Ja. Ich kann dir die Sammlung gezielt anzeigen …" statt zu rufen.
+Gemessen, dass es NICHT am Server liegt: `get_collection_contents` mit
+derselben nodeId antwortet live sauber (28 Inhalte, 20 geliefert, kein
+Fehler). Der Hebel ist der Wortlaut: `followUpTool` (die EINE Stelle, alle
+vier Tool-Aktionen) sagt jetzt „… und zeige das Ergebnis direkt an — keine
+Rückfrage nötig." (DE/EN, Test rot-zuerst). Erzwingen lässt sich der Aufruf
+nicht — Modellverhalten; als Sofort-Ausweg führt ein „ja" auf die Ankündigung
+den Aufruf aus. Ebenfalls gemessen: die Widget-URI trägt den Inhalts-Hash als
+Cache-Schlüssel, ChatGPT cached die WERKZEUGLISTE — nach einem Deploy zieht
+erst ein Connector-Refresh die neuen URIs. Tore: `npm test` → **2255 pass, 0
+fail** · lint 0 · typecheck 0 · build grün. Hashes: `search-results 82588209 ·
+topic-page fc2e1986 · browse 7bcc3f6c · reading de1ff9bf`.

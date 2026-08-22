@@ -28,6 +28,13 @@ hinterlegt ist, sage das kurz — hole keinen anderen Text als Ersatz"
 (localized). Model compliance cannot be enforced; both ends of the chain now
 state the rule at the moment it applies.
 
+Third, same day: the injected button message reached the model and the model
+ANNOUNCED the call instead of making it ("Ja. Ich kann dir die Sammlung
+gezielt anzeigen …") — while the tool itself answers fine (measured live: 28
+items for the very nodeId on screen). The shared tool sentence
+(`followUpTool`, all four tool actions) now asks for the result right away
+and rules out the confirmation round.
+
 ### Fixed — restricted records no longer render the repository's permission shield (2026-08-22)
 
 User report with screenshots: the same signed-in person sees preview images in

@@ -115,6 +115,18 @@ test('the prompts are localized', () => {
   assert.match(en, /get_collection_contents/, 'but both still name the tool');
 });
 
+test('a tool follow-up asks for execution, not a capability chat', () => {
+  // Live 2026-08-22: ChatGPT answered the injected contents message with
+  // "Ja. Ich kann dir die Sammlung gezielt anzeigen …" — an announcement
+  // instead of the call, while the tool itself answers fine (measured against
+  // the live server: 28 items). The message now states that the result is
+  // wanted immediately, with no confirmation round.
+  const de = followUpPrompt('contents', 'Optik', 'n1', 'de');
+  assert.match(de, /direkt/, 'German asks for the result right away');
+  assert.match(de, /Rückfrage/, 'and rules out the confirmation round');
+  assert.match(followUpPrompt('related', 'Optik', 'n1', 'en'), /right away/i, 'English too');
+});
+
 test('the Volltext prompt says what to do when there IS no text', () => {
   // Live 2026-08-22: "Volltext anzeigen" on an SWR video (0 chars in
   // /textContent, wwwurl → raw .mp4) got the model an honest "kein Text" — and
