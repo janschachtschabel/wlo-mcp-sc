@@ -854,3 +854,28 @@ test('the schema declares isPublic — zod strips what is not declared', async (
   const restricted = formatNode({ ref: { id: 'r1' }, isPublic: false, properties: { 'cclom:title': ['SUPRA'] } } as never);
   assert.equal(formattedNodeSchema.parse(restricted).isPublic, false, 'the field must survive structuredContent');
 });
+
+/**
+ * A collection search hit carries how much it HOLDS — for free. Measured
+ * 2026-08-22: the collections mds query sends `collection.childReferencesCount`
+ * on every hit (Wellenoptik: 59), while a metadata read sends NO `collection`
+ * object at all (even with propertyFilter=-all-). So the field is present
+ * exactly when the repository said it — absence means "not known here", never
+ * zero, and no path pays an extra fetch for it.
+ */
+test('formatNode carries contentsCount only when the repository sent it', () => {
+  const counted = formatNode({ ref: { id: 'c1' }, type: 'ccm:map', collection: { childReferencesCount: 59 }, properties: { 'cclom:title': ['Wellenoptik'] } } as never);
+  assert.equal(counted.contentsCount, 59);
+
+  const zero = formatNode({ ref: { id: 'c2' }, type: 'ccm:map', collection: { childReferencesCount: 0 }, properties: { 'cclom:title': ['Leer'] } } as never);
+  assert.equal(zero.contentsCount, 0, 'a sent zero is information (an empty collection), not absence');
+
+  const unknown = formatNode({ ref: { id: 'c3' }, type: 'ccm:map', properties: { 'cclom:title': ['Alt'] } } as never);
+  assert.ok(!('contentsCount' in unknown), 'the metadata read path sends no counts — absent, never invented');
+});
+
+test('the schema declares contentsCount — zod strips what is not declared', async () => {
+  const { formattedNodeSchema } = await import('../src/apps/outputSchemas.js');
+  const counted = formatNode({ ref: { id: 'c1' }, type: 'ccm:map', collection: { childReferencesCount: 59 }, properties: { 'cclom:title': ['Wellenoptik'] } } as never);
+  assert.equal(formattedNodeSchema.parse(counted).contentsCount, 59, 'the field must survive structuredContent');
+});

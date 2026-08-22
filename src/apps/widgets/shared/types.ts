@@ -28,6 +28,16 @@ export interface WidgetNode {
   publisher: string;
   nodeType: 'collection' | 'content';
   topicPageUrl: string;
+  /** How many materials a collection holds — present only when the search DTO
+   *  carried it; absence is "unknown", never zero. */
+  contentsCount?: number;
+  /** The cached skill catalogue of a collection (structural subset of the
+   *  server's `skillRegistry` field): the card shows the COUNT — the declared
+   *  total when the entry list is capped, else the entries. */
+  skillRegistry?: {
+    entries: Array<{ nodeId: string; title: string }>;
+    truncated?: { referenced: number };
+  };
 }
 
 export interface NodeList {

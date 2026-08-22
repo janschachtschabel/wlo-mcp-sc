@@ -129,6 +129,20 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
     const restrictedBadge = node.isPublic === false
       ? `<span class="wlo-badge"><span aria-hidden="true">🔒</span> ${escapeHtml(t(locale, 'visibilityRestricted'))}</span>`
       : '';
+    // What the collection holds — both numbers ride free (contentsCount from
+    // the search DTO, the skills count from the cached registry) and appear
+    // only when known: absence is "unknown", never zero. The declared skill
+    // total wins over a capped entry list, same rule as the prose catalogue.
+    const skillCount = node.skillRegistry
+      ? node.skillRegistry.truncated?.referenced ?? node.skillRegistry.entries.length
+      : 0;
+    const metaParts = [
+      typeof node.contentsCount === 'number' ? `${node.contentsCount} ${t(locale, 'countContents')}` : '',
+      skillCount > 0 ? `${skillCount} ${t(locale, 'countSkills')}` : '',
+    ].filter(Boolean);
+    const collMeta = metaParts.length
+      ? `<p class="wlo-tile__meta">${escapeHtml(metaParts.join(' · '))}</p>`
+      : '';
     const collDesc = node.description
       ? `<p class="wlo-tile__desc">${escapeHtml(truncate(node.description, 90))}</p>`
       : '';
@@ -145,7 +159,7 @@ export function renderTile(node: WidgetNode, options: TileOptions = {}): string 
       `<li class="wlo-tile wlo-tile--coll">` +
       `<div class="wlo-coll__block"><span class="wlo-coll__glyph" aria-hidden="true">⧉</span></div>` +
       `<div class="wlo-tile__body">` +
-      `<h3 class="wlo-tile__title">${titleHtml}</h3>${badge}${restrictedBadge}${collDesc}${collAction}` +
+      `<h3 class="wlo-tile__title">${titleHtml}</h3>${badge}${restrictedBadge}${collMeta}${collDesc}${collAction}` +
       `</div>` +
       `</li>`
     );

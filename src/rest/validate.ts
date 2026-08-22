@@ -90,7 +90,7 @@ export function parseBool(raw: string | null): boolean {
 export const PROJECTABLE_FIELDS: ReadonlySet<string> = new Set([
   'nodeId', 'title', 'description', 'keywords', 'disciplines', 'educationalContexts',
   'userRoles', 'learningResourceTypes', 'url', 'downloadUrl', 'contentUrl', 'previewUrl',
-  'previewIsIcon', 'isPublic', 'mimeType', 'fileSize', 'license', 'publisher', 'nodeType',
+  'previewIsIcon', 'isPublic', 'contentsCount', 'mimeType', 'fileSize', 'license', 'publisher', 'nodeType',
   'topicPageUrl', 'textContent', 'compendiumText', 'topicPageContent',
 ]);
 

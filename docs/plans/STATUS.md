@@ -9164,8 +9164,68 @@ Fehler). Der Hebel ist der Wortlaut: `followUpTool` (die EINE Stelle, alle
 vier Tool-Aktionen) sagt jetzt „… und zeige das Ergebnis direkt an — keine
 Rückfrage nötig." (DE/EN, Test rot-zuerst). Erzwingen lässt sich der Aufruf
 nicht — Modellverhalten; als Sofort-Ausweg führt ein „ja" auf die Ankündigung
-den Aufruf aus. Ebenfalls gemessen: die Widget-URI trägt den Inhalts-Hash als
+den Aufruf aus. Der Review-NIT dazu (aufruf- statt anzeige-fokussierter
+Wortlaut, um Volltext-Dumping in den Chat vorzubeugen) ist VERWORFEN —
+Nutzerentscheidung 2026-08-22: das Modell SOLL das Ergebnis übernehmen und
+nutzen, beim Volltext bis zur 200 000-Zeichen-Kappe des Werkzeugs; der Satz
+bleibt anzeige-fokussiert (Entscheidungskommentar an `followUpTool`,
+strings.ts). Ebenfalls gemessen: die Widget-URI trägt den Inhalts-Hash als
 Cache-Schlüssel, ChatGPT cached die WERKZEUGLISTE — nach einem Deploy zieht
 erst ein Connector-Refresh die neuen URIs. Tore: `npm test` → **2255 pass, 0
 fail** · lint 0 · typecheck 0 · build grün. Hashes: `search-results 82588209 ·
 topic-page fc2e1986 · browse 7bcc3f6c · reading de1ff9bf`.
+
+**Nachtrag 5 (2026-08-22): Zähler auf Sammlungs-Karten + der flackernde
+Klick.** (a) Live weiter beobachtet: die Buttons triggern MAL („Themenseite
+öffnen" lief im erneuten Test), mal behauptet das Modell „mir steht in diesem
+Schritt kein passendes WLO-Tool für get_collection_contents zur Verfügung" —
+während tools/list live 41 Werkzeuge samt Templates zeigt und derselbe Aufruf
+11 Inhalte liefert. Host-seitige Nichtdeterministik; der Server-Hebel (der
+geschärfte Satz) IST live. Mein „fehlt im Bundle" davor war ein
+FALSCH-NEGATIV: esbuild schreibt Nicht-ASCII als `\xFC`-Escapes, ein
+Literal-Grep findet „Rückfrage" im Bundle nicht — Bundle-Greps müssen
+escaping-tolerant sein. (b) Nutzerwunsch, ausdrücklich „nur wenn ohne
+Zusatzaufwand": Sammlungs-Karten tragen jetzt „N Inhalte · M Skills" als
+gedämpfte Faktenzeile — beide Zahlen GRATIS. `childReferencesCount` kommt mit
+jedem Treffer der collections-Query (gemessen 2026-08-22: Wellenoptik 59; der
+Metadaten-Lesepfad sendet KEIN `collection`-Objekt, auch mit `-all-` — dort
+bleibt das Feld weg, Abwesenheit heißt „unbekannt", nie null); die Skill-Zahl
+kommt aus dem ohnehin mitreisenden `skillRegistry`, deklarierte Gesamtzahl
+schlägt gekappte Liste (dieselbe Regel wie `registrySummaryLines`).
+`contentsCount` in `FormattedNode` + Schema + REST-Allowlist. Zwei Lehren aus
+dem Bau: **tsx prüft keine Typen** — die Suite war grün, während das Feld im
+INTERFACE fehlte, erst `tsc` fand es; und **`tsc | tail; echo $?` liest den
+Exit von `tail`** — der Typecheck-Beleg braucht den ungepipten Aufruf. Tore:
+TYPECHECK CLEAN (ungepipt) · `npm test` → **2258 pass, 0 fail** (3 neu,
+rot-zuerst) · lint 0 · build grün. Hashes: `search-results e6d97ea2 ·
+topic-page fa72ae5e · browse ead4beff · reading da7ca6dc`.
+
+**Nachtrag 6 (2026-08-22): „Inhalte anzeigen ging NIE" — die Asymmetrie war
+der Schlüssel.** „Themenseite öffnen" triggerte manchmal, `get_collection_contents`
+nie ('mir steht in diesem Schritt kein passendes WLO-Tool zur Verfügung') —
+also kein Zufallsrauschen. Gemessen: die Live-`_meta` beider Werkzeuge ist
+formgleich (nur `browse_collection_tree` trägt `openai/widgetAccessible`),
+Listenplätze #1 vs. #12 — Metadaten und Reihenfolge scheiden aus. Der eine
+lexikalische Unterschied: die Themenseiten-Beschreibung zitiert ihre
+Klick-Nachricht fast wörtlich („Zeige eine WLO-Themenseite" ↔ „Zeige mir die
+WLO-Themenseite"), die Sammlungs-Beschreibung nicht („Liste … auf") — und
+KEINE Beschreibung nannte ihren Knopf. Jede der vier Button-Ziel-Beschreibungen
+trägt jetzt die wörtliche Brücke („Der Widget-Knopf ‚Inhalte anzeigen' führt
+hierher." usw.), gepinnt durch einen Test, der `FOLLOW_UP_TOOLS` abläuft und
+das sichtbare Knopf-Label in der Beschreibung verlangt (rot-zuerst; dass ALLE
+vier das Label nicht trugen, belegen die gelesenen Beschreibungen — der Test
+bricht beim ersten Fehltreffer ab). `get_wlo_content_text` (1006/1024 Zeichen) tauschte dafür den
+Fast-Doppel-Trigger „den vollen Inhalt anzeigen" gegen seine Brücke — die
+selbst den stärkeren Wortlaut „Volltext anzeigen" trägt. Ehrlich bleibt: das
+hebt die lexikalische Passung, über die das Modell Werkzeuge wählt; erzwingen
+kann es den Aufruf nicht. Server-only — Widget-Hashes unverändert. Tore:
+`npm test` → **2259 pass, 0 fail** (1 neu, rot-zuerst) · LINT CLEAN ·
+TYPECHECK CLEAN · build grün.
+
+**Upload-Hinweis (Korrektur der Abschluss-Review-Runde, gegen die
+Datei-Änderungszeiten verifiziert):** dieses Paket berührt VIER bis dahin nie
+gelistete Pfade — `src/tools/collections.ts`, `src/tools/topic-page-content.ts`,
+`src/tools/node-relations.ts`, `tests/tool-triggers.test.ts`. Die im Chat
+geführte Upload-Liste wächst damit auf **54 Dateien**; die frühere Angabe
+„+0 neue Pfade" war falsch. Ohne diese vier erreicht die Brücken-Reparatur
+den Server nicht, und der nächste Klick-Test verurteilt den Fix zu Unrecht.

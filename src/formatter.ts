@@ -67,6 +67,12 @@ export interface FormattedNode {
    * Absent for public records and for instances that never send the field.
    */
   isPublic?: false;
+  /**
+   * How many materials the collection holds — present only when the search DTO
+   * carried `collection.childReferencesCount` (the collections query does; a
+   * metadata read does not — measured 2026-08-22). Absent = unknown, never 0.
+   */
+  contentsCount?: number;
   /** MIME type if the node has a binary attachment, e.g. `application/pdf`. */
   mimeType: string;
   /** File size in bytes (0 for nodes without binary content). */
@@ -270,6 +276,14 @@ export function formatNode(node: WloNode): FormattedNode {
     // fetch of the preview answers the repository's permission-shield image.
     // `true` and "field never sent" both stay absent, like `originalId`.
     ...(node.isPublic === false ? { isPublic: false as const } : {}),
+    // How much a collection HOLDS, when the repository said it: the collections
+    // search query carries `collection.childReferencesCount` on every hit, a
+    // metadata read carries no `collection` object at all (measured
+    // 2026-08-22). Absence therefore means "not known here", never zero, and
+    // no path pays an extra fetch for the number.
+    ...(typeof node.collection?.childReferencesCount === 'number'
+      ? { contentsCount: node.collection.childReferencesCount }
+      : {}),
   };
 }
 

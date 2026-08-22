@@ -39,8 +39,8 @@ export function registerContentTextTool(server: McpServer, readingWidgetUri?: st
     name: 'get_wlo_content_text',
     widgetUri: readingWidgetUri,
     title: 'WLO Volltext',
-    description: `Der INHALT eines WLO-Materials — der eigentliche Text des Arbeitsblatts, Artikels oder Dokuments, nicht seine Metadaten.
-NIMM DIES, sobald es um den Inhalt geht: „zeig mir den Inhalt", „was steht in dem Arbeitsblatt", „den ganzen Text", „den vollen Inhalt anzeigen", „lies das Dokument", „zusammenfassen", „mach Aufgaben daraus", „passe es an Klasse 7 an". Auch dann, wenn die nodeId schon aus einer früheren Antwort im Gespräch stammt — dann genügt sie.
+    description: `Der INHALT eines WLO-Materials — der eigentliche Text des Arbeitsblatts, Artikels oder Dokuments, nicht seine Metadaten. Der Knopf „Volltext anzeigen" führt hierher.
+NIMM DIES, sobald es um den Inhalt geht: „zeig mir den Inhalt", „was steht in dem Arbeitsblatt", „den ganzen Text", „lies das Dokument", „zusammenfassen", „mach Aufgaben daraus", „passe es an Klasse 7 an". Auch dann, wenn die nodeId schon aus einer früheren Antwort im Gespräch stammt — dann genügt sie.
 NICHT get_node_details: das liefert nur Metadaten (Titel, Fach, Lizenz, Link) und ist die Detailansicht, nicht der Inhalt.
 Der Text kommt aus dem Repository (~0,3 s) oder, bei extern verlinktem Material, von der verlinkten Seite (\`source\`). Lange Texte werden gekürzt (\`truncated\`, \`maxChars\`).
 Gibt es keinen Text, kommt \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_url\`, \`extraction_failed\`, \`node_not_found\`). Das ist kein Fehler, sondern die Auskunft, dass es wirklich keinen Text gibt: dann sag das — und **erfinde keinen Inhalt**.`,

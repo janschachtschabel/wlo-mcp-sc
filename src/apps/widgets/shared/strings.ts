@@ -72,8 +72,14 @@ const STRINGS = {
     selectionPrompt: 'Arbeite mit diesen WLO-Materialien weiter:',
     selectionPromptTail: 'Rufe dazu {tool} mit diesen {param} auf.',
     // Folgeaktionen auf Kacheln und in der Einzelansicht
+    // Display-focused ON PURPOSE (user decision 2026-08-22, applies to the EN
+    // twin below): the model is meant to take and USE the result — for the
+    // Volltext action up to the tool's 200k-character cap — not merely trigger
+    // the call. A review suggested call-only wording; rejected.
     followUpTool: 'Rufe dazu {tool} mit dieser {param} auf und zeige das Ergebnis direkt an — keine Rückfrage nötig.',
     followUpTextNone: 'Wenn kein Volltext hinterlegt ist, sage das kurz — hole keinen anderen Text als Ersatz.',
+    countContents: 'Inhalte',
+    countSkills: 'Skills',
     followUp_contents: 'Zeige mir die Inhalte der WLO-Sammlung',
     followUp_topicPage: 'Zeige mir die WLO-Themenseite',
     followUp_text: 'Zeige mir den Volltext von',
@@ -143,6 +149,8 @@ const STRINGS = {
     // Follow-up actions on tiles and in the detail view
     followUpTool: 'Call {tool} with this {param} and show the result right away — no need to ask back.',
     followUpTextNone: 'If there is no full text stored, say so briefly — do not fetch another text as a substitute.',
+    countContents: 'items',
+    countSkills: 'skills',
     followUp_contents: 'Show me the contents of the WLO collection',
     followUp_topicPage: 'Show me the WLO topic page',
     followUp_text: 'Show me the full text of',

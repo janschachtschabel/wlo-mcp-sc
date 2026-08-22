@@ -184,6 +184,30 @@ test('a tile that HAS a topic page offers BOTH — the curated view first, then 
   );
 });
 
+test('a collection card states what it holds — counts only when known', () => {
+  // User request 2026-08-22 ("nur wenn ohne Zusatzaufwand umsetzbar"): both
+  // numbers ride free — contentsCount from the collections search DTO,
+  // the skills count from the cached skillRegistry already in every payload.
+  const html = renderTile(coll({
+    contentsCount: 59,
+    skillRegistry: { nodeId: 'r1', title: 'Reg', entries: [{ nodeId: 's1', title: 'A' }, { nodeId: 's2', title: 'B' }, { nodeId: 's3', title: 'C' }] },
+  }), { locale: 'de' });
+  assert.match(html, /59 Inhalte/);
+  assert.match(html, /3 Skills/);
+
+  const truncated = renderTile(coll({
+    skillRegistry: { nodeId: 'r1', title: 'Reg', entries: [{ nodeId: 's1', title: 'A' }], truncated: { referenced: 12 } },
+  }), { locale: 'de' });
+  assert.match(truncated, /12 Skills/, 'the declared count wins over the capped entry list — same rule as the prose');
+
+  const zero = renderTile(coll({ contentsCount: 0 }), { locale: 'de' });
+  assert.match(zero, /0 Inhalte/, 'a known-empty collection says so');
+
+  const bare = renderTile(coll(), { locale: 'de', followUp: true });
+  assert.doesNotMatch(bare, /\d+ Inhalte/, 'no invented numbers — absence is "unknown", never zero');
+  assert.doesNotMatch(bare, /\d+ Skills/);
+});
+
 test('no action button without host support — never a dead control', () => {
   assert.doesNotMatch(renderTile(coll(), { locale: 'de' }), /data-follow-up/);
 });

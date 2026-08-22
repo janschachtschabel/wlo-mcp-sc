@@ -52,7 +52,10 @@ export interface WloNode {
    * has no binary attachment (e.g. external link nodes via `ccm:wwwurl`).
    */
   content?: { url?: string; originalUrl?: string; hash?: string; version?: string };
-  collection?: { description?: string; title?: string; childCollectionsCount?: number };
+  /** Present on collection hits from the collections SEARCH query (with child
+   *  counts); a metadata read sends no `collection` object at all (measured
+   *  2026-08-22) — so a count is trusted when present and never inferred. */
+  collection?: { description?: string; title?: string; childCollectionsCount?: number; childReferencesCount?: number };
 }
 
 export interface SearchResponse {

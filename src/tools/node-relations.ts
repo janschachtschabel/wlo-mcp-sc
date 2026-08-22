@@ -22,7 +22,7 @@ export function registerNodeRelationTools(server: McpServer, searchResultsWidget
     name: 'get_related_content',
     title: 'WLO Ähnliche Inhalte',
     widgetUri: searchResultsWidgetUri,
-    description: `Finde ähnliche WLO-Materialien zu einem Inhalt — "mehr wie dieses" / "was passt noch dazu" nach einer Suche oder Detailansicht. Andere Materialien mit gleichem Fach und gleicher Bildungsstufe.
+    description: `Finde ähnliche WLO-Materialien zu einem Inhalt — "mehr wie dieses" / "was passt noch dazu" nach einer Suche oder Detailansicht. Andere Materialien mit gleichem Fach und gleicher Bildungsstufe. Der Widget-Knopf „Ähnliche Inhalte" führt hierher.
 Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/Stufen und sucht Material mit gleichem Profil (der Ausgangsknoten wird ausgeschlossen). Optional \`includeSiblings\` — die weiteren Inhalte der Eltern-Sammlung.`,
     inputSchema: {
       skillContext: z.string().max(120).optional().describe(

@@ -37,6 +37,9 @@ export const formattedNodeSchema = z.object({
    *  cue that an anonymous <img> would fetch the permission shield. Literal
    *  false: the formatter never emits true (absence is the public case). */
   isPublic: z.literal(false).optional(),
+  /** How many materials the collection holds — present only when the search
+   *  DTO carried the number (declared: zod strips unknown keys). */
+  contentsCount: z.number().int().optional(),
   mimeType: z.string(),
   fileSize: z.number(),
   license: z.string(),

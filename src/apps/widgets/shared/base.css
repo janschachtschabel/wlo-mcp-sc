@@ -248,6 +248,9 @@ a.wlo-tile__link { display: inline-block; min-height: 24px; }
    leftover height into a stray gap between the pair. The body's gap spaces them. */
 .wlo-tile__followup + .wlo-tile__followup { margin-top: 0; }
 
+/* Collection facts line ("59 Inhalte · 3 Skills") — muted, plain text. */
+.wlo-tile__meta { margin: 0; font-size: 0.78rem; color: var(--wlo-muted); }
+
 .wlo-detail__actions {
   margin: 10px 0 0;
   display: flex;

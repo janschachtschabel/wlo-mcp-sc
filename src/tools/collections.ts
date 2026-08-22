@@ -181,7 +181,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
     name: 'get_collection_contents',
     title: 'WLO Sammlungsinhalte',
     widgetUri: searchResultsWidgetUri,
-    description: `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections, aus dem Themenbaum oder aus einer früheren Antwort) und zeigen willst, was konkret drinsteckt.
+    description: `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Der Widget-Knopf „Inhalte anzeigen" führt hierher. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections, aus dem Themenbaum oder aus einer früheren Antwort) und zeigen willst, was konkret drinsteckt.
 contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen (Unter-Themenseiten), "both" = alles. includeSubcollections=true durchläuft den gesamten Unterbaum rekursiv.`,
     inputSchema: {
       skillContext: z.string().max(120).optional().describe(

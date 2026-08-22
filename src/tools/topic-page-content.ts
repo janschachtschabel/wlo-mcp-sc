@@ -27,7 +27,7 @@ export function registerTopicPageContentTool(server: McpServer, topicPageWidgetU
     name: 'get_topic_page_content',
     widgetUri: topicPageWidgetUri,
     title: 'WLO Themenseiten-Inhalt',
-    description: `Zeige eine WLO-Themenseite zu einem Thema mit ihren Schwimmlinien (swimlanes) — z.B. "zeig die Themenseite zu Optik". Liefert die render-fertigen Abschnitte mit echten Inhaltskarten (die Schwimmlinien-Ansicht der Themenseite).
+    description: `Zeige eine WLO-Themenseite zu einem Thema mit ihren Schwimmlinien (swimlanes) — z.B. "zeig die Themenseite zu Optik". Der Widget-Knopf „Themenseite öffnen" führt hierher. Liefert die render-fertigen Abschnitte mit echten Inhaltskarten (die Schwimmlinien-Ansicht der Themenseite).
 
 Gib EINES an:
 - query: ein Themenname (z.B. "Optik") — das Tool findet die passende Themenseite

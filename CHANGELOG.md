@@ -6,6 +6,19 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — collection cards show what they hold (2026-08-22)
+
+User request from the first live day ("nur wenn ohne Zusatzaufwand umsetzbar")
+— and both numbers turned out to ride for free. A collection card now carries
+a muted facts line ("59 Inhalte · 3 Skills") built from two sources already in
+every answer: `collection.childReferencesCount`, which the collections search
+query sends with every hit (measured; a metadata read sends no `collection`
+object at all, so the field stays absent there — absence is "unknown", never
+zero), and the cached `skillRegistry` the results already carry, whose
+declared total wins over a capped entry list. No path pays an extra fetch.
+`contentsCount` is declared in `FormattedNode`, the output schema and the REST
+fields allowlist.
+
 ### Changed — a collection card with a Themenseite offers BOTH actions; the Volltext chain relays an honest "no text" (2026-08-22)
 
 Two live findings from the first day with the widgets in real use. First: a
@@ -34,6 +47,17 @@ gezielt anzeigen …") — while the tool itself answers fine (measured live: 28
 items for the very nodeId on screen). The shared tool sentence
 (`followUpTool`, all four tool actions) now asks for the result right away
 and rules out the confirmation round.
+
+Fourth (user observation: "Inhalte anzeigen" NEVER triggered while
+"Themenseite öffnen" sometimes did): the two tools' live metadata is
+byte-identical in shape, but the topic-page description almost quotes its
+button message while the collections one did not — and no description named
+its button at all. Every button-target description now carries the literal
+bridge (`Der Widget-Knopf „Inhalte anzeigen" führt hierher.` etc., all four,
+pinned by a test that walks `FOLLOW_UP_TOOLS`); `get_wlo_content_text` traded
+a near-duplicate trigger phrase for its bridge to stay under the 1024-char
+description cap. This raises the lexical match the model selects tools by; it
+cannot force the call.
 
 ### Fixed — restricted records no longer render the repository's permission shield (2026-08-22)
 

@@ -36,6 +36,37 @@ test('primary search tools lead with concrete triggers in the first 256 chars', 
   }
 });
 
+test('every widget button names a tool whose description names the button back', async () => {
+  // "Inhalte anzeigen" NEVER triggered in live ChatGPT (user report
+  // 2026-08-22) while "Themenseite öffnen" sometimes did — and the lexical
+  // difference was that the topic-page description almost quotes its button
+  // message while the collections one did not; NO description named its
+  // button. The model picks tools by their descriptions, so the literal
+  // bridge „Der Widget-Knopf X führt hierher" is the strongest signal the
+  // server can attach. It raises the match; it cannot force the call.
+  const { FOLLOW_UP_TOOLS } = await import('../src/apps/widgets/shared/follow-up.js');
+  const { t } = await import('../src/apps/widgets/shared/strings.js');
+  // action → visible button label (mirrors ACTION_LABEL in tile.ts; a renamed
+  // string key fails here at the type level).
+  const BUTTON_LABEL = {
+    contents: t('de', 'actionContents'),
+    topicPage: t('de', 'actionTopicPage'),
+    text: t('de', 'actionText'),
+    related: t('de', 'actionRelated'),
+  } as const;
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    for (const [action, tool] of Object.entries(FOLLOW_UP_TOOLS)) {
+      const desc = tools.find(x => x.name === tool)?.description ?? '';
+      const label = BUTTON_LABEL[action as keyof typeof BUTTON_LABEL];
+      assert.ok(desc.includes(label), `${tool}: description names its button „${label}"`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
 test('search_wlo_topic_pages names the subject filter it does NOT have', async () => {
   // Unknown arguments are stripped silently by the schema parse, so a client
   // sent `discipline` here for months and got byte-identical results without
