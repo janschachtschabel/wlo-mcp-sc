@@ -1,0 +1,46 @@
+# GitLab CI – 1:1-Port von .github/workflows/ci.yml
+#
+# Gleiche Schritte, gleiche Reihenfolge, gleiche Gates:
+#   npm ci → build → typecheck → lint → test → audit (prod = Gate, full = info).
+#
+# Läuft für die Ziel-Branch main und für Merge Requests. Die workflow-Regeln
+# verhindern doppelte Pipelines (eine für den Branch-Push UND eine für den MR).
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+stages:
+  - verify
+
+build-test:
+  stage: verify
+  # Gleicher Runtime wie das ausgelieferte Image: node:20-alpine, per Digest
+  # gepinnt (identisch zum Dockerfile – beim Bump dort mitziehen).
+  image: node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+  interruptible: true
+  variables:
+    # npm-Cache in den Projektbaum legen, damit GitLab ihn cachen kann.
+    npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  cache:
+    # Key an den Lockfile-Hash gebunden – neue Deps ⇒ neuer Cache.
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  script:
+    - npm ci
+    - npm run build
+    # Type-Gate über das, was der Build nicht sieht: tests/ (tsx entfernt Typen)
+    # und die Widget-DOM-Entrypoints (esbuild type-checkt nicht). tsconfig.typecheck.json.
+    - npm run typecheck
+    # Nur Correctness-Regeln (eslint.config.mjs) – kein Formatter.
+    - npm run lint
+    - npm test
+    # Gate auf AUSGELIEFERTE Schwachstellen: Prod-Abhängigkeitsbaum muss frei
+    # von High/Critical-Advisories sein. Dev-only-Funde brechen den Build nicht.
+    - npm audit --omit=dev --audit-level=high
+    # Voller Baum nur informativ.
+    - npm audit || true
