@@ -30,6 +30,13 @@ export interface AuthStatus {
   displayName?: string;
   /** How the identity reached this server. */
   credential: CredentialKind;
+  /**
+   * Whether the repository ANSWERED the identity question. `unreachable` = no
+   * verdict on the login (outage, overload, timeout) — so `authenticated:
+   * false` with `upstream: 'ok'` is a refusal, and with `'unreachable'` it is
+   * not (chatbot team feedback 2026-11-07, B2). Same words as `/ready`.
+   */
+  upstream: 'ok' | 'unreachable';
   /** When this server stops accepting the block (ISO), if it ever does. */
   expiresAt?: string;
 }
@@ -55,6 +62,7 @@ export function authStatusPayload(cred: WloCredential | null, identity: WloIdent
     authority: identity.authority,
     ...(identity.displayName ? { displayName: identity.displayName } : {}),
     credential: credentialKind(cred),
+    upstream: identity.unreachable ? 'unreachable' : 'ok',
     ...(expiresAtS !== undefined ? { expiresAt: new Date(expiresAtS * 1000).toISOString() } : {}),
   };
 }

@@ -132,3 +132,50 @@ test('a replayed PREPARED request says it is the same request, not that nothing 
   const done = replayAnswer({ kind: 'done', result: { content: [], structuredContent: { preparedRequest: { method: 'PUT' } } } });
   assert.match((done?.content[0] as { text: string }).text, /nur ausführen, wenn/);
 });
+
+// ── chatbot feedback, finding 4: requiresNewPreview is no statement about the write ──
+// The chatbot first read `requiresNewPreview` as "nothing happened, preview
+// again" and created duplicates over not_visible / unverified. Every error after
+// redemption now says explicitly whether the outcome is open.
+
+async function afterRedemption(token: string, error: Record<string, unknown> | undefined) {
+  const { runWithReplay } = await import('../src/tools/curation-replay.js');
+  const { currentIdentity } = await import('../src/services/write/confirm.js');
+  return runWithReplay(token, { title: token, confirmToken: token }, async () => {
+    markRedeemed(token, currentIdentity());
+    return { content: [{ type: 'text' as const, text: 'x' }], isError: true,
+      ...(error ? { structuredContent: { error } } : {}) };
+  });
+}
+const errorOf = (r: { structuredContent?: unknown }) => (r.structuredContent as { error: Record<string, unknown> }).error;
+const textOf = (r: { content?: unknown[] }) => (r.content ?? []).map(b => (b as { text: string }).text).join(' ');
+
+for (const code of ['not_visible', 'unverified', 'upstream_busy', 'upstream_error', 'refused']) {
+  test(`after redemption, ${code} carries outcomeOpen: true — the write may have happened`, async () => {
+    const r = await afterRedemption(`t-${code}`, { code, message: 'x' });
+    assert.equal(errorOf(r)['outcomeOpen'], true);
+    assert.equal(errorOf(r)['requiresNewPreview'], true);
+    assert.match(textOf(r), /nachsehen/, 'and the text sends the reader to look first');
+  });
+}
+
+test('after redemption, an error that KNOWS nothing was written keeps outcomeOpen: false', async () => {
+  const r = await afterRedemption('t-known', { code: 'exists', message: 'x', outcomeOpen: false });
+  assert.equal(errorOf(r)['outcomeOpen'], false);
+  assert.doesNotMatch(textOf(r), /nachsehen/);
+});
+
+test('after redemption, an error without any structured part still gets a code and outcomeOpen: true', async () => {
+  const r = await afterRedemption('t-bare', undefined);
+  assert.equal(errorOf(r)['outcomeOpen'], true);
+  assert.equal(typeof errorOf(r)['code'], 'string', 'a program never meets an error without a code');
+});
+
+test('the look-first sentence never claims "ist offen" — a report above it may state the outcome exactly (review)', async () => {
+  // e.g. not_stored "Gespeichert: Titel / NICHT gespeichert: Beschreibung":
+  // something WAS written, so look first — but the outcome is not unknown.
+  const r = await afterRedemption('t-partial', { code: 'not_stored', message: 'x', outcomeOpen: true });
+  const added = textOf(r).replace(/^x\s*/, '');
+  assert.match(added, /nachsehen/);
+  assert.doesNotMatch(added, /ist offen/);
+});

@@ -32,10 +32,28 @@ import { log } from '../logger.js';
 import type { DistinctValueLimiter } from '../rate-limit.js';
 import { sanitizeText } from '../text-sanitize.js';
 
+/**
+ * How every login-checking path fails: 400 refused, 429 the guessing guard,
+ * 503 the repository gave no answer — which is no verdict on the login, so it
+ * must not read as "wrong password" (review of the chatbot feedback B2,
+ * 2026-11-07: an outage during a widget's ticket exchange looked like an
+ * invalid ticket).
+ */
+export type LoginFailure = { ok: false; status: 400 | 429 | 503; error: string };
+
+/** The one outage answer, so the four paths that prove a login say it alike. */
+export function unreachableFailure(): LoginFailure {
+  return {
+    ok: false,
+    status: 503,
+    error: 'WLO ist gerade nicht erreichbar, die Anmeldung ließ sich nicht prüfen. Bitte in einigen Sekunden erneut versuchen.',
+  };
+}
+
 /** Everything both callers need from a verified block. */
 export type VerifyOutcome =
   | { ok: true; payload: AccessPayload }
-  | { ok: false; status: 400 | 429; error: string };
+  | LoginFailure;
 
 export interface VerifyDeps {
   /** Client key for the distinct-login limiter (already resolved via TRUST_PROXY). */
@@ -45,10 +63,13 @@ export interface VerifyDeps {
   support: AccessSupport;
 }
 
-/** What proving a login can end in. `limited` never reached the repository. */
+/**
+ * What proving a login can end in. `limited` never reached the repository;
+ * `unreachable` reached for it and got no answer (`WloIdentity.unreachable`).
+ */
 export type LoginProof =
   | { ok: true; identity: WloIdentity }
-  | { ok: false; reason: 'limited' | 'refused' };
+  | { ok: false; reason: 'limited' | 'refused' | 'unreachable' };
 
 /**
  * Bound the guessing, then prove ONE credential against the repository.
@@ -83,7 +104,8 @@ export async function proveLogin(
     return { ok: false, reason: 'limited' };
   }
   const identity = await runWithCredential(credential, () => checkIdentity());
-  return identity.authenticated ? { ok: true, identity } : { ok: false, reason: 'refused' };
+  if (identity.authenticated) return { ok: true, identity };
+  return { ok: false, reason: identity.unreachable ? 'unreachable' : 'refused' };
 }
 
 /**
@@ -122,6 +144,10 @@ export async function verifyBlockLogin(
   if (!proof.ok) {
     if (proof.reason === 'limited') {
       return { ok: false, status: 429, error: 'Zu viele verschiedene Anmeldungen von dieser Adresse.' };
+    }
+    if (proof.reason === 'unreachable') {
+      log.warn('access request not checked — repository unreachable', { purpose });
+      return unreachableFailure();
     }
     log.info('access request refused — credentials not accepted', {
       label: sanitizeText(payload.u),

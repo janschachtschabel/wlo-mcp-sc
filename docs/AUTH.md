@@ -333,7 +333,8 @@ same `proveLogin` the password paths use — and answers with an ordinary block:
 ```
 POST /auth/ticket          {"ticket": "TICKET_…"}
   → 200 {"ok": true, "block": "wlo2.…", "authority": "…", "displayName": "…"}
-  → 400  ticket refused (invalid, expired, or the repository was unreachable — deliberately indistinguishable)
+  → 400  ticket refused (invalid or expired)
+  → 503  {code: "upstream_unreachable", retryAfter} — the repository gave no answer: no verdict on the ticket
   → 404  this deployment does not issue blocks (no WLO_AUTH_PRIVATE_KEY)
   → 429  too many distinct credentials from this address
 ```
@@ -390,6 +391,17 @@ Three decisions worth naming:
   entries. Revocation is untouched by the split: `/auth/revoke-all` still takes
   both kinds, because a ticket block is exactly as much of an access as a
   pasted one.
+
+  **Logging out of a ticket block lasts until the next exchange — by design,
+  not a gap** (R2; written down at the chatbot team's request, 2026-11-07).
+  `POST /auth/revoke` removes the entry, but the id is the ticket's hash, so
+  exchanging the SAME, still-valid ticket again lists it anew. In the tab where
+  the person logged out the widget does not exchange on its own; a new tab on an
+  edu-sharing page where they are still signed in does — and signs them in
+  again, because they ARE signed in there. The edu-sharing session is the
+  authority here; this server only mirrors it. What ends a ticket access for
+  good is ending that session (logging out of edu-sharing), after which the
+  ticket fails upstream and every exchange with it is refused.
 - **This is the one `/auth*` path that carries CORS** (exact-match carve-out in
   `isCredentialSurface`). Its only real client is a widget on a foreign
   origin, and what a hostile page could make visitors present here is not a
@@ -450,7 +462,12 @@ the build if a curation tool is ever registered past it.
 
 `/auth/issue`, `/auth/revoke-all`, `POST /oauth/authorize` and `POST /auth/ticket`
 are the endpoints on this server that check a credential, which makes each a
-guessing oracle with our address as the origin. All four pass two limiters:
+guessing oracle with our address as the origin. All four answer a failed check
+the same way (`rest/login-failure.ts`): 400 refused, 429 `too_many_logins` with
+the rest of the guard's window, and 503 `upstream_unreachable` when the
+repository gave no answer — which is no verdict on the login, so it must not
+read as a wrong password (until 2026-11-07 an outage answered 400 here, and an
+embedded widget dropped a valid ticket over a repository blip). All four pass two limiters:
 
 - **requests per address** (`RATE_LIMIT_RPM`), the ordinary public-surface bound;
 - **distinct logins per address** (`AUTH_CREDENTIAL_LIMIT`) — the guessing guard.

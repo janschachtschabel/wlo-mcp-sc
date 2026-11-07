@@ -165,9 +165,10 @@ test('a duplicate that appears between preview and confirmation answers exists, 
   try {
     const preview = toolText(await client.callTool({ name: 'wlo_create_content', arguments: CREATE_ARGS }));
     const res = await client.callTool({ name: 'wlo_create_content', arguments: { ...CREATE_ARGS, confirmToken: tokenFrom(preview) } });
-    const s = res.structuredContent as { error?: { code?: string; existing?: { nodeId?: string } } };
+    const s = res.structuredContent as { error?: { code?: string; existing?: { nodeId?: string }; outcomeOpen?: boolean } };
     assert.equal(s.error?.code, 'exists');
     assert.equal(s.error?.existing?.nodeId, 'alt-9');
+    assert.equal(s.error?.outcomeOpen, false, 'nothing was created — the one post-redemption error that KNOWS it (finding 4)');
     assert.equal(calls(mock, '/children').filter(c => (c.init?.method ?? 'GET') === 'POST').length, 0);
   } finally {
     await client.close();
@@ -478,6 +479,29 @@ test('wlo_update_content: a missing record is not_found, an empty change invalid
   try {
     assert.equal(code(await client.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'weg', title: 'X' } })), 'not_found');
     assert.equal(code(await client.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'weg' } })), 'invalid_input');
+  } finally {
+    await client.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('a created record whose fields did not land is outcomeOpen: true — a new preview would create a second one (finding 4)', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock((url, init) => {
+    if (url.includes('/search/v1/')) return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+    if (url.includes('/children') && (init?.method ?? 'GET') === 'POST') return { json: { node: { ref: { id: NODE, repo: '-home-' } } } };
+    // The read-back finds none of the fields: by the field report alone, "nothing written".
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: {} } } };
+  });
+  const client = await curationClient();
+  try {
+    const preview = toolText(await client.callTool({ name: 'wlo_create_content', arguments: CREATE_ARGS }));
+    const res = await client.callTool({ name: 'wlo_create_content', arguments: { ...CREATE_ARGS, confirmToken: tokenFrom(preview) } });
+    const s = res.structuredContent as { nodeId?: string; error?: { code?: string; outcomeOpen?: boolean } };
+    assert.equal(s.nodeId, NODE, 'the record exists');
+    assert.equal(s.error?.code, 'not_stored');
+    assert.equal(s.error?.outcomeOpen, true, 'the RECORD was written even if no field was');
   } finally {
     await client.close();
     mock.restore();

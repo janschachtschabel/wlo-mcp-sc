@@ -257,7 +257,7 @@ const MAX_VERIFIED = 1000;
 export async function verifiedSlotIdentity(
   cred: WloCredential | null, deps: { ip: string; authAbuseLimiter: DistinctValueLimiter },
   now: number = Date.now(),
-): Promise<{ identity: string } | { refused: 'login' | 'limited' }> {
+): Promise<{ identity: string } | { refused: 'login' | 'unreachable' } | { refused: 'limited'; retryAfter: number }> {
   const identity = slotIdentity(cred);
   if (!cred || !identity) return { refused: 'login' };
   const key = createHash('sha256').update(cred.header).digest('hex');
@@ -270,7 +270,14 @@ export async function verifiedSlotIdentity(
   const proof = await proveLogin(cred, { ...deps, bucket: abuseBucketKey(cred, deps.ip) }, now, 'upload');
   // ``limited``: too many distinct secrets in this bucket (a block's access id, or the address for
   // Basic) — a 429, not "log in": logging in again would not help (review MA-3/MA-4, finding 4).
-  if (!proof.ok) return { refused: proof.reason === 'limited' ? 'limited' : 'login' };
+  // ``unreachable``: no verdict on the login — "log in again" would send the person to fix what is not broken.
+  if (!proof.ok) {
+    if (proof.reason === 'limited') {
+      const bucket = abuseBucketKey(cred, deps.ip);
+      return { refused: 'limited', retryAfter: deps.authAbuseLimiter.retryAfterSeconds?.(bucket, now) ?? 600 };
+    }
+    return { refused: proof.reason === 'unreachable' ? 'unreachable' : 'login' };
+  }
   if (verified.size >= MAX_VERIFIED) verified.clear();
   verified.set(key, { identity, until: now + VERIFY_TTL_MS });
   return { identity };

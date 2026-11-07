@@ -6,6 +6,32 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — chatbot team feedback on S1–S7 (2026-11-07)
+
+- **Every 429 on `/auth*` now has the shared REST shape.** The address budget before `/auth/issue`,
+  `/auth/revoke`, `/auth/revoke-all` and `/auth/ticket` answered a fixed `Retry-After: 60` with a bare `{error}`,
+  the login guard there a fixed `600`; both now answer `{error, code, retryAfter}` with the rest of the window, like
+  `/api` and `/auth/status`. `error` stays a German sentence — the pages show it to a person.
+- **`/auth/status` and `wlo_auth_status` tell a refused login from an unreachable repository.** New field
+  `upstream: "ok" | "unreachable"`: `unreachable` on a network failure, timeout, 429/5xx or a 200 that is not the
+  identity document; a 401/403/404 is an answer (`ok`). A refusal is now cached 60 s like a login, only an
+  unanswered check 10 s, and the tool no longer calls credentials rejected during an outage.
+- `docs/AUTH.md` states that logging out of a ticket block lasts until the next exchange of the same, still-valid
+  ticket — intended (R2): the edu-sharing session is the authority.
+- Review of the above (10 findings, all fixed): **a repository outage is no longer reported as a refused login** on
+  `/auth/issue`, `/auth/revoke-all`, `/auth/ticket`, `POST /oauth/authorize` (all 503 `upstream_unreachable`, one
+  answer in `rest/login-failure.ts`) and `/api/uploads` (503 instead of 403 `login_required`) — an embedded widget
+  dropped a valid ticket over a blip; the `/oauth/*` 429s carry `code`/`retryAfter` and the rest of the window too;
+  `/api/uploads`' 429 adds `Retry-After`, `code` and `retryAfter`; the `wlo_auth_status` description and the startup
+  log no longer call an unreachable repository a rejected password; German wait text in the singular for one second.
+- **Every error after a redeemed confirm key says whether anything was written** (chatbot feedback, finding 4):
+  `outcomeOpen` is now always present — `false` only where this call provably wrote nothing (`exists`, every field
+  refused or dropped), otherwise `true` (`not_visible`, `unverified`, `upstream_busy` mid-operation, a created record
+  whose fields did not land). `requiresNewPreview` states only that the key is spent; the reference said "preview
+  again" after every such error, which over a write that had landed creates a duplicate. Field reports that did not
+  fully land are now coded `not_stored`, an unverifiable write `unverified` (both were `isError` with text only), and
+  `wlo_create_content` keeps that code beside `nodeId` instead of dropping it.
+
 ### Fixed — full review of the chatbot package S1–S7 (2026-11-07, two independent reviewers, 18 findings)
 
 - **The 12-hour expiry could be issued away.** `/auth/issue` or a consent through any non-widget `redirect_uri`

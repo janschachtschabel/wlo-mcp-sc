@@ -431,6 +431,8 @@ export function reportOutcome(
   const failedWrite = new Map(statuses.filter(s => !s.ok).map(s => [s.property, s.detail ?? '']));
   const stored: string[] = [];
   const failed: string[] = [];
+  // A value stored DIFFERENTLY is still a write — only refused and dropped fields left the record as it was.
+  let changedSomething = false;
 
   for (const change of cs.changes) {
     const label = change.label;
@@ -443,6 +445,7 @@ export function reportOutcome(
     // outcome would mean the read-back and the plan disagreed — treat it like a
     // drop rather than quietly counting it as saved.
     const outcome = verified.outcomes[change.property] ?? 'dropped';
+    if (outcome === 'changed') changedSomething = true;
     if (outcome === 'stored') stored.push(`- ${label}`);
     else failed.push(`- ${label}: ${OUTCOME_NOTE[outcome]}`);
   }
@@ -455,7 +458,26 @@ export function reportOutcome(
   }
   if (lines.length === 0) lines.push('Es gab nichts zu ändern.');
 
-  return textResult(lines.join('\n'), failed.length > 0);
+  // Coded (chatbot feedback 2026-11-07, finding 4): a program must be able to
+  // tell "some fields did not land" from every other error without reading
+  // German — and what DID land is in the text beside it. `outcomeOpen` is
+  // false only when THIS report wrote nothing at all, which the read-back
+  // knows field by field; a caller that wrote something else first (a new
+  // record) says so with `markWritten`.
+  if (failed.length === 0) return textResult(lines.join('\n'));
+  return codedError('not_stored', lines.join('\n'), { outcomeOpen: stored.length > 0 || changedSomething });
+}
+
+/**
+ * The call wrote something before this answer — a created record — so its
+ * error, whatever the field report says, is not "nothing written". Without it a
+ * create whose fields were all dropped read `outcomeOpen: false`, and a client
+ * starting over would create a second record (finding 4).
+ */
+export function markWritten(result: WloToolResult): WloToolResult {
+  const sc = result.structuredContent as { error?: Record<string, unknown> } | undefined;
+  if (!sc?.error) return result;
+  return { ...result, structuredContent: { ...sc, error: { ...sc.error, outcomeOpen: true } } };
 }
 
 /**
@@ -495,10 +517,10 @@ export function reportMutation(
  */
 export function unverifiedReply(err: unknown): WloToolResult {
   const detail = err instanceof Error ? err.message : String(err);
-  return textResult(
+  return codedError('unverified',
     `Die Änderung wurde abgeschickt, konnte danach aber nicht überprüft werden. Ob sie gespeichert ` +
       `wurde, ist damit offen — bitte den Datensatz direkt ansehen. (${detail})`,
-    true,
+    { outcomeOpen: true },
   );
 }
 

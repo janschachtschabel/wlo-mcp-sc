@@ -30,6 +30,8 @@ export const authStatusSchema = z.object({
   displayName: z.string().optional(),
   /** How the identity reached this server (plan 2026-11-07, S4). */
   credential: z.enum(['none', 'basic', 'access-block', 'ticket', 'service']),
+  /** Whether the repository answered at all — `unreachable` is no verdict on the login (B2). */
+  upstream: z.enum(['ok', 'unreachable']),
   /** When this server stops accepting the block (ISO) — ticket and widget blocks only (R1). */
   expiresAt: z.string().optional(),
 });
@@ -40,7 +42,7 @@ export function registerAuthTools(server: McpServer): void {
     title: 'WLO Anmeldestatus',
     description: `Sag, mit welchen Rechten dieser MCP-Server gerade auf WLO zugreift. Nutze dies, wenn die Nutzerin fragt, ob sie angemeldet ist, warum sie bestimmte Inhalte (nicht) sieht, oder bevor du erklärst, dass etwas nicht zugänglich ist.
 "mode": "anonymous" = nur öffentliche Daten (Standard); "service" = ein fest konfiguriertes Dienstkonto, dieselben Rechte für alle Nutzenden; "user" = die Rechte der angemeldeten Person.
-WICHTIG: "authenticated" ist eine EIGENE Aussage. Ist mode="service" oder "user", aber authenticated=false, dann lehnt WLO die hinterlegten Zugangsdaten ab. Dann schlagen ALLE Abfragen fehl — es kommen nicht etwa nur öffentliche Inhalte, sondern gar keine. Das ist ein Konfigurationsfehler; nenne ihn, statt zu sagen, es gebe zum Thema nichts.`,
+WICHTIG: "authenticated" ist eine EIGENE Aussage. Ist mode="service" oder "user", aber authenticated=false, dann kommt es auf "upstream" an: "ok" heißt, WLO lehnt die hinterlegten Zugangsdaten ab; "unreachable" heißt, WLO war nicht erreichbar — das ist KEIN Urteil über die Zugangsdaten, sag dann nicht, sie seien falsch. Dann schlagen ALLE Abfragen fehl — es kommen nicht etwa nur öffentliche Inhalte, sondern gar keine. Das ist ein Konfigurationsfehler; nenne ihn, statt zu sagen, es gebe zum Thema nichts.`,
     inputSchema: {},
     outputSchema: authStatusSchema,
     annotations: { readOnlyHint: true },
@@ -57,7 +59,11 @@ WICHTIG: "authenticated" ist eine EIGENE Aussage. Ist mode="service" oder "user"
           ? 'Zugriff ohne Anmeldung: es werden ausschließlich öffentlich sichtbare WLO-Inhalte gelesen.'
           : payload.authenticated
             ? `Angemeldet als „${payload.displayName || payload.authority}“ (${mode === 'service' ? 'gemeinsames Dienstkonto' : 'persönliches Konto'}). Die Ergebnisse folgen den Rechten dieses Kontos.`
-            : `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt oder Repository nicht erreichbar'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
+            : payload.upstream === 'unreachable'
+              // No verdict: telling a person their password is wrong during an
+              // outage sends them to fix something that is not broken.
+              ? `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO ist gerade nicht erreichbar — ob sie gelten, lässt sich im Moment nicht prüfen. Bitte später erneut versuchen.`
+              : `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
 
         return { content: [{ type: 'text' as const, text }], structuredContent: payload };
       } catch (err) {

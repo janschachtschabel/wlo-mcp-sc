@@ -156,6 +156,7 @@ test('an UNKNOWN answer (repository unreachable) is held briefly, a definite one
   try {
     const first = await (await echt(`${base}/auth/status`, { headers: { Authorization: MARIA } })).json() as Record<string, unknown>;
     assert.equal(first['authority'], null);
+    assert.equal(first['upstream'], 'unreachable', 'no verdict on the login (B2)');
     down = false;
     at(AUTH_STATUS_UNKNOWN_CACHE_MS + 1);
     const second = await (await echt(`${base}/auth/status`, { headers: { Authorization: MARIA } })).json() as Record<string, unknown>;
@@ -165,6 +166,21 @@ test('an UNKNOWN answer (repository unreachable) is held briefly, a definite one
     await echt(`${base}/auth/status`, { headers: { Authorization: MARIA } });
     assert.equal(identityCalls(), 2, 'a definite answer stays cached');
     assert.ok(AUTH_STATUS_UNKNOWN_CACHE_MS < AUTH_STATUS_CACHE_MS);
+  } finally { Date.now = realNow; await close(); mock.restore(); }
+});
+
+test('a REFUSED login (repository said 401) reads upstream ok and is held the full minute — it is an answer (B2)', async () => {
+  const mock = installFetchMock((url) => (url.includes('/iam/v1/people/') ? { status: 401, json: {} } : { json: {} }));
+  const { base, close } = await start();
+  const realNow = Date.now;
+  const at = (ms: number) => { const t0 = realNow(); Date.now = () => t0 + ms; };
+  const identityCalls = () => mock.calls.filter(c => c.url.includes('/iam/v1/people/')).length;
+  try {
+    const body = await (await echt(`${base}/auth/status`, { headers: { Authorization: MARIA } })).json() as Record<string, unknown>;
+    assert.deepEqual([body['authenticated'], body['authority'], body['upstream']], [false, null, 'ok']);
+    at(AUTH_STATUS_UNKNOWN_CACHE_MS + 1);
+    await echt(`${base}/auth/status`, { headers: { Authorization: MARIA } });
+    assert.equal(identityCalls(), 1, 'a refusal is as definite as a login — only silence is held briefly');
   } finally { Date.now = realNow; await close(); mock.restore(); }
 });
 

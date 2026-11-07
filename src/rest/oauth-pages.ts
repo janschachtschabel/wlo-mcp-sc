@@ -46,6 +46,7 @@ import { log } from '../logger.js';
 import { parseRequestUrl } from '../request-url.js';
 import { flattenText } from '../text-sanitize.js';
 import { grantConsent, showConsent } from './oauth-consent.js';
+import { germanRetryMessage, refuseRateLimited } from './rate-limited.js';
 import { exchangeCode } from './oauth-token.js';
 import {
   JSON_HEADERS,
@@ -131,8 +132,8 @@ async function route(req: OAuthReq, res: OAuthRes, deps: OAuthEndpointDeps): Pro
     ? deps.authorizeRateLimiter
     : deps.connectorRateLimiter;
   if (limiter.check(deps.ip, Date.now())) {
-    return send(res, 429, { error: 'Zu viele Anfragen. Bitte in einer Minute erneut versuchen.' },
-      { 'Retry-After': '60' });
+    refuseRateLimited(res, limiter, deps.ip, 'address', { shape: 'rest', message: germanRetryMessage });
+    return true;
   }
 
   const document = DISCOVERY[parsed.pathname];

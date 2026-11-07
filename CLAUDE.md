@@ -1419,9 +1419,24 @@ The current rebuild/extension is designed in:
   0.1–0.3 s — the 22 s cold path is not the transport. Phases 2–7 add rules that
   bind: `upstream_busy` (429/503) carries `retryAfter` through ONE pairing place
   (`failureFields`); a redeemed confirm token REPLAYS its result for the same
-  identity and arguments for 30 min, never writes twice; `/auth/status` holds an
-  answer without `authority` only 10 s (an outage must not read as a refused
-  login for a minute) and its 429 is REST; `/ready` probes at most once per 30 s
+  identity and arguments for 30 min, never writes twice, and EVERY error after
+  redemption carries `outcomeOpen` — `false` only where the call provably wrote
+  nothing (`exists`, a `not_stored` report with no field landed and nothing
+  stored differently), else `true`; a created record is always `true`
+  (`markWritten`). `requiresNewPreview` says the key is spent, never whether
+  anything was written — reading it as "start over" created duplicates
+  (chatbot finding 4); `/auth/status` and
+  `wlo_auth_status` carry `upstream: ok|unreachable` from `checkIdentity`
+  (429/5xx, a throw or a non-identity 200 = unreachable; 401/403/404 = an
+  answer), and only an `unreachable` one is held 10 s instead of 60 — an outage
+  must not read as a refused login, nor a refusal as an outage (chatbot team
+  B2) — and every path that PROVES a login (`proveLogin`: `/auth/issue`,
+  `/auth/revoke-all`, `/auth/ticket`, the OAuth consent, `/api/uploads`)
+  answers an unreachable repository 503 `upstream_unreachable`, never as a
+  refused login, the four REST ones through `rest/login-failure.ts`; every 429
+  on `/auth*`, `/oauth/*`, `/api` and `/auth/status` is the REST shape
+  `{error, code, retryAfter}` with the rest of the window (B1), `/api/uploads`
+  keeping `error` as its code string; `/ready` probes at most once per 30 s
   for callers while the tick probes fresh; the slow-upstream log also fires for a
   call that THROWS (the 22 s case is past the 20 s budget). R4:
   `TICKET_ALLOWED_ORIGINS` refuses a foreign browser origin AFTER the address

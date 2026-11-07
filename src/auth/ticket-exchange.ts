@@ -29,14 +29,14 @@
 import { createHash } from 'node:crypto';
 import { SESSION_BLOCK_TTL_S } from './access-registry.js';
 import { encodeAccessToken } from './access-token.js';
-import { proveLogin, type VerifyDeps } from './access-verify.js';
+import { proveLogin, unreachableFailure, type LoginFailure, type VerifyDeps } from './access-verify.js';
 import type { WloCredential } from './credential.js';
 import { log } from '../logger.js';
 import { sanitizeText } from '../text-sanitize.js';
 
 export type TicketExchangeOutcome =
   | { ok: true; block: string; authority: string; displayName?: string }
-  | { ok: false; status: 400 | 429; error: string };
+  | LoginFailure;
 
 /** Same shape as the block paths — the limiter budget is deliberately shared. */
 export type TicketExchangeDeps = VerifyDeps;
@@ -92,9 +92,15 @@ export async function exchangeTicket(
     if (proof.reason === 'limited') {
       return { ok: false, status: 429, error: 'Zu viele verschiedene Anmeldungen von dieser Adresse.' };
     }
-    // `proveLogin` collapses "rejected" and "unreachable" into the same
-    // answer — deliberately the same coarseness as the password path, so the
-    // two error texts cannot be used to probe which tickets exist.
+    // An outage is told apart from a refusal: a widget that read a 400 here
+    // during a repository blip dropped a VALID ticket. It reveals nothing about
+    // which tickets exist — whether the repository answers does not depend on
+    // the ticket (a dead one answers 404 at the identity endpoint, measured
+    // 2026-08-13, which is a refusal).
+    if (proof.reason === 'unreachable') {
+      log.warn('ticket exchange not checked — repository unreachable');
+      return unreachableFailure();
+    }
     log.info('ticket exchange refused — ticket not accepted');
     return {
       ok: false,

@@ -11,7 +11,10 @@
  *  - A **personal** WLO credential (access block or Basic) that the repository CONFIRMS is required
  *    (`verifiedSlotIdentity`, cached 10 min); none, the anonymous token, the service account or an
  *    unconfirmed login → 403. The identity is a hash of the account name.
- *  - 429 `too_many_logins` when the distinct-login limiter refuses — bucketed like `POST /mcp`
+ *  - 503 `upstream_unreachable` (with `Retry-After`) when the repository gave no answer to the login
+ *    check — no verdict on the login, so not 403.
+ *  - 429 `too_many_logins` (with `Retry-After` and `retryAfter`, the rest of the limiter's window)
+ *    when the distinct-login limiter refuses — bucketed like `POST /mcp`
  *    (`abuseBucketKey`): a block per access id, Basic per address. The chatbot is one address for all
  *    its users, so with Basic `AUTH_CREDENTIAL_LIMIT` must fit the number of people; with blocks it
  *    does not matter. 403 for an unconfirmed login.
@@ -31,6 +34,7 @@ import { verifiedSlotIdentity, type UploadSlots } from '../services/write/upload
 import { resolvePositiveInt } from '../wlo-config.js';
 import { DRAIN_FACTOR } from '../read-body.js';
 import type { DistinctValueLimiter } from '../rate-limit.js';
+import { BUSY_RETRY_DEFAULT_S } from '../services/failure-code.js';
 
 export const UPLOAD_PATH = '/api/uploads';
 
@@ -54,18 +58,28 @@ const STATUS: Record<string, number> = {
   too_large: 413, unsupported_type: 415, too_many: 429, failed: 500, timeout: 408,
 };
 
-function send(res: ServerResponse, status: number, body: Record<string, unknown>): void {
+function send(res: ServerResponse, status: number, body: Record<string, unknown>, headers: Record<string, string> = {}): void {
   if (res.headersSent) return;
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
   res.end(JSON.stringify(body));
 }
 
 /** A refusal: answer first with ``Connection: close``, tear the request down only afterwards. */
-function refuse(req: IncomingMessage, res: ServerResponse, status: number, body: Record<string, unknown>): void {
+function refuse(
+  req: IncomingMessage, res: ServerResponse, status: number, body: Record<string, unknown>, headers: Record<string, string> = {},
+): void {
   if (!res.headersSent) res.setHeader('Connection', 'close');
   res.once('finish', () => setTimeout(() => req.destroy(), 1000).unref());
   req.resume();
-  send(res, status, body);
+  send(res, status, body, headers);
+}
+
+/**
+ * A refusal the caller should retry after a wait: `error` stays the code string this route has always
+ * answered with (its contract), `code` and `retryAfter` are the fields every other REST 429/503 carries.
+ */
+function refuseRetryable(req: IncomingMessage, res: ServerResponse, status: 429 | 503, code: string, wait: number): void {
+  refuse(req, res, status, { error: code, code, retryAfter: wait }, { 'Retry-After': String(wait) });
 }
 
 function clientName(raw: string | string[] | undefined): string {
@@ -90,7 +104,8 @@ export async function handleUploadRequest(
   const wer = await verifiedSlotIdentity(credentialFromHeader(req.headers['authorization']),
     { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter });
   if ('refused' in wer) {
-    if (wer.refused === 'limited') refuse(req, res, 429, { error: 'too_many_logins' });
+    if (wer.refused === 'limited') refuseRetryable(req, res, 429, 'too_many_logins', wer.retryAfter);
+    else if (wer.refused === 'unreachable') refuseRetryable(req, res, 503, 'upstream_unreachable', BUSY_RETRY_DEFAULT_S);
     else refuse(req, res, 403, { error: 'login_required' });
     return true;
   }

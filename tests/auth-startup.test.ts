@@ -127,3 +127,22 @@ test('an unparseable repository URL is not treated as secure', async () => {
   const { isInsecureCredentialTransport } = await import('../src/auth/credential.js');
   assert.equal(isInsecureCredentialTransport('not a url'), true, 'unknown means unsafe, not safe');
 });
+
+test('an unreachable repository at boot is reported as unreachable, not as a rejected password (finding 3)', async () => {
+  setServiceCredentialForTest({ header: 'Basic x', label: 'wlo-mcp', source: 'service' });
+  const realWrite = process.stderr.write.bind(process.stderr);
+  const realFetch = globalThis.fetch;
+  const captured: string[] = [];
+  process.stderr.write = ((chunk: unknown) => { captured.push(String(chunk)); return true; }) as never;
+  globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+  try {
+    await verifyConfiguredCredential('https://repo.example.test/edu-sharing');
+    const out = captured.join('');
+    assert.match(out, /could not be verified|unreachable/i);
+    assert.doesNotMatch(out, /NOT accepted/, 'the password is not known to be wrong');
+  } finally {
+    process.stderr.write = realWrite;
+    globalThis.fetch = realFetch;
+    setServiceCredentialForTest(null);
+  }
+});

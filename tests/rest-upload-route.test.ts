@@ -238,3 +238,40 @@ describe('login limiter buckets like POST /mcp (relay clients)', () => {
     }
   });
 });
+
+describe('review of B1–B3: upload refusals (findings 1 and 5)', () => {
+  async function serve(limiter: unknown, handler: Parameters<typeof installFetchMock>[0]) {
+    const mock = installFetchMock(handler);
+    const slots = new UploadSlots({ maxBytes: 1024 });
+    const srv = createServer((req, res) => { void handleUploadRequest(req, res, { slots, timeoutMs: 5000,
+      ip: '127.0.0.1', authAbuseLimiter: limiter as never }); });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const send = (auth: string) => echt(`http://127.0.0.1:${(srv.address() as AddressInfo).port}${UPLOAD_PATH}`, {
+      method: 'POST', body: new Uint8Array(PDF), headers: { 'Content-Type': 'application/octet-stream', Authorization: auth } });
+    return { send, close: async () => { mock.restore(); await new Promise<void>((r) => srv.close(() => r())); } };
+  }
+
+  it('429 too_many_logins carries Retry-After, code and retryAfter — error stays the code string', async () => {
+    const s = await serve({ check: () => true, retryAfterSeconds: () => 77 },
+      () => ({ json: { person: { authorityName: 'person' } } }));
+    try {
+      const r = await s.send(`Basic ${Buffer.from('fuenfte:geheim').toString('base64')}`);
+      assert.equal(r.status, 429);
+      assert.equal(r.headers.get('retry-after'), '77');
+      const body = await r.json() as Record<string, unknown>;
+      assert.deepEqual([body['error'], body['code'], body['retryAfter']], ['too_many_logins', 'too_many_logins', 77]);
+    } finally { await s.close(); }
+  });
+
+  it('an unreachable repository is 503 upstream_unreachable, not 403 login_required', async () => {
+    const s = await serve(createDistinctValueLimiter(10), () => ({ status: 503, json: {} }));
+    try {
+      const r = await s.send(`Basic ${Buffer.from('sechste:geheim').toString('base64')}`);
+      assert.equal(r.status, 503);
+      assert.ok(Number(r.headers.get('retry-after')) > 0);
+      const body = await r.json() as Record<string, unknown>;
+      assert.equal(body['error'], 'upstream_unreachable');
+      assert.equal(body['code'], 'upstream_unreachable');
+    } finally { await s.close(); }
+  });
+});

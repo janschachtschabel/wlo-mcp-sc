@@ -4212,3 +4212,70 @@ in der Beschreibung von `wlo_auth_status`. Fünf Test-Blöcke trugen ein festes
 erzeugen (`public/access-block.js`); ein Fixture `'upstream 403'` entsprach
 keiner echten Nachricht und trägt jetzt die echte Form. Gegenproben der neuen
 Ausstellungsregeln je rot. Tests 2622 grün, 1 Skip; Lint/Typen/Build sauber.
+
+### 2026-11-07 — Rückmeldung des Chatbot-Teams zu S1–S7: drei Befunde, alle behoben
+
+Das Team hat den Bericht am Quelltext und live (nur anonyme GETs, ein Widerruf
+mit einem erfundenen Block) geprüft; keine Befunde, die den Betrieb stören.
+(B1) Das Adress-Budget vor `/auth/issue`, `/auth/revoke`, `/auth/revoke-all` und
+`/auth/ticket` antwortete fest `Retry-After: 60` mit `{error}` ohne `code`, der
+Anmelde-Schutz dort fest `600` — jetzt dieselbe REST-Form wie `/api` und
+`/auth/status` (`{error, code, retryAfter}`, Restzeit des jeweiligen Fensters),
+mit deutschem `error`, weil die Seiten ihn Menschen zeigen
+(`refuseRateLimited(…, 'rest', message)` / `sendRateLimited`). (B2)
+`/auth/status` konnte „abgelehnt“ und „nicht erreicht“ nicht trennen
+(`authority: null` für beides) — jetzt `upstream: 'ok' | 'unreachable'`, aus
+`checkIdentity` (`unreachable` bei Netzfehler, Zeitüberschreitung, 429/5xx und
+einem 200, das nicht das Identitätsdokument ist; 401/403/404 sind eine Antwort).
+Folge für den Zwischenspeicher: eine Ablehnung gilt 60 s wie eine Anmeldung, nur
+„nicht erreicht“ 10 s. `wlo_auth_status` sagt bei einem Ausfall nicht mehr, die
+Zugangsdaten würden nicht akzeptiert. (B3) In `AUTH.md` festgehalten: ein
+Abmelden nach Ticket-Tausch hält bis zum nächsten Tausch desselben Tickets — so
+gewollt, die edu-sharing-Sitzung ist die Instanz. Gegenproben je rot (feste
+Wartezeit, Statusregel, alte Cache-Regel). Offen als Anregung des Teams, nicht
+umgesetzt: Widerruf über den Client-Schlüssel zählen statt über das
+Adress-Budget.
+
+**Review dieser Änderungen (10 Befunde: 5 MINOR, 5 NIT, alle behoben).** Der
+gewichtigste: `proveLogin` warf das neue `unreachable`-Signal weg, also
+antworteten `/auth/issue`, `/auth/revoke-all`, `/auth/ticket` und die
+OAuth-Zustimmung bei einem Ausfall weiter „Zugangsdaten nicht akzeptiert“ (400),
+`/api/uploads` 403 `login_required` — ein Widget verwarf über einen kurzen
+Ausfall ein gültiges Ticket. Jetzt `LoginProof.reason: 'unreachable'` → 503
+`upstream_unreachable` (`retryAfter` 10), EINE Antwortstelle
+(`rest/login-failure.ts`) für alle vier REST-Pfade. Die alte Begründung („nicht
+unterscheidbar, damit niemand Tickets abtastet“) trug nicht: ob das Repository
+antwortet, hängt nicht vom Ticket ab, ein totes Ticket antwortet 404 (gemessen
+2026-08-13). Dazu: die `/oauth/*`-429 in derselben REST-Form; 429 auf
+`/api/uploads` mit `Retry-After`/`code`/`retryAfter` (`error` bleibt der
+Code-String); Werkzeugbeschreibung und Startlog nennen einen Ausfall nicht mehr
+„abgelehnt“; `notReached()` liefert ein frisches Objekt; `refuseRateLimited`
+nimmt `{shape, message}` statt sechs Positionsparametern; „in einer Sekunde“;
+README-Sätze zu `authenticated: false`. Gegenproben aller sieben neuen
+Wächter je rot.
+
+**Zweite Rückmeldung, Befund 4 (Fehler nach der Einlösung) — behoben.**
+`keySpent` setzte `requiresNewPreview` an jeden Fehler nach der Einlösung, und
+die Referenz empfahl danach eine neue Vorschau — über `not_visible`,
+`unverified` oder einen halb ausgeführten Vorgang legt das eine Dublette an (der
+erste Stand des Chatbots hat genau das getan). Jetzt trägt JEDER Fehler nach der
+Einlösung `outcomeOpen`: `false` nur, wo der Aufruf beweisbar nichts schrieb
+(`exists`; `not_stored`, wenn kein Feld ankam und nichts anders gespeichert
+wurde), sonst `true`; der Text sagt entsprechend „erst nachsehen“ oder „nichts
+geschrieben“. `reportOutcome` antwortet `not_stored`, `unverifiedReply`
+`unverified` (vorher `isError` ohne Code), `withFiling` behält den Fehlerteil
+neben `nodeId`, und ein ANGELEGTER Datensatz ist immer `outcomeOpen: true`
+(`markWritten`), auch wenn kein Feld ankam — sonst legte ein Neustart einen
+zweiten an. Ein bestehender Test hielt die richtige Gegenregel fest („eine
+Ablehnung ist kein offenes Ergebnis“) und hat den ersten, gröberen Entwurf
+(Standard immer `true`) zu Fall gebracht. Gegenproben aller sieben Wächter je rot.
+
+**Review aller Änderungen seit dem Push `09fcb18` (2026-11-07): 1 MINOR, 1 NIT,
+beide behoben.** Der Satz nach einer Einlösung mit `outcomeOpen: true` sagte
+„… ist offen“ — auch unter einem Bericht, der den Ausgang genau nennt
+(`not_stored` mit „Gespeichert: … / NICHT gespeichert: …“); er sagt jetzt „es
+kann bereits etwas geschrieben sein — erst nachsehen“. Die Referenzzeile zu
+`not_stored` nennt die Ausnahme `wlo_create_content` (immer `true`). Bewusst
+kein Befund: `reportMutation`/`failed` bleibt `true`, weil derselbe Bericht auch
+NACH einem Anlegen prüft und `createContentNode` „2xx ohne id“ als `failed`
+meldet — `false` steht nur, wo es beweisbar ist.

@@ -69,11 +69,11 @@ function deps(over: Partial<Parameters<typeof handleOAuthEndpoint>[2]> = {}) {
 }
 
 /** Fake upstream: the identity endpoint reports whatever authority we choose. */
-function upstream(authority: string | null) {
+function upstream(authority: string | null, status = 200) {
   const original = globalThis.fetch;
   globalThis.fetch = (async () => new Response(
     JSON.stringify(authority ? { person: { authorityName: authority } } : {}),
-    { status: 200, headers: { 'content-type': 'application/json' } },
+    { status, headers: { 'content-type': 'application/json' } },
   )) as typeof fetch;
   return () => { globalThis.fetch = original; };
 }
@@ -180,7 +180,7 @@ test('the discovery paths are rate-limited like the rest of the public surface',
   const second = res();
   await handleOAuthEndpoint(req('GET', ALL[0]!), second, deps({ connectorRateLimiter }));
   assert.equal(second.out.status, 429);
-  assert.equal(second.out.headers['Retry-After'], '60');
+  assert.equal(second.out.headers['Retry-After'], '60', 'a fresh 60 s window: the rest of it is all of it');
 });
 
 // ── registration (P2/T2.2) ─────────────────────────────────────────────────
@@ -864,4 +864,46 @@ test('the password surface and the connector surface have separate budgets', asy
   const spentToo = res();
   await handleOAuthEndpoint(req('GET', '/oauth/authorize'), spentToo, both());
   assert.equal(spentToo.out.status, 429, 'and that budget is a real bound too');
+});
+
+// ── review of B1–B3: the OAuth surface answers like the rest ───────────────
+
+test('an OAuth 429 carries code, retryAfter and the rest of the window', async (t) => {
+  await support(t);
+  const connectorRateLimiter = createRateLimiter(1, 20_000);
+  await handleOAuthEndpoint(req('GET', ALL[0]!), res(), deps({ connectorRateLimiter }));
+  const r = res();
+  await handleOAuthEndpoint(req('GET', ALL[0]!), r, deps({ connectorRateLimiter }));
+  assert.equal(r.out.status, 429);
+  assert.equal(r.out.headers['Retry-After'], '20');
+  assert.equal(r.json()?.code, 'rate_limited');
+  assert.equal(r.json()?.retryAfter, 20);
+});
+
+test('a consent during a repository outage answers 503 upstream_unreachable and mints nothing', async (t) => {
+  await support(t);
+  t.after(upstream(null, 503));
+  const store = createCodeStore();
+  const r = await postConsent(consentBody(), store);
+  assert.equal(r.status, 503);
+  assert.equal(r.json?.['code'], 'upstream_unreachable');
+  assert.match(String(r.json?.['error']), /nicht erreichbar/);
+  assert.equal(store.size(), 0);
+});
+
+test('too many distinct logins at the consent carry too_many_logins and the rest of that window', async (t) => {
+  await support(t);
+  t.after(upstream('esguest'));
+  const abuse = createDistinctValueLimiter(1, 120_000);
+  const send = async (user: string) => {
+    const r = res();
+    await handleOAuthEndpoint(req('POST', '/oauth/authorize', JSON.stringify(consentBody({ token: accessBlock(user) }))),
+      r, deps({ authAbuseLimiter: abuse }));
+    return r;
+  };
+  await send('eins');
+  const r = await send('zwei');
+  assert.equal(r.out.status, 429);
+  assert.equal(r.json()?.code, 'too_many_logins');
+  assert.equal(r.out.headers['Retry-After'], '120');
 });

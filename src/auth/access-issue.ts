@@ -11,13 +11,13 @@
  */
 
 import { decodeAccessToken } from './access-token.js';
-import { verifyBlockLogin, type VerifyDeps } from './access-verify.js';
+import { verifyBlockLogin, type LoginFailure, type VerifyDeps } from './access-verify.js';
 import { log } from '../logger.js';
 import { sanitizeText } from '../text-sanitize.js';
 
 export type IssueOutcome =
   | { ok: true; label: string; jti: string }
-  | { ok: false; status: 400 | 429; error: string };
+  | LoginFailure;
 
 export type IssueDeps = VerifyDeps;
 

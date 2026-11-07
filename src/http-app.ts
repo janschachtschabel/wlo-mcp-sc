@@ -282,7 +282,7 @@ export function createHttpRequestHandler(
       if (apiRateLimiter.check(ip, Date.now())) {
         // REST, not JSON-RPC: the old `error` text stays, beside a code and the
         // exact wait (chatbot S2 — a flat 60 told clients to wait too long).
-        refuseRateLimited(res, apiRateLimiter, ip, 'address', 'rest');
+        refuseRateLimited(res, apiRateLimiter, ip, 'address', { shape: 'rest' });
         return;
       }
       // Anonymous by construction — the handler-wide scope above covers this

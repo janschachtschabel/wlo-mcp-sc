@@ -31,6 +31,25 @@ export interface WloIdentity {
   authority: string | null;
   /** Display name when the profile carries one. */
   displayName?: string;
+  /**
+   * Set when the repository gave NO usable answer — network failure, timeout,
+   * 429/5xx, or a body that is not the identity document (a proxy's
+   * maintenance page). Absent on a refusal (401/403/404), which IS an answer.
+   * Without it `authority: null` meant both, and a caller had to treat a
+   * changed password like an outage or an outage like a refused login
+   * (chatbot team feedback 2026-11-07, B2).
+   */
+  unreachable?: true;
+}
+
+/** No verdict on the login: the repository did not answer it. A fresh object each time — callers may hold on to it. */
+function notReached(): WloIdentity {
+  return { authenticated: false, authority: null, unreachable: true };
+}
+
+/** 429 and 5xx are the repository failing to answer; any other non-OK status is it saying no. */
+function isNoAnswer(status: number): boolean {
+  return status === 429 || status >= 500;
 }
 
 /**
@@ -42,12 +61,13 @@ export interface WloIdentity {
 export async function checkIdentity(): Promise<WloIdentity> {
   try {
     const res = await wloFetch(IDENTITY_URL);
-    if (!res.ok) return { authenticated: false, authority: null };
+    if (!res.ok) return isNoAnswer(res.status) ? notReached() : { authenticated: false, authority: null };
     // Through `readJson` like every other upstream body: a proxy maintenance
     // page answers 200 with HTML, and parsing it directly surfaced as
     // "identity check failed: Unexpected token <" instead of naming the call
     // and its status. `null` lands on the same answer as an unreadable
-    // authority below — not authenticated, authority unknown.
+    // authority below — not authenticated, authority unknown, NOT reached:
+    // whatever answered was not the repository's identity document.
     const data = await readJson<{
       person?: { authorityName?: string; profile?: { firstName?: string; lastName?: string } };
     }>(res, 'checkIdentity');
@@ -55,7 +75,7 @@ export async function checkIdentity(): Promise<WloIdentity> {
     // the LOGGED-IN PERSON's own fields, editable by them, and they flow into
     // model-facing text. Cleaning them here means no consumer has to remember.
     const authority = data?.person?.authorityName ? sanitizeText(data.person.authorityName) : null;
-    if (!authority) return { authenticated: false, authority: null };
+    if (!authority) return notReached();
     const p = data?.person?.profile;
     const displayName = sanitizeText([p?.firstName, p?.lastName].filter(Boolean).join(' '));
     return {
@@ -65,7 +85,7 @@ export async function checkIdentity(): Promise<WloIdentity> {
     };
   } catch (err) {
     log.warn('identity check failed', { error: err instanceof Error ? err.message : String(err) });
-    return { authenticated: false, authority: null };
+    return notReached();
   }
 }
 
@@ -111,12 +131,18 @@ export async function verifyConfiguredCredential(repositoryUrl: string = WLO_REP
   const id = await checkIdentity();
   if (id.authenticated) {
     log.info('repository credential verified', { configuredAs: cred.label, authority: id.authority });
+  } else if (id.unreachable) {
+    // Not a verdict on the password — sending the operator to fix one that is
+    // right is the cost of saying otherwise.
+    log.warn('repository credential could not be verified — the repository is unreachable at startup. ' +
+      'Check the repository, not the password; wlo_auth_status or GET /auth/status tells the two apart later.',
+    { configuredAs: cred.label });
   } else {
     log.warn(
       'repository credential is configured but NOT accepted — every upstream call will fail with 401 and the ' +
       'server can answer nothing at all, not even public content. Remove the credentials to run anonymously, ' +
       'or fix WLO_SERVICE_USER/WLO_SERVICE_PASSWORD. A "#" in an unquoted password truncates it silently.',
-      { configuredAs: cred.label, authority: id.authority ?? 'rejected or repository unreachable' },
+      { configuredAs: cred.label, authority: id.authority ?? 'rejected' },
     );
   }
   return { checked: true, ok: id.authenticated, authority: id.authority };

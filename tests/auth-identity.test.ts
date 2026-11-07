@@ -61,3 +61,67 @@ test('the identity probe asks the endpoint that actually reports the authority',
     assert.equal(seen, `${WLO_REPOSITORY_URL}/rest/iam/v1/people/-home-/-me-`);
   } finally { m.restore(); }
 });
+
+// ── refused vs. not reached (chatbot team feedback 2026-11-07, B2) ─────────
+// `authority: null` used to mean both. A chatbot then had to treat a changed
+// password like an outage (grace period) or an outage like a refused login
+// (everyone logged out on every repository blip). `unreachable` separates them.
+
+test('a refusal (401/403/404) is an ANSWER: not authenticated, but the repository was reached', async () => {
+  for (const status of [401, 403, 404]) {
+    const m = fetchMock(() => ({ status }));
+    try {
+      const id = await checkIdentity();
+      assert.equal(id.authenticated, false);
+      assert.equal(id.authority, null);
+      assert.equal(id.unreachable, undefined, `${status} is the repository saying no, not silence`);
+    } finally { m.restore(); }
+  }
+});
+
+test('an overloaded or failing repository (429/5xx) is NOT reached — no verdict on the login', async () => {
+  for (const status of [429, 500, 502, 503, 504]) {
+    const m = fetchMock(() => ({ status }));
+    try {
+      assert.equal((await checkIdentity()).unreachable, true, `${status}`);
+    } finally { m.restore(); }
+  }
+});
+
+test('a network failure and an unreadable 200 (proxy maintenance page) are NOT reached either', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+  try {
+    assert.equal((await checkIdentity()).unreachable, true, 'network failure');
+  } finally { globalThis.fetch = original; }
+  globalThis.fetch = (async () => new Response('<html>Wartung</html>', { status: 200, headers: { 'content-type': 'text/html' } })) as typeof fetch;
+  try {
+    assert.equal((await checkIdentity()).unreachable, true, 'HTML instead of JSON');
+  } finally { globalThis.fetch = original; }
+});
+
+test('a definite identity — guest or person — carries no unreachable mark', async () => {
+  for (const authorityName of ['esguest', 'maria']) {
+    const m = fetchMock(() => ({ json: { person: { authorityName } } }));
+    try {
+      assert.equal((await checkIdentity()).unreachable, undefined, authorityName);
+    } finally { m.restore(); }
+  }
+});
+
+test('a 200 that parses but names no authority is NOT reached either (finding 9)', async () => {
+  const m = fetchMock(() => ({ json: { somethingElse: true } }));
+  try {
+    assert.equal((await checkIdentity()).unreachable, true);
+  } finally { m.restore(); }
+});
+
+test('each unreachable answer is its own object — a caller writing into one cannot poison the next (finding 4)', async () => {
+  const m = fetchMock(() => ({ status: 503 }));
+  try {
+    const first = await checkIdentity();
+    (first as { authority: string | null }).authority = 'manipuliert';
+    const second = await checkIdentity();
+    assert.equal(second.authority, null);
+  } finally { m.restore(); }
+});

@@ -27,6 +27,7 @@ import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-autho
 import { log } from '../logger.js';
 import { isJsonContentType } from '../read-body.js';
 import { sanitizeText } from '../text-sanitize.js';
+import { sendLoginFailure } from './login-failure.js';
 import { send, readJsonBody, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
 import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
 
@@ -190,10 +191,7 @@ export async function grantConsent(
       Date.now(),
       isWidgetRedirect(checked.request.redirectUri, deps.widgetOAuthOrigins) ? SESSION_BLOCK_TTL_S : undefined,
     );
-  if (!outcome.ok) {
-    return send(res, outcome.status, { error: outcome.error },
-      outcome.status === 429 ? { 'Retry-After': '600' } : {});
-  }
+  if (!outcome.ok) return sendLoginFailure(res, outcome, deps.authAbuseLimiter, deps.ip);
 
   const code = deps.codeStore.mint({
     clientId: checked.request.clientId,

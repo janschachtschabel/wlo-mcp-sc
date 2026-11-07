@@ -76,9 +76,16 @@ andere Anmeldung → `confirm_unknown`. Gebunden ist an die Argumente, nicht an 
 einem Neustart des Servers ist das Gedächtnis weg (`confirm_unknown` wie bisher).
 Endet ein Aufruf NACH der Einlösung mit einem Fehler, trägt er
 `error.requiresNewPreview: true` und kein `retryAfter`: derselbe Aufruf bekäme
-nur diese Antwort noch einmal — für einen neuen Versuch ohne `confirmToken`
-aufrufen und die neue Vorschau bestätigen. Bricht er nach der Einlösung ab, kommt
-`upstream_error` mit `outcomeOpen: true` (nachsehen), nie „nichts geschrieben“.
+nur diese Antwort noch einmal. **`requiresNewPreview` sagt nichts darüber, ob
+geschrieben wurde** — das sagt `outcomeOpen`, das jeder Fehler nach der
+Einlösung ausdrücklich trägt: `false` = dieser Aufruf hat nichts geschrieben
+(etwa `exists`, oder jedes Feld wurde abgelehnt) → ohne `confirmToken` neu
+aufrufen und die neue Vorschau bestätigen; `true` = es kann schon etwas
+geschrieben sein (`not_visible`, `unverified`, `upstream_busy` mitten in einem
+Vorgang, ein angelegter Datensatz mit `not_stored`) → **erst nachsehen**, sonst
+entsteht womöglich eine Dublette. Ohne eigenen Code heißt ein solcher Fehler
+`unverified`. Bricht er nach der Einlösung ab, kommt `upstream_error` mit
+`outcomeOpen: true` (nachsehen), nie „nichts geschrieben“.
 Die Plan-Werkzeuge haben dafür ihren eigenen Weg (`continuationToken`). Wiederholt
 wird die Antwort, wie sie war: Endete der erste Aufruf mit `timeout` und
 `outcomeOpen: true`, bleibt auch die Wiederholung offen — dann nachsehen (etwa
@@ -110,7 +117,9 @@ Anmeldung oder andere Angaben).
 | `not_found` / `not_a_collection` | Ziel fehlt bzw. ist keine Sammlung | — |
 | `not_checked` | Eine nötige Prüfung ließ sich nicht lesen; nichts geändert | später erneut |
 | `timeout` | Antwort kam nicht rechtzeitig. Bei Schreibwerkzeugen `outcomeOpen`: `false` = der Aufruf trug keinen Schlüssel, war also eine Vorschau (gefahrlos wiederholen); `true` = kann gewirkt haben (erst nachsehen). Bei Lese-Werkzeugen ohne `outcomeOpen` | je nach `outcomeOpen` |
-| `not_visible` / `unverified` | Angenommen, aber im Datensatz nicht zu sehen / nicht überprüfbar | nachsehen, nicht blind wiederholen |
+| `not_visible` / `unverified` | Angenommen, aber im Datensatz nicht zu sehen / nicht überprüfbar | nachsehen, nicht blind wiederholen — auch nicht über eine neue Vorschau |
+| `not_stored` | Rückgelesen: einzelne Felder sind nicht angekommen (abgelehnt, verworfen oder anders gespeichert); was ankam, steht im Text. `outcomeOpen: false`, wenn kein Feld ankam — außer bei `wlo_create_content`: dort ist der Datensatz angelegt, also immer `true` | bei `false` neue Vorschau (sie zeigt nur, was fehlt); bei `true` erst nachsehen |
+| `requiresNewPreview: true` | Nach der Einlösung: dieser Schlüssel ist verbraucht. **Keine** Aussage darüber, ob geschrieben wurde — die trifft `outcomeOpen` (immer dabei) | `outcomeOpen: false` → neue Vorschau; `true` → erst nachsehen |
 | `forbidden` | Das Repository verweigert den Zugriff (401/403) | — |
 | `upstream_busy` | edu-sharing ist ausgelastet (es antwortete 429 oder 503); `retryAfter` = sein `Retry-After` in Sekunden, sonst geschätzt 10. Auch als `missing`-Code der Bündel-Antworten, bei `get_collection_overview`, je Eintrag bei `find_content_by_url` und bei `wlo_health_check`. Nach einer Einlösung ohne `retryAfter`, mit `requiresNewPreview` | einmal nach `retryAfter` erneut, wenn es in die eigene Frist passt |
 | `upstream_error` | Das Repository hat einen Fehler gemeldet, oder ein Werkzeug ist unerwartet abgebrochen | — |
@@ -510,9 +519,9 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 | `POST /mcp` | Der MCP-Transport. Auch unter `/`. | ja |
 | `GET /health` | Lebenszeichen: der Prozess läuft. | ja |
 | `GET /ready` | Bereitschaft: ist edu-sharing erreichbar? 200 `{status: "ready", upstream: "ok", latencyMs, checkedAt}` oder 503 mit `upstream: "unreachable"` / `"slow"` (Probe über 5 s). Anfragen lösen höchstens alle 30 s eine Probe aus — kein Budget. | ja |
-| `GET /auth/status` | Anmeldestand in **einer** Anfrage, mit denselben Regeln wie `/mcp`: `{mode, authenticated, configuredAs?, authority, displayName?, credential, expiresAt?}` — derselbe Inhalt wie `wlo_auth_status`; `credential` = `none`/`basic`/`access-block`/`ticket`/`service`. Unbrauchbarer Bearer → 401 mit Anmelde-Aufforderung. Je Kopf 60 s zwischengespeichert — eine Antwort ohne `authority` (abgelehnt oder edu-sharing nicht erreichbar) nur 10 s. Am Protokoll-Budget und am Anmelde-Schutz; ein 429 ist dort `{error, code, retryAfter}` wie auf `/api`. Ohne CORS. `expiresAt` (ISO) nur für Ticket- und Widget-Blöcke: ab dann nimmt der Server den Block nicht mehr an (eine Ticket-Sitzung kann früher enden — deren Ende kennt der Server nicht). | **nein** |
+| `GET /auth/status` | Anmeldestand in **einer** Anfrage, mit denselben Regeln wie `/mcp`: `{mode, authenticated, configuredAs?, authority, displayName?, credential, upstream, expiresAt?}` — derselbe Inhalt wie `wlo_auth_status`; `credential` = `none`/`basic`/`access-block`/`ticket`/`service`; `upstream` = `ok` (edu-sharing hat geantwortet — `authenticated: false` heißt dann „abgelehnt“) oder `unreachable` (keine Aussage über die Anmeldung: Ausfall, 429/5xx, Zeitüberschreitung). Unbrauchbarer Bearer → 401 mit Anmelde-Aufforderung. Je Kopf 60 s zwischengespeichert — eine Antwort mit `upstream: "unreachable"` nur 10 s. Am Protokoll-Budget und am Anmelde-Schutz; ein 429 ist dort `{error, code, retryAfter}` wie auf `/api`. Ohne CORS. `expiresAt` (ISO) nur für Ticket- und Widget-Blöcke: ab dann nimmt der Server den Block nicht mehr an (eine Ticket-Sitzung kann früher enden — deren Ende kennt der Server nicht). | **nein** |
 | `/api/search` · `/api/collection` · `/api/compendium` · `/api/topic-page` · `/api/wikipedia` · `/api/skills` | REST-Fläche über denselben Diensten — für Widgets und Einbettungen. | ja |
-| `/auth` · `/auth/issue` · `/auth/revoke` | Zugangsblock holen und widerrufen. Das Passwort wird im Browser verschlüsselt. `POST /auth/revoke` nimmt den Block auch als `Authorization: Bearer` (ohne Rumpf) und widerruft genau ihn — zum Abmelden aus einem Backend; Antwort immer 200 `{revoked}`. | **nein** |
+| `/auth` · `/auth/issue` · `/auth/revoke` | Zugangsblock holen und widerrufen. Das Passwort wird im Browser verschlüsselt. `POST /auth/revoke` nimmt den Block auch als `Authorization: Bearer` (ohne Rumpf) und widerruft genau ihn — zum Abmelden aus einem Backend; Antwort immer 200 `{revoked}`. Ein 429 auf `/auth*` ist `{error, code, retryAfter}` wie auf `/api` (`rate_limited` oder `too_many_logins`, `Retry-After` = Restzeit des Fensters). Antwortet edu-sharing auf die Anmeldeprüfung nicht, kommt 503 `upstream_unreachable` (`retryAfter` 10) statt „Zugangsdaten nicht akzeptiert“ — auch auf `/auth/ticket`, `POST /oauth/authorize` und `/api/uploads`. | **nein** |
 | `POST /auth/ticket` | edu-sharing-Ticket gegen einen Zugangsblock tauschen — für eingebettete Widgets. Mit `TICKET_ALLOWED_ORIGINS` nur für eingetragene Herkünfte (andere 403). | ja *(exakte Ausnahme; mit Liste nur die eingetragenen)* |
 | `/oauth/authorize` · `/oauth/register` · `/oauth/token` | OAuth 2.1 mit offener Registrierung und PKCE-Pflicht. | gemischt |
 

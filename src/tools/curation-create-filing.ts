@@ -47,9 +47,14 @@ export function withFiling(
   const withLine = target && filing
     ? { ...result, content: [...result.content, { type: 'text' as const, text: filingLine(filing, target) }] }
     : result;
+  // The error part stays: a create whose fields did not all land is still an
+  // error (`not_stored`/`unverified`), and a code dropped here reached the
+  // chatbot as an error it could not branch on (finding 4, 2026-11-07).
+  const error = (result.structuredContent as { error?: unknown } | undefined)?.error;
   return {
     ...withLine,
     structuredContent: {
+      ...(error ? { error } : {}),
       nodeId: record.nodeId,
       title: record.title,
       ...(filing ? { collection: { nodeId: filing.nodeId, status: filing.status, ...(filing.code ? { code: filing.code } : {}) } } : {}),

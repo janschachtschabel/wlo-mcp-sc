@@ -33,6 +33,8 @@ import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { isJsonContentType, readBodyWithLimit } from '../read-body.js';
 import { parseRequestUrl } from '../request-url.js';
 import { sanitizeText } from '../text-sanitize.js';
+import { sendLoginFailure } from './login-failure.js';
+import { germanRetryMessage, refuseRateLimited } from './rate-limited.js';
 
 export interface AuthEndpointDeps {
   /** Client key for both limiters (already resolved through TRUST_PROXY). */
@@ -177,8 +179,9 @@ async function route(
   }
 
   if (deps.rateLimiter.check(deps.ip, Date.now())) {
-    res.writeHead(429, { ...JSON_HEADERS, 'Retry-After': '60' });
-    res.end(JSON.stringify({ error: 'Zu viele Anfragen. Bitte in einer Minute erneut versuchen.' }));
+    // The shared REST 429 (`code`, `retryAfter`, the rest of the window), with
+    // the German text the pages show a person.
+    refuseRateLimited(res, deps.rateLimiter, deps.ip, 'address', { shape: 'rest', message: germanRetryMessage });
     return true;
   }
 
@@ -234,13 +237,10 @@ async function route(
   if (parsed.pathname === '/auth/ticket') {
     const ticket = await readField(req, deps.maxBodyBytes, 'ticket');
     if (!ticket) return send(res, 400, { error: 'Es wurde kein Ticket übermittelt.' });
-    const outcome = await exchangeTicket(
-      ticket,
-      // The ticket budget, falling back to the password one — see the field.
-      { ip: deps.ip, authAbuseLimiter: deps.ticketAbuseLimiter ?? deps.authAbuseLimiter, support },
-      Date.now(),
-    );
-    if (!outcome.ok) return sendFailure(res, outcome);
+    // The ticket budget, falling back to the password one — see the field.
+    const ticketLimiter = deps.ticketAbuseLimiter ?? deps.authAbuseLimiter;
+    const outcome = await exchangeTicket(ticket, { ip: deps.ip, authAbuseLimiter: ticketLimiter, support }, Date.now());
+    if (!outcome.ok) return sendLoginFailure(res, outcome, ticketLimiter, deps.ip);
     return send(res, 200, {
       ok: true,
       block: outcome.block,
@@ -271,28 +271,19 @@ async function route(
   }
 
   // Both remaining paths check a password, so both share the failure shape —
-  // including the ten-minute `Retry-After`, which belongs to the distinct-login
-  // limiter's window and not to the per-request one above.
+  // including a `Retry-After` from the distinct-login limiter's ten-minute
+  // window, not from the per-request one above.
   const verifyDeps = { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support };
   const now = Date.now();
 
   if (parsed.pathname === '/auth/revoke-all') {
     const outcome = await revokeAllForBlock(token, verifyDeps, now);
-    if (!outcome.ok) return sendFailure(res, outcome);
+    if (!outcome.ok) return sendLoginFailure(res, outcome, deps.authAbuseLimiter, deps.ip);
     return send(res, 200, { revoked: outcome.revoked });
   }
 
   const outcome = await issueAccessBlock(token, verifyDeps, now);
-  if (!outcome.ok) return sendFailure(res, outcome);
+  if (!outcome.ok) return sendLoginFailure(res, outcome, deps.authAbuseLimiter, deps.ip);
   return send(res, 200, { ok: true, label: outcome.label });
 }
 
-/** The 400/429 answer both password-checking endpoints give. */
-function sendFailure(res: AuthRes, outcome: { status: 400 | 429; error: string }): true {
-  if (outcome.status === 429) {
-    res.writeHead(429, { ...JSON_HEADERS, 'Retry-After': '600' });
-    res.end(JSON.stringify({ error: outcome.error }));
-    return true;
-  }
-  return send(res, 400, { error: outcome.error });
-}

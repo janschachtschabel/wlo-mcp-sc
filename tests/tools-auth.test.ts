@@ -105,3 +105,40 @@ test('a name that sanitizes away is named as such, not shown as empty quotes', a
     assert.doesNotMatch(toolText(r), /„“/, 'an empty pair of quotes reads like a bug');
   } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
 });
+
+test('an unreachable repository is named as such — not as rejected credentials (B2)', async () => {
+  setServiceCredentialForTest({ header: 'Basic x', label: 'wlo-mcp', source: 'service' });
+  const mock = installFetchMock(() => ({ status: 503, json: {} }));
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({ name: 'wlo_auth_status', arguments: {} });
+    const sc = r.structuredContent as { authenticated: boolean; upstream: string };
+    assert.equal(sc.authenticated, false);
+    assert.equal(sc.upstream, 'unreachable');
+    assert.match(toolText(r), /nicht erreichbar/);
+    assert.doesNotMatch(toolText(r), /akzeptiert sie nicht/, 'an outage is not a verdict on the password');
+  } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
+});
+
+test('a refused credential (401) is named as refused, and upstream says the repository answered (B2)', async () => {
+  setServiceCredentialForTest({ header: 'Basic wrong', label: 'wlo-mcp', source: 'service' });
+  const mock = installFetchMock(() => ({ status: 401, json: {} }));
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({ name: 'wlo_auth_status', arguments: {} });
+    const sc = r.structuredContent as { upstream: string };
+    assert.equal(sc.upstream, 'ok');
+    assert.match(toolText(r), /akzeptiert sie nicht/);
+    assert.doesNotMatch(toolText(r), /nicht erreichbar/);
+  } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
+});
+
+test('the tool description tells the model that an unreachable repository is no verdict on the login (finding 2)', async () => {
+  const client = await connectedClient();
+  try {
+    const tool = (await client.listTools()).tools.find(t => t.name === 'wlo_auth_status');
+    assert.ok(tool);
+    assert.match(String(tool.description), /upstream/);
+    assert.match(String(tool.description), /unreachable/);
+  } finally { await client.close(); }
+});

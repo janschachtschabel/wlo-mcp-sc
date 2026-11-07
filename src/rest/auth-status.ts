@@ -14,10 +14,11 @@
  *   the credential upstream, so it is a guessing oracle like `/mcp`);
  * - the answer is held 60 s per presented header (only an HMAC), so a chatbot asking
  *   every turn costs the repository one identity check a minute per person —
- *   but an UNKNOWN one (no authority: the repository refused or could not be
- *   reached, which `checkIdentity` cannot tell apart) only 10 s, so a blip does
- *   not show a valid login as refused for a whole minute, while a wrong
- *   password asked every turn still reaches the repository only every 10 s.
+ *   a login and a refusal alike, both are answers — but one the repository
+ *   did NOT answer (`upstream: 'unreachable'`) only 10 s, so a blip does not
+ *   hold "nicht prüfbar" over a valid login for a whole minute. Until B2
+ *   (chatbot team feedback 2026-11-07) the two could not be told apart, and
+ *   every answer without an authority got the short hold.
  *
  * Under `/auth*`, so it carries no CORS header (`isCredentialSurface`).
  */
@@ -35,7 +36,7 @@ import { refuseRateLimited, refuseTooManyLogins } from './rate-limited.js';
 export const AUTH_STATUS_PATH = '/auth/status';
 /** How long one header's answer is reused. */
 export const AUTH_STATUS_CACHE_MS = 60_000;
-/** How long an answer WITHOUT an authority is reused (see the module comment). */
+/** How long an answer the repository did not give (`upstream: 'unreachable'`) is reused. */
 export const AUTH_STATUS_UNKNOWN_CACHE_MS = 10_000;
 const MAX_CACHED = 1000;
 
@@ -74,7 +75,7 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
 export async function handleAuthStatus(req: IncomingMessage, res: ServerResponse, deps: AuthStatusDeps): Promise<void> {
   const now = Date.now();
   if (deps.protocolBudget?.check(deps.bucket.key, now)) {
-    refuseRateLimited(res, deps.protocolBudget, deps.bucket.key, deps.bucket.kind, 'rest');
+    refuseRateLimited(res, deps.protocolBudget, deps.bucket.key, deps.bucket.kind, { shape: 'rest' });
     return;
   }
   const header = req.headers['authorization'];
@@ -97,7 +98,7 @@ export async function handleAuthStatus(req: IncomingMessage, res: ServerResponse
 
   const payload = await readAuthStatus(effective);
   if (cache.size >= MAX_CACHED) cache.clear();
-  cache.set(key, { until: now + (payload.authority ? AUTH_STATUS_CACHE_MS : AUTH_STATUS_UNKNOWN_CACHE_MS), payload });
+  cache.set(key, { until: now + (payload.upstream === 'unreachable' ? AUTH_STATUS_UNKNOWN_CACHE_MS : AUTH_STATUS_CACHE_MS), payload });
   send(res, 200, payload);
 }
 

@@ -204,7 +204,7 @@ MCP-Ressourcen: `search-results`, `topic-page`, `reading`, `browse`.
 | Adresse | Methode | Bemerkung |
 |---|---|---|
 | `<BASIS>/mcp` | `POST` | Der MCP-Endpunkt. **Das ist die Adresse, die man in einen Client einträgt.** |
-| `<BASIS>/auth/status` | `GET` | Anmeldestand in einer Anfrage, gleicher Inhalt wie `wlo_auth_status` plus `expiresAt` für Ticket- und Widget-Blöcke (12 h), Kopf wie bei `/mcp`; 60 s zwischengespeichert, eine Antwort ohne `authority` (abgelehnt oder nicht erreichbar) nur 10 s |
+| `<BASIS>/auth/status` | `GET` | Anmeldestand in einer Anfrage, gleicher Inhalt wie `wlo_auth_status` plus `expiresAt` für Ticket- und Widget-Blöcke (12 h), Kopf wie bei `/mcp`; `upstream` trennt „abgelehnt“ (`ok`: edu-sharing hat geantwortet und Nein gesagt) von „nicht prüfbar“ (`unreachable`: Ausfall, Überlast, Zeitüberschreitung); 60 s zwischengespeichert, eine Antwort mit `upstream: "unreachable"` nur 10 s |
 | `<BASIS>/ready` | `GET` | Ist edu-sharing erreichbar? 200 oder 503 (`unreachable`/`slow`); fragt edu-sharing höchstens alle 30 s |
 | `<BASIS>/` | `POST` | Derselbe Endpunkt — manche Clients hängen nichts an |
 
@@ -404,9 +404,13 @@ Fassung für das Modell.
   Parameter: `invalid_input`). Auf den Code verzweigen, nie auf den Text. Ist
   edu-sharing selbst ausgelastet, kommt `upstream_busy` mit `retryAfter`
   (Sekunden) — ein Versuch danach lohnt sich, ein `upstream_error` nicht. Trägt
-  der Fehler `requiresNewPreview: true`, war der Schlüssel schon eingelöst: dann
-  ohne `confirmToken` neu aufrufen, nicht denselben Aufruf wiederholen. Bei
-  `timeout` entscheidet `outcomeOpen`: `false` = der Aufruf war eine Vorschau,
+  der Fehler `requiresNewPreview: true`, war der Schlüssel schon eingelöst:
+  denselben Aufruf nicht wiederholen. Ob schon geschrieben wurde, sagt dann
+  allein `outcomeOpen`, das jeder solche Fehler trägt: `false` = nichts
+  geschrieben, ohne `confirmToken` neu vorlegen; `true` = kann gewirkt haben
+  (`not_visible`, `unverified`, ein angelegter Datensatz mit `not_stored`), erst
+  nachsehen — eine neue Vorschau mit Bestätigung kann sonst eine Dublette
+  anlegen. Bei `timeout` gilt dasselbe: `false` = der Aufruf war eine Vorschau,
   gefahrlos wiederholen; `true` = kann gewirkt haben, erst nachsehen. Die
   vollständige Codetabelle steht in
   [MCP-REFERENZ.md §2](MCP-REFERENZ.md#2-anmeldung-was-womit-geht).
@@ -428,8 +432,11 @@ Fensters, nicht pauschal 60 s. Auf `/mcp` ist der Rumpf ein JSON-RPC-Fehler mit
 `error.data = {code, retryAfter}`: `rate_limited` für das Anfrage-Budget,
 `too_many_logins` für den Schutz gegen das Raten von Anmeldungen (zu viele
 verschiedene Anmeldungen je Adresse bzw. je Zugangsblock in 10 Minuten). Auf
-`/api/*` und `/auth/status` ist er `{error, code, retryAfter}` mit denselben
-Codes.
+`/api/*`, `/auth/status` und den übrigen `/auth*`-Endpunkten (`/auth/issue`,
+`/auth/revoke`, `/auth/revoke-all`, `/auth/ticket`) sowie auf `/oauth/*` ist er
+`{error, code, retryAfter}` mit denselben Codes; dort ist `error` ein
+deutscher Satz für Menschen. `/api/uploads` behält `error` als Code-Zeichenkette
+(sein bisheriger Vertrag) und trägt `code` und `retryAfter` zusätzlich.
 `X-WLO-Client-Key` schickt nur ein Backend: im Browser wäre der Schlüssel
 öffentlich, und CORS lässt den Kopf bewusst nicht zu. Ein zustandsloser Server beantwortet
 `tools/call` auch als ersten POST ohne `initialize` — ein Werkzeugaufruf braucht
@@ -514,6 +521,7 @@ Damit niemand darauf plant:
 | Kurationswerkzeug verweigert | Keine schreibberechtigte Anmeldung (`login_required`) — die Antwort trägt die Aufforderung zum Login |
 | `login_rejected` | Das Repository hat die vorhandene Anmeldung abgelehnt, meist nach einem Passwortwechsel → neu anmelden |
 | `confirm_expired` / `plan_expired` | Schlüssel älter als 10 bzw. 30 Minuten → ohne Schlüssel neu aufrufen, neue Vorschau |
-| `429 too_many_logins` auf `/api/uploads` | Mehr verschiedene Anmeldungen von einer Adresse als `AUTH_CREDENTIAL_LIMIT` erlaubt → Zugangsblöcke statt `Basic` nutzen |
+| `429 too_many_logins` auf `/api/uploads` | Mehr verschiedene Anmeldungen von einer Adresse als `AUTH_CREDENTIAL_LIMIT` erlaubt → Zugangsblöcke statt `Basic` nutzen; `Retry-After`/`retryAfter` = Restzeit des Fensters |
+| `503 upstream_unreachable` auf `/api/uploads`, `/auth/issue`, `/auth/revoke-all`, `/auth/ticket`, `POST /oauth/authorize` | edu-sharing hat die Anmeldeprüfung nicht beantwortet — **kein** Urteil über die Anmeldung. Nicht neu anmelden lassen, sondern einmal nach `retryAfter` (10 s) erneut versuchen |
 | Suche liefert nichts trotz Lizenzfilter | Auf den Hinweis achten: mit ihm gibt es nichts *mit genau dieser Lizenz*, ohne ihn nichts zum Thema. Steht die Lizenz in `unresolvedFilters`, wurde sie nicht erkannt |
 | Das Modell ruft keine Werkzeuge auf | In ChatGPT muss der Connector pro Unterhaltung einmal bestätigt werden — einmal nach WLO fragen und die Karte bestätigen |

@@ -39,6 +39,7 @@ import {
   previewReply,
   confirmOrExplain,
   reportOutcome,
+  markWritten,
   unverifiedReply,
   desiredFromChangeSet,
   errorText,
@@ -144,7 +145,9 @@ function existsReply(existing: { nodeId: string; title: string }): WloToolResult
   return codedError('exists',
     `Es gibt bereits einen Datensatz für diese URL: „${sanitizeText(existing.title)}“ ` +
       `(${existing.nodeId}). Es wurde nichts angelegt — bitte diesen bearbeiten statt einen zweiten anzulegen.`,
-    { existing: { nodeId: existing.nodeId, title: existing.title } });
+    // Known: the create was not sent. Said explicitly because after a redemption
+    // every error without it reads as an open outcome (finding 4).
+    { existing: { nodeId: existing.nodeId, title: existing.title }, outcomeOpen: false });
 }
 
 export function registerCurationContentTools(server: McpServer, challenge: WriteAuthChallenge): void {
@@ -401,7 +404,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         let report;
         try {
           const verified = await verifyWrite(stored);
-          report = prependText(reportOutcome(stored, result.statuses, verified), head);
+          report = prependText(markWritten(reportOutcome(stored, result.statuses, verified)), head);
         } catch (err) {
           report = prependText(unverifiedReply(err), head);
         }

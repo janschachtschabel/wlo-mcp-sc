@@ -24,7 +24,18 @@ const REPLAYED_NOTICE = 'Dieser Bestätigungsschlüssel wurde schon eingelöst �
 const REPLAYED_PREPARED_NOTICE = 'Dieser Bestätigungsschlüssel wurde schon eingelöst — hier dieselbe vorbereitete '
   + 'Anfrage wie beim ersten Mal. Sie nur ausführen, wenn sie noch nicht ausgeführt wurde.';
 const KEY_SPENT = 'Der Bestätigungsschlüssel ist damit verbraucht — derselbe Aufruf bekäme nur diese Antwort noch '
-  + 'einmal. Für einen neuen Versuch den Aufruf ohne confirmToken senden und die neue Vorschau bestätigen.';
+  + 'einmal.';
+/**
+ * `outcomeOpen: true`: a new preview over a write that DID land is how a
+ * duplicate is made (chatbot feedback, finding 4). It says "may", never "is
+ * open": the report above it often states exactly what landed, and a sentence
+ * calling that unknown contradicts it (review 2026-11-07).
+ */
+const LOOK_FIRST = 'Es kann bereits etwas geschrieben sein — vor einem neuen Versuch in WLO nachsehen, was schon '
+  + 'angekommen ist, sonst entsteht womöglich eine Dublette. Erst danach den Aufruf ohne confirmToken senden und die '
+  + 'neue Vorschau bestätigen.';
+const NOTHING_WRITTEN = 'Es wurde nichts geschrieben. Für einen neuen Versuch den Aufruf ohne confirmToken senden '
+  + 'und die neue Vorschau bestätigen.';
 
 /** The first call's answer again, marked so a program and a person can tell. */
 function replayed(result: unknown): WloToolResult {
@@ -42,19 +53,32 @@ function replayed(result: unknown): WloToolResult {
 /**
  * An ERROR answered after the key was redeemed: the same call can only ever
  * replay it, so it must not invite one. `retryAfter` goes (it would say "send
- * this again in N s"), `requiresNewPreview` comes, and the text says how
- * (review 2026-11-07: a busy duplicate check after redemption was kept as
- * "upstream_busy, retry in 10 s" for half an hour). The code and an
- * `outcomeOpen` stay — they say what happened.
+ * this again in N s"), `requiresNewPreview` comes (review 2026-11-07: a busy
+ * duplicate check after redemption was kept as "upstream_busy, retry in 10 s"
+ * for half an hour).
+ *
+ * `requiresNewPreview` says only that THIS key is spent — never whether
+ * anything was written. That is `outcomeOpen`, and it is now on EVERY error
+ * after redemption (chatbot feedback 2026-11-07, finding 4): a client that read
+ * `requiresNewPreview` as "nothing happened" previewed again over a
+ * `not_visible`/`unverified` write and created a duplicate. `true` unless the
+ * handler said `false` itself — past redemption the write may have run, and
+ * only the code that knows it did not may say so. An error with no code at
+ * all gets `unverified`, so a program never meets an error it cannot branch on.
  */
 function keySpent(result: WloToolResult): WloToolResult {
   const sc = (result.structuredContent ?? {}) as Record<string, unknown>;
   const { retryAfter: _dropped, ...error } = (sc['error'] ?? {}) as Record<string, unknown>;
   void _dropped;
+  const outcomeOpen = error['outcomeOpen'] !== false;
   return {
     ...result,
-    content: [...(result.content ?? []), { type: 'text' as const, text: KEY_SPENT }],
-    structuredContent: { ...sc, error: { ...error, requiresNewPreview: true } },
+    content: [...(result.content ?? []),
+      { type: 'text' as const, text: `${KEY_SPENT} ${outcomeOpen ? LOOK_FIRST : NOTHING_WRITTEN}` }],
+    structuredContent: {
+      ...sc,
+      error: { code: 'unverified', ...error, outcomeOpen, requiresNewPreview: true },
+    },
   };
 }
 

@@ -681,3 +681,97 @@ test('revocation is authenticated by the access id, and the id never leaks', asy
   assert.equal(revoked.json()?.['revoked'], true);
   assert.equal(registry.has('id-geheim'), false);
 });
+
+// ── 429 shape (chatbot team feedback 2026-11-07, B1) ───────────────────────
+
+test('the address budget answers like every other REST 429: code, retryAfter, the REST of the window', async (t) => {
+  // Before: a fixed `Retry-After: 60` and a bare `{error}` — a client branching
+  // on `code` saw nothing here, unlike on /api and /auth/status.
+  await support(t);
+  // A 20 s window, so "the rest of the window" (20) cannot pass for the old fixed 60.
+  const limiter = createRateLimiter(1, 20_000);
+  const d = deps({ rateLimiter: limiter });
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), res(), d);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), r, d);
+  assert.equal(r.out.status, 429);
+  const body = r.json();
+  assert.equal(body?.code, 'rate_limited');
+  const wait = Number(r.headers['Retry-After']);
+  assert.equal(body?.retryAfter, wait, 'header and body agree');
+  assert.equal(wait, 20, 'the rest of the window, not a fixed 60');
+  assert.match(String(body?.error), /Zu viele Anfragen/, 'the pages show this text to a person — it stays German');
+});
+
+test('too many distinct logins on /auth/issue carry code too_many_logins and the rest of THAT window', async (t) => {
+  const { keys } = await support(t);
+  t.after(upstream('esguest'));
+  const abuse = createDistinctValueLimiter(1, 120_000); // 120, never the old fixed 600
+  const d = deps({ authAbuseLimiter: abuse });
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'g-1', 'a', 'p1')), res(), d);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'g-2', 'a', 'p2')), r, d);
+  assert.equal(r.out.status, 429);
+  const body = r.json();
+  assert.equal(body?.code, 'too_many_logins');
+  assert.equal(body?.retryAfter, Number(r.headers['Retry-After']));
+  assert.equal(Number(r.headers['Retry-After']), 120);
+  assert.match(String(body?.error), /Zu viele verschiedene Anmeldungen/);
+});
+
+// ── review of B1–B3: an outage is not a refusal (finding 1) ────────────────
+
+for (const path of ['/auth/issue', '/auth/revoke-all'] as const) {
+  test(`${path}: an unreachable repository answers 503 upstream_unreachable, never "Zugangsdaten nicht akzeptiert"`, async (t) => {
+    const { keys, registry } = await support(t);
+    t.after(upstream(null, 503));
+    const r = res();
+    await handleAuthEndpoint(post(path, block(keys, 'down-1')), r, deps());
+    assert.equal(r.out.status, 503);
+    const body = r.json();
+    assert.equal(body?.code, 'upstream_unreachable');
+    assert.equal(body?.retryAfter, Number(r.headers['Retry-After']));
+    assert.ok(Number(r.headers['Retry-After']) > 0);
+    assert.match(String(body?.error), /nicht erreichbar/);
+    assert.doesNotMatch(String(body?.error), /nicht akzeptiert/);
+    assert.equal(registry.has('down-1'), false, 'nothing is granted on an unanswered check');
+  });
+}
+
+test('/auth/ticket: an unreachable repository is 503, not "ticket refused" — a widget must not drop a valid ticket', async (t) => {
+  await support(t);
+  t.after(upstream(null, 502));
+  const r = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}dd`), r, deps());
+  assert.equal(r.out.status, 503);
+  assert.equal(r.json()?.code, 'upstream_unreachable');
+});
+
+test('a refusal stays a 400 — the outage branch must not swallow it', async (t) => {
+  await support(t);
+  t.after(upstream(null, 401));
+  const r = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}ee`), r, deps());
+  assert.equal(r.out.status, 400);
+});
+
+test('the address-budget text uses the singular for one second (finding 7)', async (t) => {
+  await support(t);
+  const d = deps({ rateLimiter: createRateLimiter(1, 1_000) });
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), res(), d);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), r, d);
+  assert.equal(r.out.status, 429);
+  assert.match(String(r.json()?.error), /in einer Sekunde/);
+});
+
+test('the ticket path’s 429 waits out the TICKET limiter’s window, not the password one (finding 9)', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({ ticketAbuseLimiter: createDistinctValueLimiter(1, 90_000), authAbuseLimiter: createDistinctValueLimiter(3, 600_000) });
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), res(), d);
+  const r = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), r, d);
+  assert.equal(r.out.status, 429);
+  assert.equal(r.headers['Retry-After'], '90');
+});
