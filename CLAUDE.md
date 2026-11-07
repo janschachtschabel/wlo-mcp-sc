@@ -1433,8 +1433,9 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 
 - Build: `npm run build` (tsc → `dist/`)
 - Test: `npm test` (→ `scripts/run-tests.mjs`, which expands the file list itself
-  — Node 20 takes a `--test "tests/*.test.ts"` glob literally and runs nothing,
-  and 20 is what `engines` and the Docker image ship). Single file:
+  — written when Node 20 shipped, which takes a `--test "tests/*.test.ts"` glob
+  literally and runs nothing; `engines`, the Docker image and both CI pipelines
+  are Node 22 now). Single file:
   `node --import tsx --test tests/reranker.test.ts`. `npm test` additionally
   loads `tests/netguard.mjs`, which fails any unmocked non-loopback fetch, so a
   test that forgets `installFetchMock` is caught instead of silently going

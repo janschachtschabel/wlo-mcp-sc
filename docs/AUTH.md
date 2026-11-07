@@ -414,6 +414,13 @@ is not the address for every scheme** (`abuseBucketKey`, `auth/credential.ts`):
 | `Basic` | the client address | the guesser has no identity to bound, and this is the scheme that carries a guessable secret |
 | `wlo2.` block | its **`jti`** | under a valid access id there is exactly ONE correct password, so rotating them is guessing wherever it comes from |
 
+`POST /api/uploads` (batch filing, only with `WLO_BATCH_UPLOAD_ENABLED`) proves
+the login against the repository too and uses **the same bucket** — since
+2026-11-07. Until then it keyed every scheme by address and repeated the relay
+defect below on the one route a chatbot backend calls once per file.
+`proveLogin` takes the bucket from that caller only: issuance sees freshly
+minted ids and must stay per address.
+
 Keying a block by address was wrong in both directions, and each half was
 measured (2026-08-12, `docs/plans/2026-08-12-relay-credential-limiter.md`).
 

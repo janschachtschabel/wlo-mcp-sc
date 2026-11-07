@@ -11,7 +11,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 [AUTH.md](AUTH.md) (Anmeldung im Detail), [SKILLS.md](SKILLS.md) (Redaktion),
 [DEPLOYMENT.md](DEPLOYMENT.md) (Betrieb), [PRIVACY.md](PRIVACY.md).
 
-> Alle Angaben sind am 2026-08-09 gegen den Quelltext geprüft. Die
+> Alle Angaben sind am 2026-11-07 gegen den Quelltext geprüft. Die
 > Werkzeugliste stammt aus einem tatsächlich gestarteten Server, nicht aus einer
 > Aufzählung von Hand.
 
@@ -22,7 +22,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 42 — 28 lesend, 14 kuratierend (schreibend) |
+| **Werkzeuge** | 48 — 32 lesend, 16 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 52 (vier für die Stapel-Ablage) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -43,28 +43,30 @@ trägt dann die Aufforderung, mit der der Client die Anmeldung startet.
 auf — also fordert nichts jemals eine Anmeldung an, und ein Connector bleibt für
 immer anonym.
 
-### 1.1 Lesen — 28 Werkzeuge (`noauth`)
+### 1.1 Lesen — 32 Werkzeuge (`noauth`)
 
-**Suchen (5)**
+**Suchen (6)**
 
 | Werkzeug | Zweck |
 |---|---|
 | `search_wlo_all` | **Der Standard-Einstieg.** Materialien + Sammlungen + Themenseiten in einem Aufruf |
 | `search_wlo_content` | Nur einzelne Materialien |
 | `search_wlo_collections` | Nur Sammlungen und Themenseiten |
-| `search_wlo_within_collection` | Innerhalb *einer* Sammlung (lokal über bis zu 100 direkte Kinder) |
+| `search_wlo_within_collection` | Innerhalb *einer* Sammlung (lokal über bis zu 100 direkte Kinder); `excludeNodeIds` lässt Gesehenes weg |
 | `search_wlo_topic_pages` | Themenseiten samt Varianten und URLs |
+| `count_wlo_content_matches` | Trefferzahlen für bis zu 30 Anfragen zugleich (+ bis zu 3 Treffer je Anfrage), etwa für eine Lehrplan-Abdeckung |
 
-**Einzelne Datensätze (6)**
+**Einzelne Datensätze (7)**
 
 | Werkzeug | Zweck |
 |---|---|
-| `get_node_details` | Metadaten eines Materials |
+| `get_node_details` | Metadaten eines Materials; mit `nodeIds` (1–50) immer als Liste `{results, missing}` |
 | `get_nodes_details` | Dasselbe für mehrere IDs in einem Aufruf |
 | `get_node_breadcrumb` | Der Pfad eines Knotens von der Wurzel |
 | `get_node_collections` | In welchen Sammlungen ein Material liegt |
 | `get_related_content` | Inhaltlich verwandtes Material |
 | `get_collection_stats` | Kennzahlen einer Sammlung |
+| `find_content_by_url` | Gibt es zu diesen Adressen (≤ 20) schon einen Datensatz? `exact` oder `normalized` |
 
 **Volltext & Wissen (4)**
 
@@ -75,21 +77,23 @@ immer anonym.
 | `get_wikipedia_summary` | Wikipedia-Anriss oder Volltext (Ergänzung, kein OER) |
 | `get_url_text` ⚠️ | Text hinter einer **beliebigen** Web-Adresse. Als **unsicher** deklariert, im Docker-Deployment ab Werk aus |
 
-**Struktur & Navigation (4)**
+**Struktur & Navigation (5)**
 
 | Werkzeug | Zweck |
 |---|---|
 | `get_collection_contents` | Inhalte einer Sammlung |
-| `browse_collection_tree` | Sammlungsbaum als Textbaum |
+| `browse_collection_tree` | Sammlungsbaum als Textbaum, bis Tiefe 3 |
+| `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium-Gliederung, Statistik, freigegebene Skills, Untersammlungen, erste Inhalte |
 | `get_subject_portals` | Die Fachportale (oberste Ebene) |
 | `get_topic_page_content` | Eine Themenseite als Schwimmlinien, fertig zum Rendern |
 
-**Vokabular (2)**
+**Vokabular (3)**
 
 | Werkzeug | Zweck |
 |---|---|
 | `lookup_wlo_vocabulary` | Fächer, Bildungsstufen, Ressourcentypen, Zielgruppen, Lizenzen, Qualitätsbewertungen |
 | `lookup_wlo_publishers` | Anbieter mit Trefferzahlen |
+| `resolve_wlo_filters` | Alle Filter-Bezeichnungen eines Vorhabens in **einem** Aufruf → gespeicherter Wert, je Wert `exact`/`alias`/`fuzzy`; Lizenzen nur exakt |
 
 **Skills (3)**
 
@@ -97,18 +101,18 @@ immer anonym.
 |---|---|
 | `search_skill` | Redaktionell gepflegte Anleitungen finden — im ganzen Repository |
 | `get_skill` | Eine Anleitung im Wortlaut holen |
-| `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat |
+| `get_skill_registry` | Die Skills nennen, die EINE Inhaltssammlung freigegeben hat; mit `task` gleich den passenden samt Anleitung — nur bei eindeutiger Wahl, sonst `ambiguous` mit Kandidaten |
 
 > Die beiden Richtungen unterscheiden sich in der Frage: `search_skill` sucht
 > Skills unabhängig von einer Sammlung, `get_skill_registry` beantwortet, was
 > für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
 >
 > `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **nur die Suche** durch
-> `get_skill_for_task` (die Zahl bleibt bei 42). `get_skill` und
+> `get_skill_for_task` (die Zahl bleibt bei 48). `get_skill` und
 > `get_skill_registry` bleiben — die Freigabeliste besteht aus nodeIds, und
 > `get_skill` ist das einzige Werkzeug, das eine annimmt.
 >
-> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 41), wenn
+> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 47), wenn
 > Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.
 >
 > **Der Katalog kommt bei Sammlungs-Ergebnissen mit — ohne Zusatzabruf.** Ein
@@ -146,11 +150,12 @@ immer anonym.
 | `wlo_health_check` | Erreichbarkeit des Repositorys |
 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf |
 
-### 1.2 Kuratieren — 14 Werkzeuge (`oauth2`)
+### 1.2 Kuratieren — 16 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
 
 Alle verlangen eine Anmeldung, alle laufen **zweistufig**: erst Vorschau mit
 Änderungsmenge und Einmal-Token, dann Bestätigung. Jeder Schreibvorgang wird
-danach **zurückgelesen**.
+danach **zurückgelesen**. Wie Vorschau, Pläne und Fehler maschinenlesbar
+aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 
 | Werkzeug | Zweck |
 |---|---|
@@ -163,6 +168,8 @@ danach **zurückgelesen**.
 | `wlo_delete_collection` | Sammlung löschen |
 | `wlo_add_to_collection` | Material in eine Sammlung legen |
 | `wlo_remove_from_collection` | Material aus einer Sammlung nehmen |
+| `wlo_create_collection_tree` | Einen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4) mit **einer** Bestätigung anlegen |
+| `wlo_add_to_collections` | Bis zu 200 Materialien mit **einer** Bestätigung in Sammlungen aufnehmen |
 | `wlo_update_compendium` | Kompendialtext schreiben |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert |
 | `wlo_suggest_metadata` | Metadaten *vorschlagen* statt ändern |
@@ -171,6 +178,17 @@ danach **zurückgelesen**.
 
 > **Für Chatbots wichtig:** `wlo_set_topic_page` ist das einzige Werkzeug, dessen
 > Ergebnis **sofort öffentlich** sichtbar ist.
+
+**Stapel-Ablage (4)** — nur mit `WLO_BATCH_UPLOAD_ENABLED`, nur mit der
+*eigenen* Anmeldung (das Dienstkonto wird abgewiesen), Ziel ist der persönliche
+Bereich. Die Bytes kommen vorher über [`POST /api/uploads`](#26-upload-für-die-stapel-ablage).
+
+| Werkzeug | Zweck |
+|---|---|
+| `wlo_prepare_file_batch` | Vorschau aller Einträge und **ein** Freigabe-Schlüssel (`batchToken`, 30 min) für genau diese Liste. Legt nichts an |
+| `wlo_store_batch_file` | Eine Datei des Stapels ablegen; jeder Index einmal, Prüfsumme und Art müssen passen |
+| `wlo_store_batch_manifest` | `vorgang.json` zum Stapel, vom Server aus der Freigabe gebaut — erst nach einer abgelegten Datei |
+| `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen, neueste zuerst; mit `nodeId` eine samt Einträgen |
 
 ### 1.3 Widgets (4)
 
@@ -269,6 +287,23 @@ Für Clients mit einem Header-Feld: einmal `/auth` besuchen, den Block als
 > **`/auth*` und `/oauth/authorize` senden bewusst keinen CORS-Header** — dort
 > wird ein Passwort getippt.
 
+### 2.6 Upload für die Stapel-Ablage
+
+Nur mit `WLO_BATCH_UPLOAD_ENABLED`; sonst gibt es die Adresse nicht.
+
+| Adresse | Methode | Was |
+|---|---|---|
+| `<BASIS>/api/uploads` | `POST` | Eine Datei in einen Upload-Platz: rohe Bytes als `application/octet-stream`, Dateiname URL-kodiert in `X-Upload-Name`, derselbe `Authorization`-Header wie bei MCP → `201 {ref, sha256, size, mimeType, ext}` |
+
+> Server-zu-Server, kein CORS. Nur eine Anmeldung, die das Repository als Person
+> bestätigt; die Bytes liegen ausschließlich im Arbeitsspeicher, 30 Minuten,
+> einmal abholbar. Antworten außer 201: `403` (keine bestätigte Anmeldung),
+> `413` (zu groß), `415` (Art unbekannt — die Art bestimmt der Server aus den
+> Bytes; HTML, SVG, XML, UTF-16 und ausführbare Dateien werden abgelehnt), `408`
+> (zu langsam), `429` (`too_many_logins` oder zu viele offene Plätze). Der
+> Anmelde-Deckel zählt bei einem Zugangsblock je Block, bei `Basic` je Adresse —
+> ein Chatbot-Backend ist eine Adresse für alle seine Nutzerinnen.
+
 ---
 
 ## 3. Verhalten, das die Integration betrifft
@@ -299,10 +334,16 @@ nachnutzbar.
    Ergebnis lässt sich deshalb unterscheiden: *mit* diesem Hinweis heißt es
    „nichts mit genau dieser Lizenz", *ohne* ihn hat die Suche selbst nichts
    gefunden.
-3. **`OER` wird als fünf getrennte Suchen beantwortet.** Ab Seite 2 ist das
-   Ergebnis deshalb keine Fortsetzung, sondern die zweite Seite *jeder* der fünf
+3. **`OER` wird als vier getrennte Suchen beantwortet.** Ab Seite 2 ist das
+   Ergebnis deshalb keine Fortsetzung, sondern die zweite Seite *jeder* der vier
    Lizenzen. Zum verlässlichen Weiterblättern die gesehenen IDs über
    `excludeNodeIds` mitgeben — der Server weist darauf hin.
+4. **Eine unbekannte Lizenz leert die Materialien** (seit 2026-11-07). Sie wird
+   nicht ignoriert wie andere unbekannte Filter: ungefiltert käme Material unter
+   anderer Lizenz zurück, etwa CC BY-NC-ND auf die Frage nach CC BY. Die
+   Antwort hat dann 0 Materialien, keine Facetten und Vorschläge in
+   `unresolvedFilters`. Sammlungen und Themenseiten filtert die Lizenz ohnehin
+   nicht.
 
 Über REST kommen dieselben Angaben als Felder:
 
@@ -315,12 +356,13 @@ nachnutzbar.
 
 | Feld | Wo | Bedeutung |
 |---|---|---|
-| `unresolvedFilters` | `/api/search`, Werkzeuge | Ein Vokabular-Filter ließ sich nicht auflösen und wurde **ignoriert** (mit „Meintest du?"-Vorschlägen) |
+| `unresolvedFilters` | `/api/search`, Werkzeuge (auch in `structuredContent`) | Ein Vokabular-Filter ließ sich nicht auflösen und wurde **ignoriert** (mit „Meintest du?"-Vorschlägen) — eine Lizenz dagegen leert die Materialien, siehe 3.2 |
 | `truncated` + `collectionTotal` | `/api/collection` (gefiltert) | Die Antwort ist eine **Stichprobe** von höchstens 100 Kindern |
 | `total` vs. `count` | überall | `total` = Korpus, `count` = zurückgegebene Treffer |
 
 Ein nicht aufgelöster Filter wird **verworfen**, nicht roh weitergereicht — sonst
-verengte ein Tippfehler das Ergebnis lautlos.
+verengte ein Tippfehler das Ergebnis lautlos. Wer Filter vorab prüfen will:
+`resolve_wlo_filters` löst alle eines Vorhabens in einem Aufruf auf.
 
 ### 3.4 Schreiben ist immer zweistufig
 
@@ -333,6 +375,31 @@ der Aufruf senden wird, muss in der Vorschau gestanden haben.**
 Ein Abbruch (Timeout) wird als **offener Ausgang** gemeldet, nie als Fehlschlag —
 der Abbruch trifft die Antwort, nicht die Arbeit.
 
+**Für Programme.** Verbindlich ist `structuredContent`; der Text ist eine
+Fassung für das Modell.
+
+- **Vorschau:** `structuredContent.confirm` mit `token`, `expiresAt`
+  (10 Minuten), `preview.action`, `preview.tool`, `preview.target`,
+  `preview.fields[]` (`name`, `label`, `old`, `new`, bei Vokabularen auch
+  `oldLabels`/`newLabels`) und bei mehreren Schritten `preview.items[]`. Nichts
+  zu ändern: `{"confirm": null, "unchanged": true}`.
+- **Pläne** (`wlo_create_collection_tree`, `wlo_add_to_collections`): eine
+  Bestätigung für alles; der Server arbeitet in Abschnitten von ~40 s. Die
+  Antwort trägt `complete`, `progress {done, total}`, die Schritte (`nodes` bzw.
+  `pairs`, je `status`/`code`/`nodeId`) und, solange etwas offen ist,
+  `continuationToken`. Mit denselben Angaben und diesem Schlüssel weiter
+  aufrufen, bis `complete: true`. Ein Plan gilt 30 Minuten ab Bestätigung;
+  derselbe Schlüssel ist sicher wiederholbar, es wird nie doppelt angelegt.
+  Höchstens fünf unfertige Pläne je Anmeldung — der sechste bekommt
+  `too_many_plans`, bevor sein Schlüssel eingelöst wird.
+- **Fehler:** Jede Antwort mit `isError` trägt `structuredContent.error =
+  {code, message}`, auch Fehler, die das SDK vor dem Werkzeug erzeugt (falsche
+  Parameter: `invalid_input`). Auf den Code verzweigen, nie auf den Text. Bei
+  `timeout` entscheidet `outcomeOpen`: `false` = der Aufruf war eine Vorschau,
+  gefahrlos wiederholen; `true` = kann gewirkt haben, erst nachsehen. Die
+  vollständige Codetabelle steht in
+  [MCP-REFERENZ.md §2](MCP-REFERENZ.md#2-anmeldung-was-womit-geht).
+
 ### 3.5 Grenzen
 
 | | Standard | Variable |
@@ -340,6 +407,9 @@ der Abbruch trifft die Antwort, nicht die Arbeit.
 | MCP-Endpunkt | 120 Anfragen/Minute je Adresse | `RATE_LIMIT_RPM` |
 | `/api/*` und die Anmeldeseiten | 30 Anfragen/Minute je Adresse | `API_RATE_LIMIT_RPM` |
 | Anfrage-Rumpf | 4 MiB | `MAX_BODY_BYTES` |
+| Eine Datei auf `/api/uploads` | 50 MB (höchstens 100 MB) | `UPLOAD_MAX_BYTES` |
+| Alle offenen Upload-Plätze zusammen | 128 MB, 20 je Anmeldung | `UPLOAD_MAX_TOTAL_BYTES` |
+| Zeit für einen Upload-Rumpf | 25 s (höchstens 28 s) | `UPLOAD_REQUEST_TIMEOUT_MS` |
 
 ### 3.6 Wer was darf
 
@@ -351,6 +421,8 @@ der Abbruch trifft die Antwort, nicht die Arbeit.
 
 Das Dienstkonto ist standardmäßig gesperrt: In der Repository-Historie steht der
 Kontoname, nicht die Person — eine Änderung darunter ist niemandem zuzuordnen.
+Die Stapel-Ablage nimmt es auch dann nicht an: sie legt in den persönlichen
+Bereich, und den hat nur ein eigenes Konto.
 
 ---
 
@@ -415,6 +487,9 @@ Damit niemand darauf plant:
 | `405` auf `/mcp` | `GET` statt `POST` |
 | `404` auf `/.well-known/oauth-*` | OAuth ist nicht eingerichtet (`WLO_AUTH_PRIVATE_KEY` fehlt) oder `WLO_PUBLIC_BASE_URL` ist nicht gesetzt |
 | `401` mit `WWW-Authenticate` | Ein Token wurde vorgelegt und ist unbrauchbar (abgelaufen, gesperrt, fremd). **Ohne** Header gäbe es `200` |
-| Kurationswerkzeug verweigert | Keine schreibberechtigte Anmeldung — die Antwort trägt die Aufforderung zum Login |
-| Suche liefert nichts trotz Lizenzfilter | Auf den Hinweis achten: mit ihm gibt es nichts *mit genau dieser Lizenz*, ohne ihn nichts zum Thema |
+| Kurationswerkzeug verweigert | Keine schreibberechtigte Anmeldung (`login_required`) — die Antwort trägt die Aufforderung zum Login |
+| `login_rejected` | Das Repository hat die vorhandene Anmeldung abgelehnt, meist nach einem Passwortwechsel → neu anmelden |
+| `confirm_expired` / `plan_expired` | Schlüssel älter als 10 bzw. 30 Minuten → ohne Schlüssel neu aufrufen, neue Vorschau |
+| `429 too_many_logins` auf `/api/uploads` | Mehr verschiedene Anmeldungen von einer Adresse als `AUTH_CREDENTIAL_LIMIT` erlaubt → Zugangsblöcke statt `Basic` nutzen |
+| Suche liefert nichts trotz Lizenzfilter | Auf den Hinweis achten: mit ihm gibt es nichts *mit genau dieser Lizenz*, ohne ihn nichts zum Thema. Steht die Lizenz in `unresolvedFilters`, wurde sie nicht erkannt |
 | Das Modell ruft keine Werkzeuge auf | In ChatGPT muss der Connector pro Unterhaltung einmal bestätigt werden — einmal nach WLO fragen und die Karte bestätigen |

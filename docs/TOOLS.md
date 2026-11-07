@@ -526,7 +526,7 @@ Anmeldung auf. Ohne schreibberechtigte Anmeldung lehnt jedes beim Aufruf ab
 (`_meta["mcp/www_authenticate"]`). Die vier Stapel-Werkzeuge erscheinen nur mit
 `WLO_BATCH_UPLOAD_ENABLED`.
 
-Drei Regeln gelten für **jedes** davon:
+Vier Regeln gelten für **jedes** davon:
 
 1. **Zwei Schritte, immer.** Der erste Aufruf ändert nichts, sondern zeigt eine
    Vorschau und gibt ein einmal verwendbares Bestätigungs-Token zurück. Erst der
@@ -550,6 +550,13 @@ Drei Regeln gelten für **jedes** davon:
    harmlosen Aufräumen Datenverlust machen würde. In Ergebnislisten steht die
    Unterscheidung als `nodeId: … (Verknüpfung; Original: …)` bzw. als Feld
    `originalId`.
+
+Für ein Programm stehen Vorschau und Ergebnis zusätzlich in `structuredContent`:
+die Bestätigung als `confirm`, jede Ablehnung als `error = {code, message}`
+(Codetabelle in [MCP-REFERENZ.md](MCP-REFERENZ.md) §2). Die beiden Plan-Werkzeuge
+(`wlo_create_collection_tree`, `wlo_add_to_collections`) laufen mit **einer**
+Bestätigung in Abschnitten und geben bis zum Ende einen `continuationToken`
+zurück.
 
 ### Inhalte pflegen
 | Tool | Funktion | Bester Chat-Trigger |

@@ -6,6 +6,24 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs — README and docs brought up to date (2026-11-07)
+
+- `docs/INTEGRATION.md`: the ten tools since 2026-11-06 (it promised "all 48" and listed 38), counts
+  (32 read, 16 + 4 curation), `POST /api/uploads` (§2.6), the licence rule, `structuredContent.confirm`,
+  plans and error codes (§3.4), upload limits, new troubleshooting rows; the OER bundle is four searches,
+  not five. `tests/docs-claims.test.ts` now checks this document's own count spellings.
+- `docs/ARCHITECTURE.md`: in-memory write state and the one-instance rule, the error net in
+  `apps/tool-defaults.ts`, the new services, plans, batch filing, preview timeouts; file and test counts;
+  the Node 20 sentence (also in `CLAUDE.md`).
+- `docs/DEPLOYMENT.md`: `WLO_BATCH_UPLOAD_ENABLED`, `UPLOAD_*`, `AUTH_CREDENTIAL_LIMIT`, and the nginx
+  body limit — its 1 MB default refuses uploads and large MCP bodies before they reach the container.
+- `docs/PRIVACY.md`: uploaded files, batch approvals, plans, upload-login cache and key tombstones, with
+  their lifetimes. `docs/AUTH.md`: the upload route's limiter bucket. `docs/apps-sdk-submission-checklist.md`:
+  counts and the process-level write state.
+- READMEs: the four batch tools in the English one, the licence exception and "errors are codes" in both;
+  `docs/TOOLS.md`: the curation rules point to `structuredContent` and the plan tools.
+- `.gitlab-ci.yml` added to the working copy (it existed only on GitHub) with Node 22 like the Dockerfile.
+
 ### Fixed — review of the feedback changes (2026-11-07, 5 findings)
 
 - **Errors the SDK builds itself are coded:** wrong arguments (`invalid_input`), an unknown or disabled tool

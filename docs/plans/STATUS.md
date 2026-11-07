@@ -4022,3 +4022,15 @@ präzisem Code statt `refused` über `codedErrorResult` (`tools/shared.ts`).
 **NIT:** Frist im `too_many_plans`-Text, toter Testcode entfernt. Zwischen
 Kapazitätsprüfung und `startPlan` liegt kein `await` — kein Wettlauf, geprüft.
 Tests 2525 grün, 1 Skip. HTML-Referenz `1794013120-14f0`.
+
+### Nachtrag 2026-11-07 — GitHub und Doku
+
+Stand nach `janschachtschabel/wlo-mcp-sc` `main` übertragen (`b9778d4`, 65 neu,
+102 geändert, nichts gelöscht; `.gitlab-ci.yml` erhalten und auf Node 22
+korrigiert, `38ec600`); GitHub-CI für beide grün. Achtung: der lokale `origin`
+zeigt auf `wlo-mcp-server` (das Original), nicht auf `wlo-mcp-sc`.
+Doku-Durchgang: `INTEGRATION.md` (zehn fehlende Werkzeuge, Zahlen, Upload-Route,
+Fehlercodes, OER = vier Suchen), `ARCHITECTURE.md`, `DEPLOYMENT.md` (Schalter,
+nginx-Rumpfgrenze), `PRIVACY.md` (Uploads, Pläne, Stapel), `AUTH.md`,
+Submission-Checkliste, beide READMEs, `TOOLS.md`. `docs-claims` erfasst die
+Zahlen-Schreibweisen von `INTEGRATION.md`. Tests 2525 grün, 1 Skip.

@@ -867,6 +867,10 @@ names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_decide_suggestion` | Accept (apply, read back, then mark accepted) or decline a proposal. |
 | `wlo_delete_content` | Delete a record. Irreversible through this server — see below. |
 | `wlo_delete_collection` | Delete a collection and its sub-collections. The material it referenced survives. |
+| `wlo_prepare_file_batch` | Only with `WLO_BATCH_UPLOAD_ENABLED`: prepare filing several files into the personal area (preview + one approval key for exactly this list). Creates nothing. Personal login only. |
+| `wlo_store_batch_file` | File one file of the approved batch — its bytes arrived beforehand via `POST /api/uploads`; each index once, the checksum must match. A refused key does not spend the upload. |
+| `wlo_store_batch_manifest` | File `vorgang.json` (`wlo.ablage-vorgang@1`) beside the batch, once per batch, built by the server; the counts also go into the record's `cm:description`. |
+| `wlo_list_my_batches` | Read-only: find your own batch filings again, newest first; with `nodeId` one of them with its entries. |
 
 **Deleting is final here.** `recycle=true` is always sent, so the repository may keep an archive copy — but a person-scoped archive query found a deleted node once and then returned nothing for the same node minutes later, so recoverability could not be demonstrated. The tools therefore say the deletion cannot be undone through this server and promise no restore. Taking material out of a collection (`wlo_remove_from_collection`) is a different act and leaves the material intact.
 
@@ -887,9 +891,13 @@ Most tools accept `outputFormat: "markdown"` (default, human-readable) or
 - **`unresolvedFilters`** — `{ field, value }[]` of vocab filters the caller
   supplied that could not be resolved to a URI and were therefore dropped from
   the search. Surfaced so the caller can self-correct (e.g. via
-  `lookup_wlo_vocabulary`). Omitted when everything resolved. A licence resolves
-  exactly or not at all — `"CC BY NC"` without hyphens lands here with a
-  suggestion instead of silently filtering on CC BY.
+  `lookup_wlo_vocabulary`, or all at once via `resolve_wlo_filters`). Omitted
+  when everything resolved. Also in `structuredContent` of the four search tools.
+  A licence resolves exactly or not at all — `"CC BY NC"` without hyphens lands
+  here with a suggestion — and is the one filter that is **not** dropped: an
+  unresolvable licence returns no materials, because unfiltered the answer
+  would carry material under other terms (collections and topic pages are not
+  licence-filtered anyway).
 - **`criteria[].match: "fuzzy"`** — set on a filter that resolved only by guess
   (`"Arbeitsblat"` → Arbeitsblatt). An exact or alias match carries no field.
   `resolve_wlo_filters` reports the same distinction per value.
@@ -897,6 +905,13 @@ Most tools accept `outputFormat: "markdown"` (default, human-readable) or
   filter name, e.g. `{ learningResourceType: [{ label: "Video", count: 1203 }], … }`
   — how many hits per type/subject/level, so a client can offer targeted
   narrowing without probe-searches.
+
+**Errors are codes.** Every answer with `isError` carries
+`structuredContent.error = { code, message }` — `message` is the German
+sentence, `code` is what a program branches on (`invalid_input`, `not_found`,
+`login_required`, `confirm_expired`, `timeout` with `outcomeOpen`, …). That
+includes errors the SDK raises before a tool runs, such as wrong arguments. The
+full table is in [`docs/MCP-REFERENZ.md`](docs/MCP-REFERENZ.md) §2.
 
 The shared `FormattedNode` shape (output of all content-returning tools):
 

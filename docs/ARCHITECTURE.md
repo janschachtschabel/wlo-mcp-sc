@@ -17,8 +17,11 @@ topic pages, full texts, curated AI skills, and (after login) writing.
 Three properties shape every design decision in here:
 
 - **It is a translator, not a store.** The server holds no database. Everything
-  it answers comes from edu-sharing's REST API on the fly. The one exception is
-  an in-memory cache (§9) and one small file on disk (§8).
+  it answers comes from edu-sharing's REST API on the fly. The exceptions: an
+  in-memory cache (§9), one small file on disk (§8), and short-lived in-memory
+  state for writes in progress — confirmation keys (10 min), approved plans
+  (30 min), batch approvals and upload slots (30 min, §7). That state is lost on
+  a restart and is per process, so the server runs as **one** instance.
 - **It is anonymous by default.** A request without `Authorization` gets `200`
   and the full tool list. Reading works without a credential; writing is refused
   at call time, not by hiding the tool.
@@ -94,13 +97,13 @@ traversal a tool would otherwise inline belongs in `services/`
 | `src/server.ts` | the factory; the only place tools are assembled |
 | `src/stdio.ts`, `src/http.ts` | transports |
 | `src/http-app.ts`, `src/rest/*` | HTTP routing, REST endpoints, auth/OAuth pages |
-| `src/tools/*` (29 files) | one module per tool group; schema + rendering |
-| `src/tools/shared.ts` | tool-layer helpers (`toolError`, `queryMetaContent`, `subjectRegistryText`) |
+| `src/tools/*` (40 files) | one module per tool group; schema + rendering |
+| `src/tools/shared.ts` | tool-layer helpers (`toolError`, `codedErrorResult`, `queryMetaContent`, `subjectRegistryText`) |
 | `src/tools/curation-shared.ts` | `registerCurationTool` — the write gate every curation tool passes |
-| `src/services/*` (23 files) | search, traversal, skills, compendium, collection search |
-| `src/services/write/*` (15 files) | the shared write pipeline (§7) |
+| `src/services/*` (31 files) | search, traversal, skills, compendium, collection search, overviews, counts |
+| `src/services/write/*` (27 files) | the shared write pipeline, plan runner and batch filing (§7) |
 | `src/auth/*` (13 files) | access blocks, OAuth 2.1, ticket exchange, identity |
-| `src/apps/*` | the Apps-SDK seam: `register.ts`, `outputSchemas.ts`, `resources.ts`, `widgets/` |
+| `src/apps/*` | the Apps-SDK seam: `register.ts`, `outputSchemas.ts`, `resources.ts`, `tool-defaults.ts`, `widgets/` |
 | `src/wlo-api.ts` | barrel over the edu-sharing client |
 | `src/wlo-fetch.ts` | **the credential boundary** — the only place a password is attached |
 | `src/formatter.ts` | node → Markdown / JSON rendering |
@@ -134,6 +137,15 @@ The seam is where cross-cutting behaviour lives, which is why nothing may bypass
 it: `_meta.securitySchemes`, widget metadata, and the `unsafe` off-switch
 (`WLO_DISABLE_UNSAFE_TOOLS`) are applied here, once, for every tool.
 
+`src/apps/tool-defaults.ts` wraps the server's two registration methods, so it
+reaches every tool, the plain `server.tool` ones included. Besides descriptor
+defaults it holds the **error net**: a login the repository refused (HTTP 401)
+leads the answer with a notice and `login_rejected`; any other `isError`
+without a code gets `refused`; a thrown error becomes `upstream_error`; and the
+errors the SDK builds itself before a handler runs (`McpServer.createToolError`:
+wrong arguments, unknown tool) get `invalid_input` / `unknown_tool`. A tool that
+knows the cause codes it itself (`codedErrorResult`); the net only fills gaps.
+
 ### The output contract
 
 Every search tool answers **three things side by side**:
@@ -142,6 +154,10 @@ Every search tool answers **three things side by side**:
 2. **`structuredContent`** — the same envelope as data
 3. a trailing **`_queryMeta`** text block — pagination, criteria, `searchUrl`,
    and where applicable `unresolvedFilters` and `facets`
+
+**Every error answer carries `structuredContent.error = {code, message}`** —
+the contract a chatbot reads instead of the German sentence. The code table is
+in [`MCP-REFERENZ.md`](MCP-REFERENZ.md) §2.
 
 Two traps live here, and both have cost this project real defects:
 
@@ -193,6 +209,17 @@ Where the algorithms live. Some that carry non-obvious rules:
   approves (§9).
 - **`compendium.ts` / `compendium-view.ts`** — editorial prose per collection,
   with a table of contents and BM25-ranked passages (`src/text-bm25.ts`).
+- **`collection-overview.ts`, `content-count.ts`, `node-details.ts`,
+  `url-matches.ts`** — answers that bundle several reads (a collection at a
+  glance, hit counts for 30 queries, many node records, records for a URL). Each
+  names what it could not read in `missing [{part, code}]`, with the codes from
+  `failure-code.ts`, rather than dropping it.
+- **`skill-for-task.ts`** — picks the approved skill for a task, but only on a
+  confident choice (a discriminating word, a 1.5× lead); otherwise the caller
+  gets the ranked candidates.
+- **`my-batches.ts`** — finds a person's batch filings through the NODE store of
+  their own area, never the search index, because "you have no batches" is a
+  negative.
 - **`write/*`** — the write pipeline (§7). No MCP SDK import anywhere in it, so
   the safety properties are tested once instead of per tool.
 
@@ -200,9 +227,10 @@ Where the algorithms live. Some that carry non-obvious rules:
 
 ## 7. The write pipeline
 
-Fourteen curation tools share one path. Every one of them is registered through
-`registerCurationTool` (`tools/curation-shared.ts`) — the single place that
-stamps the `oauth2` security scheme and runs the gate.
+Sixteen curation tools (twenty with `WLO_BATCH_UPLOAD_ENABLED`) share one path.
+Every one of them is registered through `registerCurationTool`
+(`tools/curation-shared.ts`) — the single place that stamps the `oauth2`
+security scheme and runs the gate.
 
 ```
 call
@@ -239,6 +267,34 @@ Two more that came out of live measurement:
 - **The baseline travels with the target.** Tools call `readWriteBaseline`, not
   `resolveWriteTarget` — diffing against the wrong node reports success for a
   write the original never received.
+
+**Plans** (`services/write/plan-runner.ts`) — for `wlo_create_collection_tree`
+and `wlo_add_to_collections`. One confirmation approves the whole plan; the
+server holds it (bound to identity and arguments, 30 min) and runs it in ~40 s
+slices, four steps at a time, parents before children. The answer carries a
+`continuationToken` while anything is open, and the same key presented again by
+the same identity continues or replays — it never creates twice. Two measured
+rules: sibling collections created at once under one parent answer 500 while
+being created, so creates per parent run one at a time and a refused create is
+looked up before it is called `failed`; and an unfinished plan is never evicted
+to make room — a sixth is refused with `too_many_plans` before its key is
+redeemed. Keys of plans and confirmations that are gone stay as bare-id
+tombstones for an hour, so they answer `*_expired`, not `*_unknown`.
+
+**Batch filing** (`services/write/batch-*.ts`, `upload-slot.ts`,
+`rest/upload-route.ts`) — off unless `WLO_BATCH_UPLOAD_ENABLED`. The bytes reach
+an in-memory upload slot over `POST /api/uploads` (personal login confirmed by
+the repository, file type from the bytes, nothing stored at rest), one approval
+key covers the whole list, and each file is filed by its index. The server
+builds `vorgang.json` itself from the approval and the results, and writes a
+compact summary into the record's `cm:description` — a private file's bytes
+cannot be read back with a Basic login, and a property the content model does
+not declare is silently dropped (both measured).
+
+**Timeouts in write tools.** `timeoutOrError` reports an abort as an open
+outcome (`outcomeOpen: true`), except when the call carried no key of any kind
+(`isPreviewCall`): a preview never writes, so there the answer is
+`outcomeOpen: false` and the caller may simply repeat it.
 
 > **A test against `fetchMock` proves the code sends what we decided to send,
 > never that the repository accepts it.** Two curation tools were green in every
@@ -281,7 +337,9 @@ Two invariants:
 ## 9. Caching
 
 One cache: `services/skill-registry-cache.ts`, which lets every collection
-answer carry its catalogue of approved skills for free.
+answer carry its catalogue of approved skills for free. (The write state of §7 —
+keys, plans, upload slots — is not a cache: it is the only copy, which is why it
+is bounded per identity and in total.)
 
 Its design rests on an **asymmetry** that is easy to break and hard to notice:
 
@@ -321,15 +379,17 @@ degrades gracefully when `dist-widgets/` is absent — tests and a build without
 ## 11. Testing
 
 ```bash
-npm test                 # 196 files, ~2160 tests — node:test via tsx
+npm test                 # 225 files, ~2500 tests — node:test via tsx
 npm run test:coverage    # same, with the runner's coverage report
 npm run test:live        # tests/live/* — REAL repository, staging only
 node --import tsx --test tests/reranker.test.ts     # a single file
 ```
 
 `npm test` goes through `scripts/run-tests.mjs`, which expands the file list
-itself: Node 20 takes a `--test "tests/*.test.ts"` glob literally and runs
-nothing, and 20 is what `engines` and the Docker image ship.
+itself. It was written when Node 20 was the shipped runtime — 20 takes a
+`--test "tests/*.test.ts"` glob literally and runs nothing — and stays because it
+behaves the same on every Node and in every shell. `engines`, the Docker image
+and both CI pipelines now use Node 22.
 
 **Three mechanisms are worth knowing:**
 

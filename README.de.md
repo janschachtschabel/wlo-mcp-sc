@@ -932,9 +932,13 @@ die die Suche rekonstruieren wollen.
 - **`unresolvedFilters`** — `{ field, value }[]` der übergebenen Vokabular-Filter,
   die nicht zu einer URI aufgelöst werden konnten und daher aus der Suche
   entfernt wurden. Wird gemeldet, damit der Aufrufer selbst korrigieren kann
-  (z.B. via `lookup_wlo_vocabulary`). Entfällt, wenn alles aufgelöst wurde. Eine
-  Lizenz löst nur exakt auf — `"CC BY NC"` ohne Bindestriche landet hier mit
-  Vorschlag, statt still auf CC BY zu filtern.
+  (z.B. via `lookup_wlo_vocabulary` oder alle auf einmal mit
+  `resolve_wlo_filters`). Entfällt, wenn alles aufgelöst wurde. Steht auch in
+  `structuredContent` der vier Suchwerkzeuge. Eine Lizenz löst nur exakt auf —
+  `"CC BY NC"` ohne Bindestriche landet hier mit Vorschlag — und ist der eine
+  Filter, der **nicht** weggelassen wird: Eine unbekannte Lizenz liefert keine
+  Materialien, weil die Antwort ungefiltert Material unter anderer Lizenz
+  trüge (Sammlungen und Themenseiten filtert die Lizenz ohnehin nicht).
 - **`criteria[].match: "fuzzy"`** — an einem Filter, der nur geraten aufgelöst
   wurde (`"Arbeitsblat"` → Arbeitsblatt). Exakt oder per Alias aufgelöste Filter
   tragen kein Feld. `resolve_wlo_filters` meldet dieselbe Unterscheidung je Wert.
@@ -942,6 +946,14 @@ die die Suche rekonstruieren wollen.
   z.B. `{ learningResourceType: [{ label: "Video", count: 1203 }], … }` — wie
   viele Treffer je Typ/Fach/Stufe, damit ein Client gezieltes Eingrenzen ohne
   Probe-Suchen anbieten kann.
+
+**Fehler sind Codes.** Jede Antwort mit `isError` trägt
+`structuredContent.error = { code, message }` — `message` ist der deutsche
+Satz, `code` das, worauf ein Programm verzweigt (`invalid_input`, `not_found`,
+`login_required`, `confirm_expired`, `timeout` mit `outcomeOpen`, …). Das gilt
+auch für Fehler, die das SDK erzeugt, bevor ein Werkzeug läuft, etwa bei
+falschen Parametern. Die vollständige Tabelle steht in
+[`docs/MCP-REFERENZ.md`](docs/MCP-REFERENZ.md) §2.
 
 Die gemeinsame `FormattedNode`-Struktur (Ausgabe aller inhaltszurückgebenden Tools):
 

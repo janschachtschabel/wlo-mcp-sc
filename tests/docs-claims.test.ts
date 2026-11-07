@@ -311,6 +311,16 @@ test('no document states a tool count the server contradicts', async () => {
     [/\d+ der (\d+) Werkzeuge/g, total, 'a share of all tools'],
     [/Die (\d+)\s+Kurations-Tools/g, total - readTools, 'always-listed curation tools'],
     [/\b(\d+) curation (?:\(write\) )?tools/gi, total - readTools, 'always-listed curation tools'],
+    // `docs/INTEGRATION.md`'s own spellings — it said "28 lesend, 14
+    // kuratierend" and "Lesen — 28 Werkzeuge" while every pattern above stayed
+    // green (found 2026-11-07).
+    [/\*\*Werkzeuge\*\* \| (\d+) —/g, total, 'the summary table count'],
+    [/\| \d+ — (\d+) lesend/g, readTools, 'read tools in the summary table'],
+    [/lesend, (\d+) kuratierend/g, total - readTools, 'always-listed curation tools in the summary table'],
+    [/Lesen — (\d+) Werkzeuge/g, readTools, 'read tools (integration heading)'],
+    [/Kuratieren — (\d+) Werkzeuge/g, total - readTools, 'always-listed curation tools (integration heading)'],
+    [/die Zahl bleibt bei (\d+)/g, oneTool, 'one-tool mode keeps the count'],
+    [/`search_skill` heraus \(dann (\d+)\)/g, total - 1, 'WLO_DISABLE_SKILL_SEARCH drops one tool'],
   ];
 
   const wrong: string[] = [];

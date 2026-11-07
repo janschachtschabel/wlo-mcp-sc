@@ -78,6 +78,11 @@ tracked compose file. The full list with defaults is in
 | `WLO_PUBLIC_BASE_URL` | _(unset)_ | The public origin clients type in (`https://<host>`, no path). The OAuth discovery documents name it as their own endpoints. Unset = the `/.well-known/oauth-*` paths answer 404, unless `TRUST_PROXY=1` lets the origin be derived from the caller-supplied `Host` header. Set it explicitly; behind Caddy that is the same host the site block serves. |
 | `BIND_ADDR` | `127.0.0.1` | Host interface compose publishes on. Set `0.0.0.0` **only** with `TRUST_PROXY=0` for direct exposure. |
 | `HOST_PORT` | `3000` | Host-side port of the published mapping. |
+| `WLO_BATCH_UPLOAD_ENABLED` | _(unset)_ | Switches on **batch filing** into a person's own area: four curation tools (`wlo_prepare_file_batch`, `wlo_store_batch_file`, `wlo_store_batch_manifest`, `wlo_list_my_batches`) and the route `POST /api/uploads`. Off: neither exists and `tools/list` is unchanged. Personal login only — the service account is refused even with `WLO_ALLOW_SERVICE_WRITES`. Upload bytes, approvals and plans live **in memory**: run one instance, and a restart drops open batches. |
+| `UPLOAD_MAX_BYTES` | `52428800` (50 MB, at most 100 MB) | Largest single file one upload slot takes. Your reverse proxy must allow at least this much on `/api/uploads` (§4). |
+| `UPLOAD_MAX_TOTAL_BYTES` | `134217728` (128 MB) | All open upload slots together — the memory the batch path may hold at once (also 20 slots per identity). |
+| `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` (at most 28000) | How long one upload body may take. Kept below the server-wide 30 s request timeout so the route answers 408 itself. |
+| `AUTH_CREDENTIAL_LIMIT` | `10` | Distinct secrets per identity before the guessing guard refuses: per address for `Basic`, per access id for a `wlo2.` block — on `/mcp` and on `/api/uploads` alike. A chatbot backend is one address for all its users, so with `Basic` this has to fit the number of people; with blocks it does not. |
 
 ### 3.1 The one thing to back up
 
@@ -153,6 +158,26 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
+```
+
+**Request size.** nginx refuses bodies over 1 MB by default (`413` before the
+request reaches the container). The server itself accepts 4 MiB on `/mcp`
+(`MAX_BODY_BYTES`) and, with batch filing on, `UPLOAD_MAX_BYTES` on
+`/api/uploads`. Raise the proxy limit to match, and do not buffer upload bodies:
+
+```nginx
+    # In the server block: the MCP body limit (MAX_BODY_BYTES, 4 MiB).
+    client_max_body_size 5m;
+
+    # Batch filing only: at least UPLOAD_MAX_BYTES.
+    location /api/uploads {
+        client_max_body_size    100m;
+        proxy_request_buffering off;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 ```
 
 Notes for other proxies:
