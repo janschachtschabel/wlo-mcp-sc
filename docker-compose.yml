@@ -184,6 +184,10 @@ services:
       # container ran the timeout that was measured too short and cut a 4.2–8.0 s
       # create off mid-flight. `tests/deploy-env-passthrough.test.ts` enforces it.
       RATE_LIMIT_RPM: "${RATE_LIMIT_RPM:-}"
+      # Trusted clients with their own budget (`name:rpm:key`, see .env.example).
+      TRUSTED_CLIENT_KEYS: "${TRUSTED_CLIENT_KEYS:-}"
+      # Readiness probe interval in ms (GET /ready, warm-up); 0 = only on demand.
+      WLO_READY_PROBE_MS: "${WLO_READY_PROBE_MS:-}"
       API_RATE_LIMIT_RPM: "${API_RATE_LIMIT_RPM:-}"
       # How many DISTINCT logins one client address may present per 10 minutes
       # (a personal login is forwarded upstream, so this caps using the server to
@@ -194,6 +198,12 @@ services:
       # embedded widget puts a school behind one NAT). 0 disables; empty = the
       # code's default of 200.
       TICKET_CREDENTIAL_LIMIT: "${TICKET_CREDENTIAL_LIMIT:-}"
+      # Browser origins allowed to exchange a ticket (comma-separated); empty =
+      # every origin. Requests without Origin (servers) are never refused.
+      TICKET_ALLOWED_ORIGINS: "${TICKET_ALLOWED_ORIGINS:-}"
+      # OAuth logins redirecting to these origins (an embedded widget) expire
+      # after 12 h; empty = no OAuth block expires.
+      WIDGET_OAUTH_ORIGINS: "${WIDGET_OAUTH_ORIGINS:-}"
       MAX_BODY_BYTES: "${MAX_BODY_BYTES:-}"
       WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-}"
       WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"

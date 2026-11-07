@@ -27,6 +27,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { SESSION_BLOCK_TTL_S } from './access-registry.js';
 import { encodeAccessToken } from './access-token.js';
 import { proveLogin, type VerifyDeps } from './access-verify.js';
 import type { WloCredential } from './credential.js';
@@ -132,8 +133,12 @@ export async function exchangeTicket(
   // (`MAX_BLOCKS_PER_LABEL`). The id is deterministic per TICKET, so a session's
   // reloads are one entry — but each new session brings a new ticket and a new
   // entry, and counted together those retired a pasted block after ten of them.
-  if (!deps.support.registry.has(jti)) {
-    await deps.support.registry.add({ jti, label: identity.authority, iat, k: 'ticket' });
+  //
+  // The entry expires after `SESSION_BLOCK_TTL_S` (R1). An EXPIRED entry reads
+  // as not listed here, so the next exchange of a still-valid ticket writes it
+  // again with a fresh expiry — the renewal the widget gets for free.
+  if (!deps.support.registry.has(jti, now)) {
+    await deps.support.registry.add({ jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'ticket' });
   }
   log.info('ticket exchanged for an access block', { label: sanitizeText(identity.authority) });
 

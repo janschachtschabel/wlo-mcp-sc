@@ -63,7 +63,11 @@ tracked compose file. The full list with defaults is in
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | Upstream edu-sharing repository. **Defaults to STAGING** — set `https://redaktion.openeduhub.net/edu-sharing` explicitly to write to production. |
 | `MCP_SSE` | `1` | `1` = real SSE streaming (needed by ChatGPT). `0` = single-JSON responses. |
 | `TRUST_PROXY` | `1` | Take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
-| `RATE_LIMIT_RPM` | `120` | Per-IP requests/min on `/mcp` (`0` disables). |
+| `RATE_LIMIT_RPM` | `120` | Tool calls per minute on `/mcp`, per client address. Only `tools/call` counts; all POSTs together may use 3× this (`initialize`/notifications never reach edu-sharing). A 429 carries the rest of the window as `Retry-After` and a JSON-RPC error with `data.code: "rate_limited"`. `0` disables both. |
+| `WLO_READY_PROBE_MS` | `30000` | How often the readiness probe asks the repository (one one-hit search). The first probe runs at start and warms the search path; `GET /ready` answers from the latest one. Every tick probes fresh, so an interval under 30 s does take effect. `0` probes only on demand. |
+| `WIDGET_OAUTH_ORIGINS` | _(unset)_ | Origins of an embedded widget's OAuth redirect targets, comma-separated. A login whose **verified** `redirect_uri` lies there gets a block that expires after **12 h** (the allow-list entry carries `exp`; an expired block answers 401 like a revoked one). Unset = no OAuth block expires, so AI hosts (ChatGPT, Claude) are never affected. Keyed on the redirect target, not `client_name`, because registration is open. Ticket blocks expire after 12 h regardless; after it expires, the next exchange of the same still-valid ticket lists it again for 12 h (before that it is not extended, so a session longer than 12 h meets one 401 and re-exchanges). A list with no usable entry is logged as an ERROR and expires nothing. |
+| `TICKET_ALLOWED_ORIGINS` | _(unset)_ | Browser origins allowed to exchange an edu-sharing ticket at `POST /auth/ticket`, comma-separated. Another browser origin gets `403 origin_not_allowed` and no CORS header (its preflight already fails); a request without `Origin` — a server such as the chatbot backend — is never refused. Unset = every origin, as before. **A list whose every entry is unusable (e.g. `chatbot.example.org` without a scheme) admits NO browser origin** and logs an error — a typo must not switch the restriction off. Set it to the pages that embed the widget — in practice the chatbot's own `CORS_ORIGINS`. `Origin` does not stop a non-browser client; what the list closes is a foreign page exchanging a visitor's ticket in the visitor's browser. |
+| `TRUSTED_CLIENT_KEYS` | _(unset)_ | Trusted clients with their **own** budget, counted by key instead of address: comma-separated `name:rpm:key`, sent as `X-WLO-Client-Key`. For a chatbot backend, which is one address for all its users — give it more than it uses itself (BOERDi limits itself to 300/min, so `360`). Generate a key with `openssl rand -hex 32` (≥ 32 characters, else the entry is ignored with a warning naming it). Held only as a SHA-256 hash; never logged. A key lifts only the request budget, never the login-guessing guard. A second entry with the same name is refused; an entry without any colon is logged by position only (it may be a pasted key). **Server-to-server only:** a key in a browser is public to every script on the page — the CORS preflight deliberately does not allow the header, so a widget cannot send it. |
 | `API_RATE_LIMIT_RPM` | `30` | Per-IP requests/min on the public `/api/*` surface. |
 | `WLO_COMPENDIUM_SECTION_MAX` | `2000` | Characters one main section of a compendium text may contribute when `get_compendium_text` is called without a `query`; with one it caps a single passage. Raise it if a deployment wants the untruncated prose back — at the default one of the eleven texts on staging is affected (65 250 → 20 802 delivered). The REST route `/api/compendium` is unaffected either way. |
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | Per-upstream-request timeout. Sized from measurement (creating a record takes 4.2–8.0 s); the compose file deliberately forwards it with an **empty** default so this number lives only in `src/wlo-config.ts`. |
@@ -199,6 +203,9 @@ curl -s -X POST localhost:3000/mcp -H 'Content-Type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 80
 # -> "event: message\ndata: {..."   (SSE framing confirms MCP_SSE is on)
 
+# Is the repository reachable? 200 ready / 503 unreachable|slow:
+curl localhost:3000/ready
+
 # Through the proxy (public):
 curl https://mcp.example.org/health
 curl https://mcp.example.org/launcher.html -I    # 200 text/html
@@ -294,7 +301,7 @@ docker run --rm -i -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sh
 | Client connects to `/mcp` but never gets a response | Proxy is buffering SSE — set `proxy_buffering off;` and a long `proxy_read_timeout` on the `/mcp` location (§4). |
 | Widgets don't render in the host | `dist-widgets/` missing from the image — rebuild (`docker compose build --no-cache`); `resources/list` should list 3 `ui://` widgets. |
 | `/launcher.html` or `/api/skills` returns 500 | `public/` missing from the image — rebuild. |
-| Frequent `429` | Lower traffic or raise `RATE_LIMIT_RPM` / `API_RATE_LIMIT_RPM`; confirm `TRUST_PROXY=1` so limits key on the real client IP, not the proxy. |
+| Frequent `429` | Lower traffic, raise `RATE_LIMIT_RPM` / `API_RATE_LIMIT_RPM`, or give a known backend its own budget with `TRUSTED_CLIENT_KEYS`; confirm `TRUST_PROXY=1` so limits key on the real client IP, not the proxy. The log line `rate limit reached` names the bucket kind (`client`/`address`). |
 | Rate limits keyed on one IP (the proxy) | `TRUST_PROXY` is `0` behind a proxy — set it to `1`. |
 
 ## 9. Privacy & submission

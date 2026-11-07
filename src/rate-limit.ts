@@ -16,6 +16,13 @@ export interface RateLimiter {
    * callers (and tests) control the clock.
    */
   check(ip: string, now: number): boolean;
+  /**
+   * Seconds until `ip`'s current window ends — the honest `Retry-After` for a
+   * refusal (chatbot request S2: a flat 60 told a client to wait longer than
+   * needed). Never below 1. Optional so a hand-built test double stays valid;
+   * callers fall back to the full window.
+   */
+  retryAfterSeconds?(ip: string, now: number): number;
 }
 
 /**
@@ -81,6 +88,8 @@ export interface DistinctValueLimiter {
    * value already seen in this window is always allowed.
    */
   check(key: string, value: string, now: number): boolean;
+  /** Seconds until `key`'s window ends (≥ 1) — the honest `Retry-After`. Optional for test doubles. */
+  retryAfterSeconds?(key: string, now: number): number;
   /** Test seam: the retained state, to prove no raw value is kept. */
   inspectForTest(): unknown;
 }
@@ -132,6 +141,11 @@ export function createDistinctValueLimiter(maxDistinct: number, windowMs = 600_0
       bucket.seen.add(hash);
       return false;
     },
+    retryAfterSeconds(key: string, now: number): number {
+      const bucket = buckets.get(key);
+      if (!bucket) return 1;
+      return Math.max(1, Math.ceil((bucket.windowStart + windowMs - now) / 1000));
+    },
     inspectForTest() {
       return [...buckets].map(([k, b]) => [k, [...b.seen]]);
     },
@@ -165,6 +179,11 @@ export function createRateLimiter(limitRpm: number, windowMs = 60_000): RateLimi
       }
       bucket.count++;
       return bucket.count > limitRpm;
+    },
+    retryAfterSeconds(ip: string, now: number): number {
+      const bucket = buckets.get(ip);
+      if (!bucket) return 1;
+      return Math.max(1, Math.ceil((bucket.windowStart + windowMs - now) / 1000));
     },
   };
 }

@@ -48,6 +48,7 @@ function answer(plan: StoredPlan<FilingItem>, report: Awaited<ReturnType<typeof 
 
 export function registerCurationAddManyTool(server: McpServer, challenge: WriteAuthChallenge): void {
   registerCurationTool(server, challenge, {
+    replay: false, // the key continues a stored plan (plan-runner.ts)
     name: 'wlo_add_to_collections',
     title: 'WLO Materialien in Sammlungen aufnehmen',
     description: `Nimm viele vorhandene Materialien in Sammlungen auf — bis zu ${FILING_MAX_PAIRS} Paare {nodeId, collectionId} mit EINER Bestätigung. Nichts wird verschoben oder kopiert; eine Sammlung enthält Verweise.

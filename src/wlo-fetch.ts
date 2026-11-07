@@ -39,9 +39,39 @@ export async function wloFetch(url: string, init: RequestInit = {}): Promise<Res
   if (carriesScopedLogin && isCurrentCredentialRejected()) {
     return new Response(null, { status: 401, statusText: 'Unauthorized' });
   }
-  const res = await fetch(url, { ...init, headers, signal });
+  const startedAt = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, headers, signal });
+  } catch (err) {
+    // A call that ran into the timeout is the slowest call of all — the 22 s
+    // cold path is past the 20 s budget — so it is logged too, as status 0.
+    const slow = slowUpstreamEntry(url, Date.now() - startedAt, 0);
+    if (slow) log.warn('slow upstream', slow);
+    throw err;
+  }
+  const slow = slowUpstreamEntry(url, Date.now() - startedAt, res.status);
+  if (slow) log.warn('slow upstream', slow);
   if (carriesScopedLogin && res.status === 401 && await loginRefused(url)) markCurrentCredentialRejected();
   return res;
+}
+
+/**
+ * A repository call slower than this is logged (plan 2026-11-07, S6): the first
+ * request after a quiet period took 22 s in a load test while a fresh
+ * connection costs only 0.1–0.3 s (measured), so the cause sits upstream — and
+ * only a log naming the endpoint can show which one in production. Measured up
+ * to the response HEADERS, not the body; a call that fails is logged with
+ * status 0.
+ */
+export const SLOW_UPSTREAM_MS = 5_000;
+
+/** The log entry for a slow call: path only — the query can carry search terms. */
+export function slowUpstreamEntry(url: string, ms: number, status: number): { path: string; ms: number; status: number } | null {
+  if (ms < SLOW_UPSTREAM_MS) return null;
+  let path: string;
+  try { path = new URL(url).pathname; } catch { path = url.split('?')[0] ?? ''; }
+  return { path, ms, status };
 }
 
 /** One identity check per credential object — i.e. per request, however many 401s it collects. */

@@ -39,6 +39,15 @@ export interface OAuthEndpointDeps {
   codeStore: CodeStore;
   /** This deployment's public origin, or null when it could not be established. */
   issuer: string | null;
+  /**
+   * `WIDGET_OAUTH_ORIGINS` (plan 2026-11-07, R1): a login whose VERIFIED
+   * `redirect_uri` lies in one of these origins is an embedded widget's, and its
+   * block expires after `SESSION_BLOCK_TTL_S`. Everything else — ChatGPT, Claude,
+   * any AI host — keeps a block without expiry. Empty or absent = no OAuth block
+   * expires. The redirect target and not `client_name`, because registration is
+   * open and the name is whatever the caller typed.
+   */
+  widgetOAuthOrigins?: ReadonlySet<string>;
 }
 
 /**

@@ -829,8 +829,9 @@ The current rebuild/extension is designed in:
   **500** `A valid SecureContext was not provided`. Never 200-as-guest — the fear
   worth testing, since a silently-guest credential is exactly what
   `auth/identity.ts` exists for. `ngsearch` throws on non-OK rather than
-  degrading, so it reaches the caller as an error and not as "keine Treffer". Do
-  not add an expiry of ours; the repository enforces one, visibly, on every call.
+  degrading, so it reaches the caller as an error and not as "keine Treffer". The
+  ticket's own death needs no expiry of ours; the 12-hour allow-list expiry R1
+  added on 2026-11-07 (user decision) bounds the BLOCK, a different thing.
   The `401` `docs/AUTH.md` §5c claimed here was wrong and is corrected.
 
 - **Schreibziel Original + erweiterte Metadatenfläche — VOLLSTÄNDIG (P0–P5,
@@ -1404,6 +1405,35 @@ The current rebuild/extension is designed in:
   200 and silently dropped; model text properties keep 53 950 characters.
   `wlo_list_my_batches` finds manifests through the NODE store of the own area,
   never the index (a "no batches" is a negative).
+
+- **Chatbot-Anbindung: Budget, Überlast-Codes, sichere Wiederholung, Status-
+  Endpunkte, Anmeldung Stufe 2 — COMPLETE (phases 1–7, 2026-11-07), each with a
+  review whose findings are fixed (STATUS.md):**
+  `docs/plans/2026-11-07-chatbot-anbindung-stabilitaet.md` (design + tasks;
+  phases 5–7 implement the S7 decision R4 → R2 → R1). Phase 1 binds: the tool
+  budget counts `tools/call` only, every POST is bounded at 3× before its body is
+  read, a trusted client (`TRUSTED_CLIENT_KEYS`, `X-WLO-Client-Key`) is counted
+  by key instead of address, and a 429 carries the rest of the window. Two
+  measurements bind it: a stateless server answers `tools/call` as the FIRST POST without
+  `initialize` (SDK 1.32.2), and a fresh connection to edu-sharing costs only
+  0.1–0.3 s — the 22 s cold path is not the transport. Phases 2–7 add rules that
+  bind: `upstream_busy` (429/503) carries `retryAfter` through ONE pairing place
+  (`failureFields`); a redeemed confirm token REPLAYS its result for the same
+  identity and arguments for 30 min, never writes twice; `/auth/status` holds an
+  answer without `authority` only 10 s (an outage must not read as a refused
+  login for a minute) and its 429 is REST; `/ready` probes at most once per 30 s
+  for callers while the tick probes fresh; the slow-upstream log also fires for a
+  call that THROWS (the 22 s case is past the 20 s budget). R4:
+  `TICKET_ALLOWED_ORIGINS` refuses a foreign browser origin AFTER the address
+  budget (a forged `Origin` must not be a free log line) and mirrors only a listed
+  origin in CORS. R2: `POST /auth/revoke` takes the block as `Bearer`, answers
+  200 `{revoked}` in every case. R1: the expiry lives in the allow-list
+  (`RegistryEntry.exp`, checked in `registry.has`), 12 h for ticket blocks and
+  for OAuth logins whose VERIFIED `redirect_uri` lies in `WIDGET_OAUTH_ORIGINS`
+  (empty = no OAuth block expires — AI hosts are never affected); expired entries
+  are dropped BEFORE the per-account cap counts, or a widget's daily logins
+  evict the block pasted into an AI host; never a new `k` for this, because an
+  unknown `k` fails an old build closed.
 
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context

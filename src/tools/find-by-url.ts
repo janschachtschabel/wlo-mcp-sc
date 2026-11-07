@@ -17,6 +17,7 @@ import { oneLine } from '../formatter.js';
 import { log } from '../logger.js';
 import { getNodeCollections } from '../services/node-collections.js';
 import { findUrlMatches, normalizeSourceUrl, type UrlMatch } from '../services/url-matches.js';
+import { failureFields } from '../services/failure-code.js';
 
 const MAX_URLS = 20;
 /** Addresses checked at once; each asks up to three spellings. */
@@ -38,7 +39,10 @@ export const urlLookupSchema = z.object({
     url: z.string(),
     normalized: z.string().optional(),
     matches: z.array(matchSchema),
-    error: z.object({ code: z.enum(['invalid_url', 'upstream_error']), message: z.string() }).optional(),
+    error: z.object({
+      code: z.enum(['invalid_url', 'upstream_busy', 'upstream_error']), message: z.string(),
+      retryAfter: z.number().optional(),
+    }).optional(),
   })),
 });
 type UrlLookup = z.infer<typeof urlLookupSchema>;
@@ -54,9 +58,16 @@ async function lookUp(url: string, includeCollections: boolean): Promise<Entry> 
     found = await findUrlMatches(url, normalized);
   } catch (err) {
     log.warn('url lookup failed', { error: err instanceof Error ? err.message : String(err) });
+    // Busy is told apart from broken here as everywhere else (`failureFields`);
+    // a timeout or a refusal stays `upstream_error`, the code this entry had.
+    const fields = failureFields(err);
+    const busy = fields.code === 'upstream_busy';
     return {
       url, normalized, matches: [],
-      error: { code: 'upstream_error', message: 'Die Suche im Repository ist fehlgeschlagen; ob es einen Datensatz gibt, ist offen.' },
+      error: busy
+        ? { code: 'upstream_busy', retryAfter: fields.retryAfter,
+          message: 'Das Repository ist gerade überlastet; ob es einen Datensatz gibt, ist offen.' }
+        : { code: 'upstream_error', message: 'Die Suche im Repository ist fehlgeschlagen; ob es einen Datensatz gibt, ist offen.' },
     };
   }
   // Bounded: twenty copies of one address are forty reads, and four addresses

@@ -10,6 +10,7 @@
 import { BASE_URL, DISPLAY_PROPS, appendPropertyFilter } from './wlo-config.js';
 import { HEADERS, wloFetch, logUpstreamMiss } from './wlo-fetch.js';
 import { readJson } from './read-json.js';
+import { upstreamErrorMessage } from './upstream-error.js';
 import type { SearchCriterion, SearchResponse, WloNode } from './wlo-types.js';
 
 /**
@@ -81,7 +82,7 @@ export async function ngsearch(
   const body = JSON.stringify(payload);
 
   const res = await wloFetch(url, { method: 'POST', headers: HEADERS, body });
-  if (!res.ok) throw new Error(`ngsearch failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(upstreamErrorMessage('ngsearch', res));
 
   // Throws rather than degrading: search is the primary read of the call it
   // serves, and an empty result set would be read as "nothing matched".

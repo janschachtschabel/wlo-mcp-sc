@@ -20,6 +20,7 @@
  */
 
 import { issueAccessBlock } from '../auth/access-issue.js';
+import { SESSION_BLOCK_TTL_S } from '../auth/access-registry.js';
 import type { AuthKeys } from '../auth/access-token.js';
 import { ANONYMOUS_ACCESS_TOKEN, type AccessSupport } from '../auth/credential.js';
 import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-authorize.js';
@@ -31,6 +32,16 @@ import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
 
 /** What the log records for a connection made without an account. */
 const ANONYMOUS_LABEL = '(ohne Konto)';
+
+/**
+ * Is this verified redirect target an embedded widget's (`WIDGET_OAUTH_ORIGINS`)?
+ * An empty list answers no — unlike the ticket list, where empty means "every
+ * origin": here the list SHORTENS an access, so its absence must change nothing.
+ */
+function isWidgetRedirect(redirectUri: string, origins: ReadonlySet<string> | undefined): boolean {
+  if (!origins || origins.size === 0) return false;
+  try { return origins.has(new URL(redirectUri).origin); } catch { return false; }
+}
 
 /** Does the caller want data rather than the page? The page's own fetch does. */
 function wantsJson(req: OAuthReq): boolean {
@@ -177,6 +188,7 @@ export async function grantConsent(
       token,
       { ip: deps.ip, authAbuseLimiter: deps.authAbuseLimiter, support },
       Date.now(),
+      isWidgetRedirect(checked.request.redirectUri, deps.widgetOAuthOrigins) ? SESSION_BLOCK_TTL_S : undefined,
     );
   if (!outcome.ok) {
     return send(res, outcome.status, { error: outcome.error },

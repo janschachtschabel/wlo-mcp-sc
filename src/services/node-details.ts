@@ -48,12 +48,13 @@ export interface NodeDetailOptions {
  * Why an id could not be read — E6's codes, so a caller can tell a deleted record
  * from one the login may not see (review R-C, 2026-11-06).
  */
-export type MissingCode = 'not_found' | 'forbidden' | 'timeout' | 'upstream_error';
+export type MissingCode = 'not_found' | 'forbidden' | 'timeout' | 'upstream_busy' | 'upstream_error';
 
 /** An HTTP status of a failed node read, as the code both detail answers use. */
 export function codeOfStatus(status: number): MissingCode {
   if (status === 404) return 'not_found';
   if (status === 401 || status === 403) return 'forbidden';
+  if (status === 429 || status === 503) return 'upstream_busy';
   return 'upstream_error';
 }
 

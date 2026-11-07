@@ -418,8 +418,9 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         if (isUpstreamTimeout(err)) {
           return codedError('timeout',
             'Die Antwort des Repositories kam nicht rechtzeitig. Ob der Datensatz angelegt wurde, ist damit ' +
-              'unklar — der Abbruch trifft die Antwort, nicht die Arbeit. Bitte den Aufruf erneut ausführen: ' +
-              'Gibt es den Datensatz zu dieser URL bereits, wird er mit seiner ID genannt, statt einen zweiten anzulegen.',
+              'unklar — der Abbruch trifft die Antwort, nicht die Arbeit. Bitte den Aufruf ohne confirmToken ' +
+              'erneut senden: Gibt es den Datensatz zu dieser URL bereits, nennt die neue Vorschau ihn mit seiner ID, ' +
+              'statt einen zweiten anzulegen.',
             { outcomeOpen: true });
         }
         return toolError('Der Datensatz konnte nicht angelegt werden', err);

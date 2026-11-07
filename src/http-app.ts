@@ -27,6 +27,7 @@ import { parseRequestUrl } from './request-url.js';
 import type { streamableHttpOptions } from './mcp-transport.js';
 import { createCodeStore } from './auth/oauth-codes.js';
 import { bearerChallenge, resolveIssuer } from './auth/oauth-metadata.js';
+import { ticketOriginAllowed } from './auth/ticket-origins.js';
 import { handleAuthEndpoint } from './rest/auth-pages.js';
 import { handleOAuthEndpoint } from './rest/oauth-pages.js';
 import { handleRestRequest } from './rest/routes.js';
@@ -34,11 +35,28 @@ import { handleUploadRequest, UPLOAD_PATH, uploadTimeoutMs } from './rest/upload
 import { batchUploadEnabled, sharedUploadSlots } from './services/write/upload-slot.js';
 import { handleStaticRequest } from './rest/static.js';
 import { widgetBuildIds } from './apps/resources.js';
+import { AUTH_STATUS_PATH, handleAuthStatus } from './rest/auth-status.js';
+import { handleReady, READY_PATH } from './rest/ready.js';
+import { refuseRateLimited, refuseTooManyLogins } from './rest/rate-limited.js';
+import {
+  budgetBucket, CLIENT_KEY_HEADER, countToolCalls, type ClientBudgets, type TrustedClient,
+} from './client-budget.js';
 import { SERVER_VERSION } from './version.js';
 
 export interface HttpAppOptions {
-  /** Per-IP limiter for the MCP endpoint (RATE_LIMIT_RPM). */
+  /**
+   * Per-address TOOL budget of the MCP endpoint (RATE_LIMIT_RPM): counts each
+   * `tools/call`, the only message that reaches edu-sharing. Also the OAuth
+   * connector's budget.
+   */
   rateLimiter: RateLimiter;
+  /**
+   * Per-address bound on EVERY POST to the MCP endpoint, checked before the body
+   * is read (`PROTOCOL_FACTOR` × RATE_LIMIT_RPM in `http.ts`). Absent = no bound.
+   */
+  protocolLimiter?: RateLimiter;
+  /** Trusted clients (`TRUSTED_CLIENT_KEYS`), each with its own two budgets. */
+  clientBudgets?: ClientBudgets;
   /** Tighter per-IP limiter for the public REST surface (API_RATE_LIMIT_RPM). */
   apiRateLimiter: RateLimiter;
   /** Cap on DISTINCT logins one IP may present (AUTH_CREDENTIAL_LIMIT). */
@@ -50,6 +68,16 @@ export interface HttpAppOptions {
    * back to `authAbuseLimiter`, the tighter of the two.
    */
   ticketAbuseLimiter?: DistinctValueLimiter;
+  /**
+   * `TICKET_ALLOWED_ORIGINS` (plan 2026-11-07, R4). Present: `/auth/ticket`
+   * refuses any other browser origin (403, `rest/auth-pages.ts`) AND its CORS
+   * answer mirrors only a listed one, so a foreign browser already fails at the
+   * preflight — an EMPTY set (configured, every entry unusable) admits none.
+   * Absent: the wildcard, as before.
+   */
+  ticketAllowedOrigins?: ReadonlySet<string>;
+  /** `WIDGET_OAUTH_ORIGINS` (R1): OAuth logins redirecting there expire after 12 h — see `OAuthEndpointDeps`. */
+  widgetOAuthOrigins?: ReadonlySet<string>;
   /** Max buffered request-body size in bytes (MAX_BODY_BYTES). */
   maxBodyBytes: number;
   /** Derive the client IP from X-Forwarded-For (TRUST_PROXY; see clientKey). */
@@ -90,7 +118,8 @@ export const MAX_BATCH_LENGTH = 10;
  * repository-issued ticket — machine-made, high-entropy, worthless to
  * enumerate. Validating STOLEN tickets is not enabled by CORS either (a thief
  * can ask the repository directly), and the distinct-value limiter still
- * bounds attempts per address.
+ * bounds attempts per address. `TICKET_ALLOWED_ORIGINS` narrows the carve-out
+ * to the pages that embed the widget (see the CORS block in the handler).
  */
 function isCredentialSurface(path: string): boolean {
   if (path === '/auth/ticket') return false;
@@ -99,13 +128,21 @@ function isCredentialSurface(path: string): boolean {
   return path.startsWith('/auth') || path.startsWith('/oauth/authorize');
 }
 
+const NO_CLIENTS: ReadonlyMap<string, TrustedClient> = new Map();
+
+/** The request's own origin when the list allows it, else null (no CORS header). */
+function listedOrigin(raw: string | string[] | undefined, allowed: ReadonlySet<string>): string | null {
+  const origin = Array.isArray(raw) ? raw[0] : raw;
+  return origin !== undefined && ticketOriginAllowed(origin, allowed) ? origin : null;
+}
+
 /** Build the request handler `http.ts` mounts on its node:http server. */
 export function createHttpRequestHandler(
   opts: HttpAppOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const {
-    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter,
-    maxBodyBytes, trustProxy, streamOptions, publicBaseUrl,
+    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter, ticketAllowedOrigins, widgetOAuthOrigins,
+    maxBodyBytes, trustProxy, streamOptions, publicBaseUrl, protocolLimiter, clientBudgets,
   } = opts;
 
   // One store per process, held here rather than passed in: it takes no
@@ -170,10 +207,20 @@ export function createHttpRequestHandler(
     // keeps the wildcard and needs it — the discovery documents are public and
     // secret-free, and clients fetch them cross-origin; `/oauth/register` and
     // `/oauth/token` carry no password and are useless without a code.
+    //
+    // `/auth/ticket` with `TICKET_ALLOWED_ORIGINS` set names the caller's origin
+    // only when it is listed — the 403 in `rest/auth-pages.ts` is the rule, this
+    // makes a foreign browser fail at the preflight instead of after the POST.
     if (!isCredentialSurface(path)) {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+      const corsOrigin = path === '/auth/ticket' && ticketAllowedOrigins !== undefined
+        ? listedOrigin(req.headers['origin'], ticketAllowedOrigins)
+        : '*';
+      if (corsOrigin !== '*') res.setHeader('Vary', 'Origin');
+      if (corsOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+      }
     }
 
     if (req.method === 'OPTIONS') {
@@ -188,6 +235,29 @@ export function createHttpRequestHandler(
     if (req.method === 'GET' && path === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: SERVER_VERSION, widgets: widgetBuildIds() }));
+      return;
+    }
+
+    // Readiness (plan 2026-11-07, S5): can the repository be reached? No budget —
+    // the answer is cached and probed at most once per 30 s.
+    if (req.method === 'GET' && path === READY_PATH) {
+      await handleReady(res);
+      return;
+    }
+
+    // Login status in one request (S4), with the credential rules of /mcp. Under
+    // /auth*, so it carries no CORS header; spends the protocol budget.
+    if (req.method === 'GET' && path === AUTH_STATUS_PATH) {
+      const ip = clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy);
+      const bucket = budgetBucket(req.headers[CLIENT_KEY_HEADER], ip, clientBudgets?.clients ?? NO_CLIENTS);
+      const protocolBudget = bucket.kind === 'client' ? clientBudgets?.protocol(bucket.key) : protocolLimiter;
+      await handleAuthStatus(req, res, {
+        ip, bucket, authAbuseLimiter,
+        ...(protocolBudget ? { protocolBudget } : {}),
+        challenge: () => bearerChallenge(resolveIssuer({
+          configured: publicBaseUrl, host: req.headers['host'], forwardedProto: req.headers['x-forwarded-proto'], trustProxy,
+        })),
+      });
       return;
     }
 
@@ -210,8 +280,9 @@ export function createHttpRequestHandler(
     if (path.startsWith('/api/')) {
       const ip = clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy);
       if (apiRateLimiter.check(ip, Date.now())) {
-        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
-        res.end(JSON.stringify({ error: 'Rate limit exceeded. Retry after 60s.' }));
+        // REST, not JSON-RPC: the old `error` text stays, beside a code and the
+        // exact wait (chatbot S2 — a flat 60 told clients to wait too long).
+        refuseRateLimited(res, apiRateLimiter, ip, 'address', 'rest');
         return;
       }
       // Anonymous by construction — the handler-wide scope above covers this
@@ -221,12 +292,17 @@ export function createHttpRequestHandler(
 
     // MCP endpoint – stateless: new server + transport per request
     if (req.method === 'POST' && (path === '/mcp' || path === '/')) {
-      // Rate-limit per client IP BEFORE doing any work (cheap rejection). Health
-      // and CORS preflight are intentionally exempt (handled above).
+      // Two budgets (plan 2026-11-07, S1). Which bucket: a trusted client's own
+      // (X-WLO-Client-Key), else the address. The PROTOCOL budget bounds every
+      // POST and is checked here, before any work (cheap rejection); the TOOL
+      // budget counts only `tools/call` and needs the parsed body, see below.
+      // Health and CORS preflight are exempt (handled above).
       const ip = clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy);
-      if (rateLimiter.check(ip, Date.now())) {
-        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
-        res.end(JSON.stringify({ error: 'Rate limit exceeded. Retry after 60s.' }));
+      const bucket = budgetBucket(req.headers[CLIENT_KEY_HEADER], ip, clientBudgets?.clients ?? NO_CLIENTS);
+      const toolBudget = bucket.kind === 'client' ? clientBudgets?.tool(bucket.key) ?? rateLimiter : rateLimiter;
+      const protocolBudget = bucket.kind === 'client' ? clientBudgets?.protocol(bucket.key) : protocolLimiter;
+      if (protocolBudget?.check(bucket.key, Date.now())) {
+        refuseRateLimited(res, protocolBudget, bucket.key, bucket.kind);
         return;
       }
 
@@ -277,22 +353,12 @@ export function createHttpRequestHandler(
       // for every scheme — see there. Keying a block by address refused a relay
       // client at its 11th signed-in person while letting a guesser who had
       // learned a `jti` multiply their budget by rotating addresses.
-      if (userCred && authAbuseLimiter.check(
-        abuseBucketKey(userCred, ip), userCred.header, Date.now(),
-      )) {
-        // `scope` names which rule fired WITHOUT naming the bucket: for a block
-        // the bucket is the access id, and that id is a secret (AUTH.md §4) —
-        // it must never reach a log line or a response.
-        const perBlock = Boolean(userCred.jti);
-        log.warn('too many distinct credentials', {
-          ip, scope: perBlock ? 'access-block' : 'address',
-        });
-        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '600' });
-        res.end(JSON.stringify({
-          error: perBlock
-            ? 'Too many different logins for this access block.'
-            : 'Too many different logins from this address.',
-        }));
+      const abuseBucket = userCred ? abuseBucketKey(userCred, ip) : '';
+      if (userCred && authAbuseLimiter.check(abuseBucket, userCred.header, Date.now())) {
+        // The same JSON-RPC shape as the request budget's 429 (review
+        // 2026-11-07): a JSON-RPC client read the old free text as a network
+        // failure.
+        refuseTooManyLogins(res, authAbuseLimiter, { bucket: abuseBucket, perBlock: Boolean(userCred.jti), ip });
         return;
       }
 
@@ -324,22 +390,22 @@ export function createHttpRequestHandler(
         return;
       }
 
-      // A batch is charged per element: the request itself was counted above,
-      // so each further element costs one more check. Bounded first, so an
-      // oversized batch cannot even spend the budget of the ones after it.
-      if (Array.isArray(body)) {
-        if (body.length > MAX_BATCH_LENGTH) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: `JSON-RPC batch exceeds ${MAX_BATCH_LENGTH} messages.` }));
-          return;
-        }
+      // Bounded first, so an oversized batch cannot even spend the budget.
+      if (Array.isArray(body) && body.length > MAX_BATCH_LENGTH) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `JSON-RPC batch exceeds ${MAX_BATCH_LENGTH} messages.` }));
+        return;
+      }
+      // The tool budget: one unit per `tools/call`, each element of a batch on
+      // its own (audit 2026-11-05: a batch is not one request's worth of work).
+      {
+        const now = Date.now();
         let limited = false;
-        for (let i = 1; i < body.length; i++) {
-          if (rateLimiter.check(ip, Date.now())) limited = true;
+        for (let i = countToolCalls(body); i > 0; i--) {
+          if (toolBudget.check(bucket.key, now)) limited = true;
         }
         if (limited) {
-          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
-          res.end(JSON.stringify({ error: 'Rate limit exceeded. Retry after 60s.' }));
+          refuseRateLimited(res, toolBudget, bucket.key, bucket.kind);
           return;
         }
       }
@@ -451,6 +517,7 @@ export function createHttpRequestHandler(
       rateLimiter: apiRateLimiter,
       authAbuseLimiter,
       ...(ticketAbuseLimiter ? { ticketAbuseLimiter } : {}),
+      ...(ticketAllowedOrigins ? { ticketAllowedOrigins } : {}),
     })) return;
 
     // OAuth surface (discovery in P1; register/authorize/token follow). Like the
@@ -470,6 +537,7 @@ export function createHttpRequestHandler(
       connectorRateLimiter: rateLimiter,
       authAbuseLimiter,
       codeStore,
+      ...(widgetOAuthOrigins ? { widgetOAuthOrigins } : {}),
       issuer: resolveIssuer({
         configured: publicBaseUrl,
         host: req.headers['host'],

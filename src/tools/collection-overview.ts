@@ -45,7 +45,7 @@ export const collectionOverviewSchema = z.object({
     })),
   }).optional(),
   missing: z.array(z.object({
-    part: z.enum(OVERVIEW_PARTS), code: z.enum(['timeout', 'forbidden', 'upstream_error', 'not_checked']),
+    part: z.enum(OVERVIEW_PARTS), code: z.enum(['timeout', 'forbidden', 'upstream_busy', 'upstream_error', 'not_checked']),
   })),
 });
 

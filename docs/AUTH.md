@@ -111,11 +111,42 @@ everything and people fetch a new one. Inconvenient beats unsafe, so *every*
 failure here closes the door: only an **absent** file counts as "first start". A
 present-but-unreadable or malformed one disables the feature and logs why.
 
-**It holds ids, never credentials** — `{ jti, label, iat }` and nothing else,
+**It holds ids, never credentials** — `{ jti, label, iat }` plus the optional kind `k` and expiry `exp`, and nothing else,
 asserted by test. It is also the only module in this project that writes to disk
 at runtime, which is why the container mounts exactly one writable volume and
 keeps everything else read-only. `tests/shared-rule-discipline.test.ts` enforces
 that claim against the source rather than trusting this paragraph.
+
+**An entry may carry an expiry** (`exp`, 2026-11-07, chatbot R1). The token
+stays the block — no wrapper, no refresh token — and the expiry lives in the
+entry, checked where every block is opened (`registry.has`, called by
+`credentialFromHeader`); an expired block reads exactly like a revoked one, 401
+on `/mcp`. **12 h for ticket blocks** (a fresh exchange of the same live ticket
+writes the entry again once it has expired — before that it is not extended, so
+a session longer than 12 h meets one 401 and exchanges again) **and for OAuth logins whose verified
+`redirect_uri` lies in `WIDGET_OAUTH_ORIGINS`**. Everything else — a pasted block,
+an AI host's OAuth login, every entry written before — never expires. Optional
+field, no format bump: an old build ignores it, which on a rollback lifts the
+expiry rather than the access. `GET /auth/status` reports it as `expiresAt`.
+Expired entries never count against the per-account cap (they are deleted 48 h
+after expiry, at the account's next write): a widget's OAuth login has no `k` and counts
+with the pasted blocks, and logging in every 12 h would otherwise retire the
+block pasted into an AI host within a week (the 2026-08-13 defect, by a new
+route). A separate kind would do it too, but an unknown `k` fails an old build
+closed on rollback.
+
+**The expiry cannot be issued away** (review 2026-11-07). `registry.add` replaces
+a whole entry, and `/auth/issue` or a consent through any non-widget
+`redirect_uri` would otherwise have listed a stolen widget block again WITHOUT
+its expiry. So issuance (`access-issue.ts`) confirms a listed id without
+rewriting it, refuses an id that is known but expired — expired entries are
+kept as that record for `EXPIRED_KEPT_S` (48 h) and do not count against the
+cap — and refuses a block whose own `iat` is more than 24 h off our clock
+(`ISSUE_MAX_SKEW_S`), so a block can never outlive its record. The pages mint
+a fresh block moments before issuing it, so none of this touches a real login.
+What it does not close: a block REVOKED within its first day can be issued again
+by whoever holds it — revocation by id was never durable against a holder; a
+password change is.
 
 Writes are serialised and **undone on failure**, so the list never grants what it
 could not record. Ten blocks per WLO account; the oldest is evicted beyond that,
@@ -138,6 +169,16 @@ That is the intended trade — whoever notices a compromise must be able to act
 immediately — but it makes the id the secret. **It must never be logged and never
 appear in a response.** `tests/auth-endpoints.test.ts` pins both halves: a forged
 block with a listed id revokes, and the issuance answer does not carry the id.
+
+**The same endpoint takes the block as `Authorization: Bearer`** (2026-11-07,
+chatbot R2) — for a client logging a person out: the chatbot backend holds the
+block the widget signed in with (ticket exchange or OAuth) and ends exactly that
+one. No body and no JSON needed: the header already makes the request
+preflight-bound, and `/auth*` answers no foreign origin. The answer is `200
+{revoked}` for every case — unreadable, foreign, unlisted, already revoked —
+because logging out is idempotent and the distinction helps only someone without
+the block. It grants nothing the body path did not: the property above (knowing
+the id is enough) is unchanged. The header wins over a body token.
 
 **`POST /auth/revoke-all` — by account.** Verifies a WLO login and removes every
 entry carrying that user name. This exists because the path above is unreachable
@@ -234,11 +275,14 @@ Three further decisions are load-bearing:
 **The access token IS the block.** No second credential is minted, so nothing
 rests on disk and no session store exists to lose on a restart — and one entry in
 the allow-list covers both routes, so revoking it ends both. There is no
-`refresh_token` and no `expires_in`: access ends when the block is revoked or the
-WLO password changes. Do not wrap it in another token.
+`refresh_token` and no `expires_in`: access ends when the block is revoked, the
+WLO password changes, or — for ticket and widget blocks — the allow-list entry
+expires (§4). Do not wrap it in another token.
 
 What that does *not* mean, and the correction is the point: the block itself
-never reaches the OAuth user, so **`/auth/revoke` is unreachable for them**.
+never reaches the OAuth user, so **`/auth/revoke` is unreachable for them** —
+for the PERSON; the client that holds the token can end it with
+`POST /auth/revoke` and the token as `Bearer` (§4).
 Ending an OAuth access is what `/auth/revoke-all` is for (§4). An earlier version
 of this document claimed a single revocation covered both ways in without saying
 which revocation — true for the paste route, false for OAuth.
@@ -320,7 +364,8 @@ result set would be read as "nothing matched"), and the tool reports an error.
 `wlo_auth_status` names it too, since `checkIdentity` reads 404 as
 not-authenticated.
 
-So there is no expiry of ours to enforce, and none is wanted: the repository
+So the ticket's own end needs no expiry of ours (the 12-hour one of §4 bounds
+the BLOCK and came later, 2026-11-07, for a different reason): the repository
 enforces it, visibly, on every call. A well-formed but unknown ticket stands in
 for an expired one in that measurement — a ticket is a session key looked up in
 a table, and an expired session is simply absent from it.
@@ -359,6 +404,15 @@ Three decisions worth naming:
   so a visitor's page reloads cannot spend that address's `/auth/issue` budget
   either. An entry point that fails to wire it falls back to the tighter budget,
   so forgetting over-refuses instead of running unbounded.
+- **`TICKET_ALLOWED_ORIGINS` narrows the carve-out** (2026-11-07). With a list,
+  another browser origin gets `403 origin_not_allowed` before the body is
+  read (after the per-address request budget, so a forged `Origin` cannot
+  flood the log), and the CORS answer mirrors only a listed origin
+  (`Vary: Origin`), so a foreign browser already fails at the preflight. A
+  request without `Origin` is a server and is never refused; an empty list is
+  the old wildcard. `Origin` does not stop curl — what the list closes is a
+  foreign PAGE exchanging its visitor's ticket and reading the block back; a
+  server that holds a ticket holds the stronger secret already.
 - **Wrapping beats holding.** The widget could keep the raw ticket and send it
   per request — but a raw ticket is a live repository credential, while a
   block is useless anywhere except against this server and revocable here.
@@ -519,7 +573,7 @@ because HTTP Basic is base64, not encryption).
 **Also not protected.** Anyone who learns a `jti` can revoke that access (§4). A
 person who can read the server's environment has everything. And an access block
 survives a WLO password change only until the repository stops accepting the old
-one — there is no expiry of our own.
+one — a pasted block has no expiry of our own (ticket and widget blocks do, §4).
 
 **Not protected and not meant to be:** the anonymous token. It is a public
 constant, and anyone may use it. That is not a weakness, because it authorises
@@ -548,7 +602,8 @@ refactor.
    `application/json`.** Both halves are needed; either alone is bypassable.
 5. **The authorization request is checked before a password field is shown, and a
    refusal gets a page, never a redirect.** The check lives once.
-6. **The access token IS the block.** No wrapper, no refresh token, no expiry —
+6. **The access token IS the block.** No wrapper, no refresh token, no expiry IN the
+   block (the 12-hour one of ticket and widget blocks lives in the allow-list, §4) —
    it is the only reason one allow-list entry covers both routes. The block still
    never reaches the OAuth user, so revoking *that* access needs the account
    path, not the block path.

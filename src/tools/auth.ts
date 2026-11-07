@@ -13,9 +13,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { currentCredential } from '../auth/credential.js';
-import { checkIdentity } from '../auth/identity.js';
 import { registerWloTool } from '../apps/register.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { readAuthStatus } from '../auth/auth-status.js';
 import { toolError } from './shared.js';
 
 /** The rung of the credential chain a call currently resolves to. */
@@ -29,6 +28,10 @@ export const authStatusSchema = z.object({
   /** What edu-sharing reports back — `esguest` when we are nobody. */
   authority: z.string().nullable(),
   displayName: z.string().optional(),
+  /** How the identity reached this server (plan 2026-11-07, S4). */
+  credential: z.enum(['none', 'basic', 'access-block', 'ticket', 'service']),
+  /** When this server stops accepting the block (ISO) — ticket and widget blocks only (R1). */
+  expiresAt: z.string().optional(),
 });
 
 export function registerAuthTools(server: McpServer): void {
@@ -44,29 +47,17 @@ WICHTIG: "authenticated" ist eine EIGENE Aussage. Ist mode="service" oder "user"
     handler: async () => {
       try {
         const cred = currentCredential();
-        const identity = await checkIdentity();
-        const mode = cred ? cred.source : 'anonymous';
-
-        // In per-user mode the label is caller-supplied (everything before the
-        // colon in their Basic header), so it is foreign text in model-facing
-        // output and gets the same treatment as a publisher title.
-        // A name of nothing but control characters sanitizes to "", and empty
-        // quotes in the message would read like a bug rather than a fact.
-        const label = cred ? (sanitizeText(cred.label) || 'ohne lesbaren Namen') : '';
-
-        const payload = {
-          mode,
-          authenticated: identity.authenticated,
-          ...(cred ? { configuredAs: label } : {}),
-          authority: identity.authority,
-          ...(identity.displayName ? { displayName: identity.displayName } : {}),
-        };
+        // The same function `GET /auth/status` answers with, so the tool and the
+        // endpoint cannot disagree about a login.
+        const payload = await readAuthStatus(cred);
+        const { mode } = payload;
+        const label = payload.configuredAs ?? '';
 
         const text = !cred
           ? 'Zugriff ohne Anmeldung: es werden ausschließlich öffentlich sichtbare WLO-Inhalte gelesen.'
-          : identity.authenticated
-            ? `Angemeldet als „${identity.displayName || identity.authority}“ (${mode === 'service' ? 'gemeinsames Dienstkonto' : 'persönliches Konto'}). Die Ergebnisse folgen den Rechten dieses Kontos.`
-            : `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO akzeptiert sie nicht (${identity.authority ?? 'abgelehnt oder Repository nicht erreichbar'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
+          : payload.authenticated
+            ? `Angemeldet als „${payload.displayName || payload.authority}“ (${mode === 'service' ? 'gemeinsames Dienstkonto' : 'persönliches Konto'}). Die Ergebnisse folgen den Rechten dieses Kontos.`
+            : `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt oder Repository nicht erreichbar'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
 
         return { content: [{ type: 'text' as const, text }], structuredContent: payload };
       } catch (err) {

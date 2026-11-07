@@ -14,9 +14,12 @@ import { log } from './logger.js';
 import { createDistinctValueLimiter, createRateLimiter } from './rate-limit.js';
 import { streamableHttpOptions } from './mcp-transport.js';
 import { createHttpRequestHandler } from './http-app.js';
+import { createClientBudgets, parseTrustedClientKeys, PROTOCOL_FACTOR } from './client-budget.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
 import { resolveAccessSupport } from './auth/access-setup.js';
+import { parseAllowedOrigins, resolveTicketOrigins } from './auth/ticket-origins.js';
 import { startSkillRegistryCache } from './services/skill-registry-cache.js';
+import { startReadinessProbe } from './services/upstream-readiness.js';
 import { setAccessSupport } from './auth/credential.js';
 
 const PORT = resolvePositiveInt(process.env['PORT'], 3000, 'PORT');
@@ -74,6 +77,35 @@ const AUTH_CREDENTIAL_LIMIT =
 const TICKET_CREDENTIAL_LIMIT =
   resolveNonNegativeInt(process.env['TICKET_CREDENTIAL_LIMIT'], 200, 'TICKET_CREDENTIAL_LIMIT');
 
+// Which browser origins may exchange a ticket (plan 2026-11-07, R4). Unset = every
+// origin, as before; a request without Origin (a server) is never refused. In
+// production the same list as the chatbot's own CORS_ORIGINS. A list whose every
+// entry is unusable closes the browser path instead of opening it.
+const ticketOrigins = resolveTicketOrigins(process.env['TICKET_ALLOWED_ORIGINS']);
+if (ticketOrigins.allRejected) {
+  log.error('TICKET_ALLOWED_ORIGINS: no usable entry (need http(s) origins such as https://example.org) — '
+    + 'NO browser origin may exchange a ticket until this is fixed', { entries: ticketOrigins.rejected });
+} else if (ticketOrigins.rejected.length) {
+  log.warn('TICKET_ALLOWED_ORIGINS: entries ignored (need http(s) origins, no wildcard)', {
+    entries: ticketOrigins.rejected,
+  });
+}
+
+// OAuth logins whose verified redirect target lies in one of these origins are an
+// embedded widget's, and their block expires after 12 h (plan 2026-11-07, R1).
+// Empty = no OAuth block expires — AI hosts are never affected by default.
+const widgetOrigins = parseAllowedOrigins(process.env['WIDGET_OAUTH_ORIGINS']);
+// No closed direction exists here: expiring every OAuth login would hit the AI
+// hosts this list exists to spare. A list with nothing usable is an ERROR line.
+if (widgetOrigins.rejected.length && widgetOrigins.origins.size === 0) {
+  log.error('WIDGET_OAUTH_ORIGINS: no usable entry (need http(s) origins such as https://example.org) — '
+    + 'widget logins do NOT expire until this is fixed', { entries: widgetOrigins.rejected });
+} else if (widgetOrigins.rejected.length) {
+  log.warn('WIDGET_OAUTH_ORIGINS: entries ignored (need http(s) origins, no wildcard)', {
+    entries: widgetOrigins.rejected,
+  });
+}
+
 // When true, derive the client IP from X-Forwarded-For (the rightmost,
 // proxy-appended hop — see clientKey) instead of the socket address — required
 // for correct per-client rate limiting behind a reverse proxy (nginx, …). Off by
@@ -96,11 +128,31 @@ process.on('unhandledRejection', (reason) => {
   });
 });
 
+// How often the readiness probe asks the repository (ms); 0 = only on demand.
+const READY_PROBE_MS = resolveNonNegativeInt(process.env['WLO_READY_PROBE_MS'], 30_000, 'WLO_READY_PROBE_MS');
+
+// Trusted clients (plan 2026-11-07, S1): `name:rpm:key`, comma-separated. A
+// chatbot backend is ONE address for all its users; with a key it is counted in
+// its own bucket at its own rate. Refused entries are named, never their key.
+const trustedClients = parseTrustedClientKeys(process.env['TRUSTED_CLIENT_KEYS']);
+if (trustedClients.rejected.length) {
+  log.warn('TRUSTED_CLIENT_KEYS: entries ignored (need name:rpm:key, rpm > 0, key >= 32 characters)', {
+    names: trustedClients.rejected,
+  });
+}
+
 const httpServer = http.createServer(createHttpRequestHandler({
   rateLimiter: createRateLimiter(RATE_LIMIT_RPM),
+  // Every POST, before its body is read: initialize and notifications never
+  // reach edu-sharing, so they do not spend the tool budget — but they are not
+  // free to flood the process either. RATE_LIMIT_RPM=0 switches both off.
+  protocolLimiter: createRateLimiter(RATE_LIMIT_RPM * PROTOCOL_FACTOR),
+  clientBudgets: createClientBudgets(trustedClients.clients),
   apiRateLimiter: createRateLimiter(API_RATE_LIMIT_RPM),
   authAbuseLimiter: createDistinctValueLimiter(AUTH_CREDENTIAL_LIMIT),
   ticketAbuseLimiter: createDistinctValueLimiter(TICKET_CREDENTIAL_LIMIT),
+  ...(ticketOrigins.origins ? { ticketAllowedOrigins: ticketOrigins.origins } : {}),
+  widgetOAuthOrigins: widgetOrigins.origins,
   maxBodyBytes: MAX_BODY_BYTES,
   trustProxy: TRUST_PROXY,
   streamOptions,
@@ -134,6 +186,7 @@ httpServer.listen(PORT, () => {
     url: `http://localhost:${PORT}/mcp`,
     repository: WLO_REPOSITORY_URL,
     rateLimitRpm: RATE_LIMIT_RPM,
+    trustedClients: [...trustedClients.clients.values()].map(c => `${c.name}:${c.rpm}`),
     apiRateLimitRpm: API_RATE_LIMIT_RPM,
     authCredentialLimit: AUTH_CREDENTIAL_LIMIT,
     ticketCredentialLimit: TICKET_CREDENTIAL_LIMIT,
@@ -148,4 +201,8 @@ httpServer.listen(PORT, () => {
   // interval is unref'd, so a cold cache costs a caller the pointer line and
   // never a wait.
   startSkillRegistryCache();
+  // Readiness (plan 2026-11-07, S5/S6): the first probe is the warm-up call after
+  // a start, the periodic ones keep the connection and the search path warm and
+  // feed GET /ready. One small search per interval; WLO_READY_PROBE_MS=0 = off.
+  startReadinessProbe(READY_PROBE_MS);
 });

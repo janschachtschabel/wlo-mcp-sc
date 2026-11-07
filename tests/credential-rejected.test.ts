@@ -255,7 +255,7 @@ test('toolError codes a read timeout as timeout, a 403 as forbidden (feedback po
   const { toolError } = await import('../src/tools/shared.js');
   const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
   assert.equal(toolError('Lesen', timeout).structuredContent.error.code, 'timeout');
-  assert.equal(toolError('Lesen', new Error('upstream 403')).structuredContent.error.code, 'forbidden');
+  assert.equal(toolError('Lesen', new Error('getNodeMetadata failed: 403 Forbidden')).structuredContent.error.code, 'forbidden');
   assert.equal(toolError('Lesen', new Error('kaputt')).structuredContent.error.code, 'upstream_error');
 });
 

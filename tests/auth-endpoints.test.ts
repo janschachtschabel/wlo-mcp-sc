@@ -86,7 +86,7 @@ async function support(
   return { keys, registry, path };
 }
 
-const block = (keys: AuthKeys, jti = 'id-1', u = 'lehrerin', secret = 'geheim', iat = 1_754_300_000) =>
+const block = (keys: AuthKeys, jti = 'id-1', u = 'lehrerin', secret = 'geheim', iat = Math.floor(Date.now() / 1000)) =>
   encodeAccessToken({ v: 2, jti, u, secret, iat }, keys.publicKeyPem);
 
 const post = (url: string, token: string) => req('POST', url, JSON.stringify({ token }));
@@ -136,6 +136,68 @@ test('an accepted ticket is answered with a block the Bearer path honours', asyn
   assert.equal(cred.header, `EDU-TICKET ${TICKET}`);
   assert.equal(cred.label, 'lehrerin');
   assert.ok(cred.jti && registry.has(cred.jti));
+});
+
+test('TICKET_ALLOWED_ORIGINS: a foreign browser origin is refused before the repository is asked', async (t) => {
+  await support(t);
+  let calls = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { calls++; return new Response('{}'); }) as typeof fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const allowed = new Set(['https://redaktion.example.org']);
+
+  const foreign = postTicket(TICKET);
+  foreign.headers['origin'] = 'https://evil.example';
+  const r = res();
+  assert.equal(await handleAuthEndpoint(foreign, r, deps({ ticketAllowedOrigins: allowed })), true);
+  assert.equal(r.out.status, 403);
+  assert.equal(r.json()?.['code'], 'origin_not_allowed');
+  assert.equal(calls, 0, 'no upstream call for a refused origin');
+});
+
+test('TICKET_ALLOWED_ORIGINS: a listed origin and a request without Origin exchange as before', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const allowed = new Set(['https://redaktion.example.org']);
+
+  const listed = postTicket(TICKET);
+  listed.headers['origin'] = 'https://redaktion.example.org';
+  const a = res();
+  await handleAuthEndpoint(listed, a, deps({ ticketAllowedOrigins: allowed }));
+  assert.equal(a.out.status, 200, 'listed origin');
+
+  const b = res();
+  await handleAuthEndpoint(postTicket(TICKET), b, deps({ ticketAllowedOrigins: allowed }));
+  assert.equal(b.out.status, 200, 'server to server, no Origin');
+
+  const anyOrigin = postTicket(TICKET);
+  anyOrigin.headers['origin'] = 'https://anywhere.example';
+  const c = res();
+  await handleAuthEndpoint(anyOrigin, c, deps());
+  assert.equal(c.out.status, 200, 'no list changes nothing');
+});
+
+test('TICKET_ALLOWED_ORIGINS: a refused origin still spends the address budget, so the refusal log is bounded', async (t) => {
+  await support(t);
+  const allowed = new Set(['https://redaktion.example.org']);
+  const limiter = createRateLimiter(1);
+  const foreign = () => { const q = postTicket(TICKET); q.headers['origin'] = 'https://evil.example'; return q; };
+  const a = res();
+  await handleAuthEndpoint(foreign(), a, deps({ ticketAllowedOrigins: allowed, rateLimiter: limiter }));
+  assert.equal(a.out.status, 403);
+  const b = res();
+  await handleAuthEndpoint(foreign(), b, deps({ ticketAllowedOrigins: allowed, rateLimiter: limiter }));
+  assert.equal(b.out.status, 429, 'the second refusal is the budget, not another log line');
+});
+
+test('TICKET_ALLOWED_ORIGINS concerns the ticket exchange only', async (t) => {
+  const { keys } = await support(t);
+  t.after(upstream('lehrerin'));
+  const issue = req('POST', '/auth/issue', JSON.stringify({ token: block(keys) }));
+  issue.headers['origin'] = 'https://evil.example';
+  const r = res();
+  await handleAuthEndpoint(issue, r, deps({ ticketAllowedOrigins: new Set(['https://redaktion.example.org']) }));
+  assert.notEqual(r.out.status, 403);
 });
 
 test('a guest ticket is refused — the authority decides, not the status code', async (t) => {
@@ -310,7 +372,7 @@ test('the registry records our own issue time, not the one inside the block', as
   t.after(upstream('lehrerin'));
   const before = Math.floor(Date.now() / 1000);
 
-  await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-1', 'lehrerin', 'geheim', 0)), res(), deps());
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-1', 'lehrerin', 'geheim', before - 3600)), res(), deps());
 
   const stored = JSON.parse(readFileSync(path, 'utf8')) as { entries: { iat: number }[] };
   assert.equal(stored.entries.length, 1);
@@ -400,6 +462,109 @@ test('revoking an unlisted block reports honestly instead of erroring', async (t
   await handleAuthEndpoint(post('/auth/revoke', block(keys, 'never-listed')), r, deps());
   assert.equal(r.out.status, 200);
   assert.equal(r.json()?.['revoked'], false);
+});
+
+test('an expired block is unusable — the one place that opens a block checks the expiry', async (t) => {
+  const { keys, registry } = await support(t);
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: nowS - 100, exp: nowS - 1, k: 'ticket' });
+  await registry.add({ jti: 'id-2', label: 'lehrerin', iat: nowS - 100, exp: nowS + 3600, k: 'ticket' });
+  assert.equal(credentialFromHeader(`Bearer ${block(keys, 'id-1')}`), null, 'expired → /mcp answers 401');
+  assert.ok(credentialFromHeader(`Bearer ${block(keys, 'id-2')}`), 'not yet expired');
+});
+
+// ── R1 hardening (review 2026-11-07): the expiry cannot be issued away ─────
+
+test('re-issuing a block that is already listed keeps its expiry — /auth/issue cannot make it permanent', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'widget', label: 'lehrerin', iat: nowS, exp: nowS + 3600 });
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'widget')), r, deps());
+  assert.equal(r.out.status, 200, 'the same access, confirmed');
+  assert.equal(registry.expiresAt('widget'), nowS + 3600, 'and its expiry untouched');
+});
+
+test('an EXPIRED block cannot be issued again — it stays ended', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'widget', label: 'lehrerin', iat: nowS - 50_000, exp: nowS - 10 });
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'widget', 'lehrerin', 'geheim', nowS - 50_000 + 3600 * 13)), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.equal(registry.has('widget'), false);
+});
+
+test('a block made more than a day ago cannot be newly issued — the entry it once had may be long gone', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+  const old = Math.floor(Date.now() / 1000) - 25 * 3600;
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'alt', 'lehrerin', 'geheim', old)), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.equal(registry.has('alt'), false);
+});
+
+// ── R2: self-revocation by possession (plan 2026-11-07) ────────────────────
+
+/** A server-to-server logout: the block in the header, no body, no content-type. */
+const bearerRevoke = (token: string, body?: string) => {
+  const q = req('POST', '/auth/revoke', body);
+  delete q.headers['content-type'];
+  if (body) q.headers['content-type'] = 'application/json';
+  q.headers['authorization'] = `Bearer ${token}`;
+  return q;
+};
+
+test('POST /auth/revoke with the block as Bearer revokes exactly it — the next /mcp call is a 401', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+  await registry.add({ jti: 'id-2', label: 'lehrerin', iat: 1 });
+  const mine = block(keys, 'id-1');
+  assert.ok(credentialFromHeader(`Bearer ${mine}`), 'usable before');
+
+  const r = res();
+  assert.equal(await handleAuthEndpoint(bearerRevoke(mine), r, deps()), true);
+  assert.equal(r.out.status, 200);
+  assert.equal(r.json()?.['revoked'], true);
+  assert.equal(credentialFromHeader(`Bearer ${mine}`), null, 'unusable after → /mcp answers 401');
+  assert.equal(registry.has('id-2'), true, 'the person’s other accesses stay');
+});
+
+test('Bearer revocation tells nobody which case it was — unreadable, foreign, unlisted look alike', async (t) => {
+  const { keys } = await support(t);
+  const answers: string[] = [];
+  for (const token of ['wlo2.xx.yy.zz', 'kein-block', block(keys, 'never-listed')]) {
+    const r = res();
+    await handleAuthEndpoint(bearerRevoke(token), r, deps());
+    answers.push(`${r.out.status} ${r.out.body}`);
+  }
+  assert.deepEqual(new Set(answers).size, 1, answers.join(' | '));
+  assert.match(answers[0]!, /^200 /);
+});
+
+test('the Bearer header wins over a body token', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+  await registry.add({ jti: 'id-2', label: 'lehrerin', iat: 1 });
+  const r = res();
+  await handleAuthEndpoint(bearerRevoke(block(keys, 'id-1'), JSON.stringify({ token: block(keys, 'id-2') })), r, deps());
+  assert.equal(registry.has('id-1'), false);
+  assert.equal(registry.has('id-2'), true);
+});
+
+test('a Basic header is not a Bearer revocation — the body path still needs its JSON', async (t) => {
+  const { registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+  const q = req('POST', '/auth/revoke');
+  delete q.headers['content-type'];
+  q.headers['authorization'] = `Basic ${Buffer.from('a:b').toString('base64')}`;
+  const r = res();
+  await handleAuthEndpoint(q, r, deps());
+  assert.equal(r.out.status, 415);
+  assert.equal(registry.has('id-1'), true);
 });
 
 test('revoking needs a block we can open', async (t) => {

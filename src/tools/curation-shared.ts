@@ -19,7 +19,9 @@ import { flattenText, sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
 import { codedErrorResult, toolError } from './shared.js';
 import { renderChangeSet, hasSomethingToConfirm, displayValue, type ChangeSet } from '../services/write/change-set.js';
-import { mintToken, consumeToken, TOKEN_TTL_MS } from '../services/write/confirm.js';
+import { mintToken, consumeToken, currentIdentity, TOKEN_TTL_MS } from '../services/write/confirm.js';
+import { lookupReplayInCall } from '../services/write/confirm-replay.js';
+import { replayAnswer, runWithReplay } from './curation-replay.js';
 import { writeRefusal, mayPrepare } from '../services/write/credential-gate.js';
 import type { PreparedRequest } from '../services/write/prepared-request.js';
 import type { FieldWriteStatus } from '../services/write/nodes.js';
@@ -66,15 +68,26 @@ export function registerCurationTool(
      * Without it a curation tool keeps refusing exactly as before.
      */
     preparable?: boolean;
+    /**
+     * `false` for tools whose key already continues a stored PLAN
+     * (`plan-runner.ts`): a replay of the first slice would stop the plan from
+     * continuing. Every other curation tool gets the safe retry (plan
+     * 2026-11-07, S3).
+     */
+    replay?: false;
   },
 ): void {
-  const { preparable, ...toolDef } = def;
+  const { preparable, replay, ...toolDef } = def;
   registerWloTool(server, {
     ...toolDef,
     securitySchemes: OAUTH_SECURITY_SCHEMES,
     handler: async (args, extra) => {
       const refusal = writeRefusal();
-      if (refusal === null || (preparable && mayPrepare())) return namePreviewTool(await def.handler(args, extra), def.name);
+      if (refusal === null || (preparable && mayPrepare())) {
+        const run = async () => namePreviewTool(await def.handler(args, extra), def.name);
+        const token = typeof args['confirmToken'] === 'string' ? args['confirmToken'] : '';
+        return token && replay !== false ? runWithReplay(token, args, run) : run();
+      }
       return {
         content: [{ type: 'text' as const, text: refusal }],
         // A code beside the text, for a program (BOERDi rule "errors as codes", E6).
@@ -377,6 +390,11 @@ export function confirmOrExplain(token: string, cs: ChangeSet): WloToolResult | 
   switch (consumeToken(token, cs)) {
     case 'ok':
       return null;
+    case 'replay':
+      // Two calls sent at once: both passed the seam, the other one redeemed.
+      return replayAnswer(lookupReplayInCall(token, currentIdentity())) ?? codedError('confirm_unknown',
+        'Der Bestätigungsschlüssel ist unbekannt oder wurde bereits benutzt — jeder Schlüssel gilt genau einmal. '
+          + 'Es wurde nichts geschrieben. Bitte den Aufruf ohne confirmToken wiederholen.');
     case 'expired':
       return codedError('confirm_expired',
         'Der Bestätigungsschlüssel ist abgelaufen (zehn Minuten). Bitte den Aufruf ohne confirmToken ' +

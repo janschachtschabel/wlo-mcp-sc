@@ -73,6 +73,7 @@ function stepLine(item: TreeItem, existingId: string | undefined): string {
 
 export function registerCurationTreeTools(server: McpServer, challenge: WriteAuthChallenge): void {
   registerCurationTool(server, challenge, {
+    replay: false, // the key continues a stored plan (plan-runner.ts)
     name: 'wlo_create_collection_tree',
     title: 'WLO Sammlungsbaum anlegen',
     description: `Lege einen ganzen Baum von Untersammlungen unter einer bestehenden Sammlung an — mit EINER Bestätigung.

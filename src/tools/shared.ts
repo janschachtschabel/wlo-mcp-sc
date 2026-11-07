@@ -18,7 +18,7 @@ import { DESCRIBED_MAX, type ContextInstruction } from '../services/skill-regist
 import { capText } from '../text-cap.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
-import { failureCode, type FailureCode } from '../services/failure-code.js';
+import { failureFields, type FailureCode } from '../services/failure-code.js';
 // The title rule moved to a leaf module (topic-page-api/-structure and the write
 // service need it and must not import from tools/). Re-exported so the tools
 // keep one import site.
@@ -421,7 +421,8 @@ export function codedErrorResult(code: string, text: string, extra: Record<strin
  * WITHOUT any server-side trace — so upstream failures were invisible in the
  * logs. This centralizes both: structured error log + the client-facing
  * `<context>: <detail>` message (behaviour-preserving for callers), plus
- * `structuredContent.error` with `failureCode`'s code (`timeout`/`forbidden`/`upstream_error`).
+ * `structuredContent.error` with `failureCode`'s code (`timeout`/`forbidden`/`upstream_busy`/`upstream_error`;
+ * a busy repository adds `retryAfter`).
  */
 export function toolError(
   context: string,
@@ -429,7 +430,7 @@ export function toolError(
 ): {
   content: { type: 'text'; text: string }[];
   isError: true;
-  structuredContent: { error: { code: FailureCode; message: string } };
+  structuredContent: { error: { code: FailureCode; message: string; retryAfter?: number } };
 } {
   const detail = err instanceof Error ? err.message : String(err);
   log.error('tool error', { context, error: detail });
@@ -440,6 +441,7 @@ export function toolError(
   // read timeout says `timeout` here too and not `upstream_error`.
   return {
     content: [{ type: 'text' as const, text }], isError: true,
-    structuredContent: { error: { code: failureCode(err), message: text } },
+    // A busy repository adds the wait (plan 2026-11-07, S2b).
+    structuredContent: { error: { ...failureFields(err), message: text } },
   };
 }

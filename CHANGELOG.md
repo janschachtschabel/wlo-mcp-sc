@@ -6,6 +6,129 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — full review of the chatbot package S1–S7 (2026-11-07, two independent reviewers, 18 findings)
+
+- **The 12-hour expiry could be issued away.** `/auth/issue` or a consent through any non-widget `redirect_uri`
+  re-wrote a widget block's entry without `exp`. Issuance now confirms a listed id without rewriting it, refuses an
+  expired one (expired entries are kept 48 h as that record and no longer count against the per-account cap), and
+  refuses a block whose own `iat` is more than 24 h off the server clock.
+- **A busy repository after redemption invited a retry that could only replay.** An error answered after the
+  confirm key was redeemed now drops `retryAfter` and carries `requiresNewPreview: true`; a throw after redemption
+  answers `upstream_error` with `outcomeOpen: true` instead of forgetting the key (whose retry then said "nichts
+  geschrieben"). The post-confirm timeout of `wlo_create_content` now says "ohne confirmToken erneut senden".
+- `wlo_health_check` reported a real 503 as "reachable, root unresolved" (only a thrown error was mapped; the test
+  threw); it now answers `upstream_busy` with `retryAfter`. `get_collection_overview` and `find_content_by_url`
+  answer `upstream_busy` too.
+- `upstream_busy`/`forbidden` are read from the STATUS position of a message (`failed: NNN`, `HTTP NNN`), never
+  any three-digit run — a Java line number `:503` in a quoted 500 body read as busy.
+- Replays are capped per identity (50) and a running one is never evicted, so the shared service account cannot
+  push out another person's answer. A replayed prepared request says "only execute if not executed yet".
+- `/auth/status` keys its cache on an HMAC of the PRESENTED header (two blocks of one account carry different
+  `expiresAt`; no unsalted hash of `Basic user:pass` in memory).
+- `TICKET_ALLOWED_ORIGINS` set with no usable entry admits no browser origin (was: every origin) and logs an error;
+  `WIDGET_OAUTH_ORIGINS` likewise logs an error.
+- The readiness probe runs anonymously also from the timer (a wrong service password no longer reads as an outage),
+  and its cache counts from when the answer arrived.
+- `TRUSTED_CLIENT_KEYS`: an entry without a colon is logged by position, never its text; a duplicate name is refused.
+- Registry: a failed write restores the previous order; a renewed entry counts as the newest.
+- Docs: "renews" for ticket blocks corrected (only after expiry), AUTH.md's "no expiry" statements qualified,
+  `/auth/revoke` answers per path, `/auth/ticket` in INTEGRATION.md, the log line name in DEPLOYMENT.md.
+
+### Added — a 12-hour expiry for ticket and widget blocks, in the allow-list (2026-11-07, chatbot S7 / R1)
+
+- A registry entry may carry `exp`; the block then stops working at that instant and reads like a revoked one
+  (401 on `/mcp`). Checked in the one place every block is opened (`registry.has`). The token stays the block —
+  no wrapper, no refresh token.
+- **Ticket blocks** expire after 12 h; after it expires, the next exchange of the same still-valid ticket lists it again for 12 h (before that it is not extended, so a session longer than 12 h meets one 401 and re-exchanges).
+- **Widget logins over OAuth** expire after 12 h when the client's verified `redirect_uri` lies in the new
+  `WIDGET_OAUTH_ORIGINS`. Unset = no OAuth block expires: ChatGPT, Claude and other AI hosts are unaffected, as
+  are pasted blocks and every existing entry.
+- Expired entries are dropped when the account's next entry is written, before the per-account cap counts — a
+  widget logging in every 12 h would otherwise have evicted the block the same person pasted into an AI host
+  (found in review).
+- `GET /auth/status` and `wlo_auth_status` report `expiresAt` (ISO) for a block that has one. This replaces the
+  "no `expiresAt`" of the S4 entry below for those blocks.
+
+### Added — self-revocation: `POST /auth/revoke` with the block as `Bearer` (2026-11-07, chatbot S7 / R2)
+
+- A client that logs a person out ends exactly the block it holds: `Authorization: Bearer <block>`, no body and
+  no JSON needed (the header makes the request preflight-bound; `/auth*` still answers no foreign origin). Answer
+  `200 {revoked}` in every case — unreadable, foreign, unlisted, already revoked look alike, since logging out is
+  idempotent. The next `/mcp` call with that block is a 401. The header wins over a body token; the body path is
+  unchanged. Grants nothing new: the body path already accepted any block carrying a listed id (`AUTH.md` §4).
+
+### Added — `TICKET_ALLOWED_ORIGINS` for `POST /auth/ticket` (2026-11-07, chatbot S7 / R4)
+
+- Only listed browser origins may exchange an edu-sharing ticket. Another origin gets `403` with
+  `code: "origin_not_allowed"` before the body is read (after the per-address request budget, so forged
+  origins cannot flood the log), and the CORS answer of
+  `/auth/ticket` then mirrors only a listed origin (`Vary: Origin`) instead of `*`, so a foreign browser fails at
+  the preflight. A request without `Origin` (server to server) is never refused; an empty list keeps the
+  wildcard. Entries are normalised to their origin; `*`, unreadable values and non-web schemes are ignored with a
+  warning naming them. `auth/ticket-origins.ts`.
+
+### Added — `GET /auth/status`, `GET /ready`, a warm-up probe, a slow-upstream log (2026-11-07, chatbot S4–S6)
+
+- **`GET /auth/status`**: the login status in one request instead of a full MCP session — the same payload as
+  `wlo_auth_status` (both go through `readAuthStatus`, `auth/auth-status.ts`) plus `credential`
+  (`none`/`basic`/`access-block`/`ticket`/`service`). Credential rules as on `/mcp` (unusable Bearer → 401 with
+  the challenge), protocol budget and login guard (a 429 there is REST `{error, code, retryAfter}`, like
+  `/api`), cached 60 s per header hash — an answer without an authority (refused or repository unreachable,
+  which cannot be told apart) only 10 s, so an outage does not show a valid login as refused for a minute —
+  no CORS (`/auth*`). No
+  `expiresAt`: a pasted block has none, and the end of a ticket session is not visible to this server.
+- **`GET /ready`**: 200 when edu-sharing answered the latest probe (a one-hit search), 503 with `unreachable` or
+  `slow` (over 5 s; the caller is never held longer). Callers cause at most one probe per 30 s, never two at
+  once, no budget.
+- **Warm-up**: the probe runs at start and every `WLO_READY_PROBE_MS` (30 s, `0` = on demand only) — every tick
+  probes fresh, a shorter interval is not swallowed by the 30 s cache — started only from `http.ts`. Measured first: a fresh connection to edu-sharing costs 0.1–0.3 s, so the 22 s first call after
+  a quiet period is not the transport — `wloFetch` now logs `slow upstream` with path, duration and status for
+  any call over 5 s, so production shows which endpoint it is — a call that ran into the 20 s timeout as
+  status 0, since that is exactly the 22 s case. Measured to the response headers, not the body.
+- The login guard's 429 is one function (`refuseTooManyLogins`, `rest/rate-limited.ts`) for `/mcp` and
+  `/auth/status`; a refusal on `/auth/status` is now logged too. `/api`'s 429 goes through the same module and
+  is logged as `rate limit reached` (body unchanged).
+
+### Added — a confirmed write may be sent again safely (2026-11-07, chatbot S3)
+
+- Presenting a redeemed `confirmToken` again — same identity, same ARGUMENTS — answers with the first
+  call's result for 30 minutes, marked `structuredContent.replayed: true`, and writes nothing; while the
+  first call still runs it answers `{inProgress: true}` (not an error). Other arguments → `confirm_mismatch`,
+  another identity → `confirm_unknown` as before. Bound to the arguments, not the change set, because after
+  the first write a new preview reads the new state. Kept only when the key was actually redeemed in that
+  call (a refusal before redemption is not stored), in memory, ≤ 500 entries. Plan tools keep their own
+  continuation. `services/write/confirm-replay.ts` (store), `tools/curation-replay.ts` (seam); `consumeToken`
+  marks the redemption and answers `replay` to a racing second call.
+
+### Added — `upstream_busy` when edu-sharing itself is overloaded (2026-11-07, chatbot S2b)
+
+- A 429 or 503 from the repository answers `error.code: "upstream_busy"` with `retryAfter` (seconds)
+  instead of `upstream_error` — "busy, try again shortly" rather than "that did not work". The wait is the
+  repository's own `Retry-After` (delta seconds) when it sends one, else an estimate of 10 s
+  (`BUSY_RETRY_DEFAULT_S`; whether edu-sharing sends one is not measured). Also a `missing` code of
+  `get_node_details`/`get_collection_overview`/`count_wlo_content_matches`. The repository clients write
+  their failure text through `src/upstream-error.ts`, the one format `failureCode` reads back.
+
+### Changed — the MCP budget counts tool calls, trusted clients get their own (2026-11-07, chatbot S1/S2)
+
+- **`RATE_LIMIT_RPM` now counts `tools/call` only** (each element of a batch). `initialize`,
+  `notifications/*` and `tools/list` of this stateless server never reach edu-sharing; all POSTs
+  together are bounded at 3× the rate, checked before the body is read. A chatbot that opens a session
+  per call (three POSTs) thereby gets the full rate as tool calls.
+- **`TRUSTED_CLIENT_KEYS`** (`name:rpm:key`, header `X-WLO-Client-Key`): a known client — a chatbot
+  backend that is one address for all its users — is counted by key at its own rate. Keys ≥ 32
+  characters, held only as a SHA-256 hash, never logged; an unknown key counts as no key. It lifts only
+  the request budget, never the login-guessing guard.
+- **A 429 says how long to wait:** `Retry-After` is the rest of the fixed window, not a flat 60. On
+  `/mcp` the body is a JSON-RPC error (`error.code -32029`, `error.data = {code: "rate_limited",
+  retryAfter}`) instead of `{"error": "…"}`, which a JSON-RPC client read as a network failure; on
+  `/api/*` it is `{error, code: "rate_limited", retryAfter}`.
+- The login-guessing guard on `/mcp` answers the same way: JSON-RPC error with `data.code:
+  "too_many_logins"` and the rest of its 10-minute window as `Retry-After` (was free text and a flat
+  600). A trusted-client key is server-to-server only; the CORS preflight does not allow the header.
+- Measured and pinned in a test: a `tools/call` as the FIRST POST, without `initialize`, is answered
+  (SDK 1.32.2) — one POST per tool call is enough.
+
 ### Docs — README and docs brought up to date (2026-11-07)
 
 - `docs/INTEGRATION.md`: the ten tools since 2026-11-06 (it promised "all 48" and listed 38), counts

@@ -3,7 +3,8 @@
  *
  *   GET  /auth/public-key  → the key the page encrypts with
  *   POST /auth/issue       → verify a block's login, then list its id
- *   POST /auth/revoke      → strike an id from the list
+ *   POST /auth/revoke      → strike an id from the list (block in the body, or
+ *                            as `Authorization: Bearer` — self-revocation, R2)
  *   POST /auth/revoke-all  → verify a login, then strike every id of that account
  *   POST /auth/ticket      → exchange an edu-sharing ticket for a ticket block
  *
@@ -23,6 +24,7 @@
 
 import { issueAccessBlock } from '../auth/access-issue.js';
 import { exchangeTicket } from '../auth/ticket-exchange.js';
+import { ticketOriginAllowed } from '../auth/ticket-origins.js';
 import { revokeAllForBlock } from '../auth/access-revoke.js';
 import { decodeAccessToken } from '../auth/access-token.js';
 import { currentAccessSupport } from '../auth/credential.js';
@@ -61,12 +63,19 @@ export interface AuthEndpointDeps {
    * running the exchange unbounded.
    */
   ticketAbuseLimiter?: DistinctValueLimiter;
+  /**
+   * `TICKET_ALLOWED_ORIGINS`: the browser origins that may exchange a ticket.
+   * Absent = every origin (today's behaviour); EMPTY = no browser origin (a
+   * configured list whose every entry was unusable); a request without
+   * `Origin` is server-to-server and never refused (`auth/ticket-origins.ts`).
+   */
+  ticketAllowedOrigins?: ReadonlySet<string>;
 }
 
 interface AuthReq extends AsyncIterable<Buffer | Uint8Array> {
   method?: string;
   url?: string;
-  /** Only `content-type` is read — see the 415 below. */
+  /** `content-type` (the 415 below), `origin` on `/auth/ticket`, `authorization` on `/auth/revoke`. */
   headers?: Record<string, string | string[] | undefined>;
 }
 interface AuthRes {
@@ -173,8 +182,38 @@ async function route(
     return true;
   }
 
+  // A foreign page is refused before its body is read: the list is the
+  // operator's statement of which pages embed the widget. AFTER the address
+  // budget, on purpose — `Origin` is free to forge, and a refusal that cost
+  // nothing would be an unbounded supply of warning lines.
+  if (parsed.pathname === '/auth/ticket') {
+    const raw = req.headers?.['origin'];
+    const origin = Array.isArray(raw) ? raw[0] : raw;
+    if (!ticketOriginAllowed(origin, deps.ticketAllowedOrigins)) {
+      log.warn('ticket exchange from an origin not in TICKET_ALLOWED_ORIGINS refused', { origin: sanitizeText(origin ?? '') });
+      return send(res, 403, { error: 'Diese Seite darf keine Anmeldung übernehmen.', code: 'origin_not_allowed' });
+    }
+  }
+
   if (parsed.pathname === '/auth/public-key') {
     return send(res, 200, { publicKey: support.keys.publicKeyPem });
+  }
+
+  // Self-revocation (plan 2026-11-07, R2): the block as `Authorization: Bearer`,
+  // from the chatbot backend when a person logs out. Possession is the proof —
+  // whoever holds the block may end it, which is no new right. Ahead of the 415
+  // because it needs no body: the header alone makes the request
+  // preflight-bound, and `/auth*` answers no foreign origin, so what the JSON
+  // rule secures below is already secured here.
+  const bearer = /^Bearer\s+(\S+)\s*$/i.exec(String(req.headers?.['authorization'] ?? ''))?.[1];
+  if (parsed.pathname === '/auth/revoke' && bearer) {
+    const payload = decodeAccessToken(bearer, support.keys);
+    const revoked = payload ? await support.registry.remove(payload.jti) : false;
+    if (payload) log.info('access block revoked', { label: sanitizeText(payload.u), revoked, via: 'bearer' });
+    // One answer for unreadable, foreign, unlisted and already revoked: logging
+    // out is idempotent, and telling the cases apart helps only someone who
+    // does not hold the block.
+    return send(res, 200, { revoked });
   }
 
   // Every remaining path carries a credential in the body, and `/auth/issue`

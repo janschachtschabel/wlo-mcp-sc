@@ -134,6 +134,19 @@ test('the access-block surface is not offered to cross-origin pages', async () =
   } finally { await close(server); }
 });
 
+test('with TICKET_ALLOWED_ORIGINS, /auth/ticket names only a listed origin in its CORS answer', async () => {
+  const { server, base } = await startServer({ ticketAllowedOrigins: new Set(['https://redaktion.example.org']) });
+  try {
+    const listed = await fetch(`${base}/auth/ticket`, { method: 'OPTIONS', headers: { Origin: 'https://redaktion.example.org' } });
+    assert.equal(listed.headers.get('access-control-allow-origin'), 'https://redaktion.example.org', 'mirrored, not *');
+    assert.match(listed.headers.get('vary') ?? '', /Origin/);
+    const foreign = await fetch(`${base}/auth/ticket`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } });
+    assert.equal(foreign.headers.get('access-control-allow-origin'), null, 'a foreign preflight fails in the browser');
+    const mcp = await fetch(`${base}/mcp`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } });
+    assert.equal(mcp.headers.get('access-control-allow-origin'), '*', 'the list concerns the ticket exchange only');
+  } finally { await close(server); }
+});
+
 /**
  * `routes.ts` and `static.ts` both compare the NORMALIZED pathname; the dispatch
  * in `http-app.ts` compared `req.url` verbatim, which carries the query string.
@@ -217,34 +230,108 @@ test('http dispatch: POST body over maxBodyBytes → 413', async () => {
   } finally { await close(server); }
 });
 
-test('http dispatch: second MCP request over the per-IP limit → 429 with Retry-After', async () => {
+/**
+ * The budget counts what reaches edu-sharing (plan 2026-11-07, S1): only
+ * `tools/call`, each element of a batch on its own. `initialize`,
+ * `notifications/*` and `tools/list` of a stateless server never go upstream —
+ * they are bounded by the looser PROTOCOL budget on every POST instead.
+ */
+const TOOLS_LIST = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/list' });
+const TOOL_CALL = (id: number) => ({
+  jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'gibt_es_nicht', arguments: {} },
+});
+const post = (base: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${base}/mcp`, {
+  method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body),
+});
+
+test('the tool budget counts tools/call only — the 429 says how long to wait, as JSON-RPC', async () => {
   const { server, base } = await startServer({ rateLimiter: createRateLimiter(1) });
   try {
-    const first = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' });
-    assert.equal(first.status, 400, 'first request passes the limiter');
-    const second = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' });
-    assert.equal(second.status, 429);
-    assert.equal(second.headers.get('retry-after'), '60');
+    for (let i = 0; i < 4; i++) assert.equal((await post(base, TOOLS_LIST(i))).status, 200, 'tools/list is free');
+    assert.equal((await post(base, TOOL_CALL(10))).status, 200, 'the first tool call fits');
+    const refused = await post(base, TOOL_CALL(11));
+    assert.equal(refused.status, 429);
+    const wait = Number(refused.headers.get('retry-after'));
+    assert.ok(wait >= 1 && wait <= 60, `Retry-After is the rest of the window, got ${wait}`);
+    const body = await refused.json() as { jsonrpc: string; error: { data: { code: string; retryAfter: number } } };
+    assert.equal(body.jsonrpc, '2.0');
+    assert.deepEqual(body.error.data, { code: 'rate_limited', retryAfter: wait });
   } finally { await close(server); }
 });
 
-/**
- * JSON-RPC batches (audit 2026-11-05, A-1): the SDK accepts an array of any
- * length and runs every element, while the per-IP limiter counted the HTTP
- * request — one POST could carry tens of thousands of searches. Batches stay
- * supported (the 2025-03-26 protocol revision allows them), but every element
- * is charged to the limiter and the length is capped.
- */
-const TOOLS_LIST = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/list' });
+test('the protocol budget bounds every POST before the body is read', async () => {
+  const { server, base } = await startServer({ protocolLimiter: createRateLimiter(1) });
+  try {
+    assert.equal((await post(base, TOOLS_LIST(1))).status, 200);
+    const refused = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' });
+    assert.equal(refused.status, 429, 'refused before the broken body is even parsed');
+  } finally { await close(server); }
+});
+
+test('a tool call as the FIRST POST works without initialize (F2, SDK 1.32.2)', async () => {
+  // The chatbot then needs one POST per tool call. If an SDK update starts to
+  // insist on initialize, this test is where it shows.
+  const { server, base } = await startServer();
+  try {
+    const r = await post(base, { jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'lookup_wlo_vocabulary', arguments: { vocabulary: 'educationalContext' } } },
+      { 'MCP-Protocol-Version': '2025-06-18' });
+    assert.equal(r.status, 200);
+    assert.match(await r.text(), /Bildungsstufe/);
+  } finally { await close(server); }
+});
+
+test('a trusted client key gets its own bucket and rate; a wrong key is the address', async () => {
+  const { createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const key = 'c'.repeat(40);
+  const { server, base } = await startServer({
+    rateLimiter: createRateLimiter(1),
+    clientBudgets: createClientBudgets(parseTrustedClientKeys(`boerdi:3:${key}`).clients),
+  });
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await post(base, TOOL_CALL(i), { 'X-WLO-Client-Key': key })).status, 200, `client call ${i + 1} of 3`);
+    }
+    assert.equal((await post(base, TOOL_CALL(9), { 'X-WLO-Client-Key': key })).status, 429, 'the client has its own limit');
+    assert.equal((await post(base, TOOL_CALL(20), { 'X-WLO-Client-Key': 'falsch' })).status, 200,
+      'a wrong key is counted as the address, whose budget is still untouched');
+    assert.equal((await post(base, TOOL_CALL(21))).status, 429, 'and the address keeps its own limit');
+  } finally { await close(server); }
+});
+
+test('the protocol budget of a trusted client is 3x its rate, checked before the body', async () => {
+  const { createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const key = 'p'.repeat(40);
+  const { server, base } = await startServer({
+    clientBudgets: createClientBudgets(parseTrustedClientKeys(`app:1:${key}`).clients),
+  });
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await post(base, TOOLS_LIST(i), { 'X-WLO-Client-Key': key })).status, 200, `POST ${i + 1} of 3`);
+    }
+    assert.equal((await post(base, TOOLS_LIST(9), { 'X-WLO-Client-Key': key })).status, 429, 'the fourth POST at rate 1');
+  } finally { await close(server); }
+});
+
+test('a 429 on /api/* names its code and the exact wait — REST, not JSON-RPC', async () => {
+  const { server, base } = await startServer({ apiRateLimiter: createRateLimiter(1) });
+  try {
+    await fetch(`${base}/api/search?q=Optik`);
+    const refused = await fetch(`${base}/api/search?q=Optik`);
+    assert.equal(refused.status, 429);
+    const wait = Number(refused.headers.get('retry-after'));
+    assert.ok(wait >= 1 && wait <= 60);
+    const body = await refused.json() as { error: string; code: string; retryAfter: number };
+    assert.equal(body.code, 'rate_limited');
+    assert.equal(body.retryAfter, wait);
+    assert.match(body.error, /Rate limit exceeded/);
+  } finally { await close(server); }
+});
 
 test('a small JSON-RPC batch still works — every element is answered', async () => {
   const { server, base } = await startServer();
   try {
-    const r = await fetch(`${base}/mcp`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify([TOOLS_LIST(1), TOOLS_LIST(2)]),
-    });
+    const r = await post(base, [TOOLS_LIST(1), TOOLS_LIST(2)]);
     assert.equal(r.status, 200);
     const body = await r.json() as Array<{ id: number }>;
     assert.deepEqual(body.map(m => m.id).sort(), [1, 2]);
@@ -256,38 +343,25 @@ test('a batch longer than the cap is refused before anything runs', async () => 
   try {
     const { MAX_BATCH_LENGTH } = await import('../src/http-app.js');
     const batch = Array.from({ length: MAX_BATCH_LENGTH + 1 }, (_, i) => TOOLS_LIST(i + 1));
-    const r = await fetch(`${base}/mcp`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(batch),
-    });
+    const r = await post(base, batch);
     assert.equal(r.status, 400);
     assert.match(await r.text(), /batch/i);
   } finally { await close(server); }
 });
 
-test('every batch element is charged to the per-IP limiter', async () => {
-  // Limit 3: a batch of 3 uses the whole budget, so the next single call is 429.
+test('every tools/call of a batch is charged to the tool budget', async () => {
+  // Limit 3: a batch of three calls uses the whole budget, so the next one is 429.
   const { server, base } = await startServer({ rateLimiter: createRateLimiter(3) });
   try {
-    const batch = await fetch(`${base}/mcp`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify([TOOLS_LIST(1), TOOLS_LIST(2), TOOLS_LIST(3)]),
-    });
-    assert.equal(batch.status, 200, 'the batch itself fits the budget');
-    const next = await fetch(`${base}/mcp`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(TOOLS_LIST(4)),
-    });
-    assert.equal(next.status, 429, 'the batch spent three requests, not one');
+    assert.equal((await post(base, [TOOL_CALL(1), TOOL_CALL(2), TOOL_CALL(3)])).status, 200, 'the batch fits');
+    assert.equal((await post(base, TOOL_CALL(4))).status, 429, 'the batch spent three calls, not one');
   } finally { await close(server); }
 });
 
-test('a batch that exceeds the remaining budget is refused with 429', async () => {
+test('a batch whose tool calls exceed the remaining budget is refused with 429', async () => {
   const { server, base } = await startServer({ rateLimiter: createRateLimiter(2) });
   try {
-    const r = await fetch(`${base}/mcp`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify([TOOLS_LIST(1), TOOLS_LIST(2), TOOLS_LIST(3)]),
-    });
-    assert.equal(r.status, 429);
+    assert.equal((await post(base, [TOOL_CALL(1), TOOL_CALL(2), TOOL_CALL(3)])).status, 429);
   } finally { await close(server); }
 });
 
@@ -379,7 +453,15 @@ test('http dispatch: rotating credentials from one address is refused as relay a
     });
     assert.equal((await post('anna')).status, 200);
     assert.equal((await post('bruno')).status, 200);
-    assert.equal((await post('carla')).status, 429, 'the third distinct login is refused');
+    const refused = await post('carla');
+    assert.equal(refused.status, 429, 'the third distinct login is refused');
+    // The same contract as the request budget (review 2026-11-07): JSON-RPC, a
+    // code, and the rest of the 10-minute window instead of a flat 600.
+    const wait = Number(refused.headers.get('retry-after'));
+    assert.ok(wait >= 1 && wait <= 600, `Retry-After is the rest of the window, got ${wait}`);
+    const body = await refused.json() as { jsonrpc: string; error: { data: { code: string; retryAfter: number } } };
+    assert.equal(body.jsonrpc, '2.0');
+    assert.deepEqual(body.error.data, { code: 'too_many_logins', retryAfter: wait });
     assert.equal((await post('anna')).status, 200, 'an already-seen login still works');
   } finally { await close(server); }
 });
@@ -576,7 +658,7 @@ test('issuing a block works inside the handler-wide anonymous scope', async () =
   setAccessSupport({ keys, registry });
   try {
     const token = encodeAccessToken(
-      { v: 2, jti: 'through-http', u: 'lehrerin', secret: 'geheim', iat: 1_754_300_000 },
+      { v: 2, jti: 'through-http', u: 'lehrerin', secret: 'geheim', iat: Math.floor(Date.now() / 1000) },
       keys.publicKeyPem,
     );
     const r = await realFetch(`${base}/auth/issue`, {

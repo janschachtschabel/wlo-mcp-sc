@@ -153,3 +153,20 @@ test('clientKey: plain IPv4, loopback and the trusted proxy header are unchanged
   assert.equal(clientKey(undefined, '::1', false), '::1');
   assert.equal(clientKey('198.51.100.1, 2001:db8:1:2::9', '10.0.0.1', true), '2001:db8:1:2::/64');
 });
+
+test('retryAfterSeconds is the rest of the fixed window, never below 1 (chatbot S2)', () => {
+  const limiter = createRateLimiter(1, 60_000);
+  limiter.check('a', 0);
+  assert.equal(limiter.retryAfterSeconds?.('a', 45_000), 15);
+  assert.equal(limiter.retryAfterSeconds?.('a', 59_500), 1);
+  assert.equal(limiter.retryAfterSeconds?.('a', 60_000), 1, 'a window that just ended still says 1, never 0');
+  assert.equal(limiter.retryAfterSeconds?.('unknown', 1_000), 1);
+});
+
+test('the distinct-login limiter also says how long until its window ends', () => {
+  const limiter = createDistinctValueLimiter(1, 600_000);
+  limiter.check('ip', 'a', 0);
+  assert.equal(limiter.retryAfterSeconds?.('ip', 100_000), 500);
+  assert.equal(limiter.retryAfterSeconds?.('ip', 600_000), 1);
+  assert.equal(limiter.retryAfterSeconds?.('fremd', 0), 1);
+});

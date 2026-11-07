@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { getMyBatch, listMyBatches, type BatchSummary } from '../services/my-batches.js';
-import { failureCode } from '../services/failure-code.js';
+import { failureFields } from '../services/failure-code.js';
 import { oneLine } from '../formatter.js';
 import type { WloToolResult } from '../apps/register.js';
 import { registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
@@ -50,8 +50,8 @@ function line(b: BatchSummary): string {
   return oneLine(`- ${b.title} (${b.createdAt.slice(0, 16).replace('T', ' ')}) — ${stand} — manifestNodeId: ${b.manifestNodeId}`);
 }
 
-function failure(code: string, message: string): WloToolResult {
-  return { content: [{ type: 'text' as const, text: message }], structuredContent: { error: { code, message } }, isError: true };
+function failure(code: string, message: string, extra: { retryAfter?: number } = {}): WloToolResult {
+  return { content: [{ type: 'text' as const, text: message }], structuredContent: { error: { code, message, ...extra } }, isError: true };
 }
 
 export function registerMyBatchesTool(
@@ -91,7 +91,8 @@ Grundlage ist der Vorgang (vorgang.json) bzw. seine Kennzahlen am Datensatz; ein
         return { content: [{ type: 'text' as const, text }], structuredContent: { batches, ...trunc(scanCut) } };
       } catch (err) {
         // Not answerable — "no batches" must not stand in for "could not look".
-        return failure(failureCode(err), 'Der persönliche Bereich war nicht lesbar; ob es Ablagen gibt, ist offen.');
+        const { code, ...extra } = failureFields(err);
+        return failure(code, 'Der persönliche Bereich war nicht lesbar; ob es Ablagen gibt, ist offen.', extra);
       }
     },
   });

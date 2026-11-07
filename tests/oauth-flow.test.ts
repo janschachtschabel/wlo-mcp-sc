@@ -131,7 +131,7 @@ test('a client walks in unknown and walks out with an access it can lose again',
 
     // 4. Consent. The block is what the browser page would have produced.
     const block = encodeAccessToken(
-      { v: 2, jti: JTI, u: USER, secret: 'geheim', iat: 1_754_300_000 },
+      { v: 2, jti: JTI, u: USER, secret: 'geheim', iat: Math.floor(Date.now() / 1000) },
       keys.publicKeyPem,
     );
     const consent = await fetch(`${base}/oauth/authorize`, {
@@ -241,7 +241,7 @@ test('a code cannot be redeemed twice, even across a real server', async (t) => 
     });
     const clientId = String((await registered.json() as Record<string, unknown>)['client_id']);
     const block = encodeAccessToken(
-      { v: 2, jti: 'flow-id-2', u: USER, secret: 'geheim', iat: 1_754_300_000 },
+      { v: 2, jti: 'flow-id-2', u: USER, secret: 'geheim', iat: Math.floor(Date.now() / 1000) },
       keys.publicKeyPem,
     );
     const consent = await fetch(`${base}/oauth/authorize`, {
@@ -357,6 +357,64 @@ test('ohne eigenes Konto verbinden — durch den ganzen Ablauf, gegen einen echt
     const withoutHeader = await toolNames(await listTools(base));
     assert.deepEqual(withToken.sort(), withoutHeader.sort(),
       'anonym verbunden heißt: genau wie ohne Header, nicht weniger und nicht mehr');
+  } finally {
+    await close(server);
+  }
+});
+
+test('a widget login through a real server expires after 12 h, and /auth/status names when', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-oauth-flow-widget-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  assert.ok(registry);
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  t.after(fakeWlo());
+
+  const server = http.createServer(createHttpRequestHandler({
+    rateLimiter: createRateLimiter(0),
+    apiRateLimiter: createRateLimiter(0),
+    authAbuseLimiter: createDistinctValueLimiter(0),
+    maxBodyBytes: 1_048_576,
+    trustProxy: false,
+    streamOptions: streamableHttpOptions({}),
+    publicBaseUrl: ISSUER,
+    widgetOAuthOrigins: new Set([new URL(REDIRECT).origin]),
+  }));
+  const base: string = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    });
+  });
+
+  try {
+    const registered = await fetch(`${base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT] }),
+    });
+    const clientId = String((await registered.json() as Record<string, unknown>)['client_id']);
+    const block = encodeAccessToken(
+      { v: 2, jti: 'flow-widget', u: USER, secret: 'geheim', iat: Math.floor(Date.now() / 1000) },
+      keys.publicKeyPem,
+    );
+    const consent = await fetch(`${base}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: block, client_id: clientId, redirect_uri: REDIRECT, response_type: 'code',
+        code_challenge: CHALLENGE, code_challenge_method: 'S256',
+      }),
+    });
+    assert.equal(consent.status, 200);
+    const exp = registry.expiresAt('flow-widget');
+    assert.ok(exp !== undefined, 'the widget login carries an expiry');
+
+    const status = await fetch(`${base}/auth/status`, { headers: { Authorization: `Bearer ${block}` } });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json() as Record<string, unknown>)['expiresAt'], new Date(exp * 1000).toISOString());
   } finally {
     await close(server);
   }

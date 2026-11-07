@@ -130,6 +130,11 @@ test('error codes instead of repository text', async () => {
     url.includes('/geheim/') ? { status: 403, json: {} } : undefined);
   assert.equal(forbidden.sc.error?.code, 'forbidden');
 
+  const busy = await overview({ collectionId: 'voll' }, url =>
+    url.includes('/voll/') ? { status: 503, json: {} } : undefined);
+  assert.equal(busy.sc.error?.code, 'upstream_busy', 'busy, not broken');
+  assert.equal((busy.sc.error as { retryAfter?: number } | undefined)?.retryAfter, 10);
+
   const material = await overview({ collectionId: 'ein-material' }, url =>
     url.includes('/ein-material/metadata') ? { json: { node: { ...makeNode('ein-material', 'Arbeitsblatt'), type: 'ccm:io' } } } : undefined);
   assert.equal(material.sc.error?.code, 'not_a_collection');

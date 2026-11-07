@@ -204,6 +204,8 @@ MCP-Ressourcen: `search-results`, `topic-page`, `reading`, `browse`.
 | Adresse | Methode | Bemerkung |
 |---|---|---|
 | `<BASIS>/mcp` | `POST` | Der MCP-Endpunkt. **Das ist die Adresse, die man in einen Client einträgt.** |
+| `<BASIS>/auth/status` | `GET` | Anmeldestand in einer Anfrage, gleicher Inhalt wie `wlo_auth_status` plus `expiresAt` für Ticket- und Widget-Blöcke (12 h), Kopf wie bei `/mcp`; 60 s zwischengespeichert, eine Antwort ohne `authority` (abgelehnt oder nicht erreichbar) nur 10 s |
+| `<BASIS>/ready` | `GET` | Ist edu-sharing erreichbar? 200 oder 503 (`unreachable`/`slow`); fragt edu-sharing höchstens alle 30 s |
 | `<BASIS>/` | `POST` | Derselbe Endpunkt — manche Clients hängen nichts an |
 
 > **`GET /mcp` antwortet 405.** Es gibt keinen SSE-GET-Kanal; wer einen erwartet,
@@ -278,7 +280,8 @@ Für Clients mit einem Header-Feld: einmal `/auth` besuchen, den Block als
 |---|---|---|
 | `<BASIS>/auth/public-key` | `GET` | Öffentlicher Schlüssel für die Browser-Verschlüsselung |
 | `<BASIS>/auth/issue` | `POST` | Block ausstellen |
-| `<BASIS>/auth/revoke` | `POST` | Einen Block sperren |
+| `<BASIS>/auth/revoke` | `POST` | Einen Block sperren — im Rumpf `{token}` oder als `Authorization: Bearer <Block>` ohne Rumpf (Abmelden aus dem Backend). Bearer-Weg: immer 200 `{revoked}`; Rumpf-Weg: 400 für einen unlesbaren Block, 415 ohne JSON |
+| `<BASIS>/auth/ticket` | `POST` | edu-sharing-Ticket gegen einen Block tauschen (eingebettete Widgets). Mit `TICKET_ALLOWED_ORIGINS` nur für eingetragene Browser-Herkünfte, sonst 403 `origin_not_allowed`; ohne `Origin` (Server) nie abgewiesen. Ticket-Blöcke laufen nach 12 h ab |
 | `<BASIS>/auth/revoke-all` | `POST` | Alle Blöcke eines Kontos sperren |
 
 > Das Passwort wird **im Browser** verschlüsselt und verlässt das Gerät nur als
@@ -383,6 +386,10 @@ Fassung für das Modell.
   `preview.fields[]` (`name`, `label`, `old`, `new`, bei Vokabularen auch
   `oldLabels`/`newLabels`) und bei mehreren Schritten `preview.items[]`. Nichts
   zu ändern: `{"confirm": null, "unchanged": true}`.
+- **Wiederholen nach Netzfehler:** derselbe Aufruf mit demselben `confirmToken`
+  und denselben Argumenten liefert 30 Minuten lang die erste Antwort erneut
+  (`replayed: true`), ohne erneut zu schreiben; läuft sie noch, `inProgress: true`.
+  War die erste Antwort ein offener `timeout`, bleibt auch die Wiederholung offen.
 - **Pläne** (`wlo_create_collection_tree`, `wlo_add_to_collections`): eine
   Bestätigung für alles; der Server arbeitet in Abschnitten von ~40 s. Die
   Antwort trägt `complete`, `progress {done, total}`, die Schritte (`nodes` bzw.
@@ -394,7 +401,11 @@ Fassung für das Modell.
   `too_many_plans`, bevor sein Schlüssel eingelöst wird.
 - **Fehler:** Jede Antwort mit `isError` trägt `structuredContent.error =
   {code, message}`, auch Fehler, die das SDK vor dem Werkzeug erzeugt (falsche
-  Parameter: `invalid_input`). Auf den Code verzweigen, nie auf den Text. Bei
+  Parameter: `invalid_input`). Auf den Code verzweigen, nie auf den Text. Ist
+  edu-sharing selbst ausgelastet, kommt `upstream_busy` mit `retryAfter`
+  (Sekunden) — ein Versuch danach lohnt sich, ein `upstream_error` nicht. Trägt
+  der Fehler `requiresNewPreview: true`, war der Schlüssel schon eingelöst: dann
+  ohne `confirmToken` neu aufrufen, nicht denselben Aufruf wiederholen. Bei
   `timeout` entscheidet `outcomeOpen`: `false` = der Aufruf war eine Vorschau,
   gefahrlos wiederholen; `true` = kann gewirkt haben, erst nachsehen. Die
   vollständige Codetabelle steht in
@@ -404,12 +415,25 @@ Fassung für das Modell.
 
 | | Standard | Variable |
 |---|---|---|
-| MCP-Endpunkt | 120 Anfragen/Minute je Adresse | `RATE_LIMIT_RPM` |
+| MCP-Endpunkt | 120 **Werkzeugaufrufe** (`tools/call`)/Minute je Adresse; alle POSTs zusammen das Dreifache | `RATE_LIMIT_RPM` |
+| MCP-Endpunkt mit `X-WLO-Client-Key` | eigenes Budget je vertrautem Client, unabhängig von der Adresse | `TRUSTED_CLIENT_KEYS` |
 | `/api/*` und die Anmeldeseiten | 30 Anfragen/Minute je Adresse | `API_RATE_LIMIT_RPM` |
 | Anfrage-Rumpf | 4 MiB | `MAX_BODY_BYTES` |
 | Eine Datei auf `/api/uploads` | 50 MB (höchstens 100 MB) | `UPLOAD_MAX_BYTES` |
 | Alle offenen Upload-Plätze zusammen | 128 MB, 20 je Anmeldung | `UPLOAD_MAX_TOTAL_BYTES` |
 | Zeit für einen Upload-Rumpf | 25 s (höchstens 28 s) | `UPLOAD_REQUEST_TIMEOUT_MS` |
+
+**Ein 429 sagt, wie lange zu warten ist.** `Retry-After` ist die Restzeit des
+Fensters, nicht pauschal 60 s. Auf `/mcp` ist der Rumpf ein JSON-RPC-Fehler mit
+`error.data = {code, retryAfter}`: `rate_limited` für das Anfrage-Budget,
+`too_many_logins` für den Schutz gegen das Raten von Anmeldungen (zu viele
+verschiedene Anmeldungen je Adresse bzw. je Zugangsblock in 10 Minuten). Auf
+`/api/*` und `/auth/status` ist er `{error, code, retryAfter}` mit denselben
+Codes.
+`X-WLO-Client-Key` schickt nur ein Backend: im Browser wäre der Schlüssel
+öffentlich, und CORS lässt den Kopf bewusst nicht zu. Ein zustandsloser Server beantwortet
+`tools/call` auch als ersten POST ohne `initialize` — ein Werkzeugaufruf braucht
+also nur einen POST.
 
 ### 3.6 Wer was darf
 

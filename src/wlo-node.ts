@@ -8,6 +8,7 @@
  */
 
 import { BASE_URL, DISPLAY_PROPS, WLO_REPOSITORY_URL, appendPropertyFilter } from './wlo-config.js';
+import { upstreamErrorMessage } from './upstream-error.js';
 import { wloFetch, logUpstreamMiss } from './wlo-fetch.js';
 import { readJson } from './read-json.js';
 import type { SearchResponse, WloNode } from './wlo-types.js';
@@ -75,7 +76,7 @@ export async function getCollectionContents(
 
   const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/children?${params}`;
   const res = await wloFetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`getCollectionContents failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) throw new Error(upstreamErrorMessage('getCollectionContents', res));
 
   // Throws rather than degrading, unlike getChildCollections below: this is the
   // PRIMARY read of a browse call, and a silently empty page is indistinguishable

@@ -27,7 +27,7 @@ import { join } from 'node:path';
 
 import { exchangeTicket, isWellFormedTicket } from '../src/auth/ticket-exchange.js';
 import { decodeAccessToken, loadAuthKeys, type AuthKeys } from '../src/auth/access-token.js';
-import { openRegistry, type AccessRegistry } from '../src/auth/access-registry.js';
+import { openRegistry, SESSION_BLOCK_TTL_S, type AccessRegistry } from '../src/auth/access-registry.js';
 import { createDistinctValueLimiter } from '../src/rate-limit.js';
 
 const TICKET = 'TICKET_c001d00dfeedface0123456789abcdef01234567';
@@ -154,6 +154,24 @@ test('ein wiederholter Tausch schreibt die Registry nicht neu', async (t) => {
   const eintraege = entriesOnDisk(s.path) as { iat: number }[];
   assert.equal(eintraege.length, 1);
   assert.equal(eintraege[0]?.iat, Math.floor(t0 / 1000), 'der Eintrag behält seinen ersten Zeitstempel');
+});
+
+test('ein Ticket-Block läuft nach 12 h ab — und ein neuer Tausch desselben Tickets erneuert ihn', async (t) => {
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+
+  const t0 = 1_800_000_000_000;
+  const erster = await exchangeTicket(TICKET, deps(s), t0);
+  assert.ok(erster.ok);
+  const jti = decodeAccessToken(erster.block, s.keys)!.jti;
+  assert.equal(s.registry.expiresAt(jti), t0 / 1000 + SESSION_BLOCK_TTL_S, 'iat + 12 h');
+
+  const spaeter = t0 + SESSION_BLOCK_TTL_S * 1000 + 1;
+  assert.equal(s.registry.has(jti, spaeter), false, 'abgelaufen');
+  assert.ok((await exchangeTicket(TICKET, deps(s), spaeter)).ok);
+  assert.equal(s.registry.has(jti, spaeter), true, 'erneuert');
+  assert.equal(s.registry.expiresAt(jti), Math.floor(spaeter / 1000) + SESSION_BLOCK_TTL_S);
 });
 
 test('ein Gast-Ticket ergibt keinen Block — die Authority entscheidet, nicht der Status', async (t) => {

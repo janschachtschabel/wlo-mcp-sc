@@ -65,6 +65,25 @@ Herauslesen aus dem Text mehr nötig. Gibt es nichts zu bestätigen, kommt
 `{"confirm": null, "unchanged": true}`. Die Stapel-Ablage trägt dieselbe Form
 (Ziel `home`, 30 min gültig) und daneben weiter `batchToken`.
 
+**Sicher wiederholbar.** Geht die Antwort auf einen bestätigten Aufruf verloren,
+darf derselbe Aufruf mit demselben `confirmToken` und **denselben Argumenten**
+noch einmal kommen: 30 Minuten lang liefert der Server die erste Antwort erneut,
+mit `structuredContent.replayed: true` und ohne zweiten Schreibvorgang. Läuft die
+erste Ausführung noch, kommt `{inProgress: true}` (kein Fehler — gleich erneut
+fragen). Andere Argumente mit demselben Schlüssel → `confirm_mismatch`, eine
+andere Anmeldung → `confirm_unknown`. Gebunden ist an die Argumente, nicht an die
+Änderungsmenge: nach dem ersten Schreiben sähe eine neue Vorschau anders aus. Nach
+einem Neustart des Servers ist das Gedächtnis weg (`confirm_unknown` wie bisher).
+Endet ein Aufruf NACH der Einlösung mit einem Fehler, trägt er
+`error.requiresNewPreview: true` und kein `retryAfter`: derselbe Aufruf bekäme
+nur diese Antwort noch einmal — für einen neuen Versuch ohne `confirmToken`
+aufrufen und die neue Vorschau bestätigen. Bricht er nach der Einlösung ab, kommt
+`upstream_error` mit `outcomeOpen: true` (nachsehen), nie „nichts geschrieben“.
+Die Plan-Werkzeuge haben dafür ihren eigenen Weg (`continuationToken`). Wiederholt
+wird die Antwort, wie sie war: Endete der erste Aufruf mit `timeout` und
+`outcomeOpen: true`, bleibt auch die Wiederholung offen — dann nachsehen (etwa
+`find_content_by_url` oder eine neue Vorschau), nicht noch einmal senden.
+
 **Geplante Änderungen** (`wlo_create_collection_tree`, `wlo_add_to_collections`): eine
 Bestätigung für den ganzen Plan; der Server führt ihn in Abschnitten von ~40 s aus
 (vier Schritte parallel, von oben nach unten). Die Antwort trägt `complete`,
@@ -85,7 +104,7 @@ Anmeldung oder andere Angaben).
 | `invalid_input` | Angaben abgelehnt — auch falsche Parameter, die das SDK schon vor dem Werkzeug abweist (`Input validation error …`); bei Schreibwerkzeugen nennt `reasons[]` jeden Grund | Angaben korrigieren |
 | `unknown_tool` | Werkzeug unbekannt oder abgeschaltet (etwa `get_url_text` unter `WLO_DISABLE_UNSAFE_TOOLS`) | Werkzeugliste neu lesen |
 | `exists` | `wlo_create_content`: zu dieser URL gibt es schon einen Datensatz — schon in der Vorschau, ohne Schlüssel; `error.existing {nodeId, title}` | diesen bearbeiten |
-| `confirm_expired` / `confirm_mismatch` / `confirm_unknown` | Bestätigungsschlüssel abgelaufen / gehört zu anderer Änderung / unbekannt oder verbraucht | ohne `confirmToken` neu aufrufen, neue Vorschau |
+| `confirm_expired` / `confirm_mismatch` / `confirm_unknown` | Bestätigungsschlüssel abgelaufen / gehört zu anderer Änderung (auch: schon eingelöst, aber mit anderen Argumenten) / unbekannt oder verbraucht. Ein schon eingelöster Schlüssel mit **gleicher Anmeldung und gleichen Argumenten** ist keiner dieser Fälle: er liefert die erste Antwort (`replayed: true`) | ohne `confirmToken` neu aufrufen, neue Vorschau |
 | `plan_expired` / `plan_mismatch` | siehe oben | neue Vorschau |
 | `too_many_plans` | Schon fünf unfertige Pläne dieser Anmeldung; nichts geschrieben, der Schlüssel gilt weiter | einen Plan zu Ende führen, dann mit demselben Schlüssel wiederholen |
 | `not_found` / `not_a_collection` | Ziel fehlt bzw. ist keine Sammlung | — |
@@ -93,6 +112,7 @@ Anmeldung oder andere Angaben).
 | `timeout` | Antwort kam nicht rechtzeitig. Bei Schreibwerkzeugen `outcomeOpen`: `false` = der Aufruf trug keinen Schlüssel, war also eine Vorschau (gefahrlos wiederholen); `true` = kann gewirkt haben (erst nachsehen). Bei Lese-Werkzeugen ohne `outcomeOpen` | je nach `outcomeOpen` |
 | `not_visible` / `unverified` | Angenommen, aber im Datensatz nicht zu sehen / nicht überprüfbar | nachsehen, nicht blind wiederholen |
 | `forbidden` | Das Repository verweigert den Zugriff (401/403) | — |
+| `upstream_busy` | edu-sharing ist ausgelastet (es antwortete 429 oder 503); `retryAfter` = sein `Retry-After` in Sekunden, sonst geschätzt 10. Auch als `missing`-Code der Bündel-Antworten, bei `get_collection_overview`, je Eintrag bei `find_content_by_url` und bei `wlo_health_check`. Nach einer Einlösung ohne `retryAfter`, mit `requiresNewPreview` | einmal nach `retryAfter` erneut, wenn es in die eigene Frist passt |
 | `upstream_error` | Das Repository hat einen Fehler gemeldet, oder ein Werkzeug ist unerwartet abgebrochen | — |
 | `refused` | Jede übrige fachliche Ablehnung; der Grund steht in `message`. Auffangnetz: jede Fehlerantwort ohne eigenen Code bekommt diesen | Text an die Person geben |
 | `batch_unknown` / `batch_expired` / `batch_mismatch` · `slot_missing` · `mismatch_bytes` · `folder_failed` · `nothing_stored` | Stapel-Ablage: Freigabe unbekannt/abgelaufen/fremd · hochgeladene Datei nicht (mehr) da · Bytes passen nicht zur Freigabe · Ordner nicht anlegbar · noch keine Datei abgelegt (die Felder `status`/`reason` bleiben daneben) | neu vorbereiten · neu hochladen · neu hochladen · Datei erneut senden · erst eine Datei ablegen |
@@ -463,10 +483,14 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 | `PORT` · `BIND_ADDR` · `HOST_PORT` | 3000 · 127.0.0.1 · 3000 | Wo der Server lauscht. Die letzten beiden wertet **docker-compose** aus, nicht der Server. |
 | `TRUST_PROXY` | Code: **0**<br>Container: **1** | Nur hinter einem eigenen Proxy einschalten — sonst fälscht jeder Client `X-Forwarded-For` und damit seine Rate-Limit-Identität. Der Container steht per Annahme hinter einem TLS-terminierenden Proxy und setzt deshalb 1. Bei direkter Freigabe (`BIND_ADDR=0.0.0.0`) **muss** wieder 0 gesetzt werden. |
 | `MCP_SSE` | 1 | Server-Sent Events für den Transport (docker-compose). |
-| `RATE_LIMIT_RPM` | 120 | Anfragen je Minute auf `/mcp`, gezählt je Adresse (IPv6 je /64). Ein JSON-RPC-Batch zählt je Eintrag und darf höchstens 10 Einträge haben. |
+| `RATE_LIMIT_RPM` | 120 | **Werkzeugaufrufe** je Minute auf `/mcp`, gezählt je Adresse (IPv6 je /64). Nur `tools/call` zählt, in einem Batch jeder einzeln (höchstens 10 Einträge); alle POSTs zusammen dürfen das Dreifache. Ein 429 trägt die Restzeit des Fensters als `Retry-After` und einen JSON-RPC-Fehler mit `data.code: "rate_limited"`. |
+| `WLO_READY_PROBE_MS` | 30000 | Wie oft die Bereitschaftsprobe edu-sharing fragt (eine Suche mit einem Treffer). Die erste Probe beim Start wärmt den Suchpfad an; jeder Takt fragt frisch, auch unter 30 s. `0` = nur auf Anfrage. |
+| `TRUSTED_CLIENT_KEYS` | — | Vertraute Clients mit **eigenem** Budget statt der Adresse: `name:rpm:schlüssel`, kommagetrennt, gesendet als `X-WLO-Client-Key`. Schlüssel ≥ 32 Zeichen, nur als Hash gehalten, nie geloggt; ein unbekannter Schlüssel zählt wie keiner. Hebt nur das Anfrage-Budget, nie den Schutz gegen das Raten von Anmeldungen. **Nur von Server zu Server** — im Browser wäre der Schlüssel öffentlich; CORS lässt den Kopf bewusst nicht zu. |
 | `API_RATE_LIMIT_RPM` | 30 | dito für `/api/*`. |
 | `AUTH_CREDENTIAL_LIMIT` | 10 | Verschiedene Geheimnisse je Identität — der Rateversuchs-Deckel. Zählt bei `Basic` je Adresse, bei einem Zugangsblock je `jti`. |
 | `TICKET_CREDENTIAL_LIMIT` | 200 | Eigenes Budget für den Ticket-Tausch eingebetteter Widgets. |
+| `WIDGET_OAUTH_ORIGINS` | — | Herkünfte der Weiterleitungsziele eines eingebetteten Widgets (kommagetrennt). Eine OAuth-Anmeldung, deren geprüftes `redirect_uri` dort liegt, läuft nach **12 h** ab. Leer = kein OAuth-Block läuft ab — ChatGPT, Claude & Co. sind nie betroffen. Ticket-Blöcke laufen immer nach 12 h ab; nach dem Ablauf listet der nächste Tausch desselben noch gültigen Tickets ihn wieder für 12 h (vorher verlängert er nichts). Eine Liste ohne brauchbaren Eintrag wird als Fehler geloggt. |
+| `TICKET_ALLOWED_ORIGINS` | — | Browser-Herkünfte, die ein Ticket tauschen dürfen (kommagetrennt). Eine gesetzte Liste ohne brauchbaren Eintrag (etwa ohne `https://`) lässt **keine** Browser-Herkunft zu und wird als Fehler geloggt. Andere → `403 origin_not_allowed`, ohne CORS-Kopf; ohne `Origin` (Server zu Server) nie abgewiesen. Leer = jede Herkunft wie bisher. Im Betrieb dieselbe Liste wie `CORS_ORIGINS` des Chatbots. |
 | `MAX_BODY_BYTES` | 4 194 304 | Obergrenze des Anfragekörpers. |
 | `WLO_FETCH_TIMEOUT_MS` | 20 000 | Zeitbudget je Repository-Abruf. Ein Schreibvorgang mit `ccm:wwwurl` bekommt intern 60 s, weil das Repository die Seite rendert. |
 | `WLO_TEXT_TIMEOUT_MS` | 25 000 | dito für den Extraktionsdienst. |
@@ -484,10 +508,12 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 | Pfad | Zweck | CORS |
 |---|---|---|
 | `POST /mcp` | Der MCP-Transport. Auch unter `/`. | ja |
-| `GET /health` | Lebenszeichen. | ja |
+| `GET /health` | Lebenszeichen: der Prozess läuft. | ja |
+| `GET /ready` | Bereitschaft: ist edu-sharing erreichbar? 200 `{status: "ready", upstream: "ok", latencyMs, checkedAt}` oder 503 mit `upstream: "unreachable"` / `"slow"` (Probe über 5 s). Anfragen lösen höchstens alle 30 s eine Probe aus — kein Budget. | ja |
+| `GET /auth/status` | Anmeldestand in **einer** Anfrage, mit denselben Regeln wie `/mcp`: `{mode, authenticated, configuredAs?, authority, displayName?, credential, expiresAt?}` — derselbe Inhalt wie `wlo_auth_status`; `credential` = `none`/`basic`/`access-block`/`ticket`/`service`. Unbrauchbarer Bearer → 401 mit Anmelde-Aufforderung. Je Kopf 60 s zwischengespeichert — eine Antwort ohne `authority` (abgelehnt oder edu-sharing nicht erreichbar) nur 10 s. Am Protokoll-Budget und am Anmelde-Schutz; ein 429 ist dort `{error, code, retryAfter}` wie auf `/api`. Ohne CORS. `expiresAt` (ISO) nur für Ticket- und Widget-Blöcke: ab dann nimmt der Server den Block nicht mehr an (eine Ticket-Sitzung kann früher enden — deren Ende kennt der Server nicht). | **nein** |
 | `/api/search` · `/api/collection` · `/api/compendium` · `/api/topic-page` · `/api/wikipedia` · `/api/skills` | REST-Fläche über denselben Diensten — für Widgets und Einbettungen. | ja |
-| `/auth` · `/auth/issue` · `/auth/revoke` | Zugangsblock holen und widerrufen. Das Passwort wird im Browser verschlüsselt. | **nein** |
-| `POST /auth/ticket` | edu-sharing-Ticket gegen einen Zugangsblock tauschen — für eingebettete Widgets. | ja *(exakte Ausnahme)* |
+| `/auth` · `/auth/issue` · `/auth/revoke` | Zugangsblock holen und widerrufen. Das Passwort wird im Browser verschlüsselt. `POST /auth/revoke` nimmt den Block auch als `Authorization: Bearer` (ohne Rumpf) und widerruft genau ihn — zum Abmelden aus einem Backend; Antwort immer 200 `{revoked}`. | **nein** |
+| `POST /auth/ticket` | edu-sharing-Ticket gegen einen Zugangsblock tauschen — für eingebettete Widgets. Mit `TICKET_ALLOWED_ORIGINS` nur für eingetragene Herkünfte (andere 403). | ja *(exakte Ausnahme; mit Liste nur die eingetragenen)* |
 | `/oauth/authorize` · `/oauth/register` · `/oauth/token` | OAuth 2.1 mit offener Registrierung und PKCE-Pflicht. | gemischt |
 
 `/auth*` sendet **keinen** CORS-Header, und das ist keine Nachlässigkeit: beide

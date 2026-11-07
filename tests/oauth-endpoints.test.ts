@@ -24,7 +24,7 @@ import { installFetchMock } from './fetchMock.js';
 import { encodeAccessToken, loadAuthKeys } from '../src/auth/access-token.js';
 import { createCodeStore, type CodeStore } from '../src/auth/oauth-codes.js';
 import { MAX_REDIRECT_URIS, decodeClientId, encodeClientId } from '../src/auth/oauth-clients.js';
-import { openRegistry } from '../src/auth/access-registry.js';
+import { openRegistry, SESSION_BLOCK_TTL_S } from '../src/auth/access-registry.js';
 import { authorizationServerMetadata, protectedResourceMetadata } from '../src/auth/oauth-metadata.js';
 import { createDistinctValueLimiter, createRateLimiter } from '../src/rate-limit.js';
 
@@ -404,7 +404,7 @@ function accessBlock(user = 'redakteurin'): string {
   const s = currentAccessSupport();
   assert.ok(s);
   return encodeAccessToken(
-    { v: 2, jti: 'id-authorize', u: user, secret: 'geheim', iat: 1_754_300_000 },
+    { v: 2, jti: 'id-authorize', u: user, secret: 'geheim', iat: Math.floor(Date.now() / 1000) },
     s.keys.publicKeyPem,
   );
 }
@@ -464,6 +464,45 @@ test('the code carries the block, and the answer does not', async (t) => {
   assert.equal(record.redirectUri, REDIRECT);
   assert.ok(!r.body.includes(token), 'the block must never travel in a URL or a body');
   assert.ok(!r.body.includes('geheim'), 'and neither must the password');
+});
+
+test('a block issued to a WIDGET client (WIDGET_OAUTH_ORIGINS) expires after 12 h; an AI host’s never does', async (t) => {
+  await support(t);
+  t.after(upstream('redakteurin'));
+  const registry = currentAccessSupport()!.registry;
+
+  const before = Math.floor(Date.now() / 1000);
+  const r = await (async () => {
+    const out = res();
+    await handleOAuthEndpoint(req('POST', '/oauth/authorize', JSON.stringify(consentBody())), out,
+      deps({ widgetOAuthOrigins: new Set([new URL(REDIRECT).origin]) }));
+    return out.out;
+  })();
+  assert.equal(r.status, 200, r.body);
+  const exp = registry.expiresAt('id-authorize');
+  assert.ok(exp !== undefined && exp >= before + SESSION_BLOCK_TTL_S && exp <= before + SESSION_BLOCK_TTL_S + 5, String(exp));
+
+  await registry.remove('id-authorize');
+  await postConsent(consentBody());
+  assert.equal(registry.has('id-authorize'), true);
+  assert.equal(registry.expiresAt('id-authorize'), undefined, 'no list → no expiry, as before');
+
+  await registry.remove('id-authorize');
+  const other = res();
+  await handleOAuthEndpoint(req('POST', '/oauth/authorize', JSON.stringify(consentBody())), other,
+    deps({ widgetOAuthOrigins: new Set(['https://widget.example.org']) }));
+  assert.equal(registry.expiresAt('id-authorize'), undefined, 'a client outside the list keeps no expiry');
+});
+
+test('a widget block sent through an AI-host consent keeps its expiry — the consent cannot make it permanent', async (t) => {
+  await support(t);
+  t.after(upstream('redakteurin'));
+  const registry = currentAccessSupport()!.registry;
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'id-authorize', label: 'redakteurin', iat: nowS, exp: nowS + 3600 });
+  const r = await postConsent(consentBody());
+  assert.equal(r.status, 200, r.body);
+  assert.equal(registry.expiresAt('id-authorize'), nowS + 3600);
 });
 
 test('WLO refusing the login mints nothing', async (t) => {

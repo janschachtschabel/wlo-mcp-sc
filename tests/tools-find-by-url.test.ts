@@ -92,6 +92,15 @@ test('an upstream failure is reported per entry', async () => {
   assert.equal(results[1]!.matches.length, 2);
 });
 
+test('a busy repository is reported per entry as upstream_busy, not as broken', async () => {
+  const { results } = await find(
+    { urls: ['https://busy.example/x'] },
+    (url, init) => (url.includes('/ngsearch') && String(init?.body ?? '').includes('busy.example')
+      ? { status: 503, json: {} } : undefined),
+  );
+  assert.equal(results[0]!.error?.code, 'upstream_busy');
+});
+
 test('collections are counted only on request — each costs a usage read', async () => {
   const off = await find({ urls: ['https://example.org/linsen'] });
   assert.ok(!off.calls.some(c => c.url.includes('/usage/')), 'default: no usage read');

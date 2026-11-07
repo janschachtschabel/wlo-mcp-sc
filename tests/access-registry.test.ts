@@ -17,7 +17,9 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MAX_BLOCKS_PER_LABEL, openRegistry, type AccessRegistry } from '../src/auth/access-registry.js';
+import {
+  EXPIRED_KEPT_S, MAX_BLOCKS_PER_LABEL, openRegistry, SESSION_BLOCK_TTL_S, type AccessRegistry,
+} from '../src/auth/access-registry.js';
 
 function tempDir(t: { after: (fn: () => void) => void }): string {
   const dir = mkdtempSync(join(tmpdir(), 'wlo-registry-'));
@@ -379,6 +381,83 @@ test('an account revocation that cannot be written is not reported as done', asy
   assert.equal(registry.has('laptop'), true, 'and the entry is still listed');
 });
 
+// ── R1: an expiry in the allow-list, not in the token (plan 2026-11-07) ──────
+
+test('an entry past its exp is no longer listed; one without exp never expires', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowS = 1_800_000_000;
+  await registry.add({ jti: 'session', label: 'lehrerin', iat: nowS, exp: nowS + SESSION_BLOCK_TTL_S, k: 'ticket' });
+  await registry.add({ jti: 'pasted', label: 'lehrerin', iat: nowS });
+
+  assert.equal(registry.has('session', (nowS + SESSION_BLOCK_TTL_S - 1) * 1000), true, 'a second before');
+  assert.equal(registry.has('session', (nowS + SESSION_BLOCK_TTL_S) * 1000), false, 'at exp');
+  assert.equal(registry.has('pasted', (nowS + 10 * SESSION_BLOCK_TTL_S) * 1000), true, 'no exp, no expiry');
+  assert.equal(registry.expiresAt('session'), nowS + SESSION_BLOCK_TTL_S);
+  assert.equal(registry.expiresAt('pasted'), undefined);
+  assert.equal(SESSION_BLOCK_TTL_S, 12 * 3600);
+});
+
+test('expired entries never push a pasted block out — the cap counts live entries only', async (t) => {
+  // A widget's OAuth login carries no `k`, so it counts in the class of pasted
+  // blocks; logging in again every 12 h would otherwise retire the block the
+  // person pasted into their AI host within a week (the 2026-08-13 defect).
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowS = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < MAX_BLOCKS_PER_LABEL - 1; i++) await registry.add({ jti: `pasted-${i}`, label: 'lehrerin', iat: nowS - 1000 + i });
+  await registry.add({ jti: 'widget-old', label: 'lehrerin', iat: nowS - 50_000, exp: nowS - 1 });
+  await registry.add({ jti: 'widget-new', label: 'lehrerin', iat: nowS, exp: nowS + SESSION_BLOCK_TTL_S });
+  for (let i = 0; i < MAX_BLOCKS_PER_LABEL - 1; i++) assert.equal(registry.has(`pasted-${i}`), true, `pasted-${i}`);
+  assert.equal(registry.has('widget-new'), true);
+  assert.equal(registry.has('widget-old'), false, 'expired');
+  assert.equal(registry.known('widget-old'), true, 'but kept as the record that stops a re-issue');
+});
+
+test('an expired entry is kept as a record for two days — then dropped at the next write', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'recent', label: 'lehrerin', iat: nowS - 20_000, exp: nowS - 10 });
+  await registry.add({ jti: 'ancient', label: 'lehrerin', iat: nowS - 300_000, exp: nowS - EXPIRED_KEPT_S - 10 });
+  await registry.add({ jti: 'trigger', label: 'lehrerin', iat: nowS });
+  assert.equal(registry.known('recent'), true, 'still known: an expired block must not be issued again');
+  assert.equal(registry.has('recent'), false, 'but no longer listed');
+  assert.equal(registry.known('ancient'), false, 'past the record period: gone');
+});
+
+test('the per-account cap counts only LIVE entries', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowS = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < 5; i++) await registry.add({ jti: `expired-${i}`, label: 'lehrerin', iat: nowS - 100_000 + i, exp: nowS - 1 });
+  for (let i = 0; i < MAX_BLOCKS_PER_LABEL; i++) await registry.add({ jti: `live-${i}`, label: 'lehrerin', iat: nowS + i });
+  for (let i = 0; i < MAX_BLOCKS_PER_LABEL; i++) assert.equal(registry.has(`live-${i}`), true, `live-${i}`);
+});
+
+test('a failed write leaves the order as it was — the next eviction still removes the oldest', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+  for (let i = 0; i < MAX_BLOCKS_PER_LABEL; i++) await registry.add({ jti: `b-${i}`, label: 'lehrerin', iat: i });
+  mkdirSync(`${path}.tmp`);
+  await assert.rejects(registry.add({ jti: 'failed', label: 'lehrerin', iat: 99 }));
+  rmSync(`${path}.tmp`, { recursive: true, force: true });
+  await registry.add({ jti: 'next', label: 'lehrerin', iat: 100 });
+  assert.equal(registry.has('b-0'), false, 'the oldest goes');
+  assert.equal(registry.has('b-1'), true, 'not a younger one');
+});
+
+test('exp survives a restart, and an exp that is not a number fails closed', async (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'registry.json');
+  const registry = await opened(path);
+  const exp = Math.floor(Date.now() / 1000) + 60;
+  await registry.add({ jti: 'session', label: 'lehrerin', iat: exp - 120, exp });
+  const again = await opened(path);
+  assert.equal(again.expiresAt('session'), exp);
+  assert.equal(again.has('session', (exp + 1) * 1000), false);
+
+  const bad = join(dir, 'bad.json');
+  writeFileSync(bad, JSON.stringify({ v: 1, entries: [{ jti: 'x', label: 'l', iat: 1, exp: 'morgen' }] }));
+  assert.equal(await openRegistry(bad), null);
+});
+
 test('nothing resembling a credential is ever written to disk', async (t) => {
   const path = join(tempDir(t), 'registry.json');
   const registry = await opened(path);
@@ -389,4 +468,17 @@ test('nothing resembling a credential is ever written to disk', async (t) => {
 
   const parsed = JSON.parse(raw) as { entries: Record<string, unknown>[] };
   assert.deepEqual(Object.keys(parsed.entries[0]!).sort(), ['iat', 'jti', 'label']);
+});
+
+test('a renewed entry counts as the NEWEST — renewal does not leave it first in line for eviction', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 't-0', label: 'lehrerin', iat: nowS - 50_000, exp: nowS - 1, k: 'ticket' });
+  for (let i = 1; i < MAX_BLOCKS_PER_LABEL; i++) {
+    await registry.add({ jti: `t-${i}`, label: 'lehrerin', iat: nowS, exp: nowS + 3600, k: 'ticket' });
+  }
+  await registry.add({ jti: 't-0', label: 'lehrerin', iat: nowS, exp: nowS + 3600, k: 'ticket' });
+  await registry.add({ jti: 't-new', label: 'lehrerin', iat: nowS, exp: nowS + 3600, k: 'ticket' });
+  assert.equal(registry.has('t-0'), true, 'the renewed one stays');
+  assert.equal(registry.has('t-1'), false, 'the oldest live one goes');
 });

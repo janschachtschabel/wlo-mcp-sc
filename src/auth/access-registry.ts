@@ -42,10 +42,43 @@ export interface RegistryEntry {
    * counted in the stricter class.
    */
   k?: 'ticket';
+  /**
+   * Expiry, seconds (plan 2026-11-07, R1): the entry stops counting as listed
+   * at this instant, and the block reads exactly like a revoked one — 401 on
+   * `/mcp`. The expiry lives HERE and not in the block, so the token stays the
+   * block (no wrapper, no refresh token) and an operator can see it.
+   *
+   * Set for ticket blocks and for OAuth logins of an embedded widget
+   * (`SESSION_BLOCK_TTL_S`); absent everywhere else — a block pasted into an AI
+   * host, and every entry written before 2026-11-07, never expires.
+   *
+   * Optional, so no format bump (see `FORMAT_VERSION`): an old build ignores
+   * it, which on a rollback lifts the expiry and keeps the access — the safe
+   * direction for people, and a known one for the operator.
+   */
+  exp?: number;
 }
 
+/** How long a ticket block or a widget's OAuth block stays listed: 12 h. */
+export const SESSION_BLOCK_TTL_S = 12 * 60 * 60;
+
+/**
+ * How long an EXPIRED entry is kept as a record (review 2026-11-07). While it
+ * exists, issuance refuses its id (`access-issue.ts`) — otherwise whoever holds
+ * an expired widget block could list it again, without an expiry, through
+ * `/auth/issue` or a consent. Issuance also refuses a block whose own `iat` is
+ * more than `ISSUE_MAX_SKEW_S` off our clock, so a block can be issued at most
+ * 24 h + 24 h after it was made; two days after `exp` covers both.
+ */
+export const EXPIRED_KEPT_S = 48 * 60 * 60;
+
 export interface AccessRegistry {
-  has(jti: string): boolean;
+  /** Listed AND not expired at `nowMs` — the check every opened block passes (`credentialFromHeader`). */
+  has(jti: string, nowMs?: number): boolean;
+  /** Present at all — listed, or expired and still kept as a record (`EXPIRED_KEPT_S`). */
+  known(jti: string): boolean;
+  /** The entry's `exp` (seconds), or undefined for an entry without one or no entry at all. */
+  expiresAt(jti: string): number | undefined;
   add(entry: RegistryEntry): Promise<void>;
   remove(jti: string): Promise<boolean>;
   /**
@@ -137,6 +170,9 @@ function isEntry(value: unknown): value is RegistryEntry {
   // record written by something we do not understand, and admitting it in the
   // deliberate class is the direction that loses someone their pasted block.
   if (e['k'] !== undefined && e['k'] !== 'ticket') return false;
+  // An expiry we cannot read fails closed the same way: dropping it would turn a
+  // 12-hour access into one that never ends.
+  if (e['exp'] !== undefined && typeof e['exp'] !== 'number') return false;
   return typeof e['jti'] === 'string' && !!e['jti']
     && typeof e['label'] === 'string'
     && typeof e['iat'] === 'number';
@@ -264,7 +300,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
 
   /**
    * Drop the oldest entries of one label AND ONE KIND until that class is back
-   * at the cap, and report what went so the caller can undo it. Oldest by
+   * at the cap (the caller's undo restores a snapshot, not a list). Oldest by
    * INSERTION order: a `Map` preserves it and a reopened registry inherits the
    * file's order, so the order entries were registered in is already there and
    * needs no sort — and no tie-break for two blocks fetched in the same second.
@@ -277,29 +313,47 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
    * operator's edit, a lowered constant) is left alone until that account
    * fetches its next block. Pruning at load would mean opening the registry
    * could write, and `openRegistry` is also the read path.
+   *
+   * EXPIRED entries never count against the cap, whatever their kind (R1): they
+   * grant nothing, and a widget's OAuth login carries no `k` — it counts with
+   * the pasted blocks, so a login every 12 h would otherwise retire the block
+   * the person pasted into their AI host within a week. A separate `k` for
+   * widgets would avoid that too, but an unknown `k` fails an old build's
+   * registry closed, which a rollback must not do. They are deleted only once
+   * past `EXPIRED_KEPT_S`, because until then they are the record that stops
+   * the id being issued again.
    */
-  function evictOldest(label: string, kind: RegistryEntry['k']): [string, RegistryEntry][] {
-    const mine = [...entries.values()].filter((e) => e.label === label && e.k === kind);
-    const excess = mine.length - MAX_BLOCKS_PER_LABEL;
-    if (excess <= 0) return [];
-    const dropped: [string, RegistryEntry][] = [];
-    for (const e of mine.slice(0, excess)) {
-      entries.delete(e.jti);
-      dropped.push([e.jti, e]);
+  function evictOldest(label: string, kind: RegistryEntry['k'], nowMs: number): void {
+    const expired = (e: RegistryEntry) => e.exp !== undefined && nowMs >= e.exp * 1000;
+    for (const e of [...entries.values()]) {
+      if (e.label === label && e.exp !== undefined && nowMs >= (e.exp + EXPIRED_KEPT_S) * 1000) entries.delete(e.jti);
     }
-    return dropped;
+    const mine = [...entries.values()].filter((e) => e.label === label && e.k === kind && !expired(e));
+    const excess = mine.length - MAX_BLOCKS_PER_LABEL;
+    for (const e of excess > 0 ? mine.slice(0, excess) : []) entries.delete(e.jti);
   }
 
   return {
-    has: (jti) => entries.has(jti),
+    has: (jti, nowMs = Date.now()) => {
+      const e = entries.get(jti);
+      return e !== undefined && (e.exp === undefined || nowMs < e.exp * 1000);
+    },
+    known: (jti) => entries.has(jti),
+    expiresAt: (jti) => entries.get(jti)?.exp,
     async add(entry) {
       await commit(() => {
-        const previous = entries.get(entry.jti);
+        // Undo restores the WHOLE map in its old order: re-inserting evicted
+        // entries one by one would file them as the newest, and the next
+        // eviction after a failed write would then retire the wrong blocks.
+        const before = [...entries.entries()];
+        // Delete first, so a re-added (renewed) id counts as the newest — `set`
+        // on an existing key keeps its old position.
+        entries.delete(entry.jti);
         entries.set(entry.jti, entry);
-        const evicted = evictOldest(entry.label, entry.k);
+        evictOldest(entry.label, entry.k, Date.now());
         return () => {
-          for (const [jti, e] of evicted) entries.set(jti, e);
-          if (previous) entries.set(entry.jti, previous); else entries.delete(entry.jti);
+          entries.clear();
+          for (const [jti, e] of before) entries.set(jti, e);
         };
       });
     },

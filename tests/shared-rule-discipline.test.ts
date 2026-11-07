@@ -174,10 +174,12 @@ test('the authority check has one caller per purpose, not a copy per endpoint', 
   // build a block naming any user, and a removal that trusted the name in it
   // would end a stranger's accesses on a guessed username.
   //
-  // `tools/auth.ts` is the other legitimate caller: it reports the current
-  // identity to the user and gates nothing.
+  // `auth/auth-status.ts` is the other legitimate caller: it REPORTS the
+  // current identity and gates nothing. Both `wlo_auth_status` and
+  // `GET /auth/status` go through it (plan 2026-11-07, S4) — it was
+  // `tools/auth.ts` until the status got a second surface.
   assert.deepEqual(
-    offenders(AUTHORITY_CHECK, ['auth/identity.ts', 'auth/access-verify.ts', 'tools/auth.ts']),
+    offenders(AUTHORITY_CHECK, ['auth/identity.ts', 'auth/access-verify.ts', 'auth/auth-status.ts']),
     [],
     'go through verifyBlockLogin in auth/access-verify.ts — it is where the authority rule lives',
   );

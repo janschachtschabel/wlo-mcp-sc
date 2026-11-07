@@ -23,7 +23,7 @@ import { getCollectionStats } from './stats.js';
 import { buildCollectionTree } from './collection-traversal.js';
 import { ensureRegistryFor } from './skill-registry-cache.js';
 import { DESCRIBED_MAX, describeEntries } from './skill-registry.js';
-import { failureCode, type FailureCode } from './failure-code.js';
+import { BUSY_RETRY_DEFAULT_S, failureCode, type FailureCode } from './failure-code.js';
 
 export const OVERVIEW_PARTS = ['breadcrumb', 'compendium', 'stats', 'skills', 'subcollections', 'contents'] as const;
 export type OverviewPart = (typeof OVERVIEW_PARTS)[number];
@@ -36,7 +36,7 @@ export type OverviewPart = (typeof OVERVIEW_PARTS)[number];
  */
 const TOC_MAX_DEPTH = 1;
 
-export type OverviewErrorCode = 'not_found' | 'not_a_collection' | 'forbidden' | 'upstream_error';
+export type OverviewErrorCode = 'not_found' | 'not_a_collection' | 'forbidden' | 'upstream_busy' | 'upstream_error';
 /**
  * `not_checked`: the skill lookup did not answer (e.g. a collection too large
  * for the bounded registry scan) — not a failure, and not "none approved".
@@ -87,12 +87,17 @@ export interface CollectionOverview {
 
 export type OverviewResult =
   | { ok: true; overview: CollectionOverview }
-  | { ok: false; error: { code: OverviewErrorCode; message: string } };
+  | { ok: false; error: { code: OverviewErrorCode; message: string; retryAfter?: number } };
 
-function headError(status: number): { code: OverviewErrorCode; message: string } {
+function headError(status: number): { code: OverviewErrorCode; message: string; retryAfter?: number } {
   if (status === 404) return { code: 'not_found', message: 'Diese Sammlung gibt es nicht.' };
   if (status === 401 || status === 403) {
     return { code: 'forbidden', message: 'Diese Sammlung ist mit der aktuellen Anmeldung nicht lesbar.' };
+  }
+  // The same busy rule every other read follows (`codeOfStatus`).
+  if (status === 429 || status === 503) {
+    return { code: 'upstream_busy', message: 'Das Repository ist gerade überlastet. Bitte gleich noch einmal.',
+      retryAfter: BUSY_RETRY_DEFAULT_S };
   }
   return { code: 'upstream_error', message: 'Die Sammlung konnte nicht gelesen werden; über ihren Inhalt sagt das nichts.' };
 }

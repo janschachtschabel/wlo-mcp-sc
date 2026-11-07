@@ -61,7 +61,7 @@ const nodeDetailsListSchema = nodeListSchema.extend({
   /** E6: why each id is missing — a deleted record and a refused one are different answers. */
   missing: z.array(z.object({
     part: z.string(),
-    code: z.enum(['not_found', 'forbidden', 'timeout', 'upstream_error']),
+    code: z.enum(['not_found', 'forbidden', 'timeout', 'upstream_busy', 'upstream_error']),
   })).optional(),
   textContentSkipped: z.array(z.string()).optional(),
 });

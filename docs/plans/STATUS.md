@@ -4034,3 +4034,181 @@ Fehlercodes, OER = vier Suchen), `ARCHITECTURE.md`, `DEPLOYMENT.md` (Schalter,
 nginx-Rumpfgrenze), `PRIVACY.md` (Uploads, Pläne, Stapel), `AUTH.md`,
 Submission-Checkliste, beide READMEs, `TOOLS.md`. `docs-claims` erfasst die
 Zahlen-Schreibweisen von `INTEGRATION.md`. Tests 2525 grün, 1 Skip.
+
+### 2026-11-07 — Chatbot-Anbindung: Plan erstellt, wartet auf Freigabe
+
+`docs/plans/2026-11-07-chatbot-anbindung-stabilitaet.md` (Auftrag des
+Chatbot-Teams S1–S7). Gemessen: ein `tools/call` ohne `initialize` → 200
+(F2: ein POST je Aufruf reicht); Verbindungsaufbau zu edu-sharing 0,1–0,3 s
+(B7s 22 s kommen nicht vom Transport). Vier Phasen (Budget/429, upstream_busy,
+sichere Wiederholung, /auth/status + /ready). S7 ist eine Entscheidungsvorlage
+für den Nutzer, kein Code. Offen beim Nutzer: Freigabe, F1 (Live-Werte),
+S7-Wahl.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 1 (S1/S2a) erledigt
+
+Freigegeben vom Nutzer; F1: live 300 Anfragen/min; S7 entschieden (Empfehlung des
+Chatbot-Teams: R1 Frist in der Allow-Liste, 12 h für Ticket-/Widget-Blöcke; R2
+Selbst-Widerruf per Bearer; R4 `TICKET_ALLOWED_ORIGINS`) → Phasen 5–7 im Plan.
+Gebaut: `src/client-budget.ts` (Schlüssel, Bucket, `countToolCalls`, JSON-RPC-429,
+`createClientBudgets`), `RateLimiter.retryAfterSeconds`, Verdrahtung in
+`http-app.ts`/`http.ts`. Werkzeug-Budget nur `tools/call`, Protokoll-Budget 3× vor
+dem Rumpf, vertraute Clients je Schlüssel, 429 mit Restzeit. Vier alte Tests, die
+„jeder POST zählt“ festschrieben, bewusst auf die neue Regel umgestellt; F2-Test
+(`tools/call` ohne `initialize` → 200) neu. Gegenprobe: zählt das Budget jede
+Nachricht, wird der Test rot. Doku: `.env.example`, `docker-compose.yml`,
+DEPLOYMENT, MCP-REFERENZ, INTEGRATION, beide READMEs, CHANGELOG.
+HTML-Referenz `1794054659-a704`. **Nächster Schritt:** Phase 2 (`upstream_busy`) — nach Kontext-Reset.
+
+### Nachtrag 2026-11-07 — Review Phase 1 (4 Befunde, behoben)
+
+**MAJOR:** der Anmelde-Schutz auf `/mcp` antwortete weiter mit Freitext und
+pauschal `Retry-After: 600` — jetzt JSON-RPC mit `data.code: "too_many_logins"`
+und der Restzeit seines Fensters (`DistinctValueLimiter.retryAfterSeconds`).
+**MINOR:** Tests für das Protokoll-Budget eines vertrauten Clients (3×) und den
+REST-429 auf `/api/*`; Doku: `X-WLO-Client-Key` nur von Server zu Server (CORS
+lässt den Kopf bewusst nicht zu). **NIT:** `rateLimitedBody` mit Code-Parameter.
+Bewusst nicht geändert: die REST-Seiten unter `/auth*` (Passwort, Zustimmung)
+behalten ihr `Retry-After: 600` — dort spricht niemand JSON-RPC. Tests 2539 grün, 1 Skip; HTML `1794055312-bd01`.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 2 (S2b `upstream_busy`) erledigt
+
+`src/upstream-error.ts` (Fehlertext mit `retry-after=N` aus dem Kopf von oben,
+nur Sekunden-Form), `failureCode` → `upstream_busy` bei 429/503,
+`retryAfterOf` (sonst 10 s), `codeOfStatus` ebenso, `toolError` trägt
+`retryAfter`, drei `missing`-Schemata erweitert. Test zuerst rot, Gegenprobe
+(Zeile entfernt → 2 rot). Doku: MCP-REFERENZ, INTEGRATION, CHANGELOG.
+Review Phase 2 (2 MINOR, behoben): `upstream_busy` ohne `retryAfter` in
+`wlo_health_check` und `wlo_list_my_batches` — jetzt `failureFields(err)`
+(`failure-code.ts`), die EINE Stelle, die Code und Wartezeit paart; HTML-Referenz
+`1794055841-5120` ergänzt. Tests 2546 grün, 1 Skip. Bewusst außerhalb: ein 503 beim SCHREIBEN bleibt
+`upstream_error`/`failed` — dort sagt er nicht „gefahrlos wiederholen“.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 3 (S3 sichere Wiederholung) erledigt
+
+`services/write/confirm-replay.ts` (Speicher je Schlüssel-Hash, gebunden an
+Identität + Argument-Hash, 30 min, ≤ 500; aufgezeichnet NUR wenn der Schlüssel im
+Aufruf eingelöst wurde — `markRedeemed` aus `consumeToken`), `tools/curation-replay.ts`
+(Naht in `registerCurationTool`: done → `replayed: true`, running → `inProgress`,
+andere Argumente → `confirm_mismatch`), `replay: false` für die zwei Plan-Werkzeuge.
+Tests: verlorene Antwort → ein Datensatz; parallel → einmal geschrieben; fremde
+Identität → kein Replay; nie eingelöst → nichts gespeichert; Wettlauf im
+Bestätigungspfad direkt nachgestellt. Zwei Gegenproben: ohne `markRedeemed` 3 rot;
+ohne die `replay`-Prüfung zunächst GRÜN — der Werkzeug-Test erreichte den Wettlauf
+nie; ein gezielter Test schließt die Lücke (dann 1 rot).
+Review Phase 3 (2 MINOR, Doku, behoben): Codetabelle `confirm_unknown`
+präzisiert (gleiche Anmeldung + Argumente = erste Antwort); benannt, dass ein
+offener `timeout` auch in der Wiederholung offen bleibt; HTML `1794056328-8eee`.
+Geprüft ohne Befund: je Aufruf höchstens eine Einlösung, Plan-Werkzeuge
+ausgenommen (ihr Fortsetzungstest grün), nie fremde Identität, Speicher begrenzt.
+Tests 2556 grün, 1 Skip.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 4 (S4 `/auth/status`, S5 `/ready`, S6) erledigt
+
+`auth/auth-status.ts` (`authStatusPayload`, `readAuthStatus` — die EINE Stelle
+für Werkzeug und Endpunkt; der Autoritäts-Wächter nennt jetzt dieses Modul statt
+`tools/auth.ts`), `rest/auth-status.ts` (Kopf-Regeln wie `/mcp`, Protokoll-Budget,
+Anmelde-Schutz, 60-s-Cache), `services/upstream-readiness.ts` (Probe = 1-Treffer-
+Suche, 30-s-Cache, single-flight, höchstens 5 s Warten), `rest/ready.ts`,
+`rest/rate-limited.ts` (gemeinsamer JSON-RPC-429), `slow upstream`-Log in
+`wloFetch` ab 5 s (nur Pfad), Probe-Start nur aus `http.ts` (Test),
+`WLO_READY_PROBE_MS`. Gegenproben: ohne single-flight 1 rot, ohne Status-Cache 1
+rot. Bewusst weggelassen (Plan T4.5): ein Verweis auf `/auth/status` in der
+Beschreibung von `wlo_auth_status` — die liest ein Modell, und ein Modell ruft
+keinen HTTP-Endpunkt. Tests 2574 grün, 1 Skip; HTML `1794056818-4fc4`.
+
+**Review Phase 4 (2026-11-07), 7 Befunde, alle behoben.** (1, MAJOR) Der
+Slow-Log fehlte für einen Aufruf, der WIRFT — und der 22-s-Fall liegt über dem
+20-s-Budget, war also genau der, den S6 sehen sollte; jetzt als Status 0.
+(2, MAJOR) `/auth/status` hielt eine Antwort ohne `authority` 60 s — ein kurzer
+Ausfall zeigte eine gültige Anmeldung eine Minute als abgelehnt; jetzt 10 s
+(`AUTH_STATUS_UNKNOWN_CACHE_MS`), weil „abgelehnt" und „nicht erreicht" dort
+nicht unterscheidbar sind. (3) 429 auf `/auth/status` ist REST
+(`restRateLimitedBody`, wie `/api`), nicht JSON-RPC. (4) Der Anmelde-Schutz-429
+ist EINE Funktion (`refuseTooManyLogins`) für `/mcp` und `/auth/status`; die
+Kopie loggte nicht. (5) Der Probe-Takt fragt frisch statt über den 30-s-Cache
+(sonst wirkte ein Intervall unter 30 s nicht, und ein früher Takt fiel aus).
+(6) Tests für Anmelde-Schutz und kaputten Basic-Kopf mit Dienstkonto. (7)
+Kommentar: gemessen bis zu den Kopfzeilen. Gegenproben: (1), (2), (4)-Log und
+(5) je rot. Tests 2579 grün, 1 Skip; Lint/Typen/Build sauber; HTML `1794057236-4f55`.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 5 (R4 `TICKET_ALLOWED_ORIGINS`) erledigt
+
+`auth/ticket-origins.ts` (rein: Liste normalisieren über `new URL().origin`,
+`*`/Unlesbares/Nicht-Web abgelehnt und gewarnt; leere Liste und fehlende
+`Origin` erlaubt). `/auth/ticket` antwortet einer fremden Browser-Herkunft 403
+`origin_not_allowed` — nach dem Adress-Budget, vor dem Rumpf —, und die
+CORS-Antwort spiegelt mit Liste nur eine eingetragene Herkunft (`Vary: Origin`)
+statt `*`, damit schon die Vorabfrage scheitert. Gegenproben: ohne 403, mit `*`
+statt Spiegel, ohne die Ausnahme für fehlende `Origin` je rot. Review (inline):
+1 MINOR — die Abweisung lag vor dem Budget und war mit gefälschtem `Origin` eine
+unbegrenzte Quelle von Logzeilen; verschoben, Test zählt den 429 —, 1 NIT
+(Kommentar `isCredentialSurface`). HTML `1794057686-3c79`.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 6 (R2 Selbst-Widerruf) erledigt
+
+`POST /auth/revoke` nimmt den Block auch als `Authorization: Bearer` — ohne
+Rumpf und ohne JSON (der Kopf macht die Anfrage vorabfragepflichtig, `/auth*`
+bleibt ohne CORS) — und widerruft genau ihn; `credentialFromHeader` liefert
+danach `null`, `/mcp` also 401. Antwort immer 200 `{revoked}`: unlesbar, fremd,
+ungelistet und schon widerrufen sehen gleich aus. Kopf schlägt Rumpf; ein
+`Basic`-Kopf ist kein Bearer-Widerruf (weiter 415). Kein neues Recht: der
+Rumpf-Weg nahm schon jeden Block mit gelisteter id (`AUTH.md` §4). Gegenprobe
+(400 für Unlesbares) rot. Review inline ohne Befund. HTML `1794057914-a86d`.
+
+### 2026-11-07 — Chatbot-Anbindung Phase 7 (R1 Frist in der Allow-Liste) erledigt — Plan vollständig
+
+`RegistryEntry.exp` (Sekunden, optional, kein Formatwechsel; ein `exp`, das
+keine Zahl ist, schließt zu), geprüft in `registry.has(jti, nowMs)` — der einen
+Stelle, die `credentialFromHeader` fragt; ein abgelaufener Block ist wie ein
+widerrufener (401). `SESSION_BLOCK_TTL_S` = 12 h für Ticket-Blöcke (ein neuer
+Tausch desselben Tickets erneuert) und für OAuth-Anmeldungen, deren GEPRÜFTES
+`redirect_uri` in `WIDGET_OAUTH_ORIGINS` liegt — beim Bauen entschieden und im
+Plan begründet: Widget und KI-Host kommen beide über OAuth, und nur das
+Weiterleitungsziel unterscheidet sie verlässlich. Leer = kein OAuth-Block läuft
+ab. `/auth/status` und `wlo_auth_status` nennen `expiresAt`. Ein echter Server
+zeigt den Ablauf bis `/auth/status` (`oauth-flow.test.ts`). Gegenproben: `has`
+ohne Frist, Consent ohne TTL, Ticket-`has` ohne `now`, http-app ohne
+Durchreichen, Ablauf-Bereinigung aus — je rot. Review (inline): 1 MAJOR —
+Widget-Einträge haben kein `k` und zählen mit den eingefügten Blöcken, tägliche
+Anmeldungen hätten den in ChatGPT eingefügten Block nach ~5 Tagen verdrängt;
+jetzt fallen abgelaufene Einträge vor dem Deckel heraus. HTML `1794058342-5a6a`.
+
+**Damit ist `2026-11-07-chatbot-anbindung-stabilitaet.md` vollständig (Phasen
+1–7).** Nicht hier messbar und offen beim Chatbot-Team: der Lasttest mit 30
+Personen (S1) und die echte Ursache des kalten Pfads (S6 — das Log zeigt sie
+erst im Betrieb). Betrieb: `TICKET_ALLOWED_ORIGINS` und `WIDGET_OAUTH_ORIGINS`
+setzen, sonst bleibt beides wirkungslos.
+
+### 2026-11-07 — Vollständiger Review S1–S7 (zwei unabhängige Prüfer), 18 Befunde, alle behoben
+
+Zwei Prüfer mit frischem Kontext (S1–S3 und S4–S7), jeder Befund am Quelltext
+nachgeprüft. Drei waren MAJOR: (1) die 12-h-Frist ließ sich über `/auth/issue`
+oder eine Zustimmung mit beliebigem `redirect_uri` abstreifen — `add` ersetzt den
+ganzen Eintrag; jetzt bestätigt die Ausstellung eine gelistete id ohne
+Neuschreiben, verweigert eine abgelaufene (Vermerk 48 h, `EXPIRED_KEPT_S`, zählt
+nicht gegen den Deckel) und einen Block mit `iat` > 24 h neben unserer Uhr
+(`ISSUE_MAX_SKEW_S`); (2) ein Fehler NACH der Einlösung (etwa die Dubletten-
+prüfung mit 503) lud mit `retryAfter` zu einem Aufruf ein, der nur wiederholen
+konnte — jetzt `requiresNewPreview: true` ohne `retryAfter`, und ein Wurf nach
+der Einlösung antwortet `outcomeOpen: true` statt den Schlüssel zu vergessen;
+(3) `wlo_health_check` meldete einen echten 503 als „erreichbar“, weil nur ein
+WURF abgebildet war und der Test warf — dieselbe Form wie 2026-08 („ein Test
+gegen fetchMock beweist nur, was wir senden wollten“). Dazu 11 MINOR/NIT:
+Statuserkennung an der Position statt jeder dreistelligen Zahl, `upstream_busy`
+auch in Übersicht/URL-Suche, Replay-Deckel je Identität, Hinweis bei
+vorbereiteten Anfragen, `/auth/status`-Cache je VORGELEGTEM Kopf (HMAC),
+Herkunftsliste ohne brauchbaren Eintrag schließt, Probe anonym und Zeitstempel
+bei Ankunft, `TRUSTED_CLIENT_KEYS` ohne Klartext im Log und ohne Doppelnamen,
+Reihenfolge der Allow-Liste bei Rückgängig/Erneuern, Doku (Erneuerung nur nach
+Ablauf, „no expiry“-Sätze in AUTH.md/CLAUDE.md, `/auth/revoke`-Antworten,
+`/auth/ticket` in INTEGRATION.md, Logzeilen-Name). Korrektur zur Phase-2-Notiz
+„ein 503 beim Schreiben bleibt upstream_error“: nach der Einlösung heißt er jetzt
+`upstream_busy` mit `requiresNewPreview` und ohne `retryAfter`; ein Planschritt
+heißt `upstream_busy`, weil ein gescheitertes Anlegen dort nachgeprüft ist.
+Bewusst NICHT umgesetzt (begründet in Phase 4): der Verweis auf `/auth/status`
+in der Beschreibung von `wlo_auth_status`. Fünf Test-Blöcke trugen ein festes
+`iat` von 2025 und laufen jetzt mit der aktuellen Zeit, wie die Seiten sie
+erzeugen (`public/access-block.js`); ein Fixture `'upstream 403'` entsprach
+keiner echten Nachricht und trägt jetzt die echte Form. Gegenproben der neuen
+Ausstellungsregeln je rot. Tests 2622 grün, 1 Skip; Lint/Typen/Build sauber.

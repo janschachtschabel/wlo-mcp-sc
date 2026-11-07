@@ -19,6 +19,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import type { ChangeSet } from './change-set.js';
 import { currentCredential } from '../../auth/credential.js';
+import { lookupReplayInCall, markRedeemed } from './confirm-replay.js';
 
 /** How long a preview stays valid. Long enough to read, short enough to matter. */
 export const TOKEN_TTL_MS = 10 * 60 * 1000;
@@ -38,7 +39,12 @@ const MAX_PENDING = 1000;
  */
 export const MAX_PENDING_PER_IDENTITY = 50;
 
-export type ConfirmOutcome = 'ok' | 'unknown' | 'expired' | 'mismatch';
+/**
+ * `replay`: the key was already redeemed by a call with the same identity and
+ * arguments (plan 2026-11-07, S3) — the caller answers with that call's result
+ * (`confirm-replay.ts`) instead of `unknown`.
+ */
+export type ConfirmOutcome = 'ok' | 'unknown' | 'expired' | 'mismatch' | 'replay';
 
 interface Pending {
   hash: string;
@@ -145,6 +151,11 @@ export function mintToken(cs: ChangeSet, now: number = Date.now()): string {
 export function consumeToken(token: string, cs: ChangeSet, now: number = Date.now()): ConfirmOutcome {
   const entry = pending.get(token);
   if (!entry) {
+    // Redeemed already — by this identity with these arguments: the first call's
+    // answer stands (or is still being made). Checked here as well as at the
+    // tool seam, because two calls sent at once both pass the seam before
+    // either redeems.
+    if (lookupReplayInCall(token, currentIdentity(), now).kind !== 'none') return 'replay';
     // Answers once, like the token it stands for.
     const until = expired.get(token);
     if (until === undefined || until <= now) return 'unknown';
@@ -153,7 +164,10 @@ export function consumeToken(token: string, cs: ChangeSet, now: number = Date.no
   }
   pending.delete(token);
   if (entry.expiresAt <= now) return 'expired';
-  return sameHash(entry.hash, fingerprint(cs, currentIdentity())) ? 'ok' : 'mismatch';
+  const identity = currentIdentity();
+  if (!sameHash(entry.hash, fingerprint(cs, identity))) return 'mismatch';
+  markRedeemed(token, identity, now);
+  return 'ok';
 }
 
 /** Constant-time comparison — the hashes are equal-length hex digests. */
