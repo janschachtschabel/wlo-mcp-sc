@@ -34,6 +34,7 @@ import {
   previewReply,
   confirmOrExplain,
   errorText,
+  codedError,
   reportMutation,
   preparedReply,
   prependText,
@@ -41,6 +42,7 @@ import {
   rejectionReply,
   type ParamMap,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 
 const CONFIRM_TOKEN = z.string().optional()
@@ -117,7 +119,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         return result.check.status === 'ok' ? report : prependText(report, created);
       } catch (err) {
         return timeoutOrError('Die Sammlung konnte nicht angelegt werden', err,
-          `Ob die Sammlung „${sanitizeText(String(params['title'] ?? ''))}“ angelegt wurde, ist offen`);
+          `Ob die Sammlung „${sanitizeText(String(params['title'] ?? ''))}“ angelegt wurde, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });
@@ -145,7 +147,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         if (!collected.ok) return rejectionReply(collected.reasons);
 
         const node = await getNodeMetadata(nodeId);
-        if (!node) return errorText(`Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        if (!node) return codedError('not_found', `Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
         const old = titleOf(node.properties, nodeId);
 
         // Both values are diffed against the record, so the preview shows the
@@ -169,7 +171,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         );
       } catch (err) {
         return timeoutOrError('Die Sammlung konnte nicht umbenannt werden', err,
-          `Ob die Sammlung „${sanitizeText(String(params['nodeId'] ?? ''))}“ umbenannt wurde, ist offen`);
+          `Ob die Sammlung „${sanitizeText(String(params['nodeId'] ?? ''))}“ umbenannt wurde, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });
@@ -258,8 +260,8 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
       getNodeMetadata(collectionId),
       getNodeMetadata(nodeId),
     ]);
-    if (!collection) return errorText(`Die Sammlung „${sanitizeText(collectionId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
-    if (!material) return errorText(`Das Material „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+    if (!collection) return codedError('not_found', `Die Sammlung „${sanitizeText(collectionId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+    if (!material) return codedError('not_found', `Das Material „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
 
     const collectionTitle = titleOf(collection.properties, collectionId);
     const materialTitle = titleOf(material.properties, nodeId);
@@ -293,6 +295,6 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
     );
   } catch (err) {
     return timeoutOrError(spec.context, err,
-      `Ob die Änderung an der Sammlung „${sanitizeText(String(params['collectionId'] ?? ''))}“ gewirkt hat, ist offen`);
+      `Ob die Änderung an der Sammlung „${sanitizeText(String(params['collectionId'] ?? ''))}“ gewirkt hat, ist offen`, { preview: isPreviewCall(params) });
   }
 }

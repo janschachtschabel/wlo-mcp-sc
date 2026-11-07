@@ -50,6 +50,19 @@ test('readBodyWithLimit: over-limit body flags tooLarge, discards content, drain
   assert.equal(req.emitted, 3);
 });
 
+test('readBodyWithLimit: a body far past the cap stops being read (audit A-1/Low)', async () => {
+  // Draining keeps a clean 413 for an ordinary oversize, but draining WITHOUT a
+  // bound let a client stream for the whole request timeout. Past
+  // DRAIN_FACTOR × cap the reader gives up.
+  const { DRAIN_FACTOR } = await import('../src/read-body.js');
+  const chunks = Array.from({ length: 20 }, () => Buffer.from('12345')); // 100 bytes, cap 5
+  const req = fakeReq(chunks);
+  const res = await readBodyWithLimit(req, 5);
+  assert.equal(res.tooLarge, true);
+  assert.ok(req.emitted < 20, `stopped early (read ${req.emitted} of 20 chunks)`);
+  assert.ok(req.emitted * 5 <= 5 * DRAIN_FACTOR + 5, 'at most one chunk past the drain bound');
+});
+
 test('readBodyWithLimit: empty body → empty string, not tooLarge', async () => {
   const req = fakeReq([]);
   const res = await readBodyWithLimit(req, 10);

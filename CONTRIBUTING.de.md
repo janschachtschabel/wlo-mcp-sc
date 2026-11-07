@@ -84,6 +84,6 @@ Testlauf, nicht als Nebenwirkung fremder Arbeit:
 
 | Paket | Bleibt auf | Grund |
 |---|---|---|
-| `@types/node` | 20.x | Muss die ÄLTESTE unterstützte Laufzeit beschreiben (`engines.node: ">=20"`). Neuere Typen ließen Code gegen APIs typprüfen, die Node 20 nicht hat. |
+| `@types/node` | 22.x | Muss die ÄLTESTE unterstützte Laufzeit beschreiben (`engines.node: ">=22.12.0"`). Neuere Typen ließen Code gegen APIs typprüfen, die Node 22 nicht hat. |
 | `typescript` | 5.x | Ein Compiler-Major; bewusst hochziehen, mit voller Suite und Build als Gate. |
 | `zod` | 3.x | Alle Tool-Eingabeschemata sind gegen zod 3 geschrieben. Das MCP-SDK akzeptiert `^3.25 \|\| ^4.0`, ist also nicht der Blocker — die Migration selbst ist die Arbeit. |

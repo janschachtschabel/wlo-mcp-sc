@@ -72,11 +72,18 @@ const VERDICT = ' Erlaubt: "keine Auffälligkeiten gefunden (Maschine)" · '
   + '"Auffälligkeiten gefunden (Maschine)" · "ungeprüft". Ein Ergebnis, das ein MENSCH '
   + 'geprüft hat, wird abgelehnt — das trägt die Redaktion selbst ein.';
 
+/**
+ * Upper bound on keywords per call. Every caller-supplied array is bounded in
+ * its schema (zod GHSA-mrhx-c7xc-m3w5: validating an oversized constrained
+ * collection can exhaust memory); no real record carries anywhere near this.
+ */
+export const MAX_KEYWORDS = 100;
+
 /** The 27 metadata parameters, shared by the update and the create tool. */
 export const FIELD_SCHEMA = {
   title: z.string().optional().describe('Titel (cclom:title), max. 255 Zeichen.'),
   description: z.string().optional().describe('Beschreibung (cclom:general_description).'),
-  keywords: z.array(z.string()).optional()
+  keywords: z.array(z.string()).max(MAX_KEYWORDS).optional()
     .describe('Schlagwörter. Werden zu den vorhandenen HINZUGEFÜGT, nicht ersetzt.'),
   url: z.string().optional().describe('Quell-URL (ccm:wwwurl); nur http/https.'),
   language: z.string().optional().describe('Sprachcode nach ISO 639-1, z. B. "de".'),

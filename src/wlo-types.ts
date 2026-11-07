@@ -31,6 +31,8 @@ export interface WloNode {
    * above all — only know the original, so this is the field that bridges them.
    */
   originalId?: string;
+  /** Creation time as ISO 8601 — in listings AND metadata (measured 2026-11-06); `cm:created` holds the same as epoch ms. */
+  createdAt?: string;
   /** MIME type, e.g. `application/pdf` (only on `ccm:io` nodes). */
   mimetype?: string;
   /** Coarse mediatype label, e.g. `file-pdf`, `file-video`. */

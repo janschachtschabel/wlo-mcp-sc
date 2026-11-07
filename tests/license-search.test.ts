@@ -93,11 +93,14 @@ test('a single licence: one search — the criterion is already in the caller fi
   assert.deepEqual(calls[0]!.extra, []);
 });
 
-test('an unresolvable licence changes nothing — the caller reports it as unresolved', async () => {
+test('an unresolvable licence finds NOTHING — never the unfiltered corpus', async () => {
+  // Was: "changes nothing", which returned NC and ND material to a person who
+  // asked for one specific licence (chatbot feedback 2026-11-07, point 1).
   const { calls, run } = recorder();
-  await searchWithLicense({ license: 'CC XY', criteria: QUERY, size: 10, skipCount: 0, run });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0]!.extra, []);
+  const r = await searchWithLicense({ license: 'CC XY', criteria: QUERY, size: 10, skipCount: 0, run });
+  assert.equal(calls.length, 0, 'no upstream search for a filter nobody can apply');
+  assert.deepEqual(r.nodes, []);
+  assert.equal(r.pagination.total, 0);
 });
 
 test('the OER bundle fans out: one search per key, each with its own criterion', async () => {
@@ -323,4 +326,11 @@ test('more buckets than were ASKED for is normal, and the answer is still used',
   const { run } = recorder(7);
   const res = await searchWithLicense({ license: 'OER', criteria: QUERY, size: 10, skipCount: 0, run });
   assert.equal(res.pagination.total, 1, 'the exact count, not the 28 the families sum to');
+});
+
+test('no facets are counted over the corpus for an unknown licence', async () => {
+  const { searchFacets } = await import('../src/services/search.js');
+  mock = installFetchMock(() => ({ json: { nodes: [], pagination: { total: 99 }, facets: [] } }));
+  assert.deepEqual(await searchFacets({ query: 'Optik', license: 'CC XY' }), {});
+  assert.equal(mock.calls.length, 0);
 });

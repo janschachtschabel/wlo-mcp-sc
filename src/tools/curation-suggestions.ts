@@ -41,15 +41,24 @@ import {
   confirmOrExplain,
   rejectionReply,
   errorText,
+  codedError,
   plainText,
   preparedReply,
   recordTitle,
   fieldLabel,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 import { CONTENT_FIELDS, CONFIRM_TOKEN } from './curation-fields.js';
 
 const FIELD_NAMES = Object.keys(CONTENT_FIELDS) as [string, ...string[]];
+
+/**
+ * Upper bound on suggestions per call — every caller-supplied array is bounded
+ * in its schema (zod GHSA-mrhx-c7xc-m3w5). One entry per field and per keyword,
+ * so this is far above what a single record can need.
+ */
+export const MAX_SUGGESTIONS = 50;
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING: 'offen',
@@ -79,7 +88,7 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
           'Warum dieser Wert besser ist. Wird mitgespeichert und ist das, worauf die prüfende Person entscheidet.',
         ),
         confidence: z.number().min(0).max(1).optional().describe('Wie sicher der Vorschlag ist (0–1).'),
-      })).min(1).describe('Ein Eintrag je Feld. Für mehrere Schlagwörter mehrere Einträge mit field="keywords".'),
+      })).min(1).max(MAX_SUGGESTIONS).describe('Ein Eintrag je Feld. Für mehrere Schlagwörter mehrere Einträge mit field="keywords".'),
       confirmToken: CONFIRM_TOKEN,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -92,7 +101,7 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
         return await handleSuggest(params, requireWriteRoute());
       } catch (err) {
         return timeoutOrError('Die Vorschläge konnten nicht gespeichert werden', err,
-          `Ob die Vorschläge zu „${sanitizeText(String(params['nodeId'] ?? ''))}“ hinterlegt wurden, ist offen`);
+          `Ob die Vorschläge zu „${sanitizeText(String(params['nodeId'] ?? ''))}“ hinterlegt wurden, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });
@@ -206,7 +215,7 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   if (reasons.length > 0) return rejectionReply(reasons);
 
   const node = await getNodeMetadata(nodeId);
-  if (!node) return errorText(`Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+  if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
   const before = node.properties ?? {};
 
   const planned = buildChangeSet(nodeId, 'content', before, desired);

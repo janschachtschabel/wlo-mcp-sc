@@ -10,8 +10,10 @@
  */
 
 import { log } from './logger.js';
-import { currentCredential } from './auth/credential.js';
-import { WLO_REPOSITORY_URL, WLO_FETCH_TIMEOUT_MS } from './wlo-config.js';
+import {
+  currentCredential, isCurrentCredentialRejected, markCurrentCredentialRejected, type WloCredential,
+} from './auth/credential.js';
+import { IDENTITY_URL, WLO_REPOSITORY_URL, WLO_FETCH_TIMEOUT_MS } from './wlo-config.js';
 
 export const HEADERS = {
   'Accept': 'application/json',
@@ -24,10 +26,56 @@ export const HEADERS = {
  * caller-supplied ``signal`` is respected as-is; otherwise a
  * ``WLO_FETCH_TIMEOUT_MS`` abort signal is attached.
  */
-export function wloFetch(url: string, init: RequestInit = {}): Promise<Response> {
+export async function wloFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const signal = init.signal ?? AbortSignal.timeout(WLO_FETCH_TIMEOUT_MS);
   const headers = withCredential(url, init.headers);
-  return fetch(url, { ...init, headers, signal });
+  // Only when OUR credential rides on this call: an explicit header (the login
+  // probe) or a foreign host says nothing about the login in scope.
+  const carriesScopedLogin = headers !== init.headers;
+  // A personal login the repository already refused in this request is not
+  // sent again — each attempt is another failed login against the person's
+  // real WLO account, and a search fans out into several calls. The caller
+  // gets the same 401 it would have got (auth review 2026-11-05).
+  if (carriesScopedLogin && isCurrentCredentialRejected()) {
+    return new Response(null, { status: 401, statusText: 'Unauthorized' });
+  }
+  const res = await fetch(url, { ...init, headers, signal });
+  if (carriesScopedLogin && res.status === 401 && await loginRefused(url)) markCurrentCredentialRejected();
+  return res;
+}
+
+/** One identity check per credential object — i.e. per request, however many 401s it collects. */
+const identityChecks = new WeakMap<WloCredential, Promise<boolean>>();
+
+/**
+ * Does a 401 mean the LOGIN was refused, or a working login lacking a right?
+ *
+ * edu-sharing answers 401 for both (measured: wrong credentials → 401 on every
+ * endpoint; a valid account on `/bulk/v1/find` → 401 "Admin rights are
+ * required"). Taking every 401 for a refused password would stop a working
+ * login for the rest of the request and tell its owner to sign in again, which
+ * cannot help. So a 401 is confirmed against the identity endpoint, whose 401
+ * is unambiguous. Anything other than a 401 there — 200, 5xx, a timeout — is
+ * "not refused": failing toward the old behaviour cannot lock anyone out.
+ *
+ * Personal logins only (the service account is never marked); costs nothing
+ * unless a 401 actually arrives.
+ */
+function loginRefused(url: string): Promise<boolean> {
+  const cred = currentCredential();
+  if (!cred || cred.source !== 'user') return Promise.resolve(false);
+  if (url === IDENTITY_URL) return Promise.resolve(true);
+  let check = identityChecks.get(cred);
+  if (!check) {
+    // Plain `fetch`, not `wloFetch`: this IS the confirmation, it must not
+    // trigger one. The host is the repository by construction.
+    check = fetch(IDENTITY_URL, {
+      headers: { 'Accept': 'application/json', 'Authorization': cred.header },
+      signal: AbortSignal.timeout(WLO_FETCH_TIMEOUT_MS),
+    }).then(r => r.status === 401, () => false);
+    identityChecks.set(cred, check);
+  }
+  return check;
 }
 
 /**

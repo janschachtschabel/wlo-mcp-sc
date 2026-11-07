@@ -172,7 +172,7 @@ wlo_suggest_metadata.`,
 
       const lines: string[] = [`# Vokabular: ${vocabNames[vocab]}`, ''];
       for (const e of entries) {
-        const aliases = e.aliases.length ? ` | Aliases: ${e.aliases.slice(0, 4).join(', ')}` : '';
+        const aliases = e.aliases.length ? ` | Aliases: ${e.aliases.join(', ')}` : '';
         lines.push(`- **${e.label}**${aliases}`);
         lines.push(`  URI: ${e.uri}`);
       }

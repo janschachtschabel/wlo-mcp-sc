@@ -95,7 +95,14 @@ export function resolveCreateParent(mode: WriteMode, inboxId: string): string {
  */
 export async function createContentNode(
   desired: Record<string, string[]>,
-  opts: { mode: WriteMode; inboxId?: string; file?: UploadFile },
+  opts: {
+    mode: WriteMode; inboxId?: string; file?: UploadFile; parent?: string;
+    /** MA-4: an error AFTER the node exists returns it as created with `upload: unverified`, so its id
+     *  is not lost (the batch reports it; the single create keeps throwing as before). */
+    keepIdOnError?: boolean;
+    /** MA-4: deadline for the content upload (default: the shared fetch timeout). */
+    uploadTimeoutMs?: number;
+  },
 ): Promise<CreateOutcome> {
   const url = desired['ccm:wwwurl']?.[0]?.trim();
   if (!url && !opts.file) {
@@ -108,7 +115,9 @@ export async function createContentNode(
 
   let parent: string;
   try {
-    parent = resolveCreateParent(opts.mode, opts.inboxId ?? WLO_INBOX_ID);
+    // MA-4: the batch filing names its own folder in the person's home (user mode only).
+    parent = opts.parent && opts.mode === 'user' ? opts.parent
+      : resolveCreateParent(opts.mode, opts.inboxId ?? WLO_INBOX_ID);
   } catch (err) {
     return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
   }
@@ -168,15 +177,24 @@ export async function createContentNode(
 
   // Before the metadata step: a record that ends up without its bytes should at
   // least carry its title, so the person can find and finish it.
-  const upload = opts.file ? await uploadContent(nodeId, opts.file) : undefined;
+  let upload: UploadOutcome | undefined;
+  let statuses: FieldWriteStatus[] = [];
+  try {
+    upload = opts.file ? await uploadContent(nodeId, opts.file, opts.uploadTimeoutMs) : undefined;
 
-  // Everything the create body could not carry — the title above all.
-  const rest: Record<string, string[]> = {};
-  for (const [property, values] of Object.entries(desired)) {
-    if ((CREATE_BODY_FIELDS as readonly string[]).includes(property)) continue;
-    rest[property] = values;
+    // Everything the create body could not carry — the title above all.
+    const rest: Record<string, string[]> = {};
+    for (const [property, values] of Object.entries(desired)) {
+      if ((CREATE_BODY_FIELDS as readonly string[]).includes(property)) continue;
+      rest[property] = values;
+    }
+    ({ statuses } = await updateNodeMetadata(nodeId, rest, { commit: false }));
+  } catch (err) {
+    if (!opts.keepIdOnError) throw err;
+    log.warn('content node created, a later step got no answer', { nodeId });
+    return { status: 'created', nodeId, statuses,
+      upload: { status: 'unverified', detail: 'Nach dem Anlegen kam keine Antwort mehr — bitte im Repository nachsehen.' } };
   }
-  const { statuses } = await updateNodeMetadata(nodeId, rest, { commit: false });
 
   log.info('content node created', { nodeId, parent, mode: opts.mode, carriesFile: !!opts.file });
   return { status: 'created', nodeId, statuses, ...(upload ? { upload } : {}) };

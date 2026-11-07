@@ -97,6 +97,12 @@ export const WLO_REPOSITORY_URL: string = (() => {
 /** REST API base — ``<repository-url>/rest``. */
 export const BASE_URL: string = `${WLO_REPOSITORY_URL}/rest`;
 
+/**
+ * Who the current credential is (`auth/identity.ts`). Here rather than there
+ * because `wlo-fetch.ts` asks it too, and `identity.ts` imports `wlo-fetch.ts`.
+ */
+export const IDENTITY_URL: string = `${BASE_URL}/iam/v1/people/-home-/-me-`;
+
 /** The WLO root ("Portale") collection nodeId. */
 const _WLO_ROOT_ID = '5e40e372-735c-4b17-bbf7-e827a5702b57';
 

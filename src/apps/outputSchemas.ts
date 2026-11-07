@@ -7,6 +7,15 @@
  * `.strict()`: the MCP SDK validates `structuredContent` with `safeParseAsync`
  * and tolerates unknown extra keys, but throws on missing required keys / wrong
  * types — so every field here must match real `formatNode` output.
+ *
+ * WHY every field must still be DECLARED (measured against SDK 1.32.2,
+ * 2026-11-07 — the earlier comments here said "zod strips unknown keys", which
+ * is false): the SDK validates and then passes the ORIGINAL object on, so an
+ * undeclared key does reach the client. But the schema the server ADVERTISES in
+ * `tools/list` is generated with `additionalProperties: false`, so that key
+ * violates the published contract — a client that validates strictly rejects
+ * the answer, and one that generates types from the schema never sees the
+ * field. "Undeclared" below means exactly that.
  */
 
 import { z } from 'zod';
@@ -16,9 +25,8 @@ export const formattedNodeSchema = z.object({
   nodeId: z.string(),
   /**
    * Present only when `nodeId` names a collection reference — declared here for
-   * the same reason as `skillRegistry` below: zod strips unknown keys, so a
-   * field missing from this object reaches the rendered text and vanishes from
-   * structuredContent with nothing failing anywhere.
+   * the same reason as `skillRegistry` below: undeclared, it breaks the
+   * advertised schema (see the header) while nothing fails on our side.
    */
   originalId: z.string().optional(),
   title: z.string(),
@@ -38,7 +46,7 @@ export const formattedNodeSchema = z.object({
    *  false: the formatter never emits true (absence is the public case). */
   isPublic: z.literal(false).optional(),
   /** How many materials the collection holds — present only when the search
-   *  DTO carried the number (declared: zod strips unknown keys). */
+   *  DTO carried the number (declared: see the header). */
   contentsCount: z.number().int().optional(),
   mimeType: z.string(),
   fileSize: z.number(),
@@ -49,10 +57,10 @@ export const formattedNodeSchema = z.object({
   textContent: z.string().optional(),
   compendiumText: z.string().optional(),
   // The signal that replaced the inline text on search hits (2026-08-20) —
-  // undeclared, zod would strip it from structuredContent with nothing failing.
+  // undeclared, it would break the advertised schema (see the header).
   hasCompendium: z.literal(true).optional(),
-  // Declared, not inferred: zod strips unknown keys, so a field missing here
-  // disappears from structuredContent with nothing failing anywhere.
+  // Declared, not inferred: a field missing here breaks the advertised schema
+  // (see the header) with nothing failing on our side.
   skillRegistry: z.object({
     nodeId: z.string(),
     title: z.string(),
@@ -62,6 +70,21 @@ export const formattedNodeSchema = z.object({
   }).optional(),
 });
 
+/**
+ * A filter label that did not resolve (`UnresolvedFilter`, filter-criteria.ts).
+ * In `structuredContent` since 2026-11-07: before, only the text blocks and
+ * `_queryMeta` carried it, so a client reading the contract alone never learned
+ * that a filter did not apply. A licence among them EMPTIES the answer.
+ */
+const unresolvedFiltersSchema = z.array(z.object({
+  field: z.string(), value: z.string(), suggestions: z.array(z.string()).optional(),
+})).optional();
+
+/** Facet counts per property (`includeFacets`) — the same values `_queryMeta.facets` carries. */
+const facetsSchema = z.record(z.string(), z.array(z.object({
+  label: z.string(), count: z.number(), uri: z.string(),
+}))).optional();
+
 /** `{ total, count, results }` — search_wlo_content / search_wlo_collections. */
 export const nodeListSchema = z.object({
   total: z.number(),
@@ -69,11 +92,13 @@ export const nodeListSchema = z.object({
   results: z.array(formattedNodeSchema),
   /**
    * Content type derived from a medium word in the query (never set for an
-   * explicit `learningResourceType`). Declared here because zod strips unknown
-   * keys — and this is the machine-readable half of the disclosure whose prose
+   * explicit `learningResourceType`). Declared here because an undeclared key
+   * breaks the advertised schema (see the header) — and this is the machine-readable half of the disclosure whose prose
    * half is `derivedResourceTypeNotice`.
    */
   derivedResourceType: z.string().optional(),
+  unresolvedFilters: unresolvedFiltersSchema,
+  facets: facetsSchema,
 });
 
 /** Mirrors `ResolvedSwimlane` (services/topic-page.ts). */
@@ -180,20 +205,23 @@ export const searchAllEnvelopeSchema = z.object({
     derivedResourceType: z.string().optional(),
   }),
   // `registryChecked` declared for the same reason as `skillRegistry` above:
-  // zod strips unknown keys, so an undeclared field vanishes from
-  // structuredContent with nothing failing anywhere.
+  // an undeclared field breaks the advertised schema (see the header).
   collections: z.object({
     total: z.number(), count: z.number(), results: z.array(formattedNodeSchema),
     registryChecked: z.literal(true).optional(),
   }),
   // `registryChecked` here too: a Themenseite IS a collection and carries the
-  // same disclosure since 2026-08-19 — undeclared, zod would strip it from
-  // structuredContent while the text kept it, with nothing failing anywhere.
+  // same disclosure since 2026-08-19 — undeclared, it would break the
+  // advertised schema (see the header) while the text kept it.
   topicPages: z.object({
     total: z.number(), count: z.number(), results: z.array(topicPageResultSchema),
     registryChecked: z.literal(true).optional(),
   }),
   wikipedia: wikiSummarySchema.optional(),
+  // Call-level, not per bucket: the filters are the call's (only the content
+  // leg applies them; `_queryMeta` repeats them per leg for the same reason).
+  unresolvedFilters: unresolvedFiltersSchema,
+  facets: facetsSchema,
 });
 
 /**
@@ -225,6 +253,8 @@ export const browseTreeSchema = z.object({
   results: z.array(browseTreeNodeSchema),
   /** True when any branch holds more sub-collections than shown. */
   truncated: z.boolean().optional(),
+  /** The first node, in listing order, whose children were cut. */
+  truncatedAt: z.string().optional(),
 });
 
 /** `{ total, results }` — get_subject_portals (portals carry an optional count). */

@@ -21,6 +21,20 @@ test('matchSubjectPortal: prefix match resolves an abbreviation', () => {
   assert.equal(matchSubjectPortal(PORTALS, 'Mathe')?.ref?.id, 'math-portal');
 });
 
+test('matchSubjectPortal: wrapper words around the subject still resolve', () => {
+  // Agents pass the user's phrasing verbatim ("das Fachportal Deutsch").
+  assert.equal(matchSubjectPortal(PORTALS, 'Fachportal Deutsch')?.ref?.id, 'deutsch-portal');
+  assert.equal(matchSubjectPortal(PORTALS, 'das Fachportal Deutsch')?.ref?.id, 'deutsch-portal');
+  assert.equal(matchSubjectPortal(PORTALS, 'Fach Mathematik')?.ref?.id, 'math-portal');
+  assert.equal(matchSubjectPortal(PORTALS, 'Mathematik-Portal')?.ref?.id, 'math-portal');
+  assert.equal(matchSubjectPortal(PORTALS, 'Themenbaum Informatik')?.ref?.id, 'info-portal');
+});
+
+test('matchSubjectPortal: wrapper words alone match nothing', () => {
+  assert.equal(matchSubjectPortal(PORTALS, 'Fachportal'), null);
+  assert.equal(matchSubjectPortal(PORTALS, 'das Fach'), null);
+});
+
 test('matchSubjectPortal: no match and empty input return null', () => {
   assert.equal(matchSubjectPortal(PORTALS, 'Biologie'), null);
   assert.equal(matchSubjectPortal(PORTALS, '   '), null);

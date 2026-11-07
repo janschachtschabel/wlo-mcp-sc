@@ -412,7 +412,7 @@ test('the listing tier carries as many entries as the tool tier', () => {
   // without the other and that offer silently becomes true again — or, the
   // other way round, stays retracted when it no longer needs to be.
   assert.equal(REGISTRY_SEARCH_MAX, REGISTRY_MAX,
-    'the two tiers carry the same number of entries — see registryLines() in formatter.ts');
+    'the two tiers carry the same number of entries — see registryLines() in registry-render.ts');
 });
 
 test('the search tier caps the catalogue at REGISTRY_SEARCH_MAX and says so', async () => {
@@ -821,8 +821,8 @@ test('a registry without contexts carries no contexts field at all', async () =>
 });
 
 test('the contexts field survives the output schema', async () => {
-  // A separate assertion on purpose: zod strips what is not declared, so a field
-  // can be right in the text and gone from structuredContent with nothing
+  // A separate assertion on purpose: a field can be right in the text and
+  // missing from — or undeclared in — the structured contract with nothing
   // failing. Asserting the summary object alone would not notice.
   const md = `## Planung\n\n${kiSkillBlock('Stunde', uuid(1))}\n`;
   const { mock } = registryMock(md);

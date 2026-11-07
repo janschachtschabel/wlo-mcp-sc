@@ -58,7 +58,9 @@ function storedSize(size: unknown): number | null {
  * repository) still propagates, because "the answer did not arrive" is not the
  * same as "the repository said no" and the caller distinguishes them.
  */
-export async function uploadContent(nodeId: string, file: UploadFile): Promise<UploadOutcome> {
+export async function uploadContent(
+  nodeId: string, file: UploadFile, timeoutMs?: number,
+): Promise<UploadOutcome> {
   const form = new FormData();
   // Copied into a plain `Uint8Array`: a `Buffer` may be backed by a
   // `SharedArrayBuffer`, which `BlobPart` does not accept. The copy is bounded
@@ -73,7 +75,8 @@ export async function uploadContent(nodeId: string, file: UploadFile): Promise<U
     `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/content?${params}`,
     // Only `Accept`: `fetch` must set `Content-Type` itself so the multipart
     // boundary matches the body it builds.
-    { method: 'POST', headers: { Accept: 'application/json' }, body: form },
+    { method: 'POST', headers: { Accept: 'application/json' }, body: form,
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) },
   );
   if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
 

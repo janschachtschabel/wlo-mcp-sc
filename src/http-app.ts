@@ -30,8 +30,11 @@ import { bearerChallenge, resolveIssuer } from './auth/oauth-metadata.js';
 import { handleAuthEndpoint } from './rest/auth-pages.js';
 import { handleOAuthEndpoint } from './rest/oauth-pages.js';
 import { handleRestRequest } from './rest/routes.js';
+import { handleUploadRequest, UPLOAD_PATH, uploadTimeoutMs } from './rest/upload-route.js';
+import { batchUploadEnabled, sharedUploadSlots } from './services/write/upload-slot.js';
 import { handleStaticRequest } from './rest/static.js';
 import { widgetBuildIds } from './apps/resources.js';
+import { SERVER_VERSION } from './version.js';
 
 export interface HttpAppOptions {
   /** Per-IP limiter for the MCP endpoint (RATE_LIMIT_RPM). */
@@ -62,6 +65,18 @@ export interface HttpAppOptions {
 }
 
 /**
+ * The longest JSON-RPC batch the MCP endpoint accepts.
+ *
+ * The SDK runs every element of an array body, with no bound, while the per-IP
+ * limiter counts HTTP requests — so one POST under the 4 MiB body cap could
+ * carry tens of thousands of searches (audit 2026-11-05, A-1; also the reachable
+ * half of GHSA-f897-62hf-6gxq). Batches are kept rather than refused because the
+ * 2025-03-26 protocol revision allows them; every element is charged to the
+ * limiter, and this cap bounds the work one request can start.
+ */
+export const MAX_BATCH_LENGTH = 10;
+
+/**
  * Paths where someone's WLO password is checked, and which therefore get no
  * CORS header at all. Over-inclusive on purpose: denying a cross-origin read to
  * a path that does not exist costs nothing, while the reverse is an oracle.
@@ -79,6 +94,8 @@ export interface HttpAppOptions {
  */
 function isCredentialSurface(path: string): boolean {
   if (path === '/auth/ticket') return false;
+  // MA-2: the upload slot carries a person's credential and is server-to-server only.
+  if (path === UPLOAD_PATH) return true;
   return path.startsWith('/auth') || path.startsWith('/oauth/authorize');
 }
 
@@ -170,8 +187,20 @@ export function createHttpRequestHandler(
     // a fix is actually live is one curl instead of a byte-diff probe.
     if (req.method === 'GET' && path === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: '1.0.0', widgets: widgetBuildIds() }));
+      res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: SERVER_VERSION, widgets: widgetBuildIds() }));
       return;
+    }
+
+    // MA-2: one file of a batch into an upload slot (POST, personal credential, in memory). Off
+    // unless WLO_BATCH_UPLOAD_ENABLED; then a 404 like any unknown path. Not on the per-IP REST
+    // bucket: the caller is the chatbot backend, one address for all its users — the slot table
+    // caps per identity and in total instead.
+    if (path === UPLOAD_PATH && batchUploadEnabled()) {
+      const ip = clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy);
+      if (await handleUploadRequest(req, res, { slots: sharedUploadSlots(), timeoutMs: uploadTimeoutMs(),
+        ip, authAbuseLimiter })) {
+        return;
+      }
     }
 
     // Public read-only REST layer (/api/*). GET-only; the wildcard CORS headers
@@ -293,6 +322,26 @@ export function createHttpRequestHandler(
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid JSON body' }));
         return;
+      }
+
+      // A batch is charged per element: the request itself was counted above,
+      // so each further element costs one more check. Bounded first, so an
+      // oversized batch cannot even spend the budget of the ones after it.
+      if (Array.isArray(body)) {
+        if (body.length > MAX_BATCH_LENGTH) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `JSON-RPC batch exceeds ${MAX_BATCH_LENGTH} messages.` }));
+          return;
+        }
+        let limited = false;
+        for (let i = 1; i < body.length; i++) {
+          if (rateLimiter.check(ip, Date.now())) limited = true;
+        }
+        if (limited) {
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+          res.end(JSON.stringify({ error: 'Rate limit exceeded. Retry after 60s.' }));
+          return;
+        }
       }
 
       // Normalize Accept so ANY client works (incl. simple JSON-only clients like

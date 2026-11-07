@@ -33,7 +33,7 @@
 
 import type { SearchCriterion, SearchResponse } from '../wlo-api.js';
 import { FACET_BUCKET_MAX, ngsearch } from '../wlo-api.js';
-import { resolveLicenseSelection } from '../filter-criteria.js';
+import { licenseUnresolvable, resolveLicenseSelection } from '../filter-criteria.js';
 import { resolveVocab } from '../vocabs.js';
 import { mapPool } from '../concurrency.js';
 
@@ -132,6 +132,9 @@ async function exactLicenseTotal(
  */
 export async function searchWithLicense(opts: LicenseSearchOptions): Promise<SearchResponse> {
   const { license, criteria, size, skipCount, run } = opts;
+  // Asked for, but unresolvable: no search at all, an honest 0 — the same rule
+  // as `filterByExactLicense`, and no upstream call for a filter nobody can apply.
+  if (licenseUnresolvable(license)) return { nodes: [], pagination: { total: 0, from: skipCount, count: 0 } };
   const keys = resolveLicenseSelection(license);
   if (!keys) return run([], size, skipCount);
 

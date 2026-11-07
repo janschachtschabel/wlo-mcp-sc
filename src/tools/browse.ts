@@ -20,7 +20,7 @@ import { buildCollectionTree } from '../services/collection-traversal.js';
 import { resolveVocab } from '../vocabs.js';
 import { log } from '../logger.js';
 import { mapPool } from '../concurrency.js';
-import { toolError } from './shared.js';
+import { codedErrorResult, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas.js';
 
@@ -29,11 +29,24 @@ import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas
  * "Mathe") to its portal node, so callers can drill down by name without a
  * separate get_subject_portals round-trip. Tiered match — exact → prefix →
  * substring, shortest title wins on ties — tolerates paraphrased input.
- * Returns null when nothing matches. Pure (no I/O): the caller supplies the
- * portal list.
+ * Wrapper words agents copy from the user's phrasing ("das Fachportal Deutsch",
+ * "Mathematik-Portal") are dropped first; a name made only of them matches
+ * nothing. Returns null when nothing matches. Pure (no I/O): the caller
+ * supplies the portal list.
  */
+const SUBJECT_WRAPPER_WORDS = new Set([
+  'fachportal', 'portal', 'fach', 'schulfach', 'themenbaum', 'themen', 'thema',
+  'das', 'der', 'die', 'den', 'dem', 'für', 'fuer', 'zu', 'zum', 'zur', 'von', 'im',
+]);
+
+function subjectNeedle(name: string): string {
+  return name.toLowerCase().replace(/[-_/]+/g, ' ').split(/\s+/)
+    .filter(word => word && !SUBJECT_WRAPPER_WORDS.has(word))
+    .join(' ');
+}
+
 export function matchSubjectPortal(portals: WloNode[], name: string): WloNode | null {
-  const needle = name.trim().toLowerCase();
+  const needle = subjectNeedle(name);
   if (!needle) return null;
   const title = (n: WloNode) => (formatNode(n).title || '').toLowerCase();
   const byShortestTitle = (a: WloNode, b: WloNode) => title(a).length - title(b).length;
@@ -183,13 +196,14 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
     // The browse widget calls this tool from inside the iframe for drill-down.
     widgetAccessible: true,
     description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig.
-Liefert die direkten Unter-Sammlungen (depth=1, Default) oder zwei Ebenen (depth=2), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).
-Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
+Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).
+Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
     inputSchema: {
       nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
-      subject: z.string().optional().describe('Subject/Fachportal NAME (e.g. "Mathematik" or "Mathe"), resolved to its portal nodeId server-side. Alternative to nodeId.'),
-      depth: z.number().int().min(1).max(2).optional().default(1).describe(
-        '1 = direct sub-collections only (fast); 2 = also include grand-children (more API calls).'
+      subject: z.string().optional().describe('Subject NAME only, e.g. "Deutsch", "Mathematik" or "Mathe" — not "Fachportal Deutsch"; resolved to its portal nodeId server-side. Alternative to nodeId.'),
+      depth: z.number().int().min(1).max(3).optional().default(1).describe(
+        '1 = direct sub-collections only (fast); 2 = also grand-children; 3 = three levels, at most 300 '
+        + 'nodes in total (more API calls — with includeContentCounts one per node).'
       ),
       includeContentCounts: z.boolean().optional().default(false).describe(
         'When true, fetch the number of files (Inhalte) inside each sub-collection (extra round-trip per node).'
@@ -223,27 +237,21 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
               .filter(Boolean)
               .join(', ');
             log.warn('no subject portal matched', { subject: params.subject });
-            return {
-              content: [{ type: 'text' as const, text:
-                `Kein Fachportal für "${oneLine(params.subject)}" gefunden. Verfügbar: ${available}.` }],
-              isError: true,
-            };
+            return codedErrorResult('not_found',
+              `Kein Fachportal für "${oneLine(params.subject)}" gefunden. Verfügbar: ${available}.`);
           }
           parentId = hit.ref.id;
         }
         if (!parentId) {
           log.warn('browse_collection_tree called without nodeId or subject');
-          return {
-            content: [{ type: 'text' as const, text: 'Bitte nodeId oder subject angeben.' }],
-            isError: true,
-          };
+          return codedErrorResult('invalid_input', 'Bitte nodeId oder subject angeben.');
         }
 
         // The bounded, cycle-guarded walk itself lives in services/ — a tool
         // module holds its schema and its rendering, never an algorithm.
         // `truncated` is disclosed below so the caller can offer a targeted
         // drill-down rather than presenting a slice as the whole tree.
-        const { nodes: tree, truncated } = await buildCollectionTree({
+        const { nodes: tree, truncated, truncatedAt } = await buildCollectionTree({
           parentId,
           depth,
           maxResults: params.maxResults ?? 50,
@@ -267,7 +275,7 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
           if (registry) n.skillRegistry = registry;
         }
 
-        const payload = { parent: parentId, depth, total: tree.length, results: tree, truncated };
+        const payload = { parent: parentId, depth, total: tree.length, results: tree, truncated, ...(truncatedAt ? { truncatedAt } : {}) };
 
         if (params.outputFormat === 'json') {
           return {
@@ -299,9 +307,14 @@ Die Übersicht ist bewusst auf zwei Ebenen und eine begrenzte Breite je Knoten g
           }
         };
         renderTree(tree, 0);
+        // The root's own listing was cut: no branch line can say it, so say it here.
+        if (truncatedAt === parentId) {
+          lines.push(`… auf der ersten Ebene gibt es mehr als ${params.maxResults ?? 50} Unterthemen — `
+            + 'mit höherem maxResults (bis 100) erneut aufrufen.');
+        }
         if (truncated) {
           lines.push('');
-          lines.push('Hinweis: Diese Übersicht zeigt zwei Ebenen in begrenzter Breite. Zweige mit dem Hinweis oben lassen sich gezielt einzeln öffnen.');
+          lines.push(`Hinweis: Diese Übersicht zeigt ${depth} Ebene${depth === 1 ? '' : 'n'} in begrenzter Breite. Zweige mit dem Hinweis oben lassen sich gezielt einzeln öffnen.`);
         }
         return {
           content: [{ type: 'text' as const, text: lines.join('\n').trim() }],

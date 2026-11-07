@@ -7,12 +7,12 @@ KI-Agenten das **Suchen und Abrufen offener Bildungsressourcen (OER)** aus
 [WirLernenOnline (WLO)](https://wirlernenonline.de) über die öffentliche
 edu-sharing-REST-API ermöglicht.
 
-Er stellt **28 lesende Werkzeuge** bereit (alle immer; `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
+Er stellt **32 lesende Werkzeuge** bereit (alle immer; `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
 Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen die
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
 
-Dazu kommen **vierzehn kuratierende Werkzeuge** (Anlegen, Bearbeiten,
+Dazu kommen **zwanzig kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`; Anlegen, Bearbeiten,
 Einreichen, Sammlungen, Kompendialtexte, Metadaten-Vorschläge, welche Variante
 eine Themenseite rendert, Löschen). Sie
 werden für alle Aufrufenden *gelistet* — nur so erfährt ein Client, dass sich
@@ -64,7 +64,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 
 ## Funktionen
 
-- **28 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
+- **32 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
   Themenseiten und deren Swimlane-Inhalte, Fachportale, Baum-Navigation,
   Node-Details (einzeln & im Bulk), Vokabular-Abfrage, Anbieter-Abfrage,
   Health-Check, Wikipedia (Anriss oder GANZER Artikel per `fullText`), voller Kompendiumstext, Volltext
@@ -76,7 +76,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   `get_skill_for_task` — `get_skill` bleibt in jedem Modus. Dazu kommt
   `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
   deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
-- **14 kuratierende MCP-Tools** — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
+- **20 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
   anlegen, ändern, einreichen und löschen; Sammlungen anlegen, umbenennen,
   befüllen, leeren und löschen; Kompendialtexte schreiben; Metadaten
   vorschlagen, auflisten und entscheiden. Jede Änderung läuft über eine
@@ -128,8 +128,8 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 
 ## Voraussetzungen
 
-- **Node.js ≥ 20** (in `package.json` `engines` festgelegt; CI und das
-  Docker-Image bauen/testen gegen Node 20).
+- **Node.js ≥ 22** (LTS; in `package.json` `engines` festgelegt; CI und das
+  Docker-Image bauen/testen gegen Node 22 — Node 20 ist seit 30.04.2026 ohne Support).
 - **npm ≥ 9**.
 
 ## Installation
@@ -184,7 +184,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_ALLOW_SERVICE_WRITES` | _(nicht gesetzt)_ | alle | Erlaubt dem **Dienstkonto** die kuratierenden (schreibenden) Werkzeuge. Standardmäßig aus: eine Änderung unter einem gemeinsamen Konto ist niemandem zuzuordnen — in der Historie des Repositorys steht der Kontoname, nicht die Person, die sie angefordert hat. Wer sich mit dem eigenen WLO-Login meldet, darf immer schreiben und braucht hier nichts; anonyme Aufrufende dürfen nie — sie sehen die Werkzeuge (nur so lernt ihr Client, eine Anmeldung anzubieten), und jeder Aufruf wird abgelehnt. Gilt ebenso für den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als Dienstkonto gelten. Gültige Werte: `1`, `true`, `yes`, `on`; alles andere (auch `false`) lässt es aus. Siehe [Kuratieren](#kuratieren-schreiben-in-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(nicht gesetzt)_ | http | PKCS#8-PEM, das **persönliche Zugangsblöcke** einschaltet: Wer sich unter `/auth` einen verschlüsselten Block holt, trägt ihn einmal als `Bearer …` in das Authorization-Feld seines KI-Programms ein und kann ihn unter `/auth-revoke.html` (oder `/auth/revoke` — dieselbe Seite) sperren: entweder durch Einfügen des Blocks oder per WLO-Anmeldung, die alle Zugänge des Kontos auf einmal beendet. Der zweite Weg ist der einzige für OAuth-Nutzer, die ihren Block nie zu sehen bekommen. Pro Konto gelten die zehn zuletzt geholten Blöcke. Nicht gesetzt heißt: Funktion komplett aus — die `/auth/…`-Endpunkte antworten 404, die Seiten sagen es, ein Bearer-Header wird abgelehnt wie bisher. Der öffentliche Schlüssel wird hieraus **abgeleitet**, es gibt also keine zweite Variable, die auseinanderdriften könnte. Erzeugen mit `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **Dieser Schlüssel entschlüsselt jeden ausgestellten Block zu einem lebenden WLO-Passwort** — er gehört in die `.env` auf dem Server, nie ins Image und nie ins Repository. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(nicht gesetzt)_ | http | Der vorherige Schlüssel während eines Wechsels. Ausgestellt wird immer mit dem aktuellen, geöffnet mit beiden — sonst würde ein Wechsel alle Nutzerkonfigurationen gleichzeitig ungültig machen. Nach dem Überlappungsfenster wieder entfernen. Ein unbrauchbarer Wert schaltet die Funktion **aus**, statt das Fenster still zu verwerfen: sonst bräche genau das, wofür es existiert, und man erführe es von Nutzerbeschwerden statt aus dem Start-Log. |
-| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Ablageort der Positivliste ausgestellter Zugangs-IDs. Sie enthält IDs, Benutzernamen und Ausstellungszeitpunkt — **nie ein Credential**. Es ist eine POSITIV-Liste: Geht sie verloren, funktioniert kein Block mehr (unbequem) statt dass jeder widerrufene wieder gilt (unsicher). In Docker ist das das einzige beschreibbare Volume; `read_only: true` gilt für alles andere weiter. **Sichern.** |
+| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Ablageort der Positivliste ausgestellter Zugangs-IDs. Sie enthält IDs, Benutzernamen und Ausstellungszeitpunkt — **nie ein Credential**. Es ist eine POSITIV-Liste: Geht sie verloren, funktioniert kein Block mehr (unbequem) statt dass jeder widerrufene wieder gilt (unsicher). In Docker ist das das einzige beschreibbare Volume; `read_only: true` gilt für alles andere weiter. **Sichern.** **Eine Server-Instanz je Datei:** die Liste wird beim Start einmal gelesen und im Speicher geführt, ein Widerruf erreicht also nur die Instanz, die ihn ausgeführt hat — nicht zwei Instanzen auf dieselbe Datei setzen. |
 | `WLO_PUBLIC_BASE_URL` | _(nicht gesetzt)_ | http | Die öffentliche Adresse, die Clients eintragen, z. B. `https://wlo-mcp.example.org` — Schema und Host, ohne Pfad. Sie steht in den OAuth-Discovery-Dokumenten (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`) als Adresse der eigenen Endpunkte. Nicht gesetzt heißt: diese Pfade antworten 404 — außer bei `TRUST_PROXY=1`, dann wird die Adresse aus dem `Host`-Kopf der Anfrage abgeleitet, und der kommt vom AUFRUFER. Setzen: ein gefälschter Kopf schickte sonst den Browser eines Nutzers auf eine Anmeldeseite, die uns nicht gehört. Nur scheinbar unabhängig von den Zugangsblöcken — ohne `WLO_AUTH_PRIVATE_KEY` ist beides aus, denn eine OAuth-Anmeldung stellt genau denselben Block aus. |
 | `WLO_INBOX_ID` | _(nicht gesetzt)_ | alle | nodeId des gemeinsamen Posteingangs, in dem neue Datensätze landen, wenn der Server unter dem **Dienstkonto** schreibt. Wer mit eigenem Login arbeitet, legt in `-userhome-` an und braucht hier nichts. Bewusst ohne Vorgabewert: nodeIds gelten nur für ein Repository, eine fest eingebaute würde auf Staging in eine andere Sammlung zeigen als auf der Produktion und anderswo auf gar nichts. Nicht gesetzt heißt: Anlegen im Dienstkonto-Modus wird mit Hinweis auf diese Variable abgelehnt — besser als ein Datensatz, den niemand findet. |
 | `AUTH_CREDENTIAL_LIMIT` | `10` | HTTP-Modus | Wie viele **verschiedene** Logins eine Client-Adresse innerhalb von 10 Minuten vorzeigen darf; darüber 429. Der Server reicht einen mitgeschickten `Authorization`-Header nach oben weiter, könnte also zum Durchprobieren von WLO-Logins unter *unserer* Adresse dienen. Eine Anfragen-pro-Minute-Grenze wäre hier das falsche Mittel — ein Modus-3-Client sendet den Header bei **jedem** Aufruf. Das Signal sind verschiedene Logins: eine echte Person hat genau eines. `0` schaltet die Prüfung ab. |
@@ -342,18 +342,18 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 1 | `search_wlo_collections` | Sammlungen/Themenseiten suchen (Keyword + Baum-Fallback) | markdown / json |
 | 2 | `search_wlo_content` | Volltextsuche für einzelne Inhaltselemente; Filter für Fach, Stufe, Typ, Anbieter und **Lizenz** (exakt — der Repository-Schlüssel matcht sonst eine ganze CC-Familie) | markdown / json |
 | 3 | `get_collection_contents` | Elemente / Untersammlungen einer Sammlung (paginiert, optional rekursiv) | markdown / json |
-| 4 | `get_node_details` | Vollständige Metadaten eines Nodes + optional Volltext + Eltern + Roh-URIs | markdown / json |
+| 4 | `get_node_details` | Vollständige Metadaten eines Nodes + optional Volltext + Eltern + Roh-URIs. Mit `nodeIds` (1–50) ist die Antwort immer eine Liste `{results, missing}` (`missing: [{part, code}]`, Code `not_found`/`forbidden`/`timeout`/`upstream_error`) mit den Anreicherungen je Datensatz | markdown / json |
 | 5 | `search_wlo_all` | **Kombiniert**: Inhalte + Sammlungen + Themenseiten in einem parallelen Aufruf, getrennte Buckets | markdown / json |
 | 6 | `lookup_wlo_vocabulary` | Gültige Labels/URIs für ein Filter-Vokabular auflisten | markdown |
 | 7 | `search_wlo_topic_pages` | Themenseiten finden/auflisten, Zielgruppen-Varianten zusammenführen | markdown / json |
 | 8 | `get_subject_portals` | Die obersten Fachportale unter der WLO-Wurzel | markdown / json |
-| 9 | `browse_collection_tree` | In Untersammlungen navigieren (Tiefe 1–2), optional Dateizählungen | markdown / json |
+| 9 | `browse_collection_tree` | In Untersammlungen navigieren (Tiefe 1–3; Tiefe 3 höchstens 300 Knoten insgesamt, `truncatedAt` nennt den ersten Schnitt, auch eine gekappte erste Ebene), optional Dateizählungen auf jeder Ebene | markdown / json |
 | 10 | `wlo_health_check` | Erreichbarkeit + Latenz der WLO-API | json |
 | 11 | `get_nodes_details` | Metadaten im Bulk für viele `nodeIds` parallel | json |
 | 12 | `get_topic_page_content` | Die Swimlane-**Inhaltsstruktur** einer Themenseite, render-fertig | markdown / json |
 | 13 | `get_wikipedia_summary` | Wikipedia zu einem Begriff: Anriss — oder der GANZE Artikeltext mit `fullText` | markdown / json |
 | 14 | `get_compendium_text` | Redaktioneller Kompendiumstext einer/mehrerer Sammlungen (Bulk, ≤25) — Inhaltsverzeichnis immer, `query` verengt auf die passenden Absätze | markdown / json |
-| 15 | `search_wlo_within_collection` | Gefilterte Suche über die Inhaltsliste einer Sammlung (auch nach Lizenz) | markdown / json |
+| 15 | `search_wlo_within_collection` | Gefilterte Suche über die Inhaltsliste einer Sammlung (auch nach Lizenz; `excludeNodeIds` lässt schon Gesehenes weg) | markdown / json |
 | 16 | `search` | ChatGPT-Knowledge-Konvention: leichte Treffer `{id,title,url}` über WLO. Mit `WLO_SEARCH_OUTPUT_MODE=rich` zusätzlich die Töpfe und das Widget von `search_wlo_all` | json (+ Text) |
 | 17 | `fetch` | ChatGPT-Knowledge-Konvention: volles Dokument eines Knotens `{id,title,text,url,metadata}`. Mit `WLO_SEARCH_OUTPUT_MODE=rich` zusätzlich der vollständige Datensatz (Vorschaubild, Download-Link) und die Detailansicht | json (+ Text) |
 | 18 | `lookup_wlo_publishers` | Anbieter/Quellen mit Materialzahl je Anbieter auflisten (Facette) | markdown / json |
@@ -367,7 +367,11 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 25 | `get_node_collections` | In welchen Sammlungen ein Material liegt (Rückwärtssuche über `/usage/v1`) | markdown / json |
 | 26 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf | markdown / json |
 | 27 | `get_url_text` | **UNSICHER** — der Text hinter einer BELIEBIGEN Web-Adresse, über den Extraktionsdienst. Nicht für WLO-Material (dafür 24). Über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar; **für den Produktivbetrieb nicht empfohlen** — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge) | markdown / json |
-| 28 | `get_skill_registry` | Welche Skills EINE Sammlung freigegeben hat — das in ihr abgelegte Registry-Dokument, sein Katalog und die Hinweise der Redaktion | markdown / json |
+| 28 | `get_skill_registry` | Welche Skills EINE Sammlung freigegeben hat — das in ihr abgelegte Registry-Dokument, sein Katalog und die Hinweise der Redaktion. Mit `task`: der passende freigegebene Skill SAMT Anleitung, nur bei eindeutiger Wahl (sonst die Kandidaten oder „keiner passt“) | markdown / json |
+| 29 | `resolve_wlo_filters` | Alle Filter-Bezeichnungen eines Vorhabens (Fach, Stufe, Typ, Lizenz, Rolle, Zielgruppe) in EINEM Aufruf auflösen — je Wert, WIE: `exact`, `alias` oder `fuzzy` (mit Vorschlägen, nie still übernommen); Lizenzen nur exakt. Rein lokal | markdown / json |
+| 30 | `find_content_by_url` | Gibt es zu diesen Adressen (≤20) schon einen Datensatz? `exact` = dieselbe Adresse, `normalized` = gleich nach Entfernen von Schrägstrich, Fragment und Tracking-Parametern; Fehler je Eintrag. `includeCollections` zählt die Sammlungen | markdown / json |
+| 31 | `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium-Inhaltsverzeichnis, Statistik, freigegebene Skills, Untersammlungen mit Zahl, erste Inhalte — Teile parallel, ein fehlender Teil steht in `missing` | markdown + strukturiert |
+| 32 | `count_wlo_content_matches` | Für bis zu 30 Suchanfragen zugleich zählen (+ bis zu 3 Treffer je Anfrage) — eine Suche je Anfrage, ohne Varianten, die Zahl des Repositorys; ein nicht auflösbarer Filter wird nie weggelassen (Anfrage in `missing`). Über ganz WLO, nicht innerhalb einer Sammlung | markdown + strukturiert |
 
 Die Anzeige-/Such-Tools liefern zusätzlich `structuredContent` (gegen ein
 Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
@@ -812,8 +816,8 @@ OAuth-Verbindung. Es gibt kein `refresh_token` und keine Ablauffrist: der Zugang
 endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
 
 **Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
-`Authorization` bekommt die **vollständige** Liste — alle 42 Werkzeuge, die
-vierzehn Kurations-Werkzeuge eingeschlossen. Die sind für jeden *sichtbar* und
+`Authorization` bekommt die **vollständige** Liste — alle 48 Werkzeuge, die
+16 Kurations-Werkzeuge eingeschlossen (52 und 20 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
 verweigern erst beim Aufruf, mit einer OAuth-Aufforderung: genau daran bietet
 ein Host die Anmeldung an, denn ein Modell, das nie ein Schreibwerkzeug sieht,
 fragt auch nie danach. Der `401` entsteht nur bei einem vorgelegten, aber
@@ -849,6 +853,11 @@ gültigen Schlüssel zurück, der zehn Minuten hält. Erst ein zweiter Aufruf mi
 diesem Schlüssel schreibt. Der Schlüssel hängt an einer Prüfsumme der
 geplanten Änderung — die Vorschau einer harmlosen Korrektur kann also keine
 andere Änderung freigeben. Genau das bräuchte ein Prompt-Injection-Angriff.
+Für Programme trägt die Vorschau zusätzlich
+`structuredContent.confirm = {token, expiresAt, preview: {action, tool, target, fields: [{name, label, old, new}]}}`
+(Vokabular- und Bewertungsfelder zusätzlich mit `oldLabels`/`newLabels`), gebaut aus
+derselben Änderungsmenge, an die der Schlüssel gebunden ist. Gibt es nichts zu
+bestätigen, kommt `{confirm: null, unchanged: true}`.
 
 **Nichts gilt als gespeichert, bis es zurückgelesen wurde.** edu-sharing
 antwortet in drei gemessenen Fällen mit `200` und verwirft den Wert trotzdem:
@@ -883,12 +892,14 @@ Werten „keine Auffälligkeiten gefunden (Maschine)", „Auffälligkeiten gefun
 (Maschine)" oder „ungeprüft". Ein Ergebnis, das ein MENSCH geprüft hat, wird
 abgelehnt: der Wert benennt, wer geprüft hat, und ein Modell kann nicht
 bezeugen, dass eine Person hingesehen hat. |
-| `wlo_create_content` | Legt einen neuen Datensatz an, auf **zwei Wegen**. `url` — das Material liegt woanders und wird verlinkt; gibt es zu dieser URL schon einen Datensatz, wird dieser genannt statt einen zweiten anzulegen. `content` / `fileBase64` — der Datensatz **traegt** das Material als Datei (im Chat geschriebenes Markdown, ein erzeugtes PNG/JPEG/GIF/WebP, als reines Base64 oder als `data:`-URL), fuer Inhalte ohne eigene URL. Genau eine Quelle. Der Upload steht mit Name, Typ, Groesse und Pruefsumme in der Bestaetigungs-Vorschau und wird danach zurueckgelesen. Der Datensatz ist ein Entwurf und geht NICHT in die redaktionelle Warteschlange. |
+| `wlo_create_content` | Legt einen neuen Datensatz an, auf **zwei Wegen**. `url` — das Material liegt woanders und wird verlinkt; gibt es zu dieser URL schon einen Datensatz, wird dieser genannt statt einen zweiten anzulegen. `content` / `fileBase64` — der Datensatz **traegt** das Material als Datei (im Chat geschriebenes Markdown, ein erzeugtes PNG/JPEG/GIF/WebP, als reines Base64 oder als `data:`-URL), fuer Inhalte ohne eigene URL. Genau eine Quelle. Der Upload steht mit Name, Typ, Groesse und Pruefsumme in der Bestaetigungs-Vorschau und wird danach zurueckgelesen. Der Datensatz ist ein Entwurf und geht NICHT in die redaktionelle Warteschlange. Mit `addToCollectionId` wird er unter DERSELBEN Bestätigung in diese Sammlung aufgenommen (die Aufnahme ist Teil der bestätigten Änderung); scheitert sie, bleibt der Datensatz und die Antwort meldet `collection.status: "failed"` mit Code; gibt es zur Adresse schon einen Datensatz, wird angeboten, diesen aufzunehmen statt einen zweiten anzulegen. Die Antwort trägt `structuredContent {nodeId, title, collection?}`. |
 | `wlo_submit_content` | Reicht einen vorhandenen Datensatz zur redaktionellen Pruefung ein. Ein eigener Schritt, nie automatisch — damit kein Entwurf bei der Redaktion landet, weil jemand noch am Schreiben war. |
 | `wlo_create_collection` | Legt eine Sammlung an (eine kuratierte Themenseite), auf oberster Ebene oder als Untersammlung. |
 | `wlo_rename_collection` | Ändert Titel und Beschreibung einer Sammlung. |
 | `wlo_add_to_collection` | Nimmt vorhandenes Material in eine Sammlung auf. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise. |
 | `wlo_remove_from_collection` | Nimmt Material aus einer Sammlung heraus. Das Material bleibt bestehen und in allen anderen Sammlungen. |
+| `wlo_create_collection_tree` | Legt einen ganzen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder) mit EINER Bestätigung an. Läuft in Abschnitten von ~40 s; ein unfertiger Plan liefert einen `continuationToken`, und ein erneut vorgelegter Schlüssel derselben Anmeldung setzt fort oder wiederholt das Ergebnis — legt nie doppelt an. `onExisting: merge` übernimmt eine Untersammlung gleichen Titels. |
+| `wlo_add_to_collections` | Nimmt bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung auf, gleiche Planmechanik. Eine Verknüpfungs-id wird als Original aufgenommen; schon Enthaltenes kommt als `already`; ein gescheitertes Paar hält die übrigen nicht auf. Noch nicht live geprüft (Staging-Regression beim Aufnehmen, 06.11.2026). |
 | `wlo_update_compendium` | Schreibt, ersetzt oder entfernt den redaktionellen Kompendialtext einer Sammlung (Markdown). |
 | `wlo_set_topic_page` | Legt fest, **welche Variante** eine Themenseite öffentlich rendert. Legt nichts an, löscht und sortiert nichts. Das einzige Kurationswerkzeug, dessen Ergebnis sofort öffentlich sichtbar ist — deshalb liegen alle Prüfungen hier: Das gespeicherte `ccm:page_config`-Dokument wird bearbeitet statt neu gebaut (unbekannte Schlüssel und die Variantenliste bleiben erhalten), eine fremde Variante wird abgelehnt, ein unlesbares Dokument nicht überschrieben, und danach wird zurückgelesen und neu geparst. Das Repository prüft davon nichts — gemessen am 09.08.2026 speichert es auch die Zeichenkette `"not json at all"` und antwortet mit 200. |
 | `wlo_suggest_metadata` | Schlägt Werte mit Begründung vor, statt sie zu schreiben. Der Datensatz bleibt unverändert. |
@@ -896,6 +907,10 @@ bezeugen, dass eine Person hingesehen hat. |
 | `wlo_decide_suggestion` | Nimmt an (schreiben, zurücklesen, dann vermerken) oder lehnt ab. |
 | `wlo_delete_content` | Löscht einen Datensatz. Über diesen Server nicht rückgängig zu machen — siehe unten. |
 | `wlo_delete_collection` | Löscht eine Sammlung samt Untersammlungen. Das darin verlinkte Material bleibt bestehen. |
+| `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: bereitet die Ablage mehrerer Dateien in den persönlichen Bereich vor (Vorschau + Freigabe-Schlüssel für genau diese Liste). Legt nichts an. |
+| `wlo_store_batch_file` | Legt eine Datei des freigegebenen Stapels ab — die Bytes kamen vorher über `POST /api/uploads`; jeder Index einmal, Prüfsumme muss passen. |
+| `wlo_store_batch_manifest` | Legt `vorgang.json` (`wlo.ablage-vorgang@1`) zum Stapel in denselben Ordner, einmal je Stapel; die Kennzahlen stehen zusätzlich in `cm:description` des Datensatzes. |
+| `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen wiederfinden, neueste zuerst; mit `nodeId` eine samt Einträgen. |
 
 **Löschen ist hier endgültig.** `recycle=true` wird immer mitgeschickt, das Repository behält also möglicherweise eine Archivkopie — eine personenbezogene Archivabfrage fand einen gelöschten Knoten aber nur einmal und Minuten später für denselben Knoten nichts mehr. Wiederherstellbarkeit ließ sich damit nicht zeigen. Die Werkzeuge sagen deshalb, dass sich die Löschung über diesen Server nicht rückgängig machen lässt, und versprechen keine Wiederherstellung. Material aus einer Sammlung herauszunehmen (`wlo_remove_from_collection`) ist etwas anderes und lässt das Material unangetastet. Die vier Start-Skripte (`dev`, `dev:http`, `start`, `start:http`) laden eine vorhandene `.env` über Nodes `--env-file-if-exists`; `docker compose` liest sie ohnehin. `npm test` bewusst nicht — die Testsuite darf nicht von einer lokalen Datei abhängen.
 
@@ -917,7 +932,12 @@ die die Suche rekonstruieren wollen.
 - **`unresolvedFilters`** — `{ field, value }[]` der übergebenen Vokabular-Filter,
   die nicht zu einer URI aufgelöst werden konnten und daher aus der Suche
   entfernt wurden. Wird gemeldet, damit der Aufrufer selbst korrigieren kann
-  (z.B. via `lookup_wlo_vocabulary`). Entfällt, wenn alles aufgelöst wurde.
+  (z.B. via `lookup_wlo_vocabulary`). Entfällt, wenn alles aufgelöst wurde. Eine
+  Lizenz löst nur exakt auf — `"CC BY NC"` ohne Bindestriche landet hier mit
+  Vorschlag, statt still auf CC BY zu filtern.
+- **`criteria[].match: "fuzzy"`** — an einem Filter, der nur geraten aufgelöst
+  wurde (`"Arbeitsblat"` → Arbeitsblatt). Exakt oder per Alias aufgelöste Filter
+  tragen kein Feld. `resolve_wlo_filters` meldet dieselbe Unterscheidung je Wert.
 - **`facets`** — nur mit `includeFacets: true`: Facetten-Zähler nach Filtername,
   z.B. `{ learningResourceType: [{ label: "Video", count: 1203 }], … }` — wie
   viele Treffer je Typ/Fach/Stufe, damit ein Client gezieltes Eingrenzen ohne
@@ -1052,7 +1072,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Sitzungsspeicher, App-Signatur, nur OAuth), samt dem, was das Konzept
   **nicht** schützt.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **die Übergabe für das Team und
-  für Chatbot-Entwicklung**: alle 42 Werkzeuge gruppiert, jede von außen
+  für Chatbot-Entwicklung**: alle 48 Werkzeuge gruppiert, jede von außen
   aufrufbare Adresse (MCP, REST, Seiten, OAuth) und das Verhalten, das eine
   Integration kennen muss — Lizenzfilter, Offenlegungs-Felder, zweistufiges
   Schreiben, Grenzen, und was es bewusst nicht gibt.
@@ -1130,7 +1150,7 @@ Rückfallebene kosten.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 42 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 48 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
@@ -1282,7 +1302,7 @@ Codes), gruppiert nach Modul.
 
 - `npm run build` — TypeScript-Kompilierung (strict).
 - `npm test` — Offline-Test-Suite (`node:test`), kein Netzwerk erforderlich.
-- CI (`.github/workflows/ci.yml`) führt Build + Test auf Node 20 mit einem
+- CI (`.github/workflows/ci.yml`) führt Build + Test auf Node 22 mit einem
   Produktions-`npm audit`-Gate aus.
 - Siehe **[CONTRIBUTING.md](CONTRIBUTING.md)** für Konventionen (Kommentarsprache,
   Test-Disziplin, Commit-Stil, Sicherheitsregeln).

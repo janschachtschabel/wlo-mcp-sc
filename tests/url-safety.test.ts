@@ -75,6 +75,55 @@ test('a mapped PUBLIC IPv4 stays public', () => {
   assert.equal(isPrivateHost('::ffff:8.8.8.8'), false);
 });
 
+/**
+ * Ranges the audit of 2026-11-05 found passing — measured by EXECUTING
+ * `isPrivateHost`, every one of these answered `false`. Hostnames go through
+ * `new URL()` first where that is how a caller receives them, because the URL
+ * parser rewrites IPv6 spellings before any check sees them.
+ */
+const hostOf = (url: string) => new URL(url).hostname;
+
+test('shared address space 100.64.0.0/10 (CGNAT, cloud metadata) is private', () => {
+  assert.equal(isPrivateHost('100.100.100.200'), true, 'Alibaba metadata');
+  assert.equal(isPrivateHost('100.64.0.1'), true);
+  assert.equal(isPrivateHost('100.127.255.254'), true);
+  assert.equal(isPrivateHost('100.63.255.255'), false, 'just below the range');
+  assert.equal(isPrivateHost('100.128.0.1'), false, 'just above the range');
+});
+
+test('reserved IPv4 ranges are private', () => {
+  assert.equal(isPrivateHost('192.0.0.170'), true, 'IETF protocol assignments 192.0.0.0/24');
+  assert.equal(isPrivateHost('198.18.0.1'), true, 'benchmarking 198.18.0.0/15');
+  assert.equal(isPrivateHost('198.19.255.255'), true);
+  assert.equal(isPrivateHost('198.20.0.1'), false, 'just above the benchmark range');
+  assert.equal(isPrivateHost('224.0.0.1'), true, 'multicast');
+  assert.equal(isPrivateHost('240.0.0.1'), true, 'reserved');
+  assert.equal(isPrivateHost('255.255.255.255'), true, 'broadcast');
+});
+
+test('IPv6 forms that carry a private IPv4 are judged by that IPv4', () => {
+  assert.equal(isPrivateHost(hostOf('http://[64:ff9b::7f00:1]/')), true, 'NAT64 → 127.0.0.1');
+  assert.equal(isPrivateHost(hostOf('http://[64:ff9b::a00:1]/')), true, 'NAT64 → 10.0.0.1');
+  assert.equal(isPrivateHost(hostOf('http://[64:ff9b::808:808]/')), false, 'NAT64 → 8.8.8.8 stays public');
+  assert.equal(isPrivateHost(hostOf('http://[::127.0.0.1]/')), true, 'IPv4-compatible → 127.0.0.1');
+});
+
+test('the whole link-local block fe80::/10 is private, not just fe80', () => {
+  for (const h of ['fe80::1', 'fe90::1', 'fea0::1', 'febf::1']) assert.equal(isPrivateHost(h), true, h);
+  assert.equal(isPrivateHost('fec0::1'), false, 'fec0 is outside fe80::/10');
+});
+
+test('IPv6 multicast and the NAT64 local-use prefix are private', () => {
+  assert.equal(isPrivateHost('ff02::1'), true, 'multicast');
+  assert.equal(isPrivateHost(hostOf('http://[64:ff9b:1::1]/')), true, 'NAT64 local-use 64:ff9b:1::/48');
+});
+
+test('ordinary public addresses still pass after the wider rules', () => {
+  for (const h of ['8.8.8.8', '1.1.1.1', '93.184.216.34', '100.0.0.1', '2001:4860:4860::8888', 'example.org']) {
+    assert.equal(isPrivateHost(h), false, h);
+  }
+});
+
 test('the 172 range is bounded on both sides', () => {
   // 172.16.0.0–172.31.255.255 is private; the neighbours are public and a
   // sloppy `a === 172` test would swallow both.

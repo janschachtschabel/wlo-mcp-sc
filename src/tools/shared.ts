@@ -14,10 +14,11 @@ import { ensureRegistryFor } from '../services/skill-registry-cache.js';
 import {
   contextInstructions, describeEntries, loadSkillRegistry, narrowRegistry, toRegistrySummary,
 } from '../services/skill-registry.js';
-import type { ContextInstruction } from '../services/skill-registry.js';
+import { DESCRIBED_MAX, type ContextInstruction } from '../services/skill-registry.js';
 import { capText } from '../text-cap.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
+import { failureCode, type FailureCode } from '../services/failure-code.js';
 // The title rule moved to a leaf module (topic-page-api/-structure and the write
 // service need it and must not import from tools/). Re-exported so the tools
 // keep one import site.
@@ -45,17 +46,8 @@ const INSTRUCTION_MAX = 900;
  */
 const DESCRIPTIONS_MAX = 1100;
 
-/**
- * How many skills of a collection get a „what is this for" line.
- *
- * One metadata read each, so this number IS the per-answer bill — and it is a
- * cap on the READS, not just on the output: a registry may declare a hundred
- * skills (`REGISTRY_MAX`), and a hundred reads per collection answer is the cost
- * the cheap tier exists to avoid. Three, by the user's decision (2026-08-18);
- * everything past it keeps title and nodeId, which is what the surface carried
- * before.
- */
-const DESCRIBED_MAX = 3;
+// `DESCRIBED_MAX` lives in the registry service now: `get_collection_overview`
+// applies the same cap, and two copies of a read budget drift.
 
 /**
  * „What each skill is for", for the first `DESCRIBED_MAX` of them.
@@ -274,7 +266,7 @@ async function contextualRegistryText(collectionId: string, wanted: string): Pro
 }
 
 /** The editors' words, one labelled line per level. Empty in, empty out. */
-function instructionBlock(instructions: readonly ContextInstruction[]): string[] {
+export function instructionBlock(instructions: readonly ContextInstruction[]): string[] {
   const lines: string[] = [];
   if (instructions.length) {
     // One line per level, each saying which level it is. Flattening happens per
@@ -387,8 +379,17 @@ export function wikiResolutionNotice(
 export function nodeLookupMiss(nodeId: string, status: number): string {
   const id = sanitizeText(nodeId);
   if (status === 404) return `Node ${id} nicht gefunden.`;
-  if (status === 401 || status === 403) {
-    return `Node ${id} ist nicht zugänglich (HTTP ${status}) — das Material ist nicht öffentlich. `
+  // 401 is about the LOGIN (wrong credentials answer 401), 403 is a node the
+  // caller may not read. Saying "nicht öffentlich" for a 401 pointed a person
+  // whose password had changed at the material instead. Not "abgelehnt": a
+  // working login lacking a right gets 401 too, and when the login really was
+  // refused the tool-level notice (`apps/tool-defaults.ts`) leads the answer.
+  if (status === 401) {
+    return `Node ${id} konnte nicht gelesen werden (HTTP 401) — das Repository hat den Abruf mit dieser `
+      + 'Anmeldung nicht zugelassen. Über das Material selbst sagt das nichts.';
+  }
+  if (status === 403) {
+    return `Node ${id} ist nicht zugänglich (HTTP 403) — das Material ist nicht öffentlich. `
       + 'Das heißt NICHT, dass es nicht existiert.';
   }
   return `Node ${id} ist derzeit nicht abrufbar${status ? ` (HTTP ${status})` : ''} — `
@@ -398,18 +399,47 @@ export function nodeLookupMiss(nodeId: string, status: number): string {
 // ── Uniform tool error handling ──────────────────────────────────────────────
 
 /**
+ * An error answer with a code a program can act on (`structuredContent.error`)
+ * and the same sentence for the person. The one shape every coded refusal uses —
+ * `codedError` in `curation-shared.ts` is this function.
+ */
+export function codedErrorResult(code: string, text: string, extra: Record<string, unknown> = {}): {
+  content: { type: 'text'; text: string }[];
+  isError: true;
+  structuredContent: { error: Record<string, unknown> };
+} {
+  return {
+    content: [{ type: 'text' as const, text }], isError: true,
+    structuredContent: { error: { code, message: text, ...extra } },
+  };
+}
+
+/**
  * Build the standard error result for a failed tool call AND log it
  * server-side. Every tool's catch block was previously duplicating the
  * `err instanceof Error ? ...` extraction and returning it to the client
  * WITHOUT any server-side trace — so upstream failures were invisible in the
  * logs. This centralizes both: structured error log + the client-facing
- * `<context>: <detail>` message (behaviour-preserving for callers).
+ * `<context>: <detail>` message (behaviour-preserving for callers), plus
+ * `structuredContent.error` with `failureCode`'s code (`timeout`/`forbidden`/`upstream_error`).
  */
 export function toolError(
   context: string,
   err: unknown,
-): { content: { type: 'text'; text: string }[]; isError: true } {
+): {
+  content: { type: 'text'; text: string }[];
+  isError: true;
+  structuredContent: { error: { code: FailureCode; message: string } };
+} {
   const detail = err instanceof Error ? err.message : String(err);
   log.error('tool error', { context, error: detail });
-  return { content: [{ type: 'text' as const, text: `${context}: ${detail}` }], isError: true };
+  const text = `${context}: ${detail}`;
+  // Coded like every curation refusal: a chatbot that reads only
+  // `structuredContent` otherwise sees an error with no reason at all. The code
+  // is `failureCode`'s, the one the bundling answers use for `missing`, so a
+  // read timeout says `timeout` here too and not `upstream_error`.
+  return {
+    content: [{ type: 'text' as const, text }], isError: true,
+    structuredContent: { error: { code: failureCode(err), message: text } },
+  };
 }

@@ -35,7 +35,8 @@ export type FieldOutcome = 'stored' | 'dropped' | 'changed';
  */
 export type MutationOutcome =
   | { status: 'ok' }
-  | { status: 'failed'; detail: string }
+  /** `httpStatus` where the repository refused: a caller turning it into a code needs more than prose. */
+  | { status: 'failed'; detail: string; httpStatus?: number }
   | { status: 'not_visible'; detail: string }
   | { status: 'unverified'; detail: string };
 

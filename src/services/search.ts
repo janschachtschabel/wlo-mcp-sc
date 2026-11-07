@@ -18,7 +18,7 @@ import { enhancedSearch, rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, resolveFacetCounts } from '../formatter.js';
 import type { LabeledCriterion, UnresolvedFilter } from '../filter-criteria.js';
-import { buildFilterCriteria, filterByExactLicense, pageSizeForLicense } from '../filter-criteria.js';
+import { buildFilterCriteria, filterByExactLicense, licenseUnresolvable, pageSizeForLicense } from '../filter-criteria.js';
 import { mapPool } from '../concurrency.js';
 import type { WikiSummary } from '../wikipedia-api.js';
 import { fetchWikipediaSummary } from '../wikipedia-api.js';
@@ -46,6 +46,12 @@ export interface SearchWithinCollectionOptions {
   license?: string;
   maxResults?: number;
   skipCount?: number;
+  /**
+   * Already-seen items (BOERDi wishlist 12b) — matched on the listed id AND on
+   * the original a reference points at, because a caller may have seen the
+   * record under either. Removed before paging, so `total` is what is left.
+   */
+  excludeNodeIds?: string[];
 }
 
 export interface SearchWithinCollectionResult {
@@ -102,7 +108,9 @@ export async function searchWithinCollection(
   // no criterion at all — a licence set is not expressible upstream, so
   // `buildFilterCriteria` only labels it — and this path used to have nothing
   // else to filter on, which made `license: "OER"` return everything.
-  const filtered = filterByExactLicense(formatNodes(matched), opts.license);
+  const excluded = new Set(opts.excludeNodeIds ?? []);
+  const filtered = filterByExactLicense(formatNodes(matched), opts.license)
+    .filter(n => !excluded.has(n.nodeId) && !(n.originalId && excluded.has(n.originalId)));
   const page = filtered.slice(skipCount, skipCount + maxResults);
 
   return {
@@ -428,6 +436,8 @@ export interface FacetSearchOptions {
   userRole?: string;
   publisher?: string;
   learningResourceType?: string;
+  /** Only to refuse facets over an unknown licence; a resolved single licence already travels as a criterion. */
+  license?: string;
 }
 
 /**
@@ -440,6 +450,9 @@ export interface FacetSearchOptions {
 export async function searchFacets(
   opts: FacetSearchOptions,
 ): Promise<Record<string, { label: string; count: number; uri: string }[]>> {
+  // Counted over the corpus, an unknown licence would show what the content leg
+  // just refused to return.
+  if (licenseUnresolvable(opts.license)) return {};
   const { criteria: filters } = buildFilterCriteria(opts);
   const query = (opts.query ?? '').trim();
   const criteria: SearchCriterion[] = query

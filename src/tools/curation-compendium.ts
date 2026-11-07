@@ -36,7 +36,9 @@ import {
   unverifiedReply,
   desiredFromChangeSet,
   errorText,
+  codedError,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 
 const PROPERTY = 'ccm:oeh_collection_compendium_text';
@@ -72,7 +74,7 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
 
         const node = await getNodeMetadata(nodeId);
         if (!node) {
-          return errorText(`Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+          return codedError('not_found', `Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
         }
         // A collection can itself be filed into another collection, so the id
         // reaching this tool can be a reference like any other. When it is not —
@@ -109,7 +111,7 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
         }
       } catch (err) {
         return timeoutOrError('Der Kompendialtext konnte nicht bearbeitet werden', err,
-          `Ob der Text an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`);
+          `Ob der Text an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });

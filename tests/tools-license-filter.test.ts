@@ -71,9 +71,14 @@ test('an unrecognised licence is named in the visible output, not silently dropp
     });
     const text = toolText(result);
     assert.match(text, /CC XY 9\.9/, 'the rejected value is named');
-    assert.match(text, /license/, 'and which filter it was');
-    const criteria = lastSearchCriteria(mock);
-    assert.ok(!criteria.some(c => c.property === 'ccm:commonlicense_key'), 'nothing bogus is sent upstream');
+    assert.match(text, /Lizenz/, 'and which filter it was');
+    assert.match(text, /keine Materialien/, 'and that it EMPTIES the answer rather than being ignored');
+    // Stronger than "nothing bogus is sent": no content search runs at all —
+    // its result could only be the unfiltered corpus.
+    const contentSearches = mock.calls.filter(c => c.url.includes('ngsearch')
+      && !String(c.init?.body ?? '').includes('"facets"'));
+    assert.equal(contentSearches.length, 0, 'no content search for a licence nobody can apply');
+    assert.equal((result.structuredContent as { total?: number }).total, 0);
   } finally { await client.close(); mock.restore(); }
 });
 

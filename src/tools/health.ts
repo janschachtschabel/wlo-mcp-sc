@@ -4,6 +4,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { failureCode } from '../services/failure-code.js';
 
 import {
   BASE_URL,
@@ -47,7 +48,10 @@ Useful for callers (e.g. chatbots) to quickly tell "WLO is down" from "your quer
           latencyMs: Date.now() - t0,
           checkedAt: new Date().toISOString(),
         };
-        return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }], isError: true,
+          structuredContent: { ...payload, error: { code: failureCode(err), message: msg } },
+        };
       }
     },
   );

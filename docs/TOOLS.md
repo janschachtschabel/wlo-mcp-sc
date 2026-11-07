@@ -1,12 +1,12 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **42 MCP-Tools**
-(28 lesende, 14 kuratierende), 4 interaktive Widgets und die öffentlichen
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **48 MCP-Tools**
+(52 mit `WLO_BATCH_UPLOAD_ENABLED`: 32 lesende, 20 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
-**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 14
-Kurations-Tools stehen immer in `tools/list`, deklarieren `oauth2` und
+**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 16
+Kurations-Tools stehen immer in `tools/list` (die vier Stapel-Werkzeuge nur mit ihrem Schalter), deklarieren `oauth2` und
 **verweigern beim Aufruf**, solange keine schreibberechtigte Anmeldung vorliegt;
 die Antwort trägt dann die Aufforderung, mit der der Client die Anmeldung
 startet. Umgestellt am 2026-08-05: sie zu verstecken war der Grund, warum die
@@ -17,8 +17,8 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 42 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 42 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
+| **Standard** | 48 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 48 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -33,7 +33,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 ---
 
-## 1. Lesende MCP-Tools (28) — mit Chat-Trigger
+## 1. Lesende MCP-Tools (32) — mit Chat-Trigger
 
 ### Suchen & Finden
 | Tool | Funktion | Bester Chat-Trigger |
@@ -168,8 +168,10 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `get_subject_portals` | Übersicht aller Fachportale (Mathe, Bio, Deutsch …) | *„Welche Fächer gibt es bei WLO?“* |
 | `browse_collection_tree` | Themenbaum / Unterthemen eines Fachs oder einer Sammlung | *„Zeig mir den Themenbaum zu Mathematik“* |
 | `get_collection_contents` | Inhalte einer konkreten Sammlung auflisten | *„Was ist in der Sammlung Bruchrechnung drin?“* |
-| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen/filtern (auch nach **Lizenz**) | *„Welche Videos zu Zellteilung gibt es in dieser Sammlung?“* |
+| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen/filtern (auch nach **Lizenz**); `excludeNodeIds` lässt schon Gesehenes weg | *„Welche Videos zu Zellteilung gibt es in dieser Sammlung?“* |
 | `get_collection_stats` | Zusammensetzung einer Sammlung (Anzahl, Typen, Fächer) | *„Woraus besteht diese Sammlung?“* |
+| `get_collection_overview` | Eine Sammlung auf einen Blick: Pfad, Kompendium-Gliederung, Statistik, Skills, Untersammlungen, erste Inhalte — in einem Aufruf | *„Was gibt es in dieser Sammlung?“* |
+| `count_wlo_content_matches` | Für viele Suchanfragen zugleich zählen, wie viele Inhalte es gibt — Grundlage für eine Lückenanalyse | *„Zu welchen Punkten meiner Gliederung gibt es kaum Material?“* |
 | `get_node_breadcrumb` | Pfad einer Sammlung im Themenbaum | *„Wo liegt diese Sammlung im WLO-Baum?“* |
 | `get_node_collections` | Umgekehrt: in **welchen Sammlungen** ein bestimmtes Material liegt | *„In welchen Sammlungen steckt dieses Arbeitsblatt?“* |
 
@@ -184,7 +186,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 ### Details & Verwandtes
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `get_node_details` | Alle Metadaten + Volltext eines Inhalts | *„Zeig mir alle Details und den Volltext zu diesem Inhalt“* |
+| `get_node_details` | Alle Metadaten + Volltext eines Inhalts; mit `nodeIds` mehrere auf einmal | *„Zeig mir alle Details und den Volltext zu diesem Inhalt“* |
 | `get_nodes_details` | Metadaten vieler Knoten auf einmal (meist modell-intern) | *„Hol die Details zu diesen Treffern“* |
 | `get_related_content` | Ähnliche Materialien (gleiches Fach/Stufe) | *„Was passt noch dazu?“* / *„Zeig mir ähnliche Materialien“* |
 
@@ -318,6 +320,8 @@ Groß-/Kleinschreibung ist egal, deutsche Komposita treffen („Brechung" findet
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
 | `lookup_wlo_vocabulary` | Gültige Werte eines Feldes — Filter (Stufe, Fach, Materialtyp, Zielgruppe, Lizenz) und Schreibfelder (`qualityScale`, `qualityFinding`) | *„Welche Bildungsstufen kann ich als Filter angeben?“*, *„Welche Stufen hat die Didaktik-Bewertung?“* |
+| `resolve_wlo_filters` | Alle Filter-Bezeichnungen eines Vorhabens in einem Aufruf auflösen, je Wert mit `exact`/`alias`/`fuzzy`; Lizenzen nur exakt | *„Was heißt ‚Klasse 7, Physik, Arbeitsblatt, CC BY-SA‘ in WLO?“* |
+| `find_content_by_url` | Gibt es zu diesen Adressen schon einen Datensatz? `exact` oder `normalized` je Treffer | *„Ist https://de.wikipedia.org/wiki/Optik schon in WLO?“* |
 | `lookup_wlo_publishers` | Anbieter/Quellen mit Materialzahl | *„Welche Anbieter liefern die meisten Biologie-Materialien?“* |
 
 ### System & Skills
@@ -404,6 +408,7 @@ Zwei Parameter greifen darauf zu:
 | Parameter | Wo | Wirkung |
 |---|---|---|
 | `context` | `get_skill_registry` | nur die Skills dieses Kontexts (plus die immer geltenden), die Anleitung dazu, und wortgetreu **nur diesen Abschnitt** statt des ganzen Dokuments |
+| `task` | `get_skill_registry` | der zur Aufgabe passende freigegebene Skill **samt Anleitung** — nur bei eindeutiger Wahl; sonst die Kandidaten (`ambiguous`) oder ausdrücklich „keiner passt“ (`none`) |
 | `skillContext` | `get_collection_contents`, `search_wlo_within_collection`, `get_node_details`, `get_topic_page_content`, `get_related_content` | derselbe verengte Katalog **plus die Anleitung**, direkt am Sammlungstreffer |
 
 ```
@@ -511,12 +516,15 @@ gleich `get_skill_registry` — das liest immer live.
 
 ---
 
-## 1b. Kuratierende MCP-Tools (14) — mit Chat-Trigger
+## 1b. Kuratierende MCP-Tools (20) — mit Chat-Trigger
 
-**Nur sichtbar mit Schreibrechten.** Wer anonym liest, sieht diese Tools gar
-nicht — und ein Modell kann nicht missbrauchen, was es nicht sieht. Jedes lehnt
-zusätzlich beim Aufruf ab, weil ein Host eine zwischengespeicherte Werkzeugliste
-ausliefern kann.
+**Für alle gelistet, beim Aufruf geschützt.** Seit dem 2026-08-05 stehen diese
+Tools für jeden in `tools/list`, auch ohne Anmeldung — ein Modell, das ein
+Schreibwerkzeug nie sieht, ruft es nie auf, und dann fordert nichts den Host zur
+Anmeldung auf. Ohne schreibberechtigte Anmeldung lehnt jedes beim Aufruf ab
+(`error.code: login_required`) und trägt die Anmelde-Aufforderung
+(`_meta["mcp/www_authenticate"]`). Die vier Stapel-Werkzeuge erscheinen nur mit
+`WLO_BATCH_UPLOAD_ENABLED`.
 
 Drei Regeln gelten für **jedes** davon:
 
@@ -558,7 +566,13 @@ Drei Regeln gelten für **jedes** davon:
 | `wlo_rename_collection` | Titel und Beschreibung einer Sammlung ändern | *„Benenne diese Sammlung um in …“* |
 | `wlo_add_to_collection` | Vorhandenes Material in eine Sammlung aufnehmen. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise | *„Nimm dieses Video in meine Sammlung auf“* |
 | `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen | *„Nimm dieses Material aus der Sammlung heraus“* |
+| `wlo_create_collection_tree` | Ganzen Baum von Untersammlungen mit EINER Bestätigung anlegen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder). Abschnitte von ~40 s, `continuationToken` bis fertig; ein erneut vorgelegter Schlüssel setzt fort, legt nie doppelt an. Antwort `nodes [{path, nodeId, status, code}]` | *„Lege unter Optik diese Gliederung als Sammlungen an“* |
+| `wlo_add_to_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aufnehmen; Verknüpfung → Original (`filedId`), schon Enthaltenes `already`, Einzelfehler halten den Rest nicht auf. Noch nicht live geprüft | *„Nimm diese zwölf Materialien in die passenden Sammlungen auf“* |
 | `wlo_delete_collection` | Sammlung samt Untersammlungen löschen. Das verlinkte Material bleibt bestehen | *„Lösche diese Sammlung“* |
+| `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: Stapel-Ablage in den persönlichen Bereich vorbereiten (Vorschau, ein Freigabe-Schlüssel) | — (Upload-Modul des Chatbots, nicht für ein Modell) |
+| `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes vorher über `POST /api/uploads`) | — (Upload-Modul) |
+| `wlo_store_batch_manifest` | `vorgang.json` zum Stapel ablegen (Kennzahlen zusätzlich in `cm:description`) | — (Upload-Modul) |
+| `wlo_list_my_batches` | Die eigenen Ablagen wiederfinden, neueste zuerst; mit `nodeId` eine samt Einträgen. Nur lesend, nur eigene Anmeldung | *„Zeig mir meine letzten Ablagen“* |
 | `wlo_update_compendium` | Redaktionellen Kompendialtext einer Sammlung schreiben, ersetzen oder entfernen (Markdown) | *„Schreib einen Einführungstext für diese Sammlung“* |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert. Legt keine Varianten an, löscht und sortiert keine | *„Zeig auf dieser Themenseite künftig die Variante für die Oberstufe“* |
 

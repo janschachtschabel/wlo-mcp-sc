@@ -210,7 +210,7 @@ test('the auth document exists and names the rules it is there to protect', () =
  */
 const COUNTED_DOCS = [
   'README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md',
-  'docs/INTEGRATION.md',
+  'docs/INTEGRATION.md', 'docs/DEPLOYMENT.md', 'docs/PRIVACY.md',
 ];
 
 /**
@@ -300,6 +300,17 @@ test('no document states a tool count the server contradicts', async () => {
     // rather than a typo.
     [/(?:same )?(\d+)\s+(?:public tools|öffentlichen Werkzeuge)/gi, total, 'anonymous callers see every tool'],
     [/(\d+) Tools —[^\n]*get_skill_for_task/gi, oneTool, 'one-tool mode drops exactly one tool'],
+    // Spellings the patterns above walked past while every one of them said 42
+    // over a server that lists 48 (chatbot feedback 2026-11-07): the headline
+    // count, the "all N" of the anonymous listing, and the always-listed
+    // curation tools (without the four batch tools that need their switch).
+    [/\*\*(\d+) MCP-Tools\*\*/g, total, 'the headline count'],
+    [/\balle (\d+)(?: MCP-)?Werkzeuge/gi, total, 'all tools (German)'],
+    [/\ball (\d+) tools/gi, total, 'all tools (English)'],
+    [/Die (\d+) MCP-Werkzeuge/g, total, 'the tool list heading'],
+    [/\d+ der (\d+) Werkzeuge/g, total, 'a share of all tools'],
+    [/Die (\d+)\s+Kurations-Tools/g, total - readTools, 'always-listed curation tools'],
+    [/\b(\d+) curation (?:\(write\) )?tools/gi, total - readTools, 'always-listed curation tools'],
   ];
 
   const wrong: string[] = [];

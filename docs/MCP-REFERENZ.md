@@ -9,9 +9,9 @@ KI-Skills — und, nach Anmeldung, das Kuratieren von Datensätzen.
 | **Endpunkt** | `https://wlo-mcp.87.106.195.152.nip.io/mcp` |
 | **Quellcode** | <https://github.com/janschachtschabel/wlo-mcp-sc> |
 | **Transport** | Streamable HTTP (`POST /mcp`), SSE optional · stdio lokal |
-| **Werkzeuge** | 28 lesend · 14 kuratierend = **42** |
+| **Werkzeuge** | 32 lesend · 16 kuratierend = **48** |
 | **Widgets** | 4 |
-| **Env-Schlüssel** | 34 vom Server gelesen, dazu 3 für den Container |
+| **Env-Schlüssel** | 40 vom Server gelesen, dazu 3 für den Container |
 
 Erhoben aus dem Quellcode, nicht aus dem Gedächtnis: Werkzeugliste und
 Parameter stammen aus `tools/list` des laufenden Servers, die Trefferzahlen aus
@@ -23,7 +23,7 @@ einem echten Aufruf gegen Staging (zuletzt 2026-08-20, nach dem Deploy mit
 ## 1. Anschluss
 
 Ein Client **ohne** `Authorization`-Header bekommt `200` und die **volle**
-Werkzeugliste — alle 42, die Kuratier-Werkzeuge eingeschlossen. Das ist Absicht:
+Werkzeugliste — alle 48, die Kuratier-Werkzeuge eingeschlossen. Das ist Absicht:
 ein Modell, das ein Schreibwerkzeug nie sieht, ruft es nie auf, und dann fordert
 nichts den Host je zur Anmeldung auf. Der *Aufruf* wird zur Laufzeit abgewiesen
 und trägt die `WWW-Authenticate`-Aufforderung, die den Login startet.
@@ -40,9 +40,9 @@ Session-Store.
 
 | Identität | Lesen | Schreiben | Wie |
 |---|---|---|---|
-| **anonym** | alle 28 | **nie** | kein Header. Die öffentliche Fläche bleibt lesend. |
-| **eigenes WLO-Konto** | alle 28 | alle 14 | OAuth 2.1, oder ein `wlo2.…`-Block als `Bearer`, oder `Basic`. Jede Änderung ist einer Person zurechenbar. |
-| **Dienstkonto** | alle 28 | nur mit `WLO_ALLOW_SERVICE_WRITES` | Sonst stünde in der Versionshistorie „wlo-mcp" für eine Änderung, die irgendwer wollte. |
+| **anonym** | alle 32 | **nie** | kein Header. Die öffentliche Fläche bleibt lesend. |
+| **eigenes WLO-Konto** | alle 32 | alle 16 | OAuth 2.1, oder ein `wlo2.…`-Block als `Bearer`, oder `Basic`. Jede Änderung ist einer Person zurechenbar. |
+| **Dienstkonto** | alle 32 | nur mit `WLO_ALLOW_SERVICE_WRITES` | Sonst stünde in der Versionshistorie „wlo-mcp" für eine Änderung, die irgendwer wollte. |
 
 Der Zugangsblock wird unter `/auth` geholt (das Passwort wird **im Browser**
 verschlüsselt) und unter `/auth/revoke` widerrufen. Eingebettete Widgets, die
@@ -55,7 +55,47 @@ ausschließlich eine Vorschau der Änderungsmenge und einen einmalig gültigen
 Schlüssel. Der Schlüssel bindet an einen Fingerabdruck genau dieser Menge — was
 nicht in der Vorschau stand, kann nicht mitgeschrieben werden. Danach wird jeder
 Schreibvorgang zurückgelesen, weil edu-sharing drei Wege kennt, eine Änderung zu
-verwerfen und trotzdem `200` zu antworten.
+verwerfen und trotzdem `200` zu antworten. Für Programme steht der Schlüssel samt
+Änderungsmenge zusätzlich in `structuredContent.confirm` (`token`, `expiresAt`,
+`preview.action` = `change`/`delete`, `preview.tool` = der Werkzeugname,
+`preview.target`, `preview.fields[]` mit `name`/`label`/`old`/`new`, bei
+Vokabular- und Bewertungsfeldern dazu `oldLabels`/`newLabels`, bei mehrschrittigen
+Änderungen `preview.items[]` mit einer Zeile je Schritt) — kein
+Herauslesen aus dem Text mehr nötig. Gibt es nichts zu bestätigen, kommt
+`{"confirm": null, "unchanged": true}`. Die Stapel-Ablage trägt dieselbe Form
+(Ziel `home`, 30 min gültig) und daneben weiter `batchToken`.
+
+**Geplante Änderungen** (`wlo_create_collection_tree`, `wlo_add_to_collections`): eine
+Bestätigung für den ganzen Plan; der Server führt ihn in Abschnitten von ~40 s aus
+(vier Schritte parallel, von oben nach unten). Die Antwort trägt `complete`,
+`progress {done, total}`, je Schritt `status`/`code`/`nodeId` und, solange etwas offen
+ist, `continuationToken`. Der Plan gilt 30 min ab Bestätigung und verlängert sich nicht.
+Ein Schlüssel darf von derselben Anmeldung erneut vorgelegt werden — er setzt fort oder
+liefert dasselbe Ergebnis, legt nie doppelt an. Fehlercodes: `plan_expired` (unbekannt,
+abgelaufen oder nach Neustart — weiter mit neuer Vorschau) und `plan_mismatch` (andere
+Anmeldung oder andere Angaben).
+
+**Fehler als Code.** Jede Antwort mit `isError` trägt `structuredContent.error`
+(`code`, `message` = derselbe deutsche Text; einzelne Codes mit Zusatzfeldern). Die Codes:
+
+| Code | Bedeutung | Was ein Programm tut |
+|---|---|---|
+| `login_required` | Schreibwerkzeug ohne (eigene) Anmeldung | Anmeldung anstoßen (`_meta["mcp/www_authenticate"]`) |
+| `login_rejected` | Das Repository hat die vorhandene Anmeldung abgelehnt (HTTP 401, z. B. Passwort geändert) — in jedem Werkzeug | neu anmelden (`_meta["mcp/www_authenticate"]`) |
+| `invalid_input` | Angaben abgelehnt — auch falsche Parameter, die das SDK schon vor dem Werkzeug abweist (`Input validation error …`); bei Schreibwerkzeugen nennt `reasons[]` jeden Grund | Angaben korrigieren |
+| `unknown_tool` | Werkzeug unbekannt oder abgeschaltet (etwa `get_url_text` unter `WLO_DISABLE_UNSAFE_TOOLS`) | Werkzeugliste neu lesen |
+| `exists` | `wlo_create_content`: zu dieser URL gibt es schon einen Datensatz — schon in der Vorschau, ohne Schlüssel; `error.existing {nodeId, title}` | diesen bearbeiten |
+| `confirm_expired` / `confirm_mismatch` / `confirm_unknown` | Bestätigungsschlüssel abgelaufen / gehört zu anderer Änderung / unbekannt oder verbraucht | ohne `confirmToken` neu aufrufen, neue Vorschau |
+| `plan_expired` / `plan_mismatch` | siehe oben | neue Vorschau |
+| `too_many_plans` | Schon fünf unfertige Pläne dieser Anmeldung; nichts geschrieben, der Schlüssel gilt weiter | einen Plan zu Ende führen, dann mit demselben Schlüssel wiederholen |
+| `not_found` / `not_a_collection` | Ziel fehlt bzw. ist keine Sammlung | — |
+| `not_checked` | Eine nötige Prüfung ließ sich nicht lesen; nichts geändert | später erneut |
+| `timeout` | Antwort kam nicht rechtzeitig. Bei Schreibwerkzeugen `outcomeOpen`: `false` = der Aufruf trug keinen Schlüssel, war also eine Vorschau (gefahrlos wiederholen); `true` = kann gewirkt haben (erst nachsehen). Bei Lese-Werkzeugen ohne `outcomeOpen` | je nach `outcomeOpen` |
+| `not_visible` / `unverified` | Angenommen, aber im Datensatz nicht zu sehen / nicht überprüfbar | nachsehen, nicht blind wiederholen |
+| `forbidden` | Das Repository verweigert den Zugriff (401/403) | — |
+| `upstream_error` | Das Repository hat einen Fehler gemeldet, oder ein Werkzeug ist unerwartet abgebrochen | — |
+| `refused` | Jede übrige fachliche Ablehnung; der Grund steht in `message`. Auffangnetz: jede Fehlerantwort ohne eigenen Code bekommt diesen | Text an die Person geben |
+| `batch_unknown` / `batch_expired` / `batch_mismatch` · `slot_missing` · `mismatch_bytes` · `folder_failed` · `nothing_stored` | Stapel-Ablage: Freigabe unbekannt/abgelaufen/fremd · hochgeladene Datei nicht (mehr) da · Bytes passen nicht zur Freigabe · Ordner nicht anlegbar · noch keine Datei abgelegt (die Felder `status`/`reason` bleiben daneben) | neu vorbereiten · neu hochladen · neu hochladen · Datei erneut senden · erst eine Datei ablegen |
 
 ---
 
@@ -73,11 +113,15 @@ anderen Schalter sind aus, solange sie nicht gesetzt werden.
 | Schalter | Standard | Wirkt auf | Effekt |
 |---|---|---|---|
 | `WLO_AUTH_PRIVATE_KEY` | **aus** | die gesamte Anmeldung | Ohne ihn gibt es keinen Zugangsblock, kein OAuth und keine `/auth`-Seiten. Der Server ist dann rein lesend — oder schreibt unter dem Dienstkonto, falls dessen Schalter gesetzt ist. |
-| `WLO_ALLOW_SERVICE_WRITES` | **aus** | die 14 Kuratier-Werkzeuge im Dienstkonto-Modus | An: das geteilte Konto darf ändern. Aus: Absage zur Laufzeit. Betrifft auch **stdio** — dort kommen die Zugangsdaten aus der Umgebung und gelten deshalb als Dienstkonto, selbst wenn es das eigene Login ist. |
+| `WLO_ALLOW_SERVICE_WRITES` | **aus** | die 16 Kuratier-Werkzeuge im Dienstkonto-Modus | An: das geteilte Konto darf ändern. Aus: Absage zur Laufzeit. Betrifft auch **stdio** — dort kommen die Zugangsdaten aus der Umgebung und gelten deshalb als Dienstkonto, selbst wenn es das eigene Login ist. |
 | `WLO_ALLOW_PREPARED_WRITES` | **aus** | die Antwortform der Kuratier-Werkzeuge | An: ein *angemeldeter* Aufrufer kann einen Schreibvorgang **vorbereiten** statt ausführen — die Antwort ist eine Beschreibung der Anfrage, die ein Widget mit der Sitzung der Nutzerin abschickt. Gibt keine Rechte, nur eine andere Antwortform. Anonyme bekommen auch damit nichts. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | Code: **aus** (Werkzeug AN)<br>Container: **`all`** (Werkzeug AUS) | `get_url_text` | `all`, `1`, `true`, `yes` oder `on` schaltet **jedes** als unsicher erklärte Werkzeug ab; sonst eine komma- oder leerzeichengetrennte Namensliste. Ein „all" irgendwo in der Liste gewinnt. Das Werkzeug verschwindet aus `tools/list`.<br><br>**Achtung, die beiden Standards sind entgegengesetzt.** Im Code sind unsichere Werkzeuge an (deshalb warnt der Start beim Registrieren jedes einzelnen); `docker-compose.yml` dreht das auf `all`, weil eine Installation genau der Ort ist, an dem das nicht schließbare Risiko zählt. Zum Einschalten im Container die Variable **ausdrücklich leer** setzen — compose nutzt `${VAR-all}` ohne Doppelpunkt, greift also nur bei *ungesetzt*. |
 | `WLO_DISABLE_SKILL_SEARCH` | **aus** | `search_skill` | An: die repository-weite Skill-Suche entfällt — für eine Installation, die auf den Registry-Prozess umgestellt hat (ein Skill wird über die Sammlung erreicht, die ihn freigibt). `get_skill` und `get_skill_registry` bleiben unberührt: die Registry gibt nodeIds aus, und `get_skill` ist genau wofür sie da sind. Nur ein ausdrückliches Ja schaltet ab — die Zeichenkette `"false"` darf nicht als „ja" gelesen werden.<br><br>**Wirkt nur im `two-tool`-Modus.** Unter `WLO_SKILL_TOOL_MODE=one-tool` wird die Fahne **ignoriert**: dort *ist* `get_skill_for_task` die Suche, und sie abzuschalten ließe den Modus ohne jeden Weg, einen Skill zu finden. Gemessen 2026-08-19. |
 | `WLO_SKILL_TOOL_MODE` | `two-tool` | `search_skill` ↔ `get_skill_for_task` | `one-tool` tauscht **die Suche allein** gegen ein Werkzeug, das den passenden Skill sucht *und* lädt. Die Werkzeuganzahl ändert sich **nicht**, und `get_skill` ist in **jedem** Modus registriert — es ist das einzige Werkzeug, das eine nodeId nimmt, und die Freigabelisten geben nodeIds aus.<br><br>**Hebt `WLO_DISABLE_SKILL_SEARCH` auf**, siehe dort. |
+| `WLO_BATCH_UPLOAD_ENABLED` | **aus** | `wlo_prepare_file_batch`, `wlo_store_batch_file`, `wlo_store_batch_manifest`, `wlo_list_my_batches`, Route `POST /api/uploads` | An (`1`/`true`/`yes`/`on`): die Stapel-Ablage in den persönlichen Bereich ist da — vier Kuratier-Werkzeuge plus der Upload-Platz im Arbeitsspeicher. Aus: weder Werkzeuge noch Route; `tools/list` bleibt unverändert. Nur mit eigener Anmeldung, das Dienstkonto wird abgewiesen. |
+| `UPLOAD_MAX_BYTES` | 50 MB | `POST /api/uploads` | Größte Einzeldatei eines Upload-Platzes; höchstens 100 MB. Nur wirksam mit `WLO_BATCH_UPLOAD_ENABLED`. |
+| `UPLOAD_MAX_TOTAL_BYTES` | 128 MB | `POST /api/uploads` | Summe aller offenen Upload-Plätze im Arbeitsspeicher; höchstens 384 MB (der Container hat 512 MB). |
+| `UPLOAD_REQUEST_TIMEOUT_MS` | 25 000 | `POST /api/uploads` | Frist für den Empfang eines Upload-Körpers; höchstens 28 000, damit sie vor der serverweiten Empfangsfrist greift und der Client eine Antwort bekommt. |
 | `WLO_SEARCH_OUTPUT_MODE` | `lean` | `search` **und** `fetch` | `rich`: `search` liefert die vollen Töpfe von `search_wlo_all` samt Widget, `fetch` den vollen Datensatz samt Detailansicht. Der Schalter deckt beide, weil `search` → `fetch` ein Fluss ist — nur den ersten Schritt anzureichern ließe den zweiten nichts rendern. Die Konventionsform (ein einziger Parameter) bleibt in beiden Modi unangetastet. |
 | `WLO_SKILL_CACHE` | **AN** | den Freigabekatalog an Sammlungs-Antworten | Hält die Registry jeder Sammlung im Hintergrund warm, damit ein Sammlungstreffer seinen Katalog kostenlos tragen kann. Nur ein ausdrückliches `0`, `false`, `no` oder `off` schaltet ab. Der Schalter deckt **Zeitgeber und Anfragepfad**: ohne Tick darf auch der Live-Rückfall nicht laufen, sonst zahlt jede Anfrage die volle Kinderliste, während nichts sie je verfallen ließe. |
 | `WLO_TEXT_EXTRACTION_URL` | gesetzt | `get_url_text`, Volltext-Rückfall | Leer: der Extraktionsdienst ist aus, `get_url_text` antwortet mit nichts, und Volltext kommt nur noch aus `/textContent` des Repositoriums. Der Start warnt. |
@@ -125,6 +169,15 @@ Jedes Suchwerkzeug liefert drei Dinge nebeneinander:
 3. einen **`_queryMeta`**-Block mit `pagination {maxItems, skipCount, totalResults}`,
    den Suchkriterien, einer `searchUrl` sowie — falls vorhanden —
    `unresolvedFilters` (mit bis zu drei Vorschlägen) und `facets`
+
+Seit 2026-11-07 stehen `unresolvedFilters` und `facets` zusätzlich in
+`structuredContent` (`search_wlo_content`, `search_wlo_all`,
+`search_wlo_collections`, `search_wlo_within_collection`) — wer nur den Vertrag
+liest, erfährt sonst nicht, dass ein Filter nicht griff. **Eine nicht auflösbare
+Lizenz leert die Materialien** (0 Inhalte, keine Facetten, Hinweis mit Vorschlägen;
+Sammlungen und Themenseiten filtert die Lizenz ohnehin nicht):
+ungefiltert hätte sie Material unter anderer Lizenz geliefert, etwa CC BY-NC-ND auf
+die Frage nach CC BY. Die übrigen Filter werden weiterhin ignoriert und gemeldet.
 
 ### Datensatz: 19 Felder
 
@@ -214,7 +267,12 @@ Filter nehmen deutsche Labels **oder** URIs. Ein Label, das sich nicht auflösen
 lässt, wird nicht still verworfen, sondern in `_queryMeta.unresolvedFilters`
 gemeldet. `license: "OER"` fasst die vier frei nachnutzbaren Lizenzen zusammen
 (CC0, gemeinfrei, CC BY, CC BY-SA) und filtert **exakt**: „CC BY 4.0" liefert nie
-NC- oder ND-Material.
+NC- oder ND-Material. Eine Lizenz **löst** auch nur exakt auf (seit 2026-11-06):
+„CC BY NC" ohne Bindestriche wurde früher still zu CC BY und landet jetzt mit
+Vorschlag in `unresolvedFilters`, ebenso eine Lizenz-URI — WLO speichert
+Lizenzen als Schlüssel (`CC_BY_NC`), eine URI träfe nichts. Ein Filter, der nur **geraten** aufgelöst
+wurde („Arbeitsblat" → Arbeitsblatt), trägt in `_queryMeta.criteria` das Feld
+`match: "fuzzy"`.
 
 ### 5.2 Sammlungen & Navigation — ohne Anmeldung
 
@@ -222,16 +280,18 @@ NC- oder ND-Material.
 |---|---|---|
 | `search_wlo_collections` | Kuratierte Bündel zu einem Thema finden. Fragt **beide** Repository-Indizes, weil keiner eine Obermenge des anderen ist. | query · parentNodeId · educationalContext · discipline · maxResults`=5` · excludeNodeIds · includeSkillRegistry · outputFormat |
 | `get_collection_contents` | Was in dieser Sammlung liegt — Materialien und Unter-Sammlungen. | `nodeId*` · query · contentFilter (files\|folders\|both) · includeSubcollections · maxResults`=20` · skipCount · excludeNodeIds · skillContext · outputFormat |
-| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen und filtern. | `nodeId*` · query · alle Filter · maxResults`=10` · skipCount · skillContext · outputFormat |
+| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen und filtern. `excludeNodeIds` lässt schon Gesehenes weg (auch über das Original einer Verknüpfung), vor dem Blättern. | `nodeId*` · query · alle Filter · maxResults`=10` · skipCount · excludeNodeIds · skillContext · outputFormat |
 | `get_subject_portals` | Welche Fächer/Themen es überhaupt gibt — die obersten Fach-Hubs. | educationalContext · includeContentCounts · outputFormat |
-| `browse_collection_tree` | Geführtes Stöbern durch die Unterthemen eines Fachportals. | nodeId · subject · depth`=1` · includeContentCounts · includeContentPreview · maxResults`=50` · outputFormat |
+| `browse_collection_tree` | Geführtes Stöbern durch die Unterthemen eines Fachportals. Tiefe 1–3; bei Tiefe 3 höchstens **300 Knoten** insgesamt (Breite je Ast vor dem Lauf berechnet), `truncatedAt` nennt den ersten gekappten Ast — die Elternsammlung selbst, wenn schon die erste Ebene mehr als `maxResults` Unterthemen hat. | nodeId · subject · depth`=1` (1–3) · includeContentCounts · includeContentPreview · maxResults`=50` · outputFormat |
 | `get_collection_stats` | Woraus eine Sammlung besteht: Anzahl Dateien und Unter-Sammlungen plus Aufschlüsselung. | `nodeId*` · outputFormat |
+| `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium (die oberen zwei Gliederungsebenen, Gesamtzahl der Überschriften und Länge — ohne eigenen Abruf; das volle Verzeichnis liefert `get_compendium_text`), Statistik, freigegebene Skills (erste drei mit Beschreibung), Untersammlungen mit Inhaltszahl, erste Inhalte. Teile parallel; ein fehlender Teil steht in `missing` (`timeout`/`forbidden`/`upstream_error`/`not_checked`). Fehler als Code: `not_found`, `forbidden`, `not_a_collection`. | `collectionId*` · include · maxContents`=10` · maxSubcollections`=30` |
+| `count_wlo_content_matches` | Für bis zu 30 Suchanfragen zugleich die Trefferzahl (+ bis zu 3 Treffer je Anfrage). Eine Suche je Anfrage, ohne Varianten und Umsortierung — `total` ist die Zahl des Repositorys und zählt jeden Volltexttreffer, auch schwache (live: „Spiegelbild" 150, bester Treffer zu Arbeitsmärkten); die Top-Treffer zeigen, wie gut sie passt. Ein nicht auflösbarer Filter wird nie weggelassen: die Anfrage steht in `missing` (`unresolved_filter`); ein geratener in `fuzzyFilters`. Über ganz WLO, nicht in einem Teilbaum (Entscheidung E5). | `queries*` = [{id, query, filters}] (≤30) · top`=2` (0–3) |
 
 ### 5.3 Detail & Kontext — ohne Anmeldung
 
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
-| `get_node_details` | Die Detailansicht: Metadaten als lesbare Labels. `includeQualityInfo` ergänzt die 14 redaktionellen Bewertungen, `includeAccessInfo` Zugang, Kosten, Werbung, Barrierefreiheit und OER-Status — beides **ohne zusätzlichen Abruf**. Kompendium: Markdown zeigt eine 500-Zeichen-Vorschau, JSON nur das Signal `hasCompendium`. | `nodeId*` · includeTextContent · includeParents · includeRaw · includeQualityInfo · includeAccessInfo · skillContext · outputFormat |
+| `get_node_details` | Die Detailansicht: Metadaten als lesbare Labels. `includeQualityInfo` ergänzt die 14 redaktionellen Bewertungen, `includeAccessInfo` Zugang, Kosten, Werbung, Barrierefreiheit und OER-Status — beides **ohne zusätzlichen Abruf**. Kompendium: Markdown zeigt eine 500-Zeichen-Vorschau, JSON nur das Signal `hasCompendium`. Mit `nodeIds` (1–50) statt `nodeId` ist die Antwort immer eine Liste `{results, missing}` — `missing: [{part, code}]` mit `not_found`/`forbidden`/`timeout`/`upstream_error`, so dass gelöscht und gesperrt auseinanderzuhalten sind —, die Anreicherungen stehen je Ergebnis; `includeRaw` und `skillContext` gelten nur mit `nodeId`. Mit `nodeId` dieselbe Form in `structuredContent`: ein Fehlgriff trägt `missing`, ein Treffer trägt `renderUrl` und die angeforderten Anreicherungen in beiden Formaten. | `nodeId` oder `nodeIds` · includeTextContent · includeParents · includeRaw · includeQualityInfo · includeAccessInfo · skillContext · outputFormat |
 | `get_nodes_details` | Dasselbe für bis zu 50 ids parallel. Fehlschläge kommen in `failed` zurück, nicht als Gesamtfehler. | `nodeIds*` · includeTextContent · includeParents · includeQualityInfo · includeAccessInfo |
 | `get_related_content` | „Mehr wie dieses" — ähnliche Materialien nach einer Suche oder Detailansicht. | `nodeId*` · maxResults`=8` · includeSiblings · skillContext · outputFormat |
 | `get_node_breadcrumb` | Wo eine Sammlung im Themenbaum sitzt — der Pfad von der Wurzel. | `nodeId*` · outputFormat |
@@ -287,7 +347,7 @@ Anleitung, die ein Modell laden kann.
 |---|---|---|
 | `search_skill` | Skills im Repository suchen. Entfällt mit `WLO_DISABLE_SKILL_SEARCH`; unter `WLO_SKILL_TOOL_MODE=one-tool` ersetzt `get_skill_for_task` dieses Werkzeug. | query · maxResults · collectionId · includeSubcollections · discipline · educationalContext · outputFormat |
 | `get_skill` | Die Anleitung per nodeId laden — der Markdown-Volltext, wortgetreu und **ohne Längenlimit** (seit 2026-08-20; der 64-KiB-Deckel gewöhnlicher Datei-Downloads gilt auf dem Skill-Pfad nicht — eine halbe Anleitung ist schlimmer als keine). In **jedem** Modus registriert. | `nodeId*` · includeFiles · outputFormat |
-| `get_skill_registry` | Welche Skills für **eine** Sammlung freigegeben sind. Mit `context` nur der eine Arbeitszusammenhang samt Anleitung der Redaktion. | `collectionId*` · context · outputFormat |
+| `get_skill_registry` | Welche Skills für **eine** Sammlung freigegeben sind. Mit `context` nur der eine Arbeitszusammenhang samt Anleitung der Redaktion. Mit `task` wählt das Werkzeug unter den freigegebenen den passendsten und liefert seine **Anleitung** gleich mit, zusammen mit den Anweisungen der Redaktion (`task.instructions`) — aber nur bei eindeutiger Wahl (Wortübereinstimmung, deutlicher Abstand); sonst `match: ambiguous` mit den Kandidaten, `none` wenn keiner passt, `unreadable` wenn der passende nicht lesbar ist. | `collectionId*` · context · task · outputFormat |
 
 Der Freigabekatalog reist **kostenlos** an jeder Sammlungs- und
 Themenseiten-Antwort mit (aus dem Cache). Ein *benannter* `skillContext` kostet einen Live-Abruf von rund
@@ -300,24 +360,28 @@ Fehler.
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
 | `lookup_wlo_vocabulary` | Welche Werte ein Feld annimmt — für Filter **und** fürs Schreiben. `qualityScale` nennt jede Stufe jeder Qualitätsbewertung samt Beschriftung und Kuratier-Parameter, `qualityFinding` die Prüfergebnisse. | `vocabulary*` = educationalContext \| discipline \| userRole \| lrt \| license \| targetGroup \| universitySubject \| qualityScale \| qualityFinding · query *(nur für universitySubject)* |
+| `resolve_wlo_filters` | Alle Filter-Bezeichnungen eines Vorhabens in **einem** Aufruf → der gespeicherte Wert, je Wert mit `status` `exact`/`alias`/`fuzzy` (unscharf nur mit `suggestions`, nie still übernehmen); Unaufgelöstes in `unresolved` mit Vorschlägen. Lizenzen nur exakt („CC BY NC" wird nicht zu CC BY). Rein lokal. | `filters*` = {discipline · educationalContext · lrt · license · userRole · targetGroup}, je ≤10 |
+| `find_content_by_url` | Gibt es zu diesen Adressen schon einen Datensatz (`ccm:wwwurl`)? `exact` = dieselbe Adresse, `normalized` = gleich nach Bereinigung (Schrägstrich, Fragment, `utm_*`/`fbclid`/`gclid`). Eine Schreibweise mit Schrägstrich oder Tracking-Parameter findet die gespeicherte Adresse im Repository nicht (gemessen) — deshalb fragt das Werkzeug bis zu drei Schreibweisen ab und vergleicht jeden Treffer selbst, weil die Suche auch Nachbarn liefert (`…-teil-2`). Fehler je Eintrag (`invalid_url`, `upstream_error`). | `urls*` (≤20) · includeCollections`=false` |
 | `lookup_wlo_publishers` | Welche Anbieter Inhalte liefern, mit Materialzahl je Anbieter — als Facetten-Aggregation über den echten Index. | query · discipline · educationalContext · maxResults`=20` · outputFormat |
 | `wlo_health_check` | Ist das Repository erreichbar? Latenz in ms, aufgelöste Wurzel-nodeId, Status. | — |
 | `wlo_auth_status` | Wer bin ich gerade, und darf ich schreiben? Der Einstieg, wenn ein Kuratier-Aufruf abgewiesen wurde. | — |
 
 ### 5.8 Kuratierung — Anmeldung erforderlich
 
-Alle 14 sind für jeden Aufrufer **sichtbar** und werden zur Laufzeit abgewiesen.
+Alle 16 sind für jeden Aufrufer **sichtbar** und werden zur Laufzeit abgewiesen (dazu vier Stapel-Werkzeuge, die nur mit `WLO_BATCH_UPLOAD_ENABLED` erscheinen).
 Jeder Aufruf ohne `confirmToken` erzeugt nur die Vorschau.
 
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
-| `wlo_create_content` | Neuen Datensatz anlegen — mit Metadaten, optional Text oder Datei. | `title*` · description · keywords · url · language · author · publisher · licenseKey · licenseVersion · contentType · educationalContext · discipline · userRole · *14 Qualitätsfelder* · content · contentFormat · fileBase64 · confirmToken |
+| `wlo_create_content` | Neuen Datensatz anlegen — mit Metadaten, optional Text oder Datei. Mit `addToCollectionId` unter **derselben** Bestätigung gleich in eine Sammlung aufgenommen (die Aufnahme ist Teil der bestätigten Änderung); scheitert nur das Aufnehmen, bleibt der Datensatz (`collection.status` = `failed` mit Code). Gibt es zur `url` schon einen Datensatz, bietet die Vorschau an, **diesen** aufzunehmen. Eine Ziel-id, die keine Sammlung ist, wird vor der Vorschau abgelehnt. Die Antwort trägt `structuredContent {nodeId, title, collection?}`. | `title*` · description · keywords · url · language · author · publisher · licenseKey · licenseVersion · contentType · educationalContext · discipline · userRole · *14 Qualitätsfelder* · content · contentFormat · fileBase64 · addToCollectionId · confirmToken |
 | `wlo_update_content` | Metadaten oder Inhalt ändern. Zeigt die Änderung auf eine Verknüpfung automatisch auf das **Original** um und sagt das in der Vorschau. | `nodeId*` · dieselbe Feldfläche · commit · versionComment · confirmToken |
 | `wlo_submit_content` | Einen Datensatz zur redaktionellen Prüfung einreichen. | `nodeId*` · comment · confirmToken |
 | `wlo_create_collection` | Sammlung anlegen. | `title*` · description · parentId · confirmToken |
 | `wlo_rename_collection` | Sammlung umbenennen. | `nodeId*` · `title*` · description · confirmToken |
 | `wlo_add_to_collection` | Material einer Sammlung zuordnen. | `collectionId*` · `nodeId*` · confirmToken |
 | `wlo_remove_from_collection` | Zuordnung lösen. | `collectionId*` · `nodeId*` · confirmToken |
+| `wlo_create_collection_tree` | Sammlungsbaum mit einer Bestätigung anlegen (≤ 250 Knoten, Tiefe 4). | `parentCollectionId*` · `tree*` · onExisting · confirmToken · continuationToken |
+| `wlo_add_to_collections` | Bis zu 200 Materialien mit einer Bestätigung aufnehmen. | `pairs*` · confirmToken · continuationToken |
 | `wlo_update_compendium` | Kompendiumstext einer Sammlung setzen oder entfernen. | `nodeId*` · text · remove · confirmToken |
 | `wlo_set_topic_page` | Welche Variante eine Themenseite rendert. Das einzige Werkzeug, dessen Ergebnis **sofort öffentlich** ist. | `collectionId*` · `variantId*` · confirmToken |
 | `wlo_suggest_metadata` | Metadaten *vorschlagen* statt schreiben — mit Begründung, zur Entscheidung durch die Redaktion. | `nodeId*` · `suggestions*` · confirmToken |
@@ -325,6 +389,10 @@ Jeder Aufruf ohne `confirmToken` erzeugt nur die Vorschau.
 | `wlo_decide_suggestion` | Vorschlag annehmen oder ablehnen. Annehmen schreibt und liest zurück, **bevor** der Vorschlag als angenommen markiert wird. | `nodeId*` · `suggestionId*` · `decision*` · confirmToken |
 | `wlo_delete_content` | Material löschen. Über eine Verknüpfungs-id trifft es **nur die Verknüpfung** — die Vorschau sagt, welcher der beiden Fälle vorliegt. | `nodeId*` · confirmToken |
 | `wlo_delete_collection` | Sammlung löschen. | `nodeId*` · confirmToken |
+| `wlo_prepare_file_batch` | **Nur mit `WLO_BATCH_UPLOAD_ENABLED`.** Ablage mehrerer Dateien in den *persönlichen* Bereich vorbereiten: Vorschau aller Einträge und **ein** Freigabe-Schlüssel (`batchToken`) für genau diese Liste. Legt nichts an. | `target*`=home · `folderName*` · `entries*` |
+| `wlo_store_batch_file` | **Nur mit `WLO_BATCH_UPLOAD_ENABLED`.** Eine Datei des freigegebenen Stapels ablegen (Datei vorher über `POST /api/uploads`). Jeder Index nur einmal. | `batchToken*` · `index*` · `ref*` |
+| `wlo_store_batch_manifest` | **Nur mit `WLO_BATCH_UPLOAD_ENABLED`.** `vorgang.json` (`wlo.ablage-vorgang@1`) zum Stapel ablegen, vom Server aus der Freigabe gebaut. Titel, Kennung und Stand jeder Datei stehen zusätzlich in `cm:description` des Datensatzes (zurückgelesen) — diesen Server lässt das Repository die Bytes einer privaten Datei nicht lesen. | `batchToken*` |
+| `wlo_list_my_batches` | **Nur mit `WLO_BATCH_UPLOAD_ENABLED`, nur lesend, nur eigene Anmeldung.** Die eigenen Stapel-Ablagen, neueste zuerst: Titel, Datum, Stand (`counts`: stored/dropped/unverified/failed/open); mit `nodeId` eine Ablage samt Einträgen. Gefunden über die Knoten-Ablage des eigenen Bereichs (flach und eine Ordnerebene), nie über den Suchindex; nicht lesbare Kennzahlen → `status: unreadable`, ein gekappter Bereich → `scanTruncated`. Fehler als Code: `login_required`, `not_found`. | limit`=10` (1–20) · nodeId |
 
 #### Die Qualitätsfläche: 14 Felder
 
@@ -385,7 +453,7 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 |---|---|---|
 | `WLO_AUTH_PRIVATE_KEY` | — | Der Hauptschalter, siehe Abschnitt 3. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | — | Vorgängerschlüssel, damit eine Rotation ausgegebene Blöcke nicht sofort entwertet. |
-| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | Die Erlaubnisliste — hält ids, nie Zugangsdaten. Der einzige Ort, an den zur Laufzeit geschrieben wird. |
+| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | Die Erlaubnisliste — hält ids, nie Zugangsdaten, nur für den Eigentümer lesbar (0600). Der einzige Ort, an den zur Laufzeit geschrieben wird. Eine Server-Instanz je Datei: ein Widerruf wirkt nur in der Instanz, die ihn ausführt. |
 | `WLO_PUBLIC_BASE_URL` | — | Der Aussteller-Ursprung für OAuth. Ohne ihn nur aus dem `Host`-Header, und nur unter `TRUST_PROXY`. |
 
 ### Betrieb
@@ -395,7 +463,7 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 | `PORT` · `BIND_ADDR` · `HOST_PORT` | 3000 · 127.0.0.1 · 3000 | Wo der Server lauscht. Die letzten beiden wertet **docker-compose** aus, nicht der Server. |
 | `TRUST_PROXY` | Code: **0**<br>Container: **1** | Nur hinter einem eigenen Proxy einschalten — sonst fälscht jeder Client `X-Forwarded-For` und damit seine Rate-Limit-Identität. Der Container steht per Annahme hinter einem TLS-terminierenden Proxy und setzt deshalb 1. Bei direkter Freigabe (`BIND_ADDR=0.0.0.0`) **muss** wieder 0 gesetzt werden. |
 | `MCP_SSE` | 1 | Server-Sent Events für den Transport (docker-compose). |
-| `RATE_LIMIT_RPM` | 120 | Anfragen je Minute auf `/mcp`. |
+| `RATE_LIMIT_RPM` | 120 | Anfragen je Minute auf `/mcp`, gezählt je Adresse (IPv6 je /64). Ein JSON-RPC-Batch zählt je Eintrag und darf höchstens 10 Einträge haben. |
 | `API_RATE_LIMIT_RPM` | 30 | dito für `/api/*`. |
 | `AUTH_CREDENTIAL_LIMIT` | 10 | Verschiedene Geheimnisse je Identität — der Rateversuchs-Deckel. Zählt bei `Basic` je Adresse, bei einem Zugangsblock je `jti`. |
 | `TICKET_CREDENTIAL_LIMIT` | 200 | Eigenes Budget für den Ticket-Tausch eingebetteter Widgets. |

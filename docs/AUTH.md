@@ -459,7 +459,7 @@ credential.)
 |---|---|
 | `WLO_AUTH_PRIVATE_KEY` | PKCS#8 PEM. **Setting it is all it takes** to enable personal logins and the whole OAuth surface. Unset ⇒ `/auth*` and `/oauth/*` answer 404 and a Bearer is refused. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | Rotation window — tried after the current key, so blocks issued under the old one keep working. |
-| `WLO_AUTH_REGISTRY_PATH` | The allow-list file. Must point **into a writable volume**; anywhere else and the feature stays off with the reason in the log. Default `/data/access-registry.json`. |
+| `WLO_AUTH_REGISTRY_PATH` | The allow-list file. Must point **into a writable volume**; anywhere else and the feature stays off with the reason in the log. Default `/data/access-registry.json`. Read once at startup and held in memory: **one server instance per file** — a revocation reaches only the instance that performed it. |
 | `WLO_PUBLIC_BASE_URL` | This deployment's public origin. It is the issuer, so whoever sets it decides where a login happens — derived from the `Host` header it would be the *caller*. Consulted from the header only under `TRUST_PROXY`. Without a resolvable issuer, OAuth is off. |
 
 ```bash

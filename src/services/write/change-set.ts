@@ -60,6 +60,20 @@ export interface ChangeSet {
    * as the first line of the preview and part of what the token is bound to.
    */
   action?: string;
+  /**
+   * The collection the record is filed in as part of the SAME confirmation
+   * (`wlo_create_content` + `addToCollectionId`, BOERDi wishlist item 4). In the
+   * fingerprint, so an approval for "create" cannot also authorise a filing
+   * nobody saw — the same rule `redirectedFrom` follows.
+   */
+  addTo?: { nodeId: string; title: string };
+  /**
+   * One line per planned step of a multi-step change (`wlo_create_collection_tree`,
+   * `wlo_add_to_collections`). Rendered line by line — the action is flattened to
+   * one line, and forty steps in one line is not something anyone can check — and
+   * in the fingerprint, so the key authorises exactly these steps.
+   */
+  items?: string[];
 }
 
 /** Properties whose new values are added to what is there, not put in its place. */
@@ -97,7 +111,10 @@ export function buildChangeSet(
   kind: ChangeKind,
   before: Record<string, string[]>,
   desired: Record<string, string[]>,
-  opts: { destructive?: boolean; action?: string; redirectedFrom?: string } = {},
+  opts: {
+    destructive?: boolean; action?: string; redirectedFrom?: string;
+    addTo?: { nodeId: string; title: string }; items?: string[];
+  } = {},
 ): ChangeSet {
   const changes: FieldChange[] = [];
 
@@ -123,13 +140,15 @@ export function buildChangeSet(
     destructive: opts.destructive === true,
     title: before['cclom:title']?.[0] ?? before['cm:name']?.[0] ?? '',
     ...(opts.action ? { action: opts.action } : {}),
+    ...(opts.addTo ? { addTo: opts.addTo } : {}),
+    ...(opts.items?.length ? { items: opts.items } : {}),
     ...(opts.redirectedFrom ? { redirectedFrom: opts.redirectedFrom } : {}),
   };
 }
 
 /** True when there is something for the user to confirm. */
 export function hasSomethingToConfirm(cs: ChangeSet): boolean {
-  return cs.changes.length > 0 || cs.destructive || cs.action !== undefined;
+  return cs.changes.length > 0 || cs.destructive || cs.action !== undefined || Boolean(cs.items?.length);
 }
 
 /**
@@ -195,7 +214,7 @@ const PREVIEW_VOCAB: Record<string, VocabKey> = {
  * A value no table names is shown exactly as it is. Nothing is invented, and
  * the free-text fields (title, description) never enter either lookup.
  */
-function displayValue(property: string, value: string): string {
+export function displayValue(property: string, value: string): string {
   const scale = scaleLabel(property, value);
   if (scale) return scale;
   const vocab = PREVIEW_VOCAB[property];
@@ -242,6 +261,8 @@ export function renderChangeSet(cs: ChangeSet): string {
   // decline preview — which has no field changes and is therefore ONLY this line
   // — lost both the nodeId and the clause saying the record stays untouched.
   if (cs.action) lines.push(flattenText(cs.action));
+  // Each step on its own line, each flattened on its own — never the joined block.
+  for (const item of cs.items ?? []) lines.push(`- ${flattenText(item)}`);
 
   if (cs.destructive) {
     // The title is WHAT is being deleted, so a silent cut here is the worst

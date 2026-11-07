@@ -269,9 +269,9 @@ test('a topic-pages-only search settles the question too', async () => {
 });
 
 test('the topic-page disclosure survives the output schema', async () => {
-  // zod strips undeclared keys: without the schema entry the new fields reach
-  // the TEXT and silently vanish from structuredContent, with nothing failing
-  // anywhere — the exact trap CLAUDE.md documents for skillRegistry itself.
+  // Without the schema entry the new fields reach the TEXT and break the
+  // advertised schema (`additionalProperties: false`) with nothing failing on
+  // our side — the trap CLAUDE.md documents for skillRegistry itself.
   stopSkillRegistryCache();
   const { mock } = searchMock({ withTopicPageRegistry: true });
   try {

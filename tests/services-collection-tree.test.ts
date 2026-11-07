@@ -106,3 +106,25 @@ test('buildCollectionTree: an unreadable level-1 listing throws instead of readi
     mock.restore();
   }
 });
+
+test('buildCollectionTree: a first level longer than maxResults is cut AND disclosed (review R-C)', async () => {
+  const level1 = Array.from({ length: 4 }, (_, i) => makeNode(`k${i}`, `Kind${i}`));
+  const mock = installFetchMock((url) => {
+    const u = new URL(url);
+    const m = u.pathname.match(/-home-\/([^/]+)\/children/);
+    if (m?.[1] !== 'root') return { json: { nodes: [] } };
+    const max = Number(u.searchParams.get('maxItems') ?? '100');
+    return { json: { nodes: level1.slice(0, max) } };
+  });
+  try {
+    const cut = await buildCollectionTree({ parentId: 'root', depth: 1, maxResults: 3, includeContentCounts: false });
+    assert.equal(cut.nodes.length, 3);
+    assert.equal(cut.truncated, true);
+    assert.equal(cut.truncatedAt, 'root', 'the root is the first node whose children were cut');
+    const all = await buildCollectionTree({ parentId: 'root', depth: 1, maxResults: 4, includeContentCounts: false });
+    assert.equal(all.nodes.length, 4);
+    assert.equal(all.truncated, false);
+  } finally {
+    mock.restore();
+  }
+});

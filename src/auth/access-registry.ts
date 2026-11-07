@@ -121,6 +121,14 @@ const FORMAT_VERSION = 1;
  */
 export const MAX_BLOCKS_PER_LABEL = 10;
 
+/**
+ * Owner-only (0600): the file lists access ids, and an id is a secret —
+ * revocation acts on it (AUTH.md §4). The mode applies when a file is CREATED;
+ * every commit writes a fresh temp file and renames it into place, so an
+ * existing registry picks the mode up on its next write.
+ */
+const REGISTRY_FILE_OPTIONS = { encoding: 'utf8', mode: 0o600 } as const;
+
 function isEntry(value: unknown): value is RegistryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
@@ -150,6 +158,12 @@ function parseEntries(raw: string): RegistryEntry[] | null {
 
 /**
  * Load the registry, or null when it must not be trusted.
+ *
+ * Read ONCE and then held in memory: `has()` answers from memory on every
+ * request. That makes revocation immediate in THIS process and invisible to
+ * any other — the deployment runs one instance per file, and that is an
+ * assumption, not a coincidence (auth review 2026-11-05). A second instance on
+ * the same file needs a re-read before `has()` first.
  *
  * Null disables per-user access entirely — the caller treats it the way it
  * treats missing key material. A missing FILE is not that case: it is the
@@ -187,7 +201,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     // for the first person who tries to fetch a block. One line in the boot log
     // is worth more than a correct-looking startup and a 500 for a stranger.
     try {
-      await writeFile(path, JSON.stringify({ v: FORMAT_VERSION, entries: [] }), 'utf8');
+      await writeFile(path, JSON.stringify({ v: FORMAT_VERSION, entries: [] }), REGISTRY_FILE_OPTIONS);
       log.info('access registry created — starting empty', { path });
     } catch (err) {
       log.error('access registry cannot be written — per-user access stays off', {
@@ -232,7 +246,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
         const temp = `${path}.tmp`;
         // Write-then-rename: a crash mid-write leaves the previous registry
         // intact rather than a truncated file that would fail closed on restart.
-        await writeFile(temp, body, 'utf8');
+        await writeFile(temp, body, REGISTRY_FILE_OPTIONS);
         await rename(temp, path);
       } catch (err) {
         undo();

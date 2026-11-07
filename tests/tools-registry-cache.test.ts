@@ -203,7 +203,7 @@ test('get_node_details: a collection carries its registry on the record itself',
     assert.match(toolText(result), /Skill-Registry: Skill Registry Optik/);
     const structured = result.structuredContent as { results: { skillRegistry?: { title: string } }[] };
     assert.equal(structured.results[0]?.skillRegistry?.title, 'Skill Registry Optik',
-      'and the widget reads it from structuredContent, which zod would strip it from');
+      'and the widget reads it from structuredContent');
   } finally {
     await client.close();
     mock.restore();
@@ -401,8 +401,8 @@ for (const { tool, args } of JSON_CASES) {
       assert.ok(marked, `${tool} returned no coll-1 to check`);
       assert.equal(marked.skillRegistry?.title, 'Skill Registry Optik',
         'the field must survive into the json payload');
-      // structuredContent goes through zod, which strips undeclared keys — the
-      // separate assertion is what proves the field is declared, not just set.
+      // A separate assertion on structuredContent: the json text and the
+      // structured answer are built apart, and only this one is the contract.
       const structured = result.structuredContent as { results: typeof nodes };
       assert.ok(structured.results.find(n => n.nodeId === 'coll-1')?.skillRegistry,
         'and into structuredContent, which zod would silently drop it from');

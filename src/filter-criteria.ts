@@ -10,7 +10,7 @@
  */
 
 import type { SearchCriterion } from './wlo-api.js';
-import { resolveVocab, type VocabKey } from './vocabs.js';
+import { resolveVocab, resolveVocabMatch, type VocabKey, type VocabMatchKind } from './vocabs.js';
 import { suggestVocab } from './vocab-suggest.js';
 
 /** A search criterion carrying the human label the URI was resolved from. */
@@ -18,6 +18,12 @@ export interface LabeledCriterion {
   property: string;
   values: string[];
   label?: string;
+  /**
+   * Set only when the caller's value resolved by GUESS (`resolveVocabMatch`
+   * → `fuzzy`): "Arbeitsblat" filtered as Arbeitsblatt with nothing saying so.
+   * Travels into `_queryMeta.criteria`, so every search tool reports it.
+   */
+  match?: 'fuzzy';
 }
 
 export interface UnresolvedFilter {
@@ -109,6 +115,8 @@ export function derivedResourceTypeNotice(derivedType: string | undefined, kept:
     + `Für alle Materialarten die query nur mit dem Thema stellen.`;
 }
 
+const fuzzyMark = (match: VocabMatchKind): { match?: 'fuzzy' } => (match === 'fuzzy' ? { match } : {});
+
 export function buildFilterCriteria(params: {
   educationalContext?: string;
   discipline?: string;
@@ -133,28 +141,31 @@ export function buildFilterCriteria(params: {
   };
 
   if (params.educationalContext) {
-    const uri = resolveVocab(params.educationalContext, 'educationalContext');
-    if (uri) {
+    const hit = resolveVocabMatch(params.educationalContext, 'educationalContext');
+    if (hit) {
+      const uri = hit.value;
       criteria.push({ property: 'ccm:educationalcontext', values: [uri] });
-      labeled.push({ property: 'ccm:educationalcontext', values: [uri], label: params.educationalContext });
+      labeled.push({ property: 'ccm:educationalcontext', values: [uri], label: params.educationalContext, ...fuzzyMark(hit.match) });
     } else {
       reportUnresolved('educationalContext', params.educationalContext, 'educationalContext');
     }
   }
   if (params.discipline) {
-    const uri = resolveVocab(params.discipline, 'discipline');
-    if (uri) {
+    const hit = resolveVocabMatch(params.discipline, 'discipline');
+    if (hit) {
+      const uri = hit.value;
       criteria.push({ property: 'ccm:taxonid', values: [uri] });
-      labeled.push({ property: 'ccm:taxonid', values: [uri], label: params.discipline });
+      labeled.push({ property: 'ccm:taxonid', values: [uri], label: params.discipline, ...fuzzyMark(hit.match) });
     } else {
       reportUnresolved('discipline', params.discipline, 'discipline');
     }
   }
   if (params.userRole) {
-    const uri = resolveVocab(params.userRole, 'userRole');
-    if (uri) {
+    const hit = resolveVocabMatch(params.userRole, 'userRole');
+    if (hit) {
+      const uri = hit.value;
       criteria.push({ property: 'ccm:educationalintendedenduserrole', values: [uri] });
-      labeled.push({ property: 'ccm:educationalintendedenduserrole', values: [uri], label: params.userRole });
+      labeled.push({ property: 'ccm:educationalintendedenduserrole', values: [uri], label: params.userRole, ...fuzzyMark(hit.match) });
     } else {
       reportUnresolved('userRole', params.userRole, 'userRole');
     }
@@ -189,10 +200,13 @@ export function buildFilterCriteria(params: {
       labeled.push({ property: 'ccm:commonlicense_key', values: keys, label: params.license });
     }
   }
-  const lrt = resolveVocab(params.learningResourceType ?? '', 'lrt');
-  if (lrt) {
+  const lrtHit = resolveVocabMatch(params.learningResourceType ?? '', 'lrt');
+  if (lrtHit) {
+    const lrt = lrtHit.value;
     criteria.push({ property: 'ccm:oeh_lrt_aggregated', values: [lrt] });
-    labeled.push({ property: 'ccm:oeh_lrt_aggregated', values: [lrt], label: params.learningResourceType });
+    labeled.push({
+      property: 'ccm:oeh_lrt_aggregated', values: [lrt], label: params.learningResourceType, ...fuzzyMark(lrtHit.match),
+    });
   } else if (params.learningResourceType) {
     reportUnresolved('learningResourceType', params.learningResourceType, 'lrt');
   }
@@ -272,6 +286,15 @@ const OER_ALIASES = ['oer', 'oer-lizenz', 'oer-lizenzen', 'freie lizenz', 'freie
  * the upstream criterion and the local exactness pass can never disagree about
  * what the caller asked for.
  */
+/**
+ * A licence was ASKED FOR and cannot be resolved. The one condition under which
+ * every licence path answers with nothing (search, local pass, facets) — an
+ * unknown licence is not "no licence filter" (chatbot feedback 2026-11-07).
+ */
+export function licenseUnresolvable(input: string | undefined): boolean {
+  return Boolean((input ?? '').trim()) && resolveLicenseSelection(input) === null;
+}
+
 export function resolveLicenseSelection(input: string | undefined): string[] | null {
   const raw = (input ?? '').trim();
   if (!raw) return null;
@@ -304,6 +327,11 @@ export function filterByExactLicense<T extends { license: string }>(
   nodes: T[],
   requested: string | undefined,
 ): T[] {
+  // A licence that was ASKED FOR but cannot be resolved keeps nothing. Letting
+  // everything through handed CC BY-NC-ND to a person who asked for one
+  // specific licence: an unknown licence filter is not "no filter", and the
+  // unresolved hint says why the answer is empty.
+  if (licenseUnresolvable(requested)) return [];
   const wanted = resolveLicenseSelection(requested);
   if (!wanted) return nodes;
   const allowed = new Set(wanted);
@@ -383,7 +411,11 @@ export function formatUnresolvedHint(unresolved: UnresolvedFilter[]): string {
   if (!unresolved.length) return '';
   return unresolved
     .map(u => {
-      const head = `⚠ Filter "${u.value}" für ${u.field} nicht erkannt und ignoriert.`;
+      // A licence is the one filter that is not dropped: ignoring it would
+      // return material under other terms (see `filterByExactLicense`).
+      const head = u.field === 'license'
+        ? `⚠ Lizenz "${u.value}" nicht erkannt — deshalb keine Materialien, statt solche unter anderer Lizenz zu zeigen.`
+        : `⚠ Filter "${u.value}" für ${u.field} nicht erkannt und ignoriert.`;
       return u.suggestions?.length ? `${head} Meintest du: ${u.suggestions.join(', ')}?` : head;
     })
     .join('\n');

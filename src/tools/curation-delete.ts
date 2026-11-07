@@ -29,9 +29,10 @@ import {
   type WriteAuthChallenge,
   previewReply,
   confirmOrExplain,
-  errorText,
+  codedError,
   reportMutation,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 
 /** Said in the preview of every deletion, and never contradicted afterwards. */
@@ -132,7 +133,7 @@ async function runDeletion(params: Record<string, unknown>, spec: DeletionSpec) 
 
     const node = await getNodeMetadata(nodeId);
     if (!node) {
-      return errorText(`${spec.notFound} „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+      return codedError('not_found', `${spec.notFound} „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
     }
 
     // The id is used AS GIVEN, deliberately — this is the one write path that
@@ -170,6 +171,6 @@ async function runDeletion(params: Record<string, unknown>, spec: DeletionSpec) 
   } catch (err) {
     // Of every mutation here this is the one where a wrong "it failed" costs
     // most: it is irreversible, so the reader who believes it stops looking.
-    return timeoutOrError(spec.context, err, `Ob „${sanitizeText(nodeId)}“ gelöscht wurde, ist offen`);
+    return timeoutOrError(spec.context, err, `Ob „${sanitizeText(nodeId)}“ gelöscht wurde, ist offen`, { preview: isPreviewCall(params) });
   }
 }

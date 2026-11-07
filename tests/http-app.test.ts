@@ -228,6 +228,89 @@ test('http dispatch: second MCP request over the per-IP limit → 429 with Retry
   } finally { await close(server); }
 });
 
+/**
+ * JSON-RPC batches (audit 2026-11-05, A-1): the SDK accepts an array of any
+ * length and runs every element, while the per-IP limiter counted the HTTP
+ * request — one POST could carry tens of thousands of searches. Batches stay
+ * supported (the 2025-03-26 protocol revision allows them), but every element
+ * is charged to the limiter and the length is capped.
+ */
+const TOOLS_LIST = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/list' });
+
+test('a small JSON-RPC batch still works — every element is answered', async () => {
+  const { server, base } = await startServer();
+  try {
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([TOOLS_LIST(1), TOOLS_LIST(2)]),
+    });
+    assert.equal(r.status, 200);
+    const body = await r.json() as Array<{ id: number }>;
+    assert.deepEqual(body.map(m => m.id).sort(), [1, 2]);
+  } finally { await close(server); }
+});
+
+test('a batch longer than the cap is refused before anything runs', async () => {
+  const { server, base } = await startServer();
+  try {
+    const { MAX_BATCH_LENGTH } = await import('../src/http-app.js');
+    const batch = Array.from({ length: MAX_BATCH_LENGTH + 1 }, (_, i) => TOOLS_LIST(i + 1));
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(batch),
+    });
+    assert.equal(r.status, 400);
+    assert.match(await r.text(), /batch/i);
+  } finally { await close(server); }
+});
+
+test('every batch element is charged to the per-IP limiter', async () => {
+  // Limit 3: a batch of 3 uses the whole budget, so the next single call is 429.
+  const { server, base } = await startServer({ rateLimiter: createRateLimiter(3) });
+  try {
+    const batch = await fetch(`${base}/mcp`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([TOOLS_LIST(1), TOOLS_LIST(2), TOOLS_LIST(3)]),
+    });
+    assert.equal(batch.status, 200, 'the batch itself fits the budget');
+    const next = await fetch(`${base}/mcp`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(TOOLS_LIST(4)),
+    });
+    assert.equal(next.status, 429, 'the batch spent three requests, not one');
+  } finally { await close(server); }
+});
+
+test('a batch that exceeds the remaining budget is refused with 429', async () => {
+  const { server, base } = await startServer({ rateLimiter: createRateLimiter(2) });
+  try {
+    const r = await fetch(`${base}/mcp`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([TOOLS_LIST(1), TOOLS_LIST(2), TOOLS_LIST(3)]),
+    });
+    assert.equal(r.status, 429);
+  } finally { await close(server); }
+});
+
+test('a huge oversized body is cut off — the server stays healthy afterwards', async () => {
+  const { server, base } = await startServer({ maxBodyBytes: 1024 });
+  const { port } = server.address() as AddressInfo;
+  try {
+    // 64× the cap through a raw socket: the server must stop reading rather than
+    // drain it all, and must keep answering other requests.
+    await new Promise<void>((resolve) => {
+      const sock = net.connect(port, '127.0.0.1', () => {
+        sock.write('POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 65536\r\n\r\n');
+        sock.write('x'.repeat(65536));
+      });
+      sock.on('error', () => resolve());
+      sock.on('close', () => resolve());
+      sock.setTimeout(3000, () => { sock.destroy(); resolve(); });
+    });
+    const health = await fetch(`${base}/health`);
+    assert.equal(health.status, 200);
+  } finally { await close(server); }
+});
+
 test('http dispatch: POST /mcp initialize → 200 JSON result (Accept normalized)', async () => {
   const { server, base } = await startServer();
   try {

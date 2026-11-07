@@ -61,3 +61,19 @@ test('search_wlo_within_collection: discloses a sampled search on a large collec
     mock.restore();
   }
 });
+
+test('search_wlo_within_collection accepts excludeNodeIds instead of ignoring it (BOERDi 12b)', async () => {
+  const { connectedClient, installFetchMock, makeNode } = await import('./fetchMock.js');
+  const mock = installFetchMock((url) => url.includes('/children')
+    ? { json: { nodes: [makeNode('a', 'Optik A'), makeNode('b', 'Optik B')], pagination: { total: 2, from: 0, count: 2 } } }
+    : { json: {} });
+  const c = await connectedClient();
+  try {
+    const tools = await c.listTools();
+    const schema = tools.tools.find(t => t.name === 'search_wlo_within_collection')!.inputSchema as { properties: Record<string, unknown> };
+    assert.ok('excludeNodeIds' in schema.properties);
+    const r = await c.callTool({ name: 'search_wlo_within_collection', arguments: { nodeId: 'coll', query: 'optik', excludeNodeIds: ['a'] } });
+    const sc = r.structuredContent as { results: Array<{ nodeId: string }> };
+    assert.deepEqual(sc.results.map(n => n.nodeId), ['b']);
+  } finally { await c.close(); mock.restore(); }
+});

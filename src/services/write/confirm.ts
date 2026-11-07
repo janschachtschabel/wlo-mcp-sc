@@ -18,6 +18,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import type { ChangeSet } from './change-set.js';
+import { currentCredential } from '../../auth/credential.js';
 
 /** How long a preview stays valid. Long enough to read, short enough to matter. */
 export const TOKEN_TTL_MS = 10 * 60 * 1000;
@@ -29,14 +30,58 @@ export const TOKEN_TTL_MS = 10 * 60 * 1000;
  */
 const MAX_PENDING = 1000;
 
+/**
+ * Upper bound on pending previews per IDENTITY. The global bound evicts the
+ * oldest token of anyone, so one account issuing a thousand previews pushed out
+ * every other person's pending confirmation (audit 2026-11-05). Past this
+ * number an identity makes room from its OWN oldest previews.
+ */
+export const MAX_PENDING_PER_IDENTITY = 50;
+
 export type ConfirmOutcome = 'ok' | 'unknown' | 'expired' | 'mismatch';
 
 interface Pending {
   hash: string;
   expiresAt: number;
+  identity: string;
+}
+
+/**
+ * Who is previewing or confirming. Part of the fingerprint, because a token
+ * approves one change FOR ONE PERSON: without it, someone else replaying the
+ * token with the identical change set would write under their own rights on
+ * somebody else's approval (audit 2026-11-05). An access block is identified by
+ * its id, anything else by source and name — the shared service account is one
+ * identity by construction, which is exactly the attribution problem
+ * `WLO_ALLOW_SERVICE_WRITES` already names.
+ */
+export function currentIdentity(): string {
+  const cred = currentCredential();
+  if (!cred) return 'anonymous';
+  return cred.jti ? `jti:${cred.jti}` : `${cred.source}:${cred.label}`;
 }
 
 const pending = new Map<string, Pending>();
+
+/**
+ * Expired tokens, kept as a bare id for an hour so they answer `expired` and not
+ * `unknown` (chatbot feedback 2026-11-07): `prune` drops every expired entry on
+ * the next mint, by ANY caller, so the promised `confirm_expired` was almost
+ * never reachable. Only the id and its own expiry are kept — no fingerprint, no
+ * identity — and the set is bounded like `pending`.
+ */
+const expired = new Map<string, number>();
+const TOMBSTONE_MS = 60 * 60 * 1000;
+const MAX_TOMBSTONES = 2000;
+
+function bury(token: string, now: number): void {
+  expired.set(token, now + TOMBSTONE_MS);
+  while (expired.size > MAX_TOMBSTONES) {
+    const oldest = expired.keys().next();
+    if (oldest.done) break;
+    expired.delete(oldest.value);
+  }
+}
 
 /**
  * A stable fingerprint of what is about to happen. Fields are sorted, so the
@@ -44,8 +89,9 @@ const pending = new Map<string, Pending>();
  * change; everything else that distinguishes one write from another — the node,
  * the kind, whether it deletes, each old and new value — is inside the hash.
  */
-function fingerprint(cs: ChangeSet): string {
+function fingerprint(cs: ChangeSet, identity: string): string {
   const canonical = JSON.stringify({
+    identity,
     nodeId: cs.nodeId,
     kind: cs.kind,
     destructive: cs.destructive,
@@ -55,6 +101,8 @@ function fingerprint(cs: ChangeSet): string {
     // the same record can be referenced from several collections, and a preview
     // that named no redirection at all approved an edit to the node as named.
     redirectedFrom: cs.redirectedFrom ?? null,
+    addTo: cs.addTo ?? null,
+    items: cs.items ?? null,
     changes: [...cs.changes]
       .sort((a, b) => a.property.localeCompare(b.property))
       .map(c => [c.property, c.before, c.after, c.route]),
@@ -62,10 +110,14 @@ function fingerprint(cs: ChangeSet): string {
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-function prune(now: number): void {
+function prune(now: number, identity: string): void {
   for (const [token, entry] of pending) {
-    if (entry.expiresAt <= now) pending.delete(token);
+    if (entry.expiresAt <= now) { pending.delete(token); bury(token, now); }
   }
+  for (const [token, until] of expired) if (until <= now) expired.delete(token);
+  // Insertion order is age order, so the first matching entries are the oldest.
+  const own = [...pending].filter(([, entry]) => entry.identity === identity);
+  for (let i = 0; i <= own.length - MAX_PENDING_PER_IDENTITY; i++) pending.delete(own[i]![0]);
   while (pending.size >= MAX_PENDING) {
     const oldest = pending.keys().next();
     if (oldest.done) break;
@@ -75,9 +127,10 @@ function prune(now: number): void {
 
 /** Issue a single-use token for this exact change. */
 export function mintToken(cs: ChangeSet, now: number = Date.now()): string {
-  prune(now);
+  const identity = currentIdentity();
+  prune(now, identity);
   const token = randomBytes(18).toString('base64url');
-  pending.set(token, { hash: fingerprint(cs), expiresAt: now + TOKEN_TTL_MS });
+  pending.set(token, { hash: fingerprint(cs, identity), expiresAt: now + TOKEN_TTL_MS, identity });
   return token;
 }
 
@@ -91,10 +144,16 @@ export function mintToken(cs: ChangeSet, now: number = Date.now()): string {
  */
 export function consumeToken(token: string, cs: ChangeSet, now: number = Date.now()): ConfirmOutcome {
   const entry = pending.get(token);
-  if (!entry) return 'unknown';
+  if (!entry) {
+    // Answers once, like the token it stands for.
+    const until = expired.get(token);
+    if (until === undefined || until <= now) return 'unknown';
+    expired.delete(token);
+    return 'expired';
+  }
   pending.delete(token);
   if (entry.expiresAt <= now) return 'expired';
-  return sameHash(entry.hash, fingerprint(cs)) ? 'ok' : 'mismatch';
+  return sameHash(entry.hash, fingerprint(cs, currentIdentity())) ? 'ok' : 'mismatch';
 }
 
 /** Constant-time comparison — the hashes are equal-length hex digests. */

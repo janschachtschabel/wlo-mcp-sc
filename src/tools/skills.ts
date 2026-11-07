@@ -111,7 +111,7 @@ function renderCatalogue(skills: SkillSummary[], query: string | undefined): str
  * forged — and the manifest is the one part that IS server-verified. Ahead of
  * the separator they are ours; everything past it is untrusted content.
  */
-function renderSkill(skill: SkillDocument): string {
+export function renderSkill(skill: SkillDocument): string {
   const lines = [
     oneLine(`# ${skill.title}`),
     // Same disclosure as the catalogue: only the original may be written to.

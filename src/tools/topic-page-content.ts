@@ -14,7 +14,7 @@ import type { SwimlanePayload } from '../services/topic-page.js';
 import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { oneLine } from '../formatter.js';
 import { log } from '../logger.js';
-import { subjectRegistryText, toolError } from './shared.js';
+import { codedErrorResult, subjectRegistryText, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { swimlanePayloadSchema } from '../apps/outputSchemas.js';
 
@@ -74,7 +74,7 @@ Gib EINES an:
         if (!collectionId && !variantId) {
           if (!params.query?.trim()) {
             log.warn('get_topic_page_content called without query, collectionId or variantId');
-            return { content: [{ type: 'text' as const, text: 'Bitte query, collectionId oder variantId angeben.' }], isError: true };
+            return codedErrorResult('invalid_input', 'Bitte query, collectionId oder variantId angeben.');
           }
           // One-step topic path: resolve the best Themenseite for the topic so
           // the swimlane widget triggers without a prior search_wlo_topic_pages
@@ -137,7 +137,6 @@ Gib EINES an:
         // swimlanes). It IS the structuredContent contract (widget + model) and
         // is therefore resolved in BOTH formats; markdown keeps its lightweight
         // structure text below. topicPageUrl provides the jump-off point.
-        const payload = await resolveTopicPageSwimlanes(struct, params.maxPerSwimlane ?? 3);
         // A Themenseite IS a collection, so its approved skills hang off the
         // COLLECTION id — never the variant, which is one rendering of it. In
         // json mode it stays its OWN content block: block 1 is pure JSON there,
@@ -146,7 +145,12 @@ Gib EINES an:
         // since 2026-08-19: it travelled as a second block, and at least one
         // real client hands the model only the first — the server had answered
         // "which skills are approved here?" and the model never saw it.
-        const registryText = await subjectRegistryText(struct.collectionId ?? '', params.skillContext);
+        // Both run at once: the catalogue needs only the collection id, and in
+        // sequence it added ~1 s to a 3.5 s answer (measured 2026-11-05).
+        const [payload, registryText] = await Promise.all([
+          resolveTopicPageSwimlanes(struct, params.maxPerSwimlane ?? 3),
+          subjectRegistryText(struct.collectionId ?? '', params.skillContext),
+        ]);
         if (params.outputFormat === 'json') {
           const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
           return {

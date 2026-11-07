@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildFilterCriteria, formatUnresolvedHint } from '../src/filter-criteria.js';
+import { buildFilterCriteria, filterByExactLicense, formatUnresolvedHint } from '../src/filter-criteria.js';
 
 test('buildFilterCriteria: resolves labels to URIs with display labels', () => {
   const { criteria, labeled } = buildFilterCriteria({
@@ -99,4 +99,21 @@ test('formatUnresolvedHint: no suggestions → warning without a "Meintest du" l
 
 test('formatUnresolvedHint: empty list → empty string', () => {
   assert.equal(formatUnresolvedHint([]), '');
+});
+
+test('filterByExactLicense keeps nothing for a licence it cannot resolve (feedback 2026-11-07, point 1)', () => {
+  const nodes = [{ license: 'CC_BY' }, { license: 'CC_BY_NC_ND' }];
+  assert.deepEqual(filterByExactLicense(nodes, 'CC XY'), []);
+  assert.equal(filterByExactLicense(nodes, undefined).length, 2, 'no licence asked → no licence pass');
+  assert.equal(filterByExactLicense(nodes, '  ').length, 2);
+});
+
+test('the hint says an unresolved licence EMPTIES the answer, not that it was ignored', () => {
+  const text = formatUnresolvedHint([{ field: 'license', value: 'CC XY', suggestions: ['CC BY'] }]);
+  assert.doesNotMatch(text, /ignoriert/);
+  assert.match(text, /keine Materialien/);
+  // Only the content leg is licence-filtered: search_wlo_all still shows
+  // collections beside this sentence, so it must not claim "no hits".
+  assert.doesNotMatch(text, /keine Treffer/);
+  assert.match(text, /CC BY/);
 });

@@ -11,6 +11,11 @@ const EXPECTED_TOOLS = [
   'get_node_details',
   'search_wlo_all',
   'lookup_wlo_vocabulary',
+  // BOERDi wishlist P2 (2026-11-06): one call instead of chains.
+  'resolve_wlo_filters',
+  'find_content_by_url',
+  'get_collection_overview',
+  'count_wlo_content_matches',
   'search_wlo_topic_pages',
   'get_subject_portals',
   'browse_collection_tree',
@@ -42,7 +47,7 @@ const EXPECTED_TOOLS = [
   'get_skill_registry',
 ];
 
-test('createMcpServer registers exactly the 28 read tools and the 14 curation tools', async () => {
+test('createMcpServer registers exactly the 32 read tools and the 14 curation tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS, ...CURATION_TOOLS].sort());

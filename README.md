@@ -7,11 +7,11 @@ AI agents **search and retrieve open educational resources (OER)** from
 [WirLernenOnline (WLO)](https://wirlernenonline.de) via the public
 edu-sharing REST API.
 
-It exposes **28 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
+It exposes **32 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 28 sit **fourteen curation tools** (creating, editing,
+On top of those 32 sit **twenty curation tools** (four only with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
 submitting, collections, compendium texts, metadata proposals, which variant a
 topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
@@ -62,7 +62,7 @@ stateless proxy in front of edu-sharing.
 
 ## Features
 
-- **28 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill` for `get_skill_for_task` — `get_skill` stays in every mode) — content search, collection search, combined search, topic
+- **32 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill` for `get_skill_for_task` — `get_skill` stays in every mode) — content search, collection search, combined search, topic
   pages and their swimlane content, subject portals, tree browsing, node
   details (single & bulk), vocabulary lookup, publisher lookup, health check,
   Wikipedia (lead extract or the FULL article via `fullText`), full compendium text, scoped in-collection search, related
@@ -111,8 +111,8 @@ stateless proxy in front of edu-sharing.
 
 ## Requirements
 
-- **Node.js ≥ 20** (pinned in `package.json` `engines`; CI and the Docker image
-  build/test against Node 20).
+- **Node.js ≥ 22** (LTS; pinned in `package.json` `engines`; CI and the Docker image
+  build/test against Node 22 — Node 20 left support on 2026-04-30).
 - **npm ≥ 9**.
 
 ## Installation
@@ -166,7 +166,7 @@ else has sensible defaults.
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page), either by pasting the block back or by logging in to end every access of the account at once. The second way is the only one open to OAuth users, who never see their block. Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
 | `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(unset)_ | http | The previous key during a rotation. Blocks are always issued with the current key but opened with either, so a rotation does not invalidate every user's configuration at once; remove it once the overlap window is over. An unusable value here switches the feature **off** rather than silently dropping the window — otherwise exactly what the window exists for would break, and you would hear about it from users instead of from the boot log. |
-| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Where the allow-list of issued access ids lives. It holds ids, user names and issue times — **never a credential**. It is a POSITIVE list: lose it and every issued block stops working (inconvenient) rather than every revoked block starting to work again (unsafe). In Docker this is the one writable volume; `read_only: true` still covers everything else. **Back it up.** |
+| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | http | Where the allow-list of issued access ids lives. It holds ids, user names and issue times — **never a credential**. It is a POSITIVE list: lose it and every issued block stops working (inconvenient) rather than every revoked block starting to work again (unsafe). In Docker this is the one writable volume; `read_only: true` still covers everything else. **Back it up.** **One server instance per file:** the list is read once at startup and kept in memory, so a revocation reaches only the instance that performed it — do not run two instances against one file. |
 | `WLO_PUBLIC_BASE_URL` | _(unset)_ | http | The public origin clients type in, e.g. `https://wlo-mcp.example.org` — scheme and host, no path. It is what the OAuth discovery documents (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`) name as their own endpoints. Unset means those paths answer 404 unless `TRUST_PROXY=1`, in which case the origin is derived from the request's `Host` header — which the CALLER supplies. Set it: a forged header would otherwise point somebody's client at a login page we do not own. Independent of the access-block feature only in appearance — both are off without `WLO_AUTH_PRIVATE_KEY`, since an OAuth login issues exactly the same access block. |
 | `WLO_INBOX_ID` | _(unset)_ | all | nodeId of the shared inbox new records are filed in when the server writes under the **service account**. A personal login files to `-userhome-` instead and needs nothing here. Deliberately without a default: node ids are repository-bound, so a hardcoded one would point at a different collection on staging than on production, and at nothing elsewhere. Unset means service-account creation is refused with a message naming this variable — better than a record filed somewhere nobody looks. |
 | `AUTH_CREDENTIAL_LIMIT` | `10` | HTTP mode | How many **distinct** logins one client address may present within 10 minutes; over the limit returns 429. The server forwards a client-supplied `Authorization` header upstream, so it could be used to guess WLO logins from *our* address. A requests-per-minute cap is the wrong instrument here — a per-user client sends its header on **every** call — so the signal is the number of different logins: a real person has exactly one. `0` disables the check. |
@@ -318,18 +318,18 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 1 | `search_wlo_collections` | Search collections/topic pages (keyword + tree fallback) | markdown / json |
 | 2 | `search_wlo_content` | Full-text search for individual content items; filters for subject, level, type, publisher and **licence** (exact — the repository key matches a whole CC family) | markdown / json |
 | 3 | `get_collection_contents` | Items / sub-collections of a collection (paginated, optional recursive) | markdown / json |
-| 4 | `get_node_details` | Full metadata for one node + optional full text + parents + raw URIs | markdown / json |
+| 4 | `get_node_details` | Full metadata for one node + optional full text + parents + raw URIs. With `nodeIds` (1–50) the answer is always a list `{results, missing}` (`missing: [{part, code}]`, code `not_found`/`forbidden`/`timeout`/`upstream_error`) with the enrichments per node | markdown / json |
 | 5 | `search_wlo_all` | **Combined**: content + collections + topic pages in one parallel call, separate buckets | markdown / json |
 | 6 | `lookup_wlo_vocabulary` | List valid labels/URIs for a filter vocabulary | markdown |
 | 7 | `search_wlo_topic_pages` | Find/list topic pages, merge target-group variants | markdown / json |
 | 8 | `get_subject_portals` | The top-level subject portals under the WLO root | markdown / json |
-| 9 | `browse_collection_tree` | Drill into sub-collections (depth 1–2), optional file counts | markdown / json |
+| 9 | `browse_collection_tree` | Drill into sub-collections (depth 1–3; depth 3 at most 300 nodes in total, `truncatedAt` names the first cut, a cut first level included), optional file counts on every level | markdown / json |
 | 10 | `wlo_health_check` | Reachability + latency of the WLO API | json |
 | 11 | `get_nodes_details` | Bulk metadata for many `nodeIds` in parallel | json |
 | 12 | `get_topic_page_content` | The swimlane **content structure** of a topic page, render-ready | markdown / json |
 | 13 | `get_wikipedia_summary` | Wikipedia for a term: lead extract, or the FULL article text with `fullText` | markdown / json |
 | 14 | `get_compendium_text` | Editorial compendium text of one/more collections (bulk, ≤25) — outline always, `query` narrows to the matching passages | markdown / json |
-| 15 | `search_wlo_within_collection` | Filtered search over one collection's contents listing (incl. licence) | markdown / json |
+| 15 | `search_wlo_within_collection` | Filtered search over one collection's contents listing (incl. licence; `excludeNodeIds` skips what was already seen) | markdown / json |
 | 16 | `search` | ChatGPT knowledge convention: lightweight hits `{id,title,url}` across WLO. `WLO_SEARCH_OUTPUT_MODE=rich` adds the `search_wlo_all` buckets and widget beside `results` | json (+ text) |
 | 17 | `fetch` | ChatGPT knowledge convention: one node's full document `{id,title,text,url,metadata}`. `WLO_SEARCH_OUTPUT_MODE=rich` adds the complete record (preview image, download link) and the detail widget | json (+ text) |
 | 18 | `lookup_wlo_publishers` | List publishers/sources with per-publisher content counts (facet) | markdown / json |
@@ -343,7 +343,11 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 25 | `get_node_collections` | Which collections a given material sits in (reverse lookup via `/usage/v1`) | markdown / json |
 | 26 | `wlo_auth_status` | Which identity this session is using, and what it may do | markdown / json |
 | 27 | `get_url_text` | **UNSAFE** — the text behind an ARBITRARY web URL, via the extraction service. Not for WLO material (use 24). Switchable off with `WLO_DISABLE_UNSAFE_TOOLS`; **not recommended in production** — see [Tools declared unsafe](#tools-declared-unsafe) | markdown / json |
-| 28 | `get_skill_registry` | Which skills ONE collection has approved — the registry document filed in it, its catalogue, and the editors' own notes | markdown / json |
+| 28 | `get_skill_registry` | Which skills ONE collection has approved — the registry document filed in it, its catalogue, and the editors' own notes. With `task`: the fitting approved skill WITH its instruction, only on a clear choice (else the candidates, or "none fits") | markdown / json |
+| 29 | `resolve_wlo_filters` | Resolve every filter label of a plan (subject, level, type, licence, role, target group) in ONE call — each value says HOW it resolved: `exact`, `alias` or `fuzzy` (with suggestions, never taken over silently); licences only exactly. Purely local | markdown / json |
+| 30 | `find_content_by_url` | Is there already a record for these addresses (≤20)? `exact` = same address, `normalized` = same after removing trailing slash, fragment and tracking parameters; errors per entry. `includeCollections` adds a collection count | markdown / json |
+| 31 | `get_collection_overview` | One collection at a glance: head, path, compendium outline, stats, approved skills, sub-collections with counts, first contents — parts in parallel, a failed part named in `missing` | markdown + structured |
+| 32 | `count_wlo_content_matches` | Count matches for up to 30 queries at once (+ up to 3 top hits each) — one search per query, no variants, the repository's total; an unresolved filter is never dropped (query listed in `missing`). Across all of WLO, not within a collection | markdown + structured |
 
 With `WLO_SKILL_TOOL_MODE=one-tool`, 22 is replaced by a single
 `get_skill_for_task`, which ranks and loads the best match itself. 23 and 28
@@ -781,7 +785,7 @@ pasted block and the OAuth connection. No `refresh_token`, no expiry: the access
 ends when it is revoked or the WLO password changes.
 
 **A request with no credential still reads anonymously.** It gets the full list —
-all 42 tools, the fourteen curation tools included. Those are *listed* for
+all 48 tools, the 16 curation tools included (52 and 20 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
 everyone and refuse at call time with an OAuth challenge, which is what makes a
 host offer the login: a model that never sees a write tool never asks for one.
 The `401` fires only for a token that was presented and cannot be used, and it
@@ -814,7 +818,10 @@ record, shows exactly what would change (`Titel: „alt“ → „neu“`), and 
 single-use key valid for ten minutes. A second call carrying that key performs
 the write. The key is bound to a hash of the planned change, so a preview of a
 harmless edit cannot authorise a different one — the shape a prompt injection
-would otherwise need.
+would otherwise need. For programs, the preview also carries
+`structuredContent.confirm = {token, expiresAt, preview: {action, tool, target, fields: [{name, label, old, new}]}}`
+(vocabulary and rating fields add `oldLabels`/`newLabels`), built from the same
+change the key is bound to. With nothing to confirm it is `{confirm: null, unchanged: true}`.
 
 **Nothing is believed until it is read back.** edu-sharing answers `200` in three
 measured situations where the value is discarded: the metadata set filters the
@@ -845,12 +852,14 @@ AUTOMATIC quality check (`qualityCorrectness`, `qualityCopyrightLaw`,
 takes `"keine Auffälligkeiten gefunden (Maschine)"`, `"Auffälligkeiten gefunden
 (Maschine)"` or `"ungeprüft"`. A verdict a HUMAN reached is refused: the value
 names who did the checking, and a model cannot testify that a person looked. |
-| `wlo_create_content` | Create a new record, in one of **two ways**. `url` — the material lives elsewhere and is linked; an existing record for that URL is named instead of creating a second. `content` / `fileBase64` — the record **carries** the material as a file (Markdown written in the conversation, a generated PNG/JPEG/GIF/WebP, as raw base64 or a `data:` URL), for content that has no URL of its own. Exactly one source. The upload is described in the confirmation preview (name, type, size, digest) and read back afterwards. The record is a draft — it does NOT enter the editorial queue. |
+| `wlo_create_content` | Create a new record, in one of **two ways**. `url` — the material lives elsewhere and is linked; an existing record for that URL is named instead of creating a second. `content` / `fileBase64` — the record **carries** the material as a file (Markdown written in the conversation, a generated PNG/JPEG/GIF/WebP, as raw base64 or a `data:` URL), for content that has no URL of its own. Exactly one source. The upload is described in the confirmation preview (name, type, size, digest) and read back afterwards. The record is a draft — it does NOT enter the editorial queue. With `addToCollectionId` it is filed in that collection under the SAME confirmation (the filing is part of the confirmed change); a failed filing keeps the record and reports `collection.status: "failed"` with a code, and an address that already has a record is offered for filing instead of a second create. The answer carries `structuredContent {nodeId, title, collection?}`. |
 | `wlo_submit_content` | Hand an existing record to the editorial review queue. A separate act, never automatic, so a draft cannot reach a reviewer because someone was still writing. |
 | `wlo_create_collection` | Create a collection (a curated topic page), top-level or as a sub-collection. |
 | `wlo_rename_collection` | Change a collection's title and description. |
 | `wlo_add_to_collection` | Put existing material into a collection. Nothing is moved or copied — a collection holds references. |
 | `wlo_remove_from_collection` | Take material out of one collection. The material itself survives and stays in every other collection. |
+| `wlo_create_collection_tree` | Create a whole tree of sub-collections (≤ 250 nodes, depth 4, ≤ 15 children) under ONE approval. Runs in ~40 s slices; an unfinished plan returns a `continuationToken`, and a key presented again by the same identity continues or replays — never creates twice. `onExisting: merge` reuses a same-titled sub-collection. |
+| `wlo_add_to_collections` | File up to 200 `{nodeId, collectionId}` pairs under ONE approval, same plan mechanics. A reference id is filed as its original; a pair already in place is `already`; one failed pair does not stop the rest. Not yet live-verified (staging filing regression, 2026-11-06). |
 | `wlo_update_compendium` | Write, replace, or remove a collection's editorial compendium text (Markdown). |
 | `wlo_set_topic_page` | Choose **which variant** a topic page renders publicly. Creates, deletes and reorders nothing — it sets the active one. The only curation tool whose result is immediately public, so every check is local: the stored `ccm:page_config` document is edited rather than composed (unknown keys and the variant list survive), a variant that does not belong to this page is refused, an unparseable document is left alone, and the result is read back and re-parsed. The repository validates none of this — measured 2026-08-09, it stores the literal string `"not json at all"` and answers 200. |
 | `wlo_suggest_metadata` | Propose values with a rationale instead of writing them. The record stays untouched. |
@@ -878,7 +887,12 @@ Most tools accept `outputFormat: "markdown"` (default, human-readable) or
 - **`unresolvedFilters`** — `{ field, value }[]` of vocab filters the caller
   supplied that could not be resolved to a URI and were therefore dropped from
   the search. Surfaced so the caller can self-correct (e.g. via
-  `lookup_wlo_vocabulary`). Omitted when everything resolved.
+  `lookup_wlo_vocabulary`). Omitted when everything resolved. A licence resolves
+  exactly or not at all — `"CC BY NC"` without hyphens lands here with a
+  suggestion instead of silently filtering on CC BY.
+- **`criteria[].match: "fuzzy"`** — set on a filter that resolved only by guess
+  (`"Arbeitsblat"` → Arbeitsblatt). An exact or alias match carries no field.
+  `resolve_wlo_filters` reports the same distinction per value.
 - **`facets`** — present only with `includeFacets: true`: facet counts keyed by
   filter name, e.g. `{ learningResourceType: [{ label: "Video", count: 1203 }], … }`
   — how many hits per type/subject/level, so a client can offer targeted
@@ -1006,7 +1020,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   signature, OAuth only) — including what the design does **not** protect.
   German.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
-  chatbot developer**: all 42 tools grouped, every externally callable URL (MCP,
+  chatbot developer**: all 48 tools grouped, every externally callable URL (MCP,
   REST, pages, OAuth), and the behaviour an integration has to know — licence
   filtering, the disclosure fields, the two-step write, the limits, and what
   deliberately does not exist. German.
@@ -1076,7 +1090,7 @@ must not cost the other one its fallback.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 42 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 48 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
@@ -1228,7 +1242,7 @@ the code), grouped by module.
 
 - `npm run build` — TypeScript compile (strict).
 - `npm test` — offline test suite (`node:test`), no network required.
-- CI (`.github/workflows/ci.yml`) runs build + test on Node 20 with a production
+- CI (`.github/workflows/ci.yml`) runs build + test on Node 22 with a production
   `npm audit` gate.
 - See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for how the server is put
   together: the layer model and its dependency rule, the registration seam every

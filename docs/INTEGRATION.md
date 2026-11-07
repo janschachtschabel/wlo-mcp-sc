@@ -3,7 +3,7 @@
 Für das Team und für Entwicklerinnen und Entwickler, die einen Chatbot oder eine
 andere Anwendung anbinden. Ein Dokument, drei Fragen:
 
-1. **[Welche Werkzeuge gibt es?](#1-die-41-mcp-werkzeuge)** — alle 41, gruppiert.
+1. **[Welche Werkzeuge gibt es?](#1-die-48-mcp-werkzeuge)** — alle 48, gruppiert.
 2. **[Welche Adressen kann ich von außen aufrufen?](#2-alle-adressen-von-außen)** — MCP, REST, Seiten, OAuth.
 3. **[Was muss ich über das Verhalten wissen?](#3-verhalten-das-die-integration-betrifft)** — die Regeln, an denen Integrationen sonst scheitern.
 
@@ -32,7 +32,7 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 
 ---
 
-## 1. Die 42 MCP-Werkzeuge
+## 1. Die 48 MCP-Werkzeuge
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -275,7 +275,7 @@ Für Clients mit einem Header-Feld: einmal `/auth` besuchen, den Block als
 
 ### 3.1 Ausgabeformat
 
-22 der 42 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+22 der 48 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).

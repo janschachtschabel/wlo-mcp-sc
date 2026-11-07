@@ -26,7 +26,7 @@ Three properties shape every design decision in here:
   entry point was removed on 2026-08-02. Do not reason about cold starts or
   per-request statelessness as platform constraints.
 
-**Stack:** TypeScript (ESM, NodeNext, `strict`), Node ≥ 20.12. Two runtime
+**Stack:** TypeScript (ESM, NodeNext, `strict`), Node ≥ 22.12. Two runtime
 dependencies on purpose: `@modelcontextprotocol/sdk` and `zod`. No web
 framework — the HTTP layer is `node:http` plus a router of our own.
 
@@ -145,10 +145,15 @@ Every search tool answers **three things side by side**:
 
 Two traps live here, and both have cost this project real defects:
 
-> **zod strips what is not declared.** A new field on `FormattedNode` or on an
-> envelope that is not added to `src/apps/outputSchemas.ts` reaches the text
-> output and vanishes from `structuredContent` — with nothing failing. Assert
-> the text and the structured content *separately*.
+> **What is not declared breaks the advertised contract.** A new field on
+> `FormattedNode` or on an envelope that is not added to
+> `src/apps/outputSchemas.ts` still reaches the client — the SDK validates and
+> passes the original object on (measured on SDK 1.32.2, 2026-11-07) — but the
+> schema in `tools/list` says `additionalProperties: false`, so a strictly
+> validating client rejects the answer and a generated type never has the
+> field. Nothing fails on our side. Assert the text and the structured content
+> *separately*. (Until 2026-11-07 this note said zod strips the field; that was
+> never measured and is false.)
 
 > **Some clients pass only the first content block to the model.** Measured on a
 > real client in 2026-08. A second block is therefore not a place for anything
@@ -389,7 +394,7 @@ code — [`.env.example`](../.env.example) is the annotated template, and
 2. Put the algorithm in `services/`, not in the tool. The tool holds the schema
    and the rendering.
 3. Declare the output schema in `src/apps/outputSchemas.ts` — **every field**,
-   or zod strips it from `structuredContent`.
+   or it breaks the schema the server advertises (`additionalProperties: false`).
 4. Register via `registerWloTool`. Never call `server.tool` / `registerTool`
    directly; a curation tool goes through `registerCurationTool` instead
    (enforced by a test).

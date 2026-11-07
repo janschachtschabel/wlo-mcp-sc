@@ -252,9 +252,9 @@ test('the "catalogue is not the instruction" note is written in exactly one modu
   // by construction, while the third had none at all. That is the drift shape:
   // the copies agree until one is improved.
   assert.deepEqual(
-    offenders(INLINE_DESCRIPTIONS_ONLY, ['formatter.ts']),
+    offenders(INLINE_DESCRIPTIONS_ONLY, ['registry-render.ts']),
     [],
-    'use DESCRIPTIONS_ONLY_NOTE from formatter.ts — it sits beside registrySummaryLines, which decides '
+    'use DESCRIPTIONS_ONLY_NOTE from registry-render.ts — it sits beside registrySummaryLines, which decides '
       + 'the tier the note is true for (a head line shows no skill nodeId, so it promises no load)',
   );
 });
@@ -344,8 +344,13 @@ test('the collection a tool was CALLED ON is answered from one place', () => {
   // `tools/shared.ts` holds both; a second copy would state one of them wrong.
   const found = offenders(/ensureRegistryFor\s*\(/, ['services/skill-registry-cache.ts']);
   const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
-  assert.deepEqual(files, ['tools/shared.ts'],
-    `only tools/shared.ts may ask for a single collection's registry — got ${JSON.stringify(files)}`);
+  // `services/collection-overview.ts` (2026-11-06, BOERDi item 1) is the one
+  // deliberate second caller: it answers in STRUCTURED data, which the text
+  // helper cannot give, and holds both rules — it asks the collection id after
+  // resolving a reference, and an unanswered lookup becomes `not_checked`,
+  // never "no skills" (tests/tools-collection-overview.test.ts pins that).
+  assert.deepEqual(files, ['services/collection-overview.ts', 'tools/shared.ts'],
+    `only these may ask for a single collection's registry — got ${JSON.stringify(files)}`);
 });
 
 test('a collection search asks BOTH backends, and only one module knows that', () => {
@@ -452,7 +457,7 @@ test('a rendered nodeId line goes through nodeIdLine, never built by hand', () =
   // those render entries that carry no `originalId` (parent collections, registry
   // entries, companion files).
   const found = offenders(/`nodeId: \$\{/, [
-    'formatter.ts',
+    'text-line.ts',
     'tools/skill-registry.ts',
   ]);
   assert.deepEqual(found, [], `nodeId-Zeile von Hand gebaut statt über nodeIdLine:\n${found.join('\n')}`);

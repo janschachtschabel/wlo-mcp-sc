@@ -126,3 +126,30 @@ test('distinct-credential limiter: the raw credential is never retained', () => 
     'the credential must not be recoverable from the limiter state',
   );
 });
+
+// ── IPv6 prefix keying (audit 2026-11-05) ───────────────────────────────────
+// A single IPv6 customer usually holds a whole /64; keyed per full address, one
+// client had ~2^64 independent budgets for both the request limiter and the
+// password-guessing guard.
+
+test('clientKey: every address in one IPv6 /64 shares a bucket', () => {
+  assert.equal(clientKey(undefined, '2001:db8:aa:bb::1', false), clientKey(undefined, '2001:db8:aa:bb:ffff:1:2:3', false));
+  assert.equal(clientKey(undefined, '2001:db8:aa:bb::1', false), '2001:db8:aa:bb::/64');
+});
+
+test('clientKey: different /64s stay apart', () => {
+  assert.notEqual(clientKey(undefined, '2001:db8:aa:bb::1', false), clientKey(undefined, '2001:db8:aa:bc::1', false));
+});
+
+test('clientKey: IPv4 clients reported as mapped IPv6 keep their OWN address', () => {
+  // Node reports IPv4 peers on a dual-stack socket as ::ffff:a.b.c.d. A naive
+  // /64 cut would put EVERY IPv4 client into one shared bucket.
+  assert.equal(clientKey(undefined, '::ffff:203.0.113.7', false), '203.0.113.7');
+  assert.notEqual(clientKey(undefined, '::ffff:203.0.113.7', false), clientKey(undefined, '::ffff:203.0.113.8', false));
+});
+
+test('clientKey: plain IPv4, loopback and the trusted proxy header are unchanged', () => {
+  assert.equal(clientKey(undefined, '203.0.113.7', false), '203.0.113.7');
+  assert.equal(clientKey(undefined, '::1', false), '::1');
+  assert.equal(clientKey('198.51.100.1, 2001:db8:1:2::9', '10.0.0.1', true), '2001:db8:1:2::/64');
+});

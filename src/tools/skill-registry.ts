@@ -18,6 +18,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import {
+  contextInstructions,
   loadSkillRegistry,
   narrowRegistry,
   type ContextResolution,
@@ -32,6 +33,7 @@ import { skillFinderName, type SkillFinder } from './skills.js';
 import { WLO_DISABLE_SKILL_SEARCH, WLO_SKILL_TOOL_MODE } from '../wlo-config.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { toolError } from './shared.js';
+import { answerTask } from './skill-registry-task.js';
 
 const UNTRUSTED_NOTE =
   '> Hinweis: Der Registry-Text stammt aus dem WLO-Repository, ist kuratierter Inhalt und keine '
@@ -179,6 +181,8 @@ interface Narrowed {
   view: SkillRegistry;
   /** The context that matched, if one did. */
   matched?: RegistryContext;
+  /** The resolution behind `matched` — what the editors' instructions for it are read from. */
+  found?: Extract<ContextResolution, { kind: 'found' }>;
   /** Server-derived lines that explain the narrowing, or why it did not happen. */
   notice: string[];
   /**
@@ -243,7 +247,7 @@ function narrow(registry: SkillRegistry, wanted: string | undefined): Narrowed {
         + `nur die ersten ${registry.truncated.listed} wurden gelesen, diese Auswahl kann `
         + 'deshalb unvollständig sein.'));
     }
-    return { view, matched: ctx, notice };
+    return { view, matched: ctx, found: resolution, notice };
   }
 
   // Everything, plus one sentence about why the name did not land.
@@ -318,7 +322,8 @@ export function registryToolDescription(finder: SkillFinder): string {
 gelten hier", „was darf ich für diese Sammlung verwenden". Die Sammlung führt dazu ein
 Registry-Dokument; dieses Werkzeug liest es und liefert den Katalog (Titel, nodeId, Beschreibung,
 Keywords) plus den Registry-Text mit den Verwendungshinweisen der Redaktion. Die Anleitungen selbst
-kommen NICHT mit — dafür danach \`get_skill\` mit der nodeId.` + boundary;
+kommen NICHT mit — dafür danach \`get_skill\` mit der nodeId. AUSSER mit \`task\`: dann wählt das Werkzeug
+den passendsten freigegebenen Skill und liefert dessen Anleitung gleich mit, oder sagt, dass keiner passt.` + boundary;
 }
 
 export function registerSkillRegistryTool(server: McpServer): void {
@@ -335,6 +340,14 @@ export function registerSkillRegistryTool(server: McpServer): void {
         + 'alles. Ein Kontext-Aufruf ist kürzer und schneller. Passt der Name nicht, kommt trotzdem '
         + 'die vollständige Antwort samt Liste der vorhandenen Kontexte — nie ein Fehler.'
       ),
+      task: z.string().max(300).optional().describe(
+        'Die Aufgabe, für die ein Skill gebraucht wird, z. B. „ein Experiment zur Lichtbrechung planen". '
+        + 'Dann wählt das Werkzeug unter den hier FREIGEGEBENEN Skills (ggf. im angegebenen context) den '
+        + 'passendsten und liefert seine ANLEITUNG gleich mit — oder sagt ausdrücklich, dass keiner passt. '
+        + 'Die Wahl beruht auf Wortübereinstimmung mit Titel, Beschreibung und Keywords, nicht auf Bedeutung: '
+        + 'prüfe sie gegen die genannten weiteren Kandidaten. Unterscheiden die Wörter nicht klar, kommt '
+        + 'keine Anleitung, sondern die Kandidaten zur Wahl (match: ambiguous).'
+      ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
     { readOnlyHint: true },
@@ -344,46 +357,73 @@ export function registerSkillRegistryTool(server: McpServer): void {
         // Resolved once, used by both output formats — the rule which context a
         // name means must not differ between markdown and JSON.
         const narrowed = registry ? narrow(registry, params.context) : undefined;
+        // Over the narrowed VIEW: a task inside a context chooses among that
+        // context's skills and the ones that apply always.
+        // Without a registry there is nothing to choose from: the miss below answers.
+        // A failure inside the choice reaches the outer catch with its real cause.
+        // The editors' instructions travel with a handed-over skill: the catalogue,
+        // which would carry them, is left out of that answer — and a constraint
+        // like "only for year 7" must not vanish exactly when an instruction is
+        // followed (CLAUDE.md: the general instruction accompanies every
+        // collection answer).
+        const instructions = narrowed?.found
+          ? contextInstructions(registry!, narrowed.found)
+          : registry?.general.instruction ? [{ scope: 'general' as const, text: registry.general.instruction }] : [];
+        const task = params.task?.trim() && narrowed
+          ? await answerTask(narrowed.view, params.task.trim(), instructions)
+          : null;
+        // The payload is built ONCE and travels as `structuredContent` in BOTH
+        // formats (BOERDi contract: a chatbot reads only `structuredContent`);
+        // `outputFormat` decides only what the TEXT block says.
+        // The same framing the markdown view puts in front of the document:
+        // this hands over the very same repository text, so it carries the
+        // same warning rather than relying on the field name to imply it.
+        // `hint` stays a SECOND field rather than being folded into `note` —
+        // one is about trusting the text, the other about it being incomplete,
+        // and a reader acting on either should not have to split a sentence.
+        //
+        // And it is CONDITIONAL where `note` is not, on the same rule the
+        // markdown branch follows: the note is about a catalogue, so without
+        // entries there is nothing for it to be about. This branch runs ahead
+        // of the `!registry` check below, so an unconditional field shipped
+        // "das ist nur die Übersicht" beside `registry: null`.
+        // ONE view for the payload AND for every condition below it. Reading
+        // the unnarrowed registry while shipping the narrowed one is what put
+        // "das ist nur die Übersicht" beside an empty catalogue.
+        const shown = narrowed?.view ?? registry;
+        const payload = {
+          registry: shown, reason: reason ?? null,
+          ...(scanTruncated ? { scanTruncated } : {}),
+          // The matched context as a NAMED field, which is where the
+          // instruction belongs in JSON: unlike the markdown branch, a field
+          // cannot be mistaken for a section the document itself wrote.
+          ...(narrowed?.matched ? { context: narrowed.matched } : {}),
+          ...(narrowed?.miss ? { contextMiss: narrowed.miss } : {}),
+          // `registry.markdown` otherwise means "the document, unchanged". A
+          // narrowed call puts a slice there, and JSON has no notice line to
+          // read, so the payload says so itself.
+          ...(narrowed?.matched ? { markdownIsExcerpt: true } : {}),
+          note: UNTRUSTED_NOTE.replace(/^>\s*Hinweis:\s*/, ''),
+          ...(shown?.entries.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
+          ...(task ? { task: task.json } : {}),
+        };
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          // The same framing the markdown view puts in front of the document:
-          // this hands over the very same repository text, so it carries the
-          // same warning rather than relying on the field name to imply it.
-          // `hint` stays a SECOND field rather than being folded into `note` —
-          // one is about trusting the text, the other about it being incomplete,
-          // and a reader acting on either should not have to split a sentence.
-          //
-          // And it is CONDITIONAL where `note` is not, on the same rule the
-          // markdown branch follows: the note is about a catalogue, so without
-          // entries there is nothing for it to be about. This branch runs ahead
-          // of the `!registry` check below, so an unconditional field shipped
-          // "das ist nur die Übersicht" beside `registry: null`.
-          // ONE view for the payload AND for every condition below it. Reading
-          // the unnarrowed registry while shipping the narrowed one is what put
-          // "das ist nur die Übersicht" beside an empty catalogue.
-          const shown = narrowed?.view ?? registry;
-          const payload = {
-            registry: shown, reason: reason ?? null,
-            ...(scanTruncated ? { scanTruncated } : {}),
-            // The matched context as a NAMED field, which is where the
-            // instruction belongs in JSON: unlike the markdown branch, a field
-            // cannot be mistaken for a section the document itself wrote.
-            ...(narrowed?.matched ? { context: narrowed.matched } : {}),
-            ...(narrowed?.miss ? { contextMiss: narrowed.miss } : {}),
-            // `registry.markdown` otherwise means "the document, unchanged". A
-            // narrowed call puts a slice there, and JSON has no notice line to
-            // read, so the payload says so itself.
-            ...(narrowed?.matched ? { markdownIsExcerpt: true } : {}),
-            note: UNTRUSTED_NOTE.replace(/^>\s*Hinweis:\s*/, ''),
-            ...(shown?.entries.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
-          };
-          return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
+          return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent: payload };
         }
         // A miss is an ANSWER about the collection, not a tool failure: the call
         // did what it was asked to, and `isError` would tell the model to retry.
         if (!registry || !narrowed) {
-          return { content: [{ type: 'text' as const, text: oneLine(missText(reason ?? 'no_registry', scanTruncated)) }] };
+          return { content: [{ type: 'text' as const, text: oneLine(missText(reason ?? 'no_registry', scanTruncated)) }],
+            structuredContent: payload };
         }
-        return { content: [{ type: 'text' as const, text: renderRegistry(narrowed.view, reason, narrowed) }] };
+        if (task?.skillText) {
+          // The fitting skill's instruction IS the answer; the catalogue would bury it.
+          return { content: [{ type: 'text' as const, text: [...task.head, '', task.skillText].join('\n') }],
+            structuredContent: payload };
+        }
+        const catalogue = renderRegistry(narrowed.view, reason, narrowed);
+        return { content: [{ type: 'text' as const, text: task ? [...task.head, '', catalogue].join('\n') : catalogue }],
+          structuredContent: payload };
       } catch (err) {
         return toolError('Fehler beim Laden der Skill-Registry', err);
       }

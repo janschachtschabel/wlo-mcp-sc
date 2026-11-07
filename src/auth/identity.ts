@@ -17,7 +17,7 @@
  * `person.authorityName`, which is `esguest` for anyone not logged in.
  */
 
-import { BASE_URL, WLO_REPOSITORY_URL } from '../wlo-config.js';
+import { IDENTITY_URL, WLO_REPOSITORY_URL } from '../wlo-config.js';
 import { wloFetch } from '../wlo-fetch.js';
 import { readJson } from '../read-json.js';
 import { ANONYMOUS_AUTHORITY, currentCredential, isInsecureCredentialTransport } from './credential.js';
@@ -41,7 +41,7 @@ export interface WloIdentity {
  */
 export async function checkIdentity(): Promise<WloIdentity> {
   try {
-    const res = await wloFetch(`${BASE_URL}/iam/v1/people/-home-/-me-`);
+    const res = await wloFetch(IDENTITY_URL);
     if (!res.ok) return { authenticated: false, authority: null };
     // Through `readJson` like every other upstream body: a proxy maintenance
     // page answers 200 with HTML, and parsing it directly surfaced as

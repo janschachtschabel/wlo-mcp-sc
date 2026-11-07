@@ -260,7 +260,7 @@ export async function addToCollection(collection: string, nodeId: string): Promi
     referencePath(collection, nodeId),
     { method: 'PUT', headers: { Accept: 'application/json' } },
   );
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
   log.info('content added to collection', { collection, nodeId });
   return await confirmReference(collection, nodeId, 'present');
 }

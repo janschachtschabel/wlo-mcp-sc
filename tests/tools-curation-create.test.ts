@@ -125,19 +125,50 @@ test('the token creates the record and reports its id', async () => {
   }
 });
 
-test('an existing record for the same URL stops the creation and names it', async () => {
+test('an existing record for the same URL is refused in the PREVIEW — no key is spent', async () => {
+  // Chatbot feedback 2026-11-07, point 3: the check ran only after the
+  // confirmation, so the person approved a record that could never be created.
   setServiceCredentialForTest(USER);
   const mock = serveAll([URL_NEW]);
   const client = await curationClient();
   try {
-    const preview = toolText(await client.callTool({ name: 'wlo_create_content', arguments: CREATE_ARGS }));
-    const res = await client.callTool({
-      name: 'wlo_create_content',
-      arguments: { ...CREATE_ARGS, confirmToken: tokenFrom(preview) },
-    });
-    assert.equal(calls(mock, '/children').length, 0);
-    assert.match(toolText(res), /alt-0/, 'the existing record is named so the user can go there');
+    const res = await client.callTool({ name: 'wlo_create_content', arguments: CREATE_ARGS });
+    const s = res.structuredContent as { error?: { code?: string; existing?: { nodeId?: string; title?: string } }; confirm?: unknown };
     assert.equal((res as { isError?: boolean }).isError, true);
+    assert.equal(s.error?.code, 'exists');
+    assert.deepEqual(s.error?.existing, { nodeId: 'alt-0', title: 'Schon da' });
+    assert.equal(s.confirm, undefined, 'nothing to confirm');
+    assert.match(toolText(res), /alt-0/, 'the existing record is named so the user can go there');
+    assert.equal(calls(mock, '/children').length, 0);
+  } finally {
+    await client.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('a duplicate that appears between preview and confirmation answers exists, not refused', async () => {
+  setServiceCredentialForTest(USER);
+  let searches = 0;
+  const mock = installFetchMock((url, init) => {
+    if (url.includes('/search/v1/')) {
+      searches++;
+      const dup = searches > 1;
+      return { json: {
+        nodes: dup ? [{ ref: { id: 'alt-9', repo: '-home-' }, properties: { 'ccm:wwwurl': [URL_NEW], 'cclom:title': ['Neu da'] } }] : [],
+        pagination: { total: dup ? 1 : 0, from: 0, count: dup ? 1 : 0 } } };
+    }
+    if (url.includes('/children') && (init?.method ?? 'GET') === 'POST') return { json: { node: { ref: { id: NODE, repo: '-home-' } } } };
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: {} } } };
+  });
+  const client = await curationClient();
+  try {
+    const preview = toolText(await client.callTool({ name: 'wlo_create_content', arguments: CREATE_ARGS }));
+    const res = await client.callTool({ name: 'wlo_create_content', arguments: { ...CREATE_ARGS, confirmToken: tokenFrom(preview) } });
+    const s = res.structuredContent as { error?: { code?: string; existing?: { nodeId?: string } } };
+    assert.equal(s.error?.code, 'exists');
+    assert.equal(s.error?.existing?.nodeId, 'alt-9');
+    assert.equal(calls(mock, '/children').filter(c => (c.init?.method ?? 'GET') === 'POST').length, 0);
   } finally {
     await client.close();
     mock.restore();
@@ -436,5 +467,20 @@ test('an anonymous caller can neither create nor submit', async () => {
   } finally {
     await client.close();
     mock.restore();
+  }
+});
+
+test('wlo_update_content: a missing record is not_found, an empty change invalid_input (feedback point 10)', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock(() => ({ status: 404, json: {} }));
+  const client = await curationClient();
+  const code = (r: unknown) => (r as { structuredContent?: { error?: { code?: string } } }).structuredContent?.error?.code;
+  try {
+    assert.equal(code(await client.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'weg', title: 'X' } })), 'not_found');
+    assert.equal(code(await client.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'weg' } })), 'invalid_input');
+  } finally {
+    await client.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
   }
 });

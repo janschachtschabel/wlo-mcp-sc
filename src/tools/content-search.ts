@@ -226,6 +226,8 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
             count: formatted.length,
             results: formatted,
             ...(derivedType ? { derivedResourceType: derivedType } : {}),
+            ...(unresolved.length ? { unresolvedFilters: unresolved } : {}),
+            ...(facetsArg ? { facets: facetsArg } : {}),
           },
           // Widget-only: hosts hand result _meta to the widget, never the
           // model — the base64 must not spend the chat's context.
@@ -414,9 +416,13 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         // does not carry the field, and enriching BEFORE the json branch keeps
         // the text envelope and structuredContent from disagreeing.
         const derivedNotice = derivedResourceTypeNotice(derivedType, envelope.content.count);
-        const enriched = derivedType
-          ? { ...envelope, content: { ...envelope.content, derivedResourceType: derivedType } }
-          : envelope;
+        const enriched = {
+          ...(derivedType
+            ? { ...envelope, content: { ...envelope.content, derivedResourceType: derivedType } }
+            : envelope),
+          ...(unresolvedArg ? { unresolvedFilters: unresolvedArg } : {}),
+          ...(facetsArg ? { facets: facetsArg } : {}),
+        };
         const derivedBlock = derivedNotice ? [{ type: 'text' as const, text: derivedNotice }] : [];
         // Materials only: a collection tile renders no thumbnail (block glyph,
         // early return in tile.ts), so the service would discard those anyway.

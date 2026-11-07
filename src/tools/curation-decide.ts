@@ -37,11 +37,13 @@ import {
   unverifiedReply,
   desiredFromChangeSet,
   errorText,
+  codedError,
   plainText,
   prependText,
   recordTitle,
   fieldLabel,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 import { CONFIRM_TOKEN } from './curation-fields.js';
 
@@ -68,7 +70,7 @@ export function registerCurationDecisionTool(server: McpServer, challenge: Write
         return await handleDecide(params);
       } catch (err) {
         return timeoutOrError('Über den Vorschlag konnte nicht entschieden werden', err,
-          `Ob der Wert in „${sanitizeText(String(params['nodeId'] ?? ''))}“ geschrieben und der Vorschlag vermerkt wurde, ist offen`);
+          `Ob der Wert in „${sanitizeText(String(params['nodeId'] ?? ''))}“ geschrieben und der Vorschlag vermerkt wurde, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });
@@ -88,7 +90,7 @@ async function handleDecide(params: Record<string, unknown>) {
   }
 
   const node = await getNodeMetadata(nodeId);
-  if (!node) return errorText(`Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+  if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
   const before = node.properties ?? {};
   const label = fieldLabel(found.propertyId);
   const title = recordTitle(before);

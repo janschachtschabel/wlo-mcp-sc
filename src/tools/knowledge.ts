@@ -19,7 +19,8 @@ import {
   searchKnowledgeSchema, searchKnowledgeRichSchema,
   fetchDocumentSchema, fetchDocumentRichSchema,
 } from '../apps/outputSchemas.js';
-import { nodeLookupMiss, toolError } from './shared.js';
+import { codedErrorResult, nodeLookupMiss, toolError } from './shared.js';
+import { codeOfStatus } from '../services/node-details.js';
 
 /**
  * Cap on the fetched document text. 100 000 (user decision 2026-08-20 — 10 000
@@ -161,7 +162,7 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
         // refused record as absent teaches the model the source does not exist.
         const { node, status } = await readNodeMetadata(params.id);
         if (!node) {
-          return { content: [{ type: 'text' as const, text: nodeLookupMiss(params.id, status) }], isError: true };
+          return codedErrorResult(codeOfStatus(status), nodeLookupMiss(params.id, status));
         }
         const f = formatNode(node);
         // Prefer the curated compendium text, then the stored full text, then

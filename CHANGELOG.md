@@ -6,6 +6,164 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — review of the feedback changes (2026-11-07, 5 findings)
+
+- **Errors the SDK builds itself are coded:** wrong arguments (`invalid_input`), an unknown or disabled tool
+  (`unknown_tool`), anything else (`upstream_error`). They never reach a tool handler, so the net missed them;
+  `McpServer.createToolError` is wrapped in `apps/tool-defaults.ts`, and a test fails if an SDK update moves it.
+- The licence hint says "keine Materialien", not "keine Treffer": `search_wlo_all` still shows collections and
+  topic pages beside it.
+- Read tools give the cause instead of the net's `refused`: missing arguments `invalid_input`
+  (`browse_collection_tree`, `get_compendium_text`, `get_topic_page_content`), `not_found` (`get_node_collections`,
+  an unknown subject portal), `fetch` by HTTP status, `wlo_health_check` by `failureCode`. One helper,
+  `codedErrorResult` (`tools/shared.ts`), which `codedError` now is.
+- `too_many_plans` names the key's deadline (ten minutes after the preview).
+
+### Fixed — chatbot feedback on the contract (2026-11-07, 11 points)
+
+- **An unresolvable licence returns nothing instead of everything.** It produced no criterion and
+  `filterByExactLicense` let every hit through, so "CC BY-NC" or a typo answered with NC and ND material.
+  Now no content search runs (`licenseUnresolvable`, one rule for search, local pass and facets), the
+  answer is an honest 0, and the hint says why.
+- **`unresolvedFilters` and `facets` in `structuredContent`** of `search_wlo_content`, `search_wlo_all`,
+  `search_wlo_collections` and `search_wlo_within_collection`, declared in the output schemas.
+- **`wlo_create_content` checks for a URL duplicate in the PREVIEW**, not only after the confirmation —
+  before, the key was spent on a refusal. Both places answer `exists` with `error.existing {nodeId, title}`.
+- **Every error answer is coded, by a net in `apps/tool-defaults.ts`:** `refused` for an `isError` without
+  a code, `upstream_error` for a thrown error, `login_rejected` for a login the repository refused (HTTP
+  401). `toolError` codes timeouts as `timeout` and 401/403 as `forbidden` (`failureCode`). Missing targets
+  of the single write tools are `not_found`.
+- **Expired keys answer `expired`:** `prune` dropped expired confirmation keys on the next mint and they
+  answered `unknown`; they are kept for an hour as bare ids. Plans that expired or made room are buried
+  the same way, so their keys answer `plan_expired` and not `confirm_unknown`.
+- **`outcomeOpen: false` for a preview timeout in every write tool** (`isPreviewCall`: no key of any kind).
+- **Unfinished plans are never evicted.** Room comes from complete plans; with five unfinished ones a new
+  plan is refused with `too_many_plans` BEFORE the confirmation key is redeemed, so the key stays valid.
+- **Batch filing:** the personal-login refusal carries the sign-in challenge; a refused batch token no
+  longer spends the upload slot (an `already` still drops it).
+- **`get_node_details` with `nodeId`:** a miss carries `missing [{part, code}]`; the enrichments
+  (`renderUrl`, `parents`, `textContent`, `accessInfo`, `qualityInfo`, `raw`) are in `structuredContent`
+  in both formats; `nodeId` and `nodeIds` together is `invalid_input`.
+- **Docs:** tool counts corrected (48, 52 with the batch switch; 16 always-listed curation tools) and
+  `tests/docs-claims.test.ts` now catches the spellings it missed; "only visible with write rights" in
+  `docs/TOOLS.md` replaced. The comments claiming "zod strips unknown keys" were false — measured on SDK
+  1.32.2 the SDK passes undeclared keys on; the rule to declare every field stands because the advertised
+  schema carries `additionalProperties: false`.
+
+### Fixed — cross-cutting review of the chatbot contract (2026-11-07)
+
+- **Every error answer is coded.** Only the login gate carried `structuredContent.error`; every other refusal
+  was text-only, so a client that reads only `structuredContent` saw a bare `isError`. Now: `invalid_input`
+  (with `reasons[]`), `confirm_expired`/`confirm_mismatch`/`confirm_unknown`, `not_found`,
+  `not_a_collection`, `not_checked`, `timeout` (with `outcomeOpen`), `not_visible`, `unverified`,
+  `upstream_error` (also every read-tool failure via `toolError`), and `refused` for every remaining refusal.
+  The batch tools keep `status`/`reason` and add `error` with the reason as code; the token refusal's reason
+  is now `batch_unknown`/`batch_expired`/`batch_mismatch` (was `unknown`/…). Text unchanged. Table in `docs/MCP-REFERENZ.md` §2 (“Fehler als Code”).
+- **`POST /api/uploads` counted logins per ADDRESS for every scheme**, so the eleventh signed-in person behind
+  one chatbot backend got 429 `too_many_logins` — the relay-client defect `POST /mcp` was fixed for on
+  2026-08-12. It now uses the same bucket (`abuseBucketKey`: a block per access id, Basic per address);
+  `proveLogin` takes the bucket from that caller only, because issuance mints fresh ids and must stay per
+  address.
+- **`get_skill_registry` returns `structuredContent` in both formats** — the payload of the JSON branch
+  (`registry`, `reason`, `context`, `contextMiss`, `task`, …) was only ever a text block, and with `task` the
+  chosen skill was unreachable for a client reading `structuredContent`.
+
+### Added — BOERDi wishlist P6 (12b, 10; 2026-11-06)
+
+- **`search_wlo_within_collection` takes `excludeNodeIds`** (≤ 200) — it was silently ignored; matched on
+  the listed id and on a reference's original, removed before paging.
+- **`get_skill_registry` takes `task`**: picks the fitting APPROVED skill and returns its instruction in
+  the same call — but only on a confident choice (a discriminating word, a 1.5× lead), because plain
+  ranking chose the wrong skill in 2 of 4 natural phrasings on the real Optik registry. Otherwise
+  `match: ambiguous` with the ranked candidates, `none`, or `unreadable`. `rankBm25` results now carry
+  the matched terms per hit and the document frequency per term (additive).
+- **`wlo_list_my_batches`** (only with `WLO_BATCH_UPLOAD_ENABLED`, read-only, personal login only): the own
+  batch filings, newest first, with title, date and `counts`; with `nodeId` one batch with its entries. The
+  server cannot read a private file's bytes with a Basic login (`eduservlet/download` 403, `/content` 405,
+  `/textContent` empty — measured), so filing `vorgang.json` now ALSO writes a compact summary into the
+  record's `cm:description` and reads it back (decision A). Measured first: a property the content model
+  does not declare is not kept (`PUT …/metadata` 400, `POST …/property` 200 and dropped); `cm:description`
+  keeps 53 950 characters unchanged. Found through the node store of the own area (flat and one folder
+  level), never the search index. Live on staging: written, read back, listed — although staging drops the
+  file's bytes.
+- Every curation refusal at the login gate now also carries `structuredContent.error.code = "login_required"`.
+- Review of P6/item 9: a handed-over skill now carries the editors' instructions (general and, with
+  `context`, the context's) as `task.instructions` — they were dropped together with the catalogue; batch
+  folders are read with one page (a batch holds ≤ 201 entries); an unreadable batch in a folder is named
+  after the folder.
+
+### Fixed — review of the day's changes (R-A…R-D, 2026-11-06)
+
+- **Batch filing:** an aborted file is recorded as OPEN (`unverified`) instead of staying "being filed"
+  forever, and goes out through `timeoutOrError`; an aborted `vorgang.json` is no longer reported as
+  filed by the next call (the manifest keeps its recorded result, like `redeem`); batches are capped in
+  total (500), not only per owner.
+- **`wlo_create_content`:** an abort while READING before the confirmation (collection, duplicate check)
+  now says nothing was created — "may have been created" only after the token was redeemed.
+- **`get_node_details` with `nodeIds`:** `missing` is `[{part, code}]` with
+  `not_found`/`forbidden`/`timeout`/`upstream_error` (decision E6) — a deleted and a refused record no
+  longer read the same. `get_nodes_details` keeps `failed`.
+- **First tree level:** a listing longer than `maxResults` is cut AND disclosed (`truncatedAt` = the
+  parent); `get_collection_overview`'s `subcollectionsTruncated` could never be set before, and
+  `browse_collection_tree` now says so in its text.
+- Measured and documented, not changed: a `ccm:wwwurl` search ranks the stored address first (40/40)
+  and returns originals only (0 references among 50) — the 20-hit window and the unresolved filing in
+  `wlo_create_content` rest on that.
+
+### Added — BOERDi wishlist: planned writes under ONE approval (P5, 2026-11-06)
+
+- **`wlo_create_collection_tree`** — a whole tree of sub-collections (≤ 250 nodes, depth 4, ≤ 15
+  children) under one confirmation. The preview names every node (`anlegen` / `vorhanden`), and the key
+  binds to those lines including each description IN FULL. `onExisting: merge` (default) reuses a
+  same-titled sub-collection (case and spacing ignored), `fail` refuses. Answer
+  `nodes [{path, nodeId, status, code}]`.
+- **`wlo_add_to_collections`** — up to 200 `{nodeId, collectionId}` pairs under one confirmation. A
+  reference id is filed as its original (`filedId`), a pair already in place is `already`, one failed
+  pair does not stop the rest. Answer `pairs […]`. Not live-verified: staging answers every filing with
+  500 since 2026-11-06.
+- **Plan runner** (`services/write/plan-runner.ts`, decision E4 = B): the server holds the approved plan
+  and runs it in ~40 s slices (pool 4); `complete`, `progress {done, total}`, `continuationToken` while
+  open; 30 min from the confirmation, never extended; ≤ 5 plans per identity. A key presented again by
+  the SAME identity continues or replays — never creates twice. Codes `plan_expired`, `plan_mismatch`.
+- **Measured and handled:** siblings created AT ONCE under one parent → HTTP 500
+  `ConcurrencyFailureException: Acl…` in 17 of 24 cases, and every one of them EXISTS afterwards.
+  Creates under one parent now run one at a time (different parents stay parallel: 12 of 12), and a
+  refused create is looked up before it is reported `failed`. Live: 40 nodes in one call, 15.8 s.
+
+### Added — BOERDi wishlist P1–P4 (2026-11-06)
+
+`structuredContent.confirm` on every preview; `resolve_wlo_filters`; `find_content_by_url`;
+`addToCollectionId` on `wlo_create_content`; licences resolve exactly or not at all;
+`get_collection_overview`; `get_node_details` with `nodeIds`; `count_wlo_content_matches`;
+`browse_collection_tree` to depth 3. Details: `docs/plans/2026-11-06-boerdi-wunschliste.md`.
+
+### Added — batch filing into the personal area (MA-1…MA-5, 2026-11-06)
+
+For the chatbot's upload module ("Ordner übertragen"), off unless `WLO_BATCH_UPLOAD_ENABLED`:
+
+- **File types from the bytes** (`services/write/file-types.ts`, `zip-entries.ts`): PDF, OOXML/ODF via the
+  ZIP central directory (nothing unpacked, ≤ 2000 entries), the shared image signatures
+  (`file-signatures.ts`, now also used by `content-source.ts`), MP3 (real frame header), MP4 (known
+  brands), UTF-8 text/markdown without markup anywhere. HTML/SVG/XML, UTF-16 and executables are refused.
+- **Upload slot** `POST /api/uploads` (`rest/upload-route.ts`, `services/write/upload-slot.ts`): raw
+  `application/octet-stream` (no multipart parser, no new dependency); only a login the repository
+  CONFIRMS (`proveLogin`, distinct-login limiter, cached 10 min); bytes held **in memory only** (the
+  server stores nothing at rest), 30 min, one take per ref and identity; caps per identity (20) and in
+  total (`UPLOAD_MAX_TOTAL_BYTES`, default 128 MB); 413/408 answered before the connection closes.
+  New env: `UPLOAD_MAX_BYTES`, `UPLOAD_MAX_TOTAL_BYTES`, `UPLOAD_REQUEST_TIMEOUT_MS`.
+- **Batch approval** (`services/write/batch-confirm.ts`) and **filing** (`batch-filing.ts`,
+  `tools/curation-batch.ts`): `wlo_prepare_file_batch` (preview + one token for exactly this list;
+  folder permission read once → `folder | flat`), `wlo_store_batch_file` (each index once, checksum and
+  type must match — else nothing is created and the index stays redeemable; one folder per batch, ONLY a
+  403 continues flat, other folder failures fail the file and are retried; content AND title read back, an
+  error after creation keeps the node id; upload deadline grows with the size), `wlo_store_batch_manifest`
+  (`vorgang.json` built by the SERVER from the approved plan and the results — announced in the preview,
+  the caller sends no content). Personal login only — the service account is refused, never used; batches
+  are owned by the credential header, so a wrong password cannot displace someone's batch. A refused
+  distinct-login limiter answers 429 `too_many_logins` (not "log in").
+- Registered from `src/server.ts` unconditionally; `registerCurationBatchTools` checks the switch itself.
+  One server instance only (in-memory).
+
 ### Added — collection cards show what they hold (2026-08-22)
 
 User request from the first live day ("nur wenn ohne Zusatzaufwand umsetzbar")

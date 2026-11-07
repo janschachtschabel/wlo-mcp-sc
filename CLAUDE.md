@@ -138,7 +138,7 @@ The current rebuild/extension is designed in:
   rejection forward, and a failed write is undone rather than left granting what
   it could not record.
 
-- **OAuth 2.1 für alle Clients — IN ARBEIT, P1–P4 fertig, nur P5 (live + Doku) offen (2026-08-05):**
+- **OAuth 2.1 für alle Clients — COMPLETE (P1–P5, live 2026-08-05, T5.3-Review 2026-08-09):**
   - Design: `docs/plans/2026-08-05-mcp-oauth-design.md`
   - Tasks:  `docs/plans/2026-08-05-mcp-oauth-tasks.md` (17 tasks, 5 packages)
 
@@ -267,7 +267,8 @@ The current rebuild/extension is designed in:
 
   **A catalogue says it is not the instruction (2026-08-16).** Every surface
   that lists skills BY NAME closes with `DESCRIPTIONS_ONLY_NOTE` — one constant
-  in `formatter.ts`, beside `registrySummaryLines`, pinned by
+  in `registry-render.ts` (split out of `formatter.ts` 2026-11-05, re-exported
+  there), beside `registrySummaryLines`, pinned by
   `tests/shared-rule-discipline.test.ts`; two of the three surfaces already
   carried their own closing pointer, identical by luck, and the third had none.
   It reaches `registrySummaryLines` (so: search results, `subjectRegistryText`,
@@ -487,8 +488,9 @@ The current rebuild/extension is designed in:
   own `registryChecked` against the shared call — a count cannot say which side
   an answer belongs to, and the count-based union marked the NORMAL mixed
   search unchecked while its catalogues stood in the answer; and
-  `topicPages.registryChecked` is declared in `searchAllEnvelopeSchema` (zod
-  strips undeclared keys with nothing failing). `get_topic_page_content`
+  `topicPages.registryChecked` is declared in `searchAllEnvelopeSchema` (an
+  undeclared key breaks the advertised schema with nothing failing — see the
+  note below on what zod does and does not do). `get_topic_page_content`
   additionally carries the catalogue INLINE in markdown — it was a second
   content block, and at least one real client hands the model only the first,
   so the server had answered and the model never saw it; JSON keeps the second
@@ -509,9 +511,9 @@ The current rebuild/extension is designed in:
   both browse tools computed it after the JSON early-return, so a JSON caller
   got nothing while the docs promised it to both. It costs no schema work:
   `CollectionTreeNode` IS a `FormattedNode` and both browse schemas extend
-  `formattedNodeSchema`, so the field and its zod entry already exist — and zod
-  strips what is not declared, which is why `structuredContent` is asserted
-  separately from the text. (2) `ensureRegistryFor` reports THREE outcomes
+  `formattedNodeSchema`, so the field and its zod entry already exist — and an
+  undeclared key breaks the advertised schema, which is why `structuredContent`
+  is asserted separately from the text. (2) `ensureRegistryFor` reports THREE outcomes
   (`{registry, answered}`), not two: a catalogue, "answered, none there", and
   "not answered" — collapsing the last two into one `null` made a failed listing
   read as a collection that approves nothing. A lookup that learned nothing is
@@ -556,9 +558,12 @@ The current rebuild/extension is designed in:
   the one collection in play, rather than for all five. Three rules bind any
   change: `WLO_REGISTRY_IN_SEARCH` is read INSIDE `searchAll`, not at the three
   call sites; a new `FormattedNode` field
-  must be DECLARED in `formattedNodeSchema`, because zod strips unknown keys and
-  the field would vanish from every `structuredContent` with nothing failing
-  (found in this diff); and the measured cost is **~1.0–1.4 s** per search, not
+  must be DECLARED in `formattedNodeSchema` (found in this diff). The reason
+  given here until 2026-11-07 — "zod strips unknown keys" — is FALSE for the
+  tool pipeline (measured on SDK 1.32.2): the SDK validates and passes the
+  original object on. The rule still holds for a different reason: the schema
+  in `tools/list` carries `additionalProperties: false`, so an undeclared key
+  breaks the advertised contract for every strictly validating client; and the measured cost is **~1.0–1.4 s** per search, not
   the 0.5 s first estimated — driven by the child COUNT of the largest
   collection, while the projection costs nothing (27 fields vs 3: 531 vs 523 ms,
   measured before the "obvious" optimisation was written, which is why it was
@@ -1038,7 +1043,7 @@ The current rebuild/extension is designed in:
   (zod verwirft Unbekanntes, sonst erreicht es den Text und verschwindet aus
   `structuredContent`, ohne dass etwas fehlschlägt — deshalb sind Text- und
   JSON-Zusicherung getrennte Aufgaben), und die Zeile entsteht in **`nodeIdLine`**
-  (`formatter.ts`), geteilt mit den Skill-Werkzeugen: eine Formulierung für eine
+  (`text-line.ts`, über `formatter.ts` re-exportiert), geteilt mit den Skill-Werkzeugen: eine Formulierung für eine
   Tatsache. Ebenfalls hier: `wlo_delete_content` versprach „zerstört das Material
   für alle Sammlungen" — über eine Verknüpfungs-id falsch; Beschreibung
   korrigiert, und die VORSCHAU sagt jetzt, welcher der beiden Fälle vorliegt
@@ -1344,6 +1349,62 @@ The current rebuild/extension is designed in:
   und kein Aufrufparameter: der Deckel existiert, damit eine Antwort nicht endlos
   wird, und wer ihn hochsetzen kann, hat keinen.
 
+- **BOERDi-Wunschliste (Chatbot-Werkzeuge) — COMPLETE (P1–P6, 2026-11-06; item 9 via decision A):**
+  `docs/plans/2026-11-06-boerdi-wunschliste.md` (Machbarkeit je Punkt, Blocker,
+  Entscheidungen E1–E6, Phasen). Two rules bind it: every new write keeps the
+  two-step rule — a batch or combined write puts EVERY step (e.g. the
+  collection add of `addToCollectionId`) into the ChangeSet the token binds to;
+  and `structuredContent.confirm` is built from that same ChangeSet in
+  `previewReply`, never beside it. Item 9 is free for design since MA-0 was measured (2026-11-06, non-admin test
+  account `WLO_TEST_USER`): no folder right → batches lie FLAT in `-userhome-`, and
+  the owner's search finds them at once. Staging rejects EVERY content upload
+  (500 `InvalidTypeException … property name: content`, raw REST, both accounts) —
+  the same defect as the filing regression; file types/sizes stay unmeasured.
+  P2 adds two rules: a licence resolves EXACTLY or not at all (`resolveVocabMatch`
+  has no fuzzy step for `license` — "CC BY NC" became `CC_BY`, the freer key),
+  and the `ccm:wwwurl` search returns prefix NEIGHBOURS while a decorated
+  spelling (trailing slash, `utm_`) does not find the clean stored one (measured
+  2026-11-06) — so `services/url-matches.ts` asks up to three spellings and
+  compares every hit; never trust "a result came back".
+  P3 adds: `get_collection_overview` reports an unanswered skill lookup as
+  `missing: not_checked`, never as "no skills", and carries only outline levels
+  0–1 (Optik: 242 headings, 19 KB in full); its text closes a printed skill list
+  with `DESCRIPTIONS_ONLY_NOTE` like every other catalogue surface.
+  P4 adds: `count_wlo_content_matches` never drops an unresolved filter (the
+  query goes to `missing`) — a count without the filter reads as the filtered
+  one; and the depth-3 tree budget (300) is computed BEFORE the walk, never by a
+  counter. Staging regression found 2026-11-06: `PUT …/references/{id}` answers
+  500 `InvalidTypeException` for every record — filing is not live-testable
+  until the repository is fixed (see STATUS).
+  E4 is decided (2026-11-06): **B** — the server holds the approval for the
+  whole plan; a key may be re-presented by the SAME identity and then continues
+  or replays the result, never creates twice. Design: plan file, "P5 — Entwurf".
+  P5 adds (`services/write/plan-runner.ts`): a plan is bound to identity AND
+  arguments, ≤ 5 per identity, every step in `ChangeSet.items` — and a preview
+  line carries what is SENT in full (`flattenText`, never the capping
+  `sanitizeText`: two descriptions sharing 120 characters shared a key). Measured
+  2026-11-06 and binding: sibling collections created AT ONCE under one parent →
+  500 `ConcurrencyFailureException: Acl…` while the collection IS created (17/24);
+  different parents 12/12. So creates per parent run one at a time, and a refused
+  create is looked up before it is called `failed`. Lesson: `mapPool` returns
+  `null` for a throw — a measurement counting its results counts only successes
+  (the "0.35 s at 4 parallel" figure was wrong for that reason).
+  P6 adds: `get_skill_registry` + `task` hands over an instruction ONLY on a
+  confident choice (`services/skill-for-task.ts`: a word at most half the
+  candidates carry, a 1.5× lead) — plain ranking picked the wrong skill in 2 of
+  4 natural phrasings on the real Optik registry; otherwise `ambiguous` with the
+  candidates, never a fallback to the next one. Unresolved (unreadable) approved
+  skills are candidates too. Item 9 is NOT built: a private file's bytes are not
+  readable with a Basic login (`eduservlet/download` 403, `/content` 405,
+  `/textContent` empty — measured 2026-11-06), so item 9 (decision A) keeps a
+  compact manifest summary in `cm:description` of the vorgang.json record
+  (`services/write/batch-manifest.ts`, ONE place for writer and reader; read
+  back, missing → `unverified`). Measured and binding: a property the content
+  model does not declare is NOT kept — `PUT …/metadata` 400, `POST …/property`
+  200 and silently dropped; model text properties keep 53 950 characters.
+  `wlo_list_my_batches` finds manifests through the NODE store of the own area,
+  never the index (a "no batches" is a negative).
+
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context
 before the next package.
@@ -1358,7 +1419,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 ## Tech stack
 
 - TypeScript (ESM, `module`/`moduleResolution` NodeNext, target ES2022,
-  `strict: true`), Node >= 20.
+  `strict: true`), Node >= 22 (LTS; 20 is end-of-life since 2026-04-30).
 - Runtime deps: `@modelcontextprotocol/sdk` (MCP server + stdio/HTTP transports),
   `zod` (tool input schemas). Deliberately minimal — no web framework.
 - Dev: `tsx` (run TS directly), `typescript` (build), `esbuild` (widget bundle).
@@ -1423,7 +1484,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   nobody starts.) Two thin entry points connect a
   transport to it: `stdio.ts` (local/Docker) and `http.ts` (self-hosted
   Streamable HTTP + rate limit + body cap — the production path).
-- `src/tools/*` — the 28 read tools (all unconditional, of which `get_url_text`
+- `src/tools/*` — the 32 read tools (all unconditional, of which `get_url_text`
   is declared `unsafe` and removable via `WLO_DISABLE_UNSAFE_TOOLS`;
   `search` gains the `search_wlo_all` buckets + widget and `fetch` the full
   record + detail widget under `WLO_SEARCH_OUTPUT_MODE=rich`, off by default —
@@ -1435,7 +1496,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   convention shape therefore stays first and untouched in both modes, pinned by
   `tests/tools-knowledge-rich.test.ts`;
   `search_skill` becomes `get_skill_for_task` under
-  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 14 curation tools (`curation-*.ts`,
+  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 16 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm/report they share, `curation-fields.ts` the 13-field
@@ -1449,7 +1510,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   (`collection-traversal.ts`, `topic-page-discovery.ts`).
   A tool that renders its own line-oriented text (browse tree, Fachportal list,
   Themenseiten listing, swimlane outline) must pass every repository-supplied
-  value through `oneLine` from `formatter.ts` — a newline in a title otherwise
+  value through `oneLine` (`text-line.ts`, re-exported by `formatter.ts`) — a newline in a title otherwise
   forges a second record with a nodeId the next call acts on.
 - `src/services/collection-search.ts` — "which collections match this word?",
   asked of BOTH repository backends and merged. The one place that knows there

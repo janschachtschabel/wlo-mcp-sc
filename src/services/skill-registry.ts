@@ -232,6 +232,18 @@ async function scanForRegistry(
  * One skill the registry declares. Title and nodeId come out of the `:::` block
  * and cost nothing; description and keywords only when the heads are resolved.
  */
+/**
+ * How many skills of a collection get a „what is this for" line.
+ *
+ * One metadata read each, so this number IS the per-answer bill — and it is a
+ * cap on the READS, not just on the output: a registry may declare a hundred
+ * skills (`REGISTRY_MAX`), and a hundred reads per collection answer is the cost
+ * the cheap tier exists to avoid. Three, by the user's decision (2026-08-18);
+ * everything past it keeps title and nodeId, which is what the surface carried
+ * before.
+ */
+export const DESCRIBED_MAX = 3;
+
 export interface RegistryEntry {
   nodeId: string;
   title: string;

@@ -116,3 +116,67 @@ test('a redirection from a different reference is a mismatch', () => {
     });
   assert.equal(consumeToken(mintToken(from('reference-1')), from('reference-2')), 'mismatch');
 });
+
+// ── Identity binding and per-identity cap (audit 2026-11-05) ────────────────
+
+import { runWithCredential, type WloCredential } from '../src/auth/credential.js';
+
+const ALICE: WloCredential = { header: 'Basic YQ==', label: 'alice', source: 'user' };
+const BOB: WloCredential = { header: 'Basic Yg==', label: 'bob', source: 'user' };
+
+test('a token approved by one person does not authorise the same change for another', () => {
+  // The fingerprint covered the change, not who saw the preview: Bob replaying
+  // Alice's token with the identical change set would have written under his
+  // own rights on her approval.
+  const cs = changeTitle('Gemeinsam');
+  const token = runWithCredential(ALICE, () => mintToken(cs));
+  assert.equal(runWithCredential(BOB, () => consumeToken(token, cs)), 'mismatch');
+});
+
+test('the same person confirming their own preview still works', () => {
+  const cs = changeTitle('Eigene Änderung');
+  const token = runWithCredential(ALICE, () => mintToken(cs));
+  assert.equal(runWithCredential(ALICE, () => consumeToken(token, cs)), 'ok');
+});
+
+test('one identity flooding previews evicts only its own, not anyone else\'s', async () => {
+  const { MAX_PENDING_PER_IDENTITY } = await import('../src/services/write/confirm.js');
+  const bobsToken = runWithCredential(BOB, () => mintToken(changeTitle('Bob wartet')));
+  const alicesFirst = runWithCredential(ALICE, () => mintToken(changeTitle('Alice 0')));
+  for (let i = 1; i <= MAX_PENDING_PER_IDENTITY; i++) {
+    runWithCredential(ALICE, () => mintToken(changeTitle(`Alice ${i}`)));
+  }
+  assert.equal(runWithCredential(ALICE, () => consumeToken(alicesFirst, changeTitle('Alice 0'))), 'unknown',
+    'her own oldest preview made room');
+  assert.equal(runWithCredential(BOB, () => consumeToken(bobsToken, changeTitle('Bob wartet'))), 'ok',
+    "Bob's pending preview survived Alice's flood");
+});
+
+test('the collection a create files into is part of what the token authorises', () => {
+  // BOERDi wishlist item 4: the action sentence names the collection too, but
+  // `addTo` must bind ON ITS OWN — a later rewording of that sentence must not
+  // turn an approval for one collection into one for another.
+  const action = 'Legt einen neuen Datensatz an:';
+  const into = (nodeId: string) =>
+    buildChangeSet('https://example.org/x', 'content', {}, { 'cclom:title': ['T'] }, { action, addTo: { nodeId, title: 'Optik' } });
+  assert.equal(consumeToken(mintToken(into('coll-a')), into('coll-b')), 'mismatch');
+  const plain = buildChangeSet('https://example.org/x', 'content', {}, { 'cclom:title': ['T'] }, { action });
+  assert.equal(consumeToken(mintToken(plain), into('coll-a')), 'mismatch', 'nor does a key without a filing');
+});
+
+test('the steps of a multi-step change are part of what the token authorises', () => {
+  const plan = (steps: string[]) =>
+    buildChangeSet('parent', 'collection', {}, {}, { action: 'Legt einen Baum an:', items: steps });
+  assert.equal(consumeToken(mintToken(plan(['A: anlegen', 'A/B: anlegen'])), plan(['A: anlegen', 'A/C: anlegen'])), 'mismatch');
+});
+
+test('an expired token still answers expired after another token was minted (feedback 2026-11-07, point 5)', () => {
+  // `prune` used to drop expired entries on every mint, and the expired token
+  // then answered `unknown` — the code the docs promise could never be reached.
+  const cs = buildChangeSet('n-tomb', 'content', { 'cclom:title': ['a'] }, { 'cclom:title': ['b'] });
+  const t0 = 5_000_000;
+  const token = mintToken(cs, t0);
+  mintToken(cs, t0 + TOKEN_TTL_MS + 1);
+  assert.equal(consumeToken(token, cs, t0 + TOKEN_TTL_MS + 2), 'expired');
+  assert.equal(consumeToken(token, cs, t0 + TOKEN_TTL_MS + 3), 'unknown', 'the grave answers once');
+});

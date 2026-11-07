@@ -7,6 +7,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 
 export interface RateLimiter {
   /**
@@ -40,9 +41,36 @@ export function clientKey(
     const raw = Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor;
     const hops = raw.split(',').map(s => s.trim()).filter(Boolean);
     const last = hops[hops.length - 1];
-    if (last) return last;
+    if (last) return addressBucket(last);
   }
-  return remoteAddress ?? 'unknown';
+  return remoteAddress ? addressBucket(remoteAddress) : 'unknown';
+}
+
+/**
+ * The unit a client is counted in: an IPv4 address as is, an IPv6 address by
+ * its /64.
+ *
+ * One IPv6 customer normally holds a whole /64, so keying per full address
+ * handed a single client ~2^64 independent budgets — for the request limiter
+ * and for the password-guessing guard alike (audit 2026-11-05).
+ *
+ * Two forms must NOT be cut: an IPv4 peer that Node reports as IPv4-mapped
+ * (`::ffff:a.b.c.d`, the normal case on a dual-stack socket) keeps its own
+ * IPv4 — a /64 cut would put every IPv4 client into ONE bucket — and loopback
+ * stays loopback. Anything that is not an address passes through unchanged.
+ */
+function addressBucket(address: string): string {
+  const host = address.replace(/^\[|\]$/g, '').toLowerCase();
+  if (isIP(host) !== 6) return address;
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
+  if (mapped) return mapped[1]!;
+  if (host === '::1') return host;
+  const [head = '', tail] = host.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail !== undefined && tail ? tail.split(':') : [];
+  const groups = [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right];
+  const prefix = groups.slice(0, 4).map(g => parseInt(g, 16).toString(16)).join(':');
+  return `${prefix}::/64`;
 }
 
 /** Counts how many DISTINCT values one key presents within a window. */

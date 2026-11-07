@@ -364,8 +364,29 @@ const VOCAB_MAP: Record<VocabKey, VocabEntry[]> = {
   qualityFinding: QUALITY_FINDING,
 };
 
+/** How a value resolved — the caller decides what an uncertain match may do. */
+export type VocabMatchKind = 'exact' | 'alias' | 'fuzzy';
+
 /** Resolve a label or URI to a full URI. Returns null if nothing matches. */
 export function resolveVocab(input: string, vocab: VocabKey): string | null {
+  return resolveVocabMatch(input, vocab)?.value ?? null;
+}
+
+/**
+ * The same resolution, saying HOW it matched: `exact` (a URI, the repository's
+ * own key, or the main label), `alias` (another listed spelling) or `fuzzy`
+ * (substring guess). One function, so a search, a write and
+ * `resolve_wlo_filters` can never disagree about what a value means.
+ *
+ * Licences never resolve fuzzily (BOERDi wishlist 12c, 2026-11-06): the
+ * substring rule turned "CC BY NC" into `CC_BY` — the FREER licence, which is
+ * the surplus direction `filter-criteria.ts` calls harmful. A licence the table
+ * does not spell is unresolved and gets a suggestion instead.
+ */
+export function resolveVocabMatch(
+  input: string,
+  vocab: VocabKey,
+): { value: string; match: VocabMatchKind } | null {
   if (!input?.trim()) return null;
   const trimmed = input.trim();
 
@@ -373,7 +394,10 @@ export function resolveVocab(input: string, vocab: VocabKey): string | null {
   // "http" is a typo, and passing it through as a filter value produced a
   // guaranteed empty result with no "did you mean" hint — a non-null return
   // means "resolved" to every caller.
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  //
+  // Not for licences: WLO stores them as bare keys (`CC_BY_NC`), so a licence
+  // URI passed through as "exact" filtered on a value that matches nothing.
+  if (/^https?:\/\//i.test(trimmed)) return vocab === 'license' ? null : { value: trimmed, match: 'exact' };
 
   const lower = trimmed.toLowerCase();
   const entries = VOCAB_MAP[vocab];
@@ -383,12 +407,14 @@ export function resolveVocab(input: string, vocab: VocabKey): string | null {
   //    repository value" — what every filter description promises — would hold
   //    for every vocabulary except that one.
   for (const entry of entries) {
-    if (entry.id.toLowerCase() === lower) return entry.id;
+    if (entry.id.toLowerCase() === lower) return { value: entry.id, match: 'exact' };
   }
   // 1) Exact label/alias match wins — precise and order-independent.
   for (const entry of entries) {
-    if (entry.labels.some(l => l.toLowerCase() === lower)) return entry.id;
+    const i = entry.labels.findIndex(l => l.toLowerCase() === lower);
+    if (i >= 0) return { value: entry.id, match: i === 0 ? 'exact' : 'alias' };
   }
+  if (vocab === 'license') return null;
   // 2) Fuzzy fallback, but ONLY between tokens of length >= 4 on both sides.
   //    The old unbounded bidirectional `includes` mis-resolved short inputs
   //    (e.g. "it" → "arbeit", "uni" → "kommunikation") and was order-
@@ -400,7 +426,7 @@ export function resolveVocab(input: string, vocab: VocabKey): string | null {
       if (ll.length < 4 || lower.length < 4) return false;
       return ll.includes(lower) || lower.includes(ll);
     })) {
-      return entry.id;
+      return { value: entry.id, match: 'fuzzy' };
     }
   }
   return null;

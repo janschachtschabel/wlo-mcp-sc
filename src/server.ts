@@ -13,6 +13,8 @@ import { registerCollectionTools } from './tools/collections.js';
 import { registerContentSearchTools } from './tools/content-search.js';
 import { registerNodeDetailTools } from './tools/node-details.js';
 import { registerVocabularyTool, registerPublisherTool } from './tools/vocabulary.js';
+import { registerFilterResolveTool } from './tools/filter-resolve.js';
+import { registerFindByUrlTool } from './tools/find-by-url.js';
 import { registerTopicPageSearchTool } from './tools/topic-pages.js';
 import { registerTopicPageContentTool } from './tools/topic-page-content.js';
 import { registerBrowseTools } from './tools/browse.js';
@@ -24,6 +26,8 @@ import { registerUrlTextTool } from './tools/url-text.js';
 import { registerKnowledgeTools } from './tools/knowledge.js';
 import { registerNodeRelationTools } from './tools/node-relations.js';
 import { registerCollectionStatsTool } from './tools/collection-stats.js';
+import { registerCollectionOverviewTool } from './tools/collection-overview.js';
+import { registerContentCountTool } from './tools/content-count.js';
 import { registerSkillTools } from './tools/skills.js';
 import { registerSkillRegistryTool } from './tools/skill-registry.js';
 import {
@@ -40,10 +44,14 @@ import { registerCurationTopicPageTool } from './tools/curation-topic-page.js';
 import { registerCurationDeleteTools } from './tools/curation-delete.js';
 import { registerCurationSuggestionTools } from './tools/curation-suggestions.js';
 import { registerCurationDecisionTool } from './tools/curation-decide.js';
+import { registerCurationBatchTools } from './tools/curation-batch.js';
+import { registerCurationTreeTools } from './tools/curation-tree.js';
+import { registerCurationAddManyTool } from './tools/curation-add-many.js';
 import { writeAuthChallenge } from './auth/oauth-metadata.js';
 import { registerWidgets } from './apps/resources.js';
 import { applyReadOnlyToolDefaults } from './apps/tool-defaults.js';
 import { WLO_SERVER_INSTRUCTIONS } from './apps/instructions.js';
+import { SERVER_VERSION } from './version.js';
 
 export type { QueryMeta } from './tools/shared.js';
 export type { LabeledCriterion } from './filter-criteria.js';
@@ -69,7 +77,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   const server = new McpServer(
     {
       name: 'wlo-mcp',
-      version: '1.0.0',
+      version: SERVER_VERSION,
     },
     { instructions: WLO_SERVER_INSTRUCTIONS },
   );
@@ -83,7 +91,11 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // curation tools registered at the bottom of this function declare `oauth2`
   // alone and keep it (see `apps/tool-defaults.ts`). Claiming `noauth` for
   // those would tell the host something untrue about when they can be called.
-  applyReadOnlyToolDefaults(server);
+  // The same challenge the curation tools send: a read tool whose login the
+  // repository REJECTED answers with it too, so the client offers a new sign-in
+  // instead of only showing an error (auth review 2026-11-05).
+  const challenge = writeAuthChallenge(issuer);
+  applyReadOnlyToolDefaults(server, challenge);
 
   // Register the built Apps-SDK widget resources (if any) and get their `ui://`
   // URIs. Skipped gracefully when `dist-widgets/` is absent (e.g. tests / a
@@ -94,6 +106,8 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerContentSearchTools(server, widgets['search-results']); // search_wlo_content, search_wlo_all (W1)
   registerNodeDetailTools(server, widgets['search-results']); // get_node_details (W1), get_nodes_details
   registerVocabularyTool(server);       // lookup_wlo_vocabulary
+  registerFilterResolveTool(server);    // resolve_wlo_filters
+  registerFindByUrlTool(server);        // find_content_by_url
   registerTopicPageSearchTool(server, widgets['search-results']); // search_wlo_topic_pages (W1)
   registerBrowseTools(server, widgets['browse']);          // get_subject_portals, browse_collection_tree (W2)
   registerHealthTool(server);           // wlo_health_check
@@ -116,6 +130,8 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerPublisherTool(server);        // lookup_wlo_publishers
   registerNodeRelationTools(server, widgets['search-results']); // get_related_content (W1), get_node_breadcrumb
   registerCollectionStatsTool(server);  // get_collection_stats
+  registerCollectionOverviewTool(server); // get_collection_overview
+  registerContentCountTool(server);     // count_wlo_content_matches
   // Registered unconditionally: the skill search no longer NEEDS a configured
   // collection — without one it filters the whole repository by the `ai_skill`
   // content type. `WLO_SKILLS_COLLECTION_ID` narrows it to a subtree when set.
@@ -142,9 +158,11 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // mixed-auth example does — the protected tool is always listed and refuses
   // on invocation. The refusal itself is unchanged and absolute; only the
   // invisibility is gone.
-  const challenge = writeAuthChallenge(issuer);
   registerCurationContentTools(server, challenge);    // wlo_update_content, wlo_create_content, wlo_submit_content
   registerCurationCollectionTools(server, challenge); // create/rename collection, add/remove material
+  // The planned pair (E4 = B): one approval, run in time-budgeted calls.
+  registerCurationTreeTools(server, challenge);       // wlo_create_collection_tree
+  registerCurationAddManyTool(server, challenge);     // wlo_add_to_collections
   registerCurationCompendiumTool(server, challenge);  // wlo_update_compendium
   registerCurationTopicPageTool(server, challenge);   // wlo_set_topic_page — the one whose result is immediately public
   registerCurationSuggestionTools(server, challenge); // wlo_suggest_metadata, wlo_list_suggestions — proposals only
@@ -152,6 +170,9 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // Deleting comes last, so the destructive pair sits at the end of the list
   // rather than next to the tools that merely change a field.
   registerCurationDeleteTools(server, challenge);     // wlo_delete_content, wlo_delete_collection
+  // Off unless WLO_BATCH_UPLOAD_ENABLED — the function checks it and registers
+  // nothing otherwise, so the default tool list is unchanged.
+  registerCurationBatchTools(server, challenge);      // wlo_prepare_file_batch, wlo_store_batch_file, wlo_store_batch_manifest
 
   return server;
 }

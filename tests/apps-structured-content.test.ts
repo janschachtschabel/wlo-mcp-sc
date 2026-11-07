@@ -33,9 +33,10 @@ test('search_wlo_content returns text + nodeList structuredContent', async () =>
 
 test('a reference keeps its originalId in structuredContent, not only in the text', async () => {
   // Its own test, deliberately separate from the text-path one in
-  // formatter.test.ts: zod strips what the schema does not declare, so a field
-  // that reaches the rendered text can still vanish from structuredContent with
-  // nothing failing anywhere. Only parsing the real tool result proves both.
+  // formatter.test.ts: a field that reaches the rendered text can still be
+  // missing from structuredContent, or present there but undeclared — which
+  // breaks the advertised schema (`additionalProperties: false`). Only the real
+  // tool result proves both.
   const mock = installFetchMock(() => ({
     json: {
       nodes: [{ ...makeNode('reference-1', 'Titel'), originalId: 'original-1' }],

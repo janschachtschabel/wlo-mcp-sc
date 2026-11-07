@@ -90,6 +90,6 @@ side effect of unrelated work:
 
 | Package | Held at | Why |
 |---|---|---|
-| `@types/node` | 20.x | Must describe the OLDEST supported runtime (`engines.node: ">=20"`). Newer types would let code typecheck against APIs Node 20 does not have. |
+| `@types/node` | 22.x | Must describe the OLDEST supported runtime (`engines.node: ">=22.12.0"`). Newer types would let code typecheck against APIs Node 22 does not have. |
 | `typescript` | 5.x | A compiler major; upgrade it deliberately, with the full suite and the build as the gate. |
 | `zod` | 3.x | Every tool's input schema is written against zod 3. The MCP SDK accepts `^3.25 \|\| ^4.0`, so the SDK is not the blocker — the migration itself is the work. |

@@ -37,10 +37,21 @@ export interface BodyResult {
 }
 
 /**
+ * How far past the cap an oversized body is still drained.
+ *
+ * Draining lets the HTTP layer answer a clean 413 instead of resetting the
+ * connection — worth it for the ordinary case of a file a little too large. An
+ * unbounded drain, however, lets a client stream for the whole request timeout
+ * (audit 2026-11-05). Past this multiple the reader stops, which destroys the
+ * request; the caller's 413 then goes nowhere, which is the right outcome for a
+ * body nobody legitimate sends.
+ */
+export const DRAIN_FACTOR = 4;
+
+/**
  * Buffer the body up to `maxBytes`. Once the cap is exceeded we stop buffering
- * (memory stays bounded) but keep draining the stream to its end — reading the
- * body fully lets the HTTP layer send a clean 413 instead of resetting the
- * connection, which happens if the response finishes with the body unread.
+ * (memory stays bounded) and keep draining up to `DRAIN_FACTOR × maxBytes`, so
+ * an ordinary oversize still gets its clean 413.
  */
 export async function readBodyWithLimit(
   req: AsyncIterable<Buffer | Uint8Array>,
@@ -54,6 +65,7 @@ export async function readBodyWithLimit(
     received += buf.length;
     if (received > maxBytes) {
       tooLarge = true;
+      if (received > maxBytes * DRAIN_FACTOR) break; // stop draining an abusive stream
       continue; // keep draining, stop buffering
     }
     chunks.push(buf);

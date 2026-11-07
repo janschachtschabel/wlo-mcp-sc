@@ -108,6 +108,10 @@ services:
       #   WLO_INBOX_ID             – where service-account creates are filed;
       #     required before that account can create anything.
       WLO_ALLOW_SERVICE_WRITES: "${WLO_ALLOW_SERVICE_WRITES:-}"
+      WLO_BATCH_UPLOAD_ENABLED: "${WLO_BATCH_UPLOAD_ENABLED:-}"
+      UPLOAD_MAX_BYTES: "${UPLOAD_MAX_BYTES:-}"
+      UPLOAD_MAX_TOTAL_BYTES: "${UPLOAD_MAX_TOTAL_BYTES:-}"
+      UPLOAD_REQUEST_TIMEOUT_MS: "${UPLOAD_REQUEST_TIMEOUT_MS:-}"
       WLO_ALLOW_PREPARED_WRITES: "${WLO_ALLOW_PREPARED_WRITES:-}"
       WLO_INBOX_ID: "${WLO_INBOX_ID:-}"
 

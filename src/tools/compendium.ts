@@ -18,7 +18,7 @@ import { getCompendiumTexts, type CompendiumEntry } from '../services/compendium
 import { buildCompendiumView, type CompendiumView } from '../services/compendium-view.js';
 import { WLO_COMPENDIUM_SECTION_MAX } from '../wlo-config.js';
 import { oneLine } from '../formatter.js';
-import { toolError } from './shared.js';
+import { codedErrorResult, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { contentTextSchema } from '../apps/outputSchemas.js';
 
@@ -135,7 +135,7 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
       try {
         const ids = [...(params.nodeId ? [params.nodeId] : []), ...(params.nodeIds ?? [])];
         if (ids.length === 0) {
-          return { content: [{ type: 'text' as const, text: 'Bitte nodeId oder nodeIds angeben.' }], isError: true };
+          return codedErrorResult('invalid_input', 'Bitte nodeId oder nodeIds angeben.');
         }
 
         // The caller's own text, not the repository's — but it is echoed into a

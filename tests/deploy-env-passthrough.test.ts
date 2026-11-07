@@ -28,6 +28,18 @@ const root = new URL('../', import.meta.url);
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
 
 /**
+ * The image must not name a repository (audit 2026-11-05, A-2). `ENV` in the
+ * Dockerfile overrides the code's deliberate STAGING fallback for every
+ * `docker run` without `-e`, so the forgotten-variable case wrote to production
+ * again — the exact incident of 2026-08-06, by another route.
+ */
+test('the Dockerfile does not override the repository default', () => {
+  const dockerfile = read('Dockerfile');
+  assert.doesNotMatch(dockerfile, /^\s*ENV\s+WLO_REPOSITORY_URL\b/m,
+    'the code default (staging) must stay the fallback; production is named explicitly at run time');
+});
+
+/**
  * Deliberately NOT forwarded into the container.
  *
  *   PORT                 — would desynchronise the container from the `…:3000`

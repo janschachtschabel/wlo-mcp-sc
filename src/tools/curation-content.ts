@@ -15,6 +15,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { WloToolResult } from '../apps/register.js';
 
 import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
@@ -23,7 +24,9 @@ import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.j
 import { createContentNode, resolveCreateParent, submitForReview } from '../services/write/nodes-lifecycle.js';
 import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
 import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
-import { findByTitle } from '../services/write/duplicates.js';
+import { findByTitle, findByUrl } from '../services/write/duplicates.js';
+import { fileRecord, readFilingTarget, type FilingTarget } from '../services/write/create-filing.js';
+import { fileExistingRecord, filingSentence, withFiling } from './curation-create-filing.js';
 import { WLO_INBOX_ID } from '../wlo-config.js';
 import { verifyWrite } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
@@ -39,10 +42,12 @@ import {
   unverifiedReply,
   desiredFromChangeSet,
   errorText,
+  codedError,
   prependText,
   recordTitle,
   isUpstreamTimeout,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 import { CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.js';
 
@@ -87,6 +92,10 @@ const createSchema = {
     .describe('WEG 2 für Bilder: die Bilddatei als Base64, wahlweise als data:-URL ' +
       '(data:image/png;base64,…) oder als reiner Base64-Text. Erkannt werden PNG, JPEG, GIF und WebP — ' +
       'der Typ wird aus den Daten gelesen, ein angegebener Typ wird ignoriert.'),
+  addToCollectionId: z.string().max(200).optional()
+    .describe('Optional: nodeId einer Sammlung, in die der neue Datensatz nach dem Anlegen aufgenommen wird — ' +
+      'mit DERSELBEN Bestätigung. Gibt es zur url schon einen Datensatz, bietet die Vorschau an, DIESEN aufzunehmen, ' +
+      'statt einen zweiten anzulegen.'),
   confirmToken: CONFIRM_TOKEN,
 };
 
@@ -127,6 +136,17 @@ function uploadNote(upload: UploadOutcome | undefined): string {
   }
 }
 
+/**
+ * A record for this URL already exists — coded `exists` with the record, so a
+ * client can offer "edit that one" without reading the sentence.
+ */
+function existsReply(existing: { nodeId: string; title: string }): WloToolResult {
+  return codedError('exists',
+    `Es gibt bereits einen Datensatz für diese URL: „${sanitizeText(existing.title)}“ ` +
+      `(${existing.nodeId}). Es wurde nichts angelegt — bitte diesen bearbeiten statt einen zweiten anzulegen.`,
+    { existing: { nodeId: existing.nodeId, title: existing.title } });
+}
+
 export function registerCurationContentTools(server: McpServer, challenge: WriteAuthChallenge): void {
   registerCurationTool(server, challenge, {
     name: 'wlo_update_content',
@@ -156,23 +176,14 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // replace the content", which is the main reason the file path exists
         // on an existing record at all.
         if (Object.keys(collected.desired).length === 0 && !carriesFile) {
-          return {
-            content: [{ type: 'text' as const, text: 'Es wurde kein zu änderndes Feld angegeben.' }],
-            isError: true,
-          };
+          return codedError('invalid_input', 'Es wurde kein zu änderndes Feld angegeben.');
         }
 
         const node = await getNodeMetadata(nodeId);
         if (!node) {
           // The id is echoed back sanitized: it came from the caller, and this
           // text goes to the model.
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`,
-            }],
-            isError: true,
-          };
+          return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
         }
 
         // A collection listing hands out REFERENCE ids, so this is the ordinary
@@ -261,7 +272,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         }
       } catch (err) {
         return timeoutOrError('Der Datensatz konnte nicht bearbeitet werden', err,
-          `Ob die Änderung an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`);
+          `Ob die Änderung an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });
@@ -277,10 +288,17 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
       'eigene URL haben. Genau eine Quelle angeben. ZWEISTUFIG: ohne confirmToken nur Vorschau, nichts ' +
       'wird angelegt; die Vorschau nennt bei einer Datei Name, Typ, Größe und Prüfsumme. Der Datensatz ' +
       'entsteht als Entwurf und geht NICHT automatisch in die redaktionelle Prüfung — dafür gibt es ' +
-      'wlo_submit_content. Erfordert eine Anmeldung.',
+      'wlo_submit_content. Mit addToCollectionId wird der Datensatz unter derselben Bestätigung gleich in eine ' +
+      'Sammlung aufgenommen; scheitert nur das Aufnehmen, bleibt der Datensatz bestehen (collection.status ' +
+      '"failed" mit Code). Erfordert eine Anmeldung.',
     inputSchema: createSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
+      // Set once the token is redeemed: only from there on can an abort have
+      // created something. Before it (preview, collection and duplicate reads)
+      // an abort interrupted a READ, and saying "may have been created" sends
+      // the person looking for a record nobody asked to exist.
+      let writing = false;
       try {
         requireWrite();
 
@@ -299,6 +317,33 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         if (!resolved.ok) return errorText(resolved.reason);
         const source = resolved.source;
         const file = source.kind === 'file' ? source.file : undefined;
+        const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
+
+        // The collection is read BEFORE any preview: a filing that cannot run
+        // must not be offered under a key, and its name is part of the sentence
+        // the key binds to.
+        const collectionId = typeof params['addToCollectionId'] === 'string' ? params['addToCollectionId'].trim() : '';
+        let target: FilingTarget | undefined;
+        if (collectionId) {
+          const found = await readFilingTarget(collectionId);
+          if (!found.ok) {
+            return found.reason === 'not_a_collection'
+              ? codedError('not_a_collection', `„${sanitizeText(collectionId)}“ ist keine Sammlung. Es wurde nichts angelegt.`)
+              : codedError('not_found', `Die Sammlung „${sanitizeText(collectionId)}“ wurde nicht gefunden oder ist nicht lesbar. Es wurde nichts angelegt.`);
+          }
+          target = found.target;
+          if (source.kind === 'url') {
+            const existing = await findByUrl(source.url);
+            if (existing) return fileExistingRecord(existing, target, token);
+          }
+        } else if (source.kind === 'url' && !token) {
+          // In the PREVIEW, not only at execution: a person must not approve a
+          // record that can never be created — the key would be spent on a
+          // refusal (chatbot feedback 2026-11-07). The create re-checks below,
+          // because a record can appear between preview and confirmation.
+          const existing = await findByUrl(source.url);
+          if (existing) return existsReply(existing);
+        }
 
         // A record that does not exist yet has no id, so the change set is
         // anchored on what identifies the intended record — the URL when there
@@ -309,17 +354,17 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // two-step exists for: bytes are payload, and an approval for "create a
         // record" must not additionally authorise a file nobody saw.
         const cs = buildChangeSet(source.kind === 'url' ? source.url : title, 'content', {}, collected.desired, {
-          action: file
+          action: (file
             ? `Legt einen neuen Datensatz an. ${describeUpload(file)}`
-            : 'Legt einen neuen Datensatz an:',
+            : 'Legt einen neuen Datensatz an:') + (target ? filingSentence(target) : ''),
+          ...(target ? { addTo: target } : {}),
         });
 
-        const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
         if (!token) {
-          // Only for the file path: a URL duplicate BLOCKS at execution and
-          // needs no warning, while a same-title record is weaker evidence and
-          // is the person's call — so it belongs in the preview, as a note
-          // beside the change set rather than inside the fingerprint.
+          // Only for the file path: a URL duplicate is refused above, before any
+          // preview, while a same-title record is weaker evidence and is the
+          // person's call — so it belongs in the preview, as a note beside the
+          // change set rather than inside the fingerprint.
           const notes = [...collected.notes];
           if (file) {
             const twin = await findByTitle(title, resolveCreateParent(writeMode(), WLO_INBOX_ID));
@@ -336,16 +381,12 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const refusal = confirmOrExplain(token, cs);
         if (refusal) return refusal;
 
+        writing = true;
         const result = await createContentNode(collected.desired, {
           mode: writeMode(),
           ...(file ? { file } : {}),
         });
-        if (result.status === 'duplicate') {
-          return errorText(
-            `Es gibt bereits einen Datensatz für diese URL: „${sanitizeText(result.existing.title)}“ ` +
-              `(${result.existing.nodeId}). Es wurde nichts angelegt — bitte diesen bearbeiten statt einen zweiten anzulegen.`,
-          );
-        }
+        if (result.status === 'duplicate') return existsReply(result.existing);
         if (result.status === 'failed') {
           return errorText(`Der Datensatz konnte nicht angelegt werden: ${result.detail}`);
         }
@@ -357,21 +398,29 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // upload that did not land is stated as such next to the id, never
         // folded into a general success.
         const head = `Angelegt: ${result.nodeId}${uploadNote(result.upload)}`;
+        let report;
         try {
           const verified = await verifyWrite(stored);
-          return prependText(reportOutcome(stored, result.statuses, verified), head);
+          report = prependText(reportOutcome(stored, result.statuses, verified), head);
         } catch (err) {
-          return prependText(unverifiedReply(err), head);
+          report = prependText(unverifiedReply(err), head);
         }
+        // Create first, then file: a failed filing leaves the record and is
+        // reported beside it, never as a failure of the whole call.
+        const filing = target ? await fileRecord(result.nodeId, target) : undefined;
+        return withFiling(report, { nodeId: result.nodeId, title }, target, filing);
       } catch (err) {
-        // Nothing upstream happens before the token is redeemed, so any abort
-        // here interrupted a write that may well have completed.
+        if (isUpstreamTimeout(err) && !writing) {
+          return codedError('timeout', 'Die Antwort des Repositories kam nicht rechtzeitig — beim Vorbereiten, vor jeder '
+            + 'Änderung. Es wurde nichts angelegt. Bitte den Aufruf erneut ausführen.', { outcomeOpen: false });
+        }
+        // After the token: the abort interrupted a write that may well have completed.
         if (isUpstreamTimeout(err)) {
-          return errorText(
+          return codedError('timeout',
             'Die Antwort des Repositories kam nicht rechtzeitig. Ob der Datensatz angelegt wurde, ist damit ' +
               'unklar — der Abbruch trifft die Antwort, nicht die Arbeit. Bitte den Aufruf erneut ausführen: ' +
               'Gibt es den Datensatz zu dieser URL bereits, wird er mit seiner ID genannt, statt einen zweiten anzulegen.',
-          );
+            { outcomeOpen: true });
         }
         return toolError('Der Datensatz konnte nicht angelegt werden', err);
       }
@@ -396,7 +445,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const comment = typeof params['comment'] === 'string' ? params['comment'] : '';
 
         const node = await getNodeMetadata(nodeId);
-        if (!node) return errorText(`Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
 
         // The note is IN the action, which means it is in the preview and in the
         // token's fingerprint. Without that, an approval for "submit this
@@ -443,7 +492,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         }
       } catch (err) {
         return timeoutOrError('Der Datensatz konnte nicht eingereicht werden', err,
-          `Ob „${sanitizeText(String(params['nodeId'] ?? ''))}“ in der Redaktions-Warteschlange liegt, ist offen`);
+          `Ob „${sanitizeText(String(params['nodeId'] ?? ''))}“ in der Redaktions-Warteschlange liegt, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });

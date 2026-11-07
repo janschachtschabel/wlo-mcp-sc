@@ -1,6 +1,7 @@
 # Pinned by digest for reproducible builds (tag kept for readability).
-# node:20-alpine @ v20.20.2 — refresh the digest when bumping the base image.
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
+# node:22-alpine @ v22.23.4 (LTS) — refresh the digest when bumping the base image.
+# Node 20 left support on 2026-04-30; an image pinned to it gets no security fixes.
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -8,12 +9,14 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
 
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-# Repository defaults to WLO production. Override at run time, e.g.:
-#   docker run -e WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing wlomcp
-ENV WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing
+# No WLO_REPOSITORY_URL here on purpose: the code falls back to STAGING, and an
+# ENV line would override that for every `docker run` without -e — the forgotten
+# variable would write to production again (incident 2026-08-06). Name
+# production explicitly at run time:
+#   docker run -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing wlomcp
 ENV PORT=3000
 # Serve real SSE by default — ChatGPT developer mode on the vServer needs it.
 # The reverse proxy in front MUST disable response buffering (see docker-compose.yml).

@@ -364,3 +364,47 @@ test('get_topic_page_content: a PAGE_VARIANT placeholder never becomes the title
     mock.restore();
   }
 });
+
+test('get_topic_page_content: the collection\'s catalogue is fetched WHILE the swimlanes resolve, not after', async () => {
+  // Measured 2026-11-05 on staging ("Optik", 3.5 s): the catalogue — children
+  // listing, registry document, skill heads, ~1 s — ran strictly AFTER the
+  // swimlanes, though it needs only the collection id, known before them.
+  // The widget read below is held until the catalogue's listing has been
+  // REQUESTED; run in sequence, that request never comes and the hold expires.
+  stopSkillRegistryCache();
+  const laneConfig = JSON.stringify({ structure: { swimlanes: [
+    { heading: 'Material', type: 'container', grid: [{ item: 'wlo-collection-content', nodeId: 'widget-1' }] },
+  ] } });
+  const handler = (url: string) => {
+    if (url.includes('var-1/metadata') || url.includes('cfg-1/children')) {
+      const node = makeNode('var-1', 'Variante', {
+        'ccm:page_variant_config': [laneConfig], 'cclom:title': ['Variante Ideal'],
+      });
+      return url.includes('/children') ? { json: { nodes: [node] } } : { json: { node } };
+    }
+    return registryTopicPageHandler(url);
+  };
+  const mock = installFetchMock(handler);
+  const mocked = globalThis.fetch;
+  let catalogueRequested!: () => void;
+  const catalogueStarted = new Promise<void>(r => { catalogueRequested = r; });
+  let heldUntilTimeout = false;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('coll-1/children')) catalogueRequested();
+    if (url.includes('widget-1')) {
+      const timeout = new Promise<'timeout'>(r => setTimeout(() => r('timeout'), 500));
+      heldUntilTimeout = (await Promise.race([catalogueStarted, timeout])) === 'timeout';
+    }
+    return mocked(input as string, init);
+  }) as typeof fetch;
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({
+      name: 'get_topic_page_content', arguments: { collectionId: 'coll-1', variantId: 'var-1' },
+    });
+    assert.ok(mock.calls.some(c => c.url.includes('widget-1')), 'the fixture must reach the swimlane widget');
+    assert.equal(heldUntilTimeout, false, 'catalogue lookup must already be under way while the lanes resolve');
+    assert.match((r.content as Array<{ text: string }>)[0]!.text, /Skill Registry Optik/, 'and still lands in the answer');
+  } finally { await client.close(); mock.restore(); }
+});

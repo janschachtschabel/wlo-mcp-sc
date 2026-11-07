@@ -199,6 +199,8 @@ export interface CollectionTree {
   nodes: CollectionTreeNode[];
   /** At least one branch holds more than was returned. */
   truncated: boolean;
+  /** The first node, in listing order, whose children were cut. */
+  truncatedAt?: string;
 }
 
 // Width of the level-1 fan-out — one `/children` call per node, the
@@ -224,6 +226,21 @@ const TREE_CHILDREN_MAX = 10;
 const TREE_CHILDREN_MIN = 3;
 
 /**
+ * Depth 3 (BOERDi wishlist item 11, 2026-11-06): a FIXED total of 300 nodes.
+ * The depth-2 rule would allow 15 × 10 × 10 = 1 665. The slice per parent is
+ * the largest k with level1 × (1 + k + k²) ≤ 300 — decided before the walk, so
+ * every parent gets the same width and the bound cannot depend on which worker
+ * ran first. `maxResults` ≤ 100 keeps k ≥ 1.
+ */
+export const TREE_DEPTH3_BUDGET = 300;
+
+function depth3Slice(level1: number): number {
+  let k = 1;
+  while (k < TREE_CHILDREN_MAX && level1 * (1 + (k + 1) + (k + 1) ** 2) <= TREE_DEPTH3_BUDGET) k++;
+  return k;
+}
+
+/**
  * Walk a collection's sub-tree to `depth`, bounded on every axis: fan-out width,
  * children per parent (from a total node budget), and cycles.
  *
@@ -239,15 +256,23 @@ const TREE_CHILDREN_MIN = 3;
 export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<CollectionTree> {
   const { parentId, depth, maxResults, includeContentCounts, contentPreview } = opts;
 
-  const level1Listing = await getChildCollectionsResult(parentId, maxResults);
+  // One more than shown, like every level below: without it a first level
+  // longer than `maxResults` was cut SILENTLY — the overview's
+  // `subcollectionsTruncated` could never be set (review R-C, 2026-11-06).
+  const level1Listing = await getChildCollectionsResult(parentId, maxResults + 1);
   if (!level1Listing.reachable) {
     throw new Error(`Die Unter-Sammlungen von ${parentId} sind derzeit nicht abrufbar.`);
   }
-  const sorted1 = sortByTitle(level1Listing.nodes);
+  // Cut in the repository's order, before sorting: what was cut is the tail of
+  // ITS listing, not the alphabetical last.
+  const level1Cut = level1Listing.nodes.length > maxResults;
+  const sorted1 = sortByTitle(level1Listing.nodes.slice(0, maxResults));
 
-  const childSlice = depth > 1
-    ? Math.max(TREE_CHILDREN_MIN, Math.min(TREE_CHILDREN_MAX, Math.floor(TREE_NODE_BUDGET / Math.max(1, sorted1.length))))
-    : 0;
+  const childSlice = depth > 2
+    ? depth3Slice(Math.max(1, sorted1.length))
+    : depth > 1
+      ? Math.max(TREE_CHILDREN_MIN, Math.min(TREE_CHILDREN_MAX, Math.floor(TREE_NODE_BUDGET / Math.max(1, sorted1.length))))
+      : 0;
 
   // Level-1 nodes are claimed BEFORE the walk starts, for the same reason
   // children are claimed at scheduling time (see below): a node that is
@@ -284,7 +309,10 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
         visited.add(cid);
         return true;
       });
-      const enriched = await mapPool(sortedChildren, TREE_CHILD_CONCURRENCY, c => enrichOne(c, level + 1));
+      // Level 3 runs one at a time per branch: 10 × 4 × 1 keeps the 40-in-flight
+      // bound depth 2 already had; nested pools of 4 would make it 160.
+      const width = level >= 2 ? 1 : TREE_CHILD_CONCURRENCY;
+      const enriched = await mapPool(sortedChildren, width, c => enrichOne(c, level + 1));
       f.children = enriched.filter((c): c is CollectionTreeNode => c !== null);
     }
     return f;
@@ -311,8 +339,16 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
     });
   }
 
-  const anyTruncated = (ns: CollectionTreeNode[]): boolean =>
-    ns.some(n => n.hasMoreChildren || anyTruncated(n.children ?? []));
+  const firstCut = (ns: CollectionTreeNode[]): string | undefined => {
+    for (const n of ns) {
+      if (n.hasMoreChildren) return n.nodeId;
+      const below = firstCut(n.children ?? []);
+      if (below) return below;
+    }
+    return undefined;
+  };
+  // The root's own children come first in listing order.
+  const truncatedAt = level1Cut ? parentId : firstCut(nodes);
 
-  return { nodes, truncated: anyTruncated(nodes) };
+  return { nodes, truncated: truncatedAt !== undefined, ...(truncatedAt ? { truncatedAt } : {}) };
 }

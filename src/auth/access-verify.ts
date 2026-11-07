@@ -65,11 +65,20 @@ export type LoginProof =
  */
 export async function proveLogin(
   credential: WloCredential,
-  deps: VerifyDeps,
+  deps: Pick<VerifyDeps, 'ip' | 'authAbuseLimiter'> & {
+    /**
+     * The limiter bucket, when it is not the address. Only `upload` passes one
+     * (`abuseBucketKey`, the rule `POST /mcp` follows): a chatbot backend is
+     * ONE address for all its users. Issuance must stay per address — its
+     * blocks are minted fresh, so a per-`jti` bucket there would be a new
+     * budget per guess. Never logged: for a block it IS the access id.
+     */
+    bucket?: string;
+  },
   now: number,
-  purpose: 'issuance' | 'revocation' | 'ticket-exchange',
+  purpose: 'issuance' | 'revocation' | 'ticket-exchange' | 'upload',
 ): Promise<LoginProof> {
-  if (deps.authAbuseLimiter.check(deps.ip, credential.header, now)) {
+  if (deps.authAbuseLimiter.check(deps.bucket ?? deps.ip, credential.header, now)) {
     log.warn('too many distinct logins offered', { ip: deps.ip, purpose });
     return { ok: false, reason: 'limited' };
   }

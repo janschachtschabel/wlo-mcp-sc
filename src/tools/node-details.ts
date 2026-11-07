@@ -7,30 +7,24 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { buildRenderUrl, readNodeMetadata, readNodeTextContent } from '../wlo-api.js';
 import {
-  buildRenderUrl,
-  getNodeMetadata,
-  getNodeTextContent,
-  readNodeMetadata,
-  readNodeTextContent,
-  type WloNode,
-} from '../wlo-api.js';
-import { formatNode, nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines } from '../formatter.js';
+  formatNode, nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines, renderToText, type FormattedNode,
+} from '../formatter.js';
+import { codeOfStatus, loadNodeDetails, TEXT_CONTENT_CAP, TEXT_ENRICH_MAX } from '../services/node-details.js';
 import { accessInfo, accessInfoLines } from '../node-access.js';
 import { qualityInfo, qualityLines } from '../node-quality.js';
 import { getParentCollections } from '../services/node-collections.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { registerWloTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
-import { nodeListSchema } from '../apps/outputSchemas.js';
+import { formattedNodeSchema, nodeListSchema } from '../apps/outputSchemas.js';
 import { nodeLookupMiss, subjectRegistryText, toolError } from './shared.js';
-import { mapPool } from '../concurrency.js';
 
 // Full-text length caps. JSON/bulk output carries the fuller text for machine
 // consumers; the human-readable markdown detail view uses a shorter preview
 // (deep text is available via get_compendium_text). Named so the two are an
 // explicit choice, not stray literals.
-const TEXT_CONTENT_CAP = 4000;
 const TEXT_CONTENT_MARKDOWN_CAP = 2000;
 
 /**
@@ -44,23 +38,36 @@ const COMPENDIUM_PREVIEW_CAP = 500;
 /** Same idea for the description, and the same value `renderToText` uses. */
 const DESCRIPTION_PREVIEW_CAP = 400;
 
+
 /**
- * How many nodes of a bulk call may have their full text fetched.
- *
- * `/textContent` is the slow endpoint (median 4.6 s, max 9.2 s measured — see
- * `wlo-node-text.ts`), so 50 ids at pool width 10 is five waves: ~23 s at the
- * median and ~46 s at the maximum, spent before a single line reaches the
- * caller. The remaining ids are NAMED in the response rather than silently left
- * textless.
- *
- * The cap is about that WAIT, not about a server-side limit. This comment used
- * to say the batch "can outlast the server's own 30 s request timeout"; measured
- * 2026-08-17, `httpServer.requestTimeout` bounds RECEIVING a request and not the
- * work on it — a handler answering after 35 s delivers its response — which is
- * also why this server's SSE streams survive. What gives up is the client, on a
- * budget we cannot see.
+ * The list answer of `get_node_details` with `nodeIds` (E3): the record list the
+ * widget renders, plus what each node was enriched with and what could not be
+ * read. Declared field by field, because what a schema does not name does not
+ * reach `structuredContent` (the rule `formattedNodeSchema` already follows).
  */
-const TEXT_ENRICH_MAX = 20;
+const nodeDetailsListSchema = nodeListSchema.extend({
+  results: z.array(formattedNodeSchema.extend({
+    /** Single `nodeId` only: the repository's render page for the record. */
+    renderUrl: z.string().optional(),
+    textContent: z.string().optional(),
+    textContentError: z.string().optional(),
+    parents: z.array(z.unknown()).optional(),
+    parentsError: z.string().optional(),
+    /** Single `nodeId` with `includeRaw`: the unresolved URIs and the licence key. */
+    raw: z.record(z.string(), z.unknown()).optional(),
+    accessInfo: z.record(z.string(), z.unknown()).optional(),
+    qualityInfo: z.record(z.string(), z.unknown()).optional(),
+  })),
+  /** E6: why each id is missing — a deleted record and a refused one are different answers. */
+  missing: z.array(z.object({
+    part: z.string(),
+    code: z.enum(['not_found', 'forbidden', 'timeout', 'upstream_error']),
+  })).optional(),
+  textContentSkipped: z.array(z.string()).optional(),
+});
+
+/** At most this many ids per call, for both detail tools. */
+const MAX_IDS = 50;
 
 /**
  * @param searchResultsWidgetUri – the W1 (results) `ui://` resource, when
@@ -86,7 +93,11 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
         + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
       ),
-      nodeId: z.string().describe('Node ID of a content item or collection (from search results)'),
+      nodeId: z.string().optional().describe('Node ID of ONE content item or collection (from search results). Either this or nodeIds.'),
+      nodeIds: z.array(z.string()).min(1).max(MAX_IDS).optional().describe(
+        `Several node IDs at once (1–${MAX_IDS}) instead of calling this tool repeatedly. The answer is then ALWAYS a list `
+        + '{results, missing}, missing = [{part: nodeId, code: not_found|forbidden|timeout|upstream_error}]; the enrichments (textContent, parents, accessInfo, qualityInfo) sit on each result. '
+        + 'includeRaw and skillContext apply to nodeId only.'),
       includeTextContent: z.boolean().optional().default(false).describe(
         'Also fetch the stored full-text content of the node (crawled webpage/PDF text)'
       ),
@@ -110,19 +121,33 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         '"markdown" (default, human-readable) or "json" (structured data, easier to parse for callers)'
       ),
     },
-    outputSchema: nodeListSchema,
+    outputSchema: nodeDetailsListSchema,
     annotations: { readOnlyHint: true },
     handler: async (params) => {
       try {
+        const many = Array.isArray(params.nodeIds) && params.nodeIds.length > 0;
+        if (many === Boolean(params.nodeId)) {
+          // A caller's mistake, not a failure: no log line, no stack.
+          const message = 'Bitte genau eines angeben: nodeId oder nodeIds (für einen bzw. mehrere Datensätze).';
+          return {
+            content: [{ type: 'text' as const, text: message }],
+            structuredContent: { error: { code: 'invalid_input', message } },
+            isError: true,
+          };
+        }
+        if (many) return await manyNodeDetails(params);
+
         const { node, status } = await readNodeMetadata(params.nodeId);
         if (!node) {
           // A miss still satisfies the schema, so the widget shows its empty
           // state instead of the host failing on a missing structuredContent.
           // WHY the status matters here: 401/403/5xx all produced "not found",
           // which tells a teacher a non-public material does not exist.
+          // `missing` as with `nodeIds` (feedback 2026-11-07): a deleted record
+          // and a refused one must not read the same to a program either.
           return {
             content: [{ type: 'text' as const, text: nodeLookupMiss(params.nodeId, status) }],
-            structuredContent: { total: 0, count: 0, results: [] },
+            structuredContent: { total: 0, count: 0, results: [], missing: [{ part: params.nodeId, code: codeOfStatus(status) }] },
           };
         }
 
@@ -134,8 +159,6 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         // for a material — `ensureRegistries` skips anything that is not a
         // collection.
         await ensureRegistries([formatted]);
-        // One node is a list of one — the shape the results widget renders.
-        const structuredContent = { total: 1, count: 1, results: [formatted] };
 
         // Extras that don't fit into FormattedNode. The text read reports its
         // status: "nothing stored" and "we could not read it" are different
@@ -158,36 +181,42 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         const access = params.includeAccessInfo ? accessInfo(props) : {};
         const quality = params.includeQualityInfo ? qualityInfo(props) : {};
 
+        // ONE record for both channels: the JSON text and `structuredContent`
+        // used to differ — the enrichments reached only the text, so a client
+        // reading the contract never saw them (chatbot feedback 2026-11-07).
+        const payload: Record<string, unknown> = {
+          ...formatted,
+          renderUrl,
+        };
+        if (params.includeParents) {
+          payload['parents'] = parents;
+          // An empty list and a failed lookup must not read the same.
+          if (parentOutcome.status === 'unknown') payload['parentsError'] = parentOutcome.detail;
+        }
+        if (params.includeTextContent) {
+          payload['textContent'] = fullText ? capText(fullText, TEXT_CONTENT_CAP).text : '';
+          // An empty string and a failed read must not read the same, for the
+          // same reason `parentsError` exists.
+          if (!fullText && textRead.status !== 200) {
+            payload['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${textRead.status}).`;
+          }
+        }
+        if (params.includeAccessInfo) payload['accessInfo'] = access;
+        if (params.includeQualityInfo) payload['qualityInfo'] = quality;
+        if (params.includeRaw) {
+          payload['raw'] = {
+            disciplines: props['ccm:taxonid'] ?? [],
+            educationalContexts: props['ccm:educationalcontext'] ?? [],
+            userRoles: props['ccm:educationalintendedenduserrole'] ?? [],
+            learningResourceTypes: props['ccm:oeh_lrt_aggregated'] ?? [],
+            license: props['ccm:commonlicense_key']?.[0] ?? '',
+          };
+        }
+        // One node is a list of one — the shape the results widget renders.
+        const structuredContent = { total: 1, count: 1, results: [payload] };
+
         // ── JSON output ───────────────────────────────────────────────────
         if (params.outputFormat === 'json') {
-          const payload: Record<string, unknown> = {
-            ...formatted,
-            renderUrl,
-          };
-          if (params.includeParents) {
-            payload['parents'] = parents;
-            // An empty list and a failed lookup must not read the same.
-            if (parentOutcome.status === 'unknown') payload['parentsError'] = parentOutcome.detail;
-          }
-          if (params.includeTextContent) {
-            payload['textContent'] = fullText ? capText(fullText, TEXT_CONTENT_CAP).text : '';
-            // An empty string and a failed read must not read the same, for the
-            // same reason `parentsError` exists.
-            if (!fullText && textRead.status !== 200) {
-              payload['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${textRead.status}).`;
-            }
-          }
-          if (params.includeAccessInfo) payload['accessInfo'] = access;
-          if (params.includeQualityInfo) payload['qualityInfo'] = quality;
-          if (params.includeRaw) {
-            payload['raw'] = {
-              disciplines: props['ccm:taxonid'] ?? [],
-              educationalContexts: props['ccm:educationalcontext'] ?? [],
-              userRoles: props['ccm:educationalintendedenduserrole'] ?? [],
-              learningResourceTypes: props['ccm:oeh_lrt_aggregated'] ?? [],
-              license: props['ccm:commonlicense_key']?.[0] ?? '',
-            };
-          }
           return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], structuredContent };
         }
 
@@ -304,25 +333,21 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
 
   server.tool(
     'get_nodes_details',
-    `Bulk-fetch metadata for multiple node IDs in parallel.
-Saves N round-trips (e.g. resolving cards from a search).
+    `Bulk-fetch metadata for multiple node IDs in parallel (kept for existing callers).
+Prefer get_node_details with nodeIds: same reads, answered as a list {results, missing} in structured content.
 Same FormattedNode shape as get_node_details (json mode), keyed by nodeId.
 
-Optionally enrich each entry, as in get_node_details:
-- includeTextContent: adds \`textContent\` (crawled/stored full text, capped) per node — the
-  full text is the SLOW read, so it is fetched for at most the first ${TEXT_ENRICH_MAX} nodes;
-  the rest are named in \`textContentSkipped\`. Ask for fewer ids, or use get_wlo_content_text.
-- includeParents: adds \`parents\` (the collections each node belongs to) per node
-- includeAccessInfo: adds \`accessInfo\` (login? cost? advertising? WCAG/BITV? OER status?)
-  per node — no extra request
-- includeQualityInfo: adds \`qualityInfo\` (editorial ratings: correctness, didactics,
-  law, protection of minors) per node — no extra request either
+Optional per node, as in get_node_details:
+- includeTextContent: \`textContent\` (stored full text, capped) — the SLOW read, so only for the
+  first ${TEXT_ENRICH_MAX} nodes; the rest are named in \`textContentSkipped\` (or use get_wlo_content_text).
+- includeParents: \`parents\` (the collections the node belongs to)
+- includeAccessInfo: \`accessInfo\` (login, cost, advertising, WCAG/BITV, OER status) — no extra request
+- includeQualityInfo: \`qualityInfo\` (editorial ratings) — no extra request
 
-Failed lookups (deleted node, network error) are returned in the \`failed\` array, not as
-overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
+Failed lookups land in \`failed\`, not as an overall error — one bad id does not ruin the batch.`,
     {
-      nodeIds: z.array(z.string()).min(1).max(50).describe(
-        'Array of node IDs to fetch (max 50 per call).'
+      nodeIds: z.array(z.string()).min(1).max(MAX_IDS).describe(
+        `Array of node IDs to fetch (max ${MAX_IDS} per call).`
       ),
       includeTextContent: z.boolean().optional().default(false).describe(
         'Also fetch the stored full-text content of each node (crawled webpage/PDF text)'
@@ -345,58 +370,9 @@ overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
     { readOnlyHint: true },
     async (params) => {
       try {
-        const ids = Array.from(new Set(params.nodeIds.filter(Boolean)));
-        // Bounded concurrency (not raw Promise.allSettled) so a 50-id batch does
-        // not open 50 simultaneous upstream sockets. mapPool nulls a failed slot.
-        const metas = await mapPool(ids, 10, (id) => getNodeMetadata(id));
-        const results: Record<string, Record<string, unknown>> = {};
-        const failed: string[] = [];
-        const resolvedIds: string[] = [];
-        // Kept so the parent lookup can pick the right endpoint per node kind
-        // without loading each node a second time.
-        const loaded = new Map<string, WloNode>();
-        ids.forEach((id, i) => {
-          const node = metas[i];
-          if (node) {
-            results[id] = { ...formatNode(node) };
-            // Here rather than in the enrichment block below: those cost an
-            // upstream call each, this is a projection of properties already in
-            // hand (`getNodeMetadata` reads `-all-`).
-            if (params.includeAccessInfo) results[id]['accessInfo'] = accessInfo(node.properties ?? {});
-            if (params.includeQualityInfo) results[id]['qualityInfo'] = qualityInfo(node.properties ?? {});
-            resolvedIds.push(id);
-            loaded.set(id, node);
-          } else {
-            failed.push(id);
-          }
-        });
-
-        // Optional per-node enrichment — opt-in, so callers that only want
-        // metadata pay zero extra round-trips. Bounded concurrency (matches
-        // topic-pages) keeps a 50-node batch from hammering the repository.
-        // The full text additionally has a COUNT bound, because concurrency
-        // alone does not bound wall-clock: 50 slow reads at width 10 outlast
-        // the server's own request timeout. Skipped ids are named, not dropped.
-        const textIds = params.includeTextContent ? resolvedIds.slice(0, TEXT_ENRICH_MAX) : [];
-        const textSkipped = params.includeTextContent ? resolvedIds.slice(TEXT_ENRICH_MAX) : [];
-        if (params.includeTextContent || params.includeParents) {
-          const withText = new Set(textIds);
-          await mapPool(resolvedIds, 10, async (id) => {
-            if (withText.has(id)) {
-              const fullText = await getNodeTextContent(id);
-              results[id]['textContent'] = fullText ? capText(fullText, TEXT_CONTENT_CAP).text : '';
-            }
-            if (params.includeParents) {
-              const node = loaded.get(id);
-              const outcome = node
-                ? await getParentCollections(node, id)
-                : ({ status: 'unknown', detail: 'Knoten nicht geladen' } as const);
-              results[id]['parents'] = outcome.status === 'ok' ? outcome.collections : [];
-              if (outcome.status === 'unknown') results[id]['parentsError'] = outcome.detail;
-            }
-            return null;
-          });
-        }
+        const batch = await loadNodeDetails(params.nodeIds, params);
+        const { ids, failed, textSkipped } = batch;
+        const results = Object.fromEntries(batch.results);
 
         return {
           content: [{
@@ -415,4 +391,38 @@ overall errors — so a single bad nodeId doesn't ruin the whole batch.`,
       }
     },
   );
+}
+
+/**
+ * `get_node_details` with `nodeIds`: the same load `get_nodes_details` makes, the
+ * answer as a list in request order. Collections in it get their catalogue like
+ * every other record list.
+ */
+async function manyNodeDetails(params: {
+  nodeIds: string[]; includeTextContent?: boolean; includeParents?: boolean;
+  includeAccessInfo?: boolean; includeQualityInfo?: boolean; outputFormat?: string;
+}) {
+  const batch = await loadNodeDetails(params.nodeIds, params);
+  const results = batch.ids.flatMap(id => {
+    const r = batch.results.get(id);
+    return r ? [r as FormattedNode & Record<string, unknown>] : [];
+  });
+  await ensureRegistries(results);
+  const structuredContent = {
+    total: results.length,
+    count: results.length,
+    results,
+    missing: batch.failures.map(f => ({ part: f.id, code: f.code })),
+    ...(batch.textSkipped.length ? { textContentSkipped: batch.textSkipped } : {}),
+  };
+  const text = params.outputFormat === 'json'
+    ? JSON.stringify(structuredContent)
+    : [
+      renderToText(results, results.length) || 'Keiner der Datensätze war lesbar.',
+      ...(batch.failures.length
+        ? [oneLine(`Nicht lesbar: ${batch.failures.map(f => `${f.id} (${f.code})`).join(', ')}`)] : []),
+      ...(batch.textSkipped.length
+        ? [oneLine(`Volltext nur für die ersten ${TEXT_ENRICH_MAX}; ohne: ${batch.textSkipped.join(', ')}`)] : []),
+    ].join('\n');
+  return { content: [{ type: 'text' as const, text }], structuredContent };
 }

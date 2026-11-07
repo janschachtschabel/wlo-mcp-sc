@@ -36,8 +36,10 @@
  */
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { SCOPES } from '../auth/oauth-metadata.js';
+import { isCurrentCredentialRejected } from '../auth/credential.js';
 import { toolStatusMeta } from './tool-status.js';
 
 /**
@@ -102,7 +104,90 @@ const TOOL_TITLES: Readonly<Record<string, string>> = {
   wlo_auth_status: 'WLO Anmeldestatus',
 };
 
-function applyDefaults(tool: RegisteredTool, name: unknown): RegisteredTool {
+/**
+ * What a person reads when the repository refused THEIR login during the call.
+ *
+ * First block on purpose: at least one real client hands the model only content
+ * block 0 (2026-08-19), and the blocks below — "ngsearch failed: 401", or a
+ * node "nicht öffentlich" — would otherwise be all it sees, each pointing at
+ * the wrong cause.
+ */
+export const CREDENTIAL_REJECTED_NOTICE =
+  'WLO hat deine Anmeldung abgelehnt (HTTP 401) — meist, weil das WLO-Passwort geändert '
+  + 'oder der Zugang widerrufen wurde. Bitte neu anmelden bzw. den Zugang neu verbinden; '
+  + 'bis dahin konnte dieser Aufruf nichts lesen.';
+
+type ToolResultLike = {
+  content?: unknown[]; isError?: boolean; _meta?: Record<string, unknown>; structuredContent?: Record<string, unknown>;
+};
+
+/** The first text block of a result — the sentence a coded error carries as its `message`. */
+function firstText(result: ToolResultLike): string {
+  const block = (result.content ?? []).find(
+    (c): c is { type: 'text'; text: string } => (c as { type?: unknown }).type === 'text');
+  return block?.text ?? '';
+}
+
+/**
+ * Every `isError` leaves with `structuredContent.error` (chatbot feedback
+ * 2026-11-07). Tools code their own refusals; this is the NET for the ones that
+ * do not — a client that reads only `structuredContent` otherwise sees a bare
+ * `isError` with no reason. A code the tool set is never overwritten.
+ */
+function withErrorCode(result: ToolResultLike, code: string): ToolResultLike {
+  if (!result.isError) return result;
+  const sc = result.structuredContent;
+  if (sc && typeof sc['error'] === 'object' && sc['error'] !== null) return result;
+  return { ...result, structuredContent: { ...(sc ?? {}), error: { code, message: firstText(result) } } };
+}
+
+/**
+ * Wrap a tool handler so a rejected personal login is reported as what it is
+ * (auth review 2026-11-05). Applied HERE because this is the one place every
+ * tool passes through — the `registerWloTool` seam and the plain `server.tool`
+ * registrations alike. A result produced without a rejected login is returned
+ * exactly as the tool built it.
+ */
+function reportRejectedLogin(tool: RegisteredTool, challenge: string | undefined): void {
+  const original = tool.handler as unknown;
+  if (typeof original !== 'function') return; // task-style handlers stay as they are
+  const fn = original as (...a: unknown[]) => Promise<ToolResultLike>;
+  tool.handler = (async (...args: unknown[]) => {
+    let result: ToolResultLike;
+    try {
+      result = await fn(...args);
+    } catch (err) {
+      // The SDK would turn this throw into a result led by its raw message
+      // ("… 401") — the very block the notice exists to replace. Without a
+      // rejected login it would still be a result without a code, so the throw
+      // becomes the same error result HERE, coded `upstream_error`. An
+      // `McpError` is the SDK's own protocol signal and passes through.
+      if (err instanceof McpError) throw err;
+      const text = err instanceof Error ? err.message : String(err);
+      if (!isCurrentCredentialRejected()) {
+        return { content: [{ type: 'text', text }], isError: true,
+          structuredContent: { error: { code: 'upstream_error', message: text } } };
+      }
+      result = { content: [{ type: 'text', text }] };
+    }
+    if (!isCurrentCredentialRejected()) return withErrorCode(result, 'refused');
+    return {
+      ...result,
+      content: [{ type: 'text', text: CREDENTIAL_REJECTED_NOTICE }, ...(result.content ?? [])],
+      isError: true,
+      // Its OWN code, overriding whatever the tool said: the cause is the login,
+      // and the tool's own reading of the 401 ("nicht öffentlich") is wrong.
+      structuredContent: { ...(result.structuredContent ?? {}),
+        error: { code: 'login_rejected', message: CREDENTIAL_REJECTED_NOTICE } },
+      ...(challenge
+        ? { _meta: { ...(result._meta ?? {}), 'mcp/www_authenticate': [challenge] } }
+        : {}),
+    };
+  }) as unknown as RegisteredTool['handler'];
+}
+
+function applyDefaults(tool: RegisteredTool, name: unknown, challenge?: string): RegisteredTool {
+  reportRejectedLogin(tool, challenge);
   const statusMeta = typeof name === 'string' ? toolStatusMeta(name) : {};
   // The mixed form is the default, not a rule: a curation tool declares its own
   // scheme at the registration site and must not be overwritten with a claim
@@ -129,7 +214,7 @@ function applyDefaults(tool: RegisteredTool, name: unknown): RegisteredTool {
  * this call carries the uniform read-only defaults. Call once, right after the
  * server is constructed and before any tool is registered.
  */
-export function applyReadOnlyToolDefaults(server: McpServer): void {
+export function applyReadOnlyToolDefaults(server: McpServer, challenge?: string): void {
   // `tool`/`registerTool` are heavily overloaded generics; type the bound
   // originals as plain variadic functions so the wrappers forward `...args`
   // verbatim (runtime behaviour is unchanged — only descriptor defaults added).
@@ -138,8 +223,33 @@ export function applyReadOnlyToolDefaults(server: McpServer): void {
 
   // args[0] is the tool name for both signatures — used to look up its status copy.
   server.tool = ((...args: unknown[]): RegisteredTool =>
-    applyDefaults(origTool(...args), args[0])) as unknown as McpServer['tool'];
+    applyDefaults(origTool(...args), args[0], challenge)) as unknown as McpServer['tool'];
 
   server.registerTool = ((...args: unknown[]): RegisteredTool =>
-    applyDefaults(origRegisterTool(...args), args[0])) as unknown as McpServer['registerTool'];
+    applyDefaults(origRegisterTool(...args), args[0], challenge)) as unknown as McpServer['registerTool'];
+
+  codeSdkErrors(server);
+}
+
+/**
+ * The errors the SDK builds itself — wrong arguments, an unknown tool, an answer
+ * that breaks its own schema — never reach a tool handler, so the net in
+ * `reportRejectedLogin` cannot code them. They all leave through
+ * `McpServer.createToolError` (SDK 1.32.2; private in its types, a plain method
+ * at runtime), which is wrapped here. Wrong arguments are a chatbot's most
+ * common error (review 2026-11-07). If an SDK update renames the method, this
+ * does nothing and `tests/credential-rejected.test.ts` fails — which is the
+ * signal to find its new seam.
+ */
+function codeSdkErrors(server: McpServer): void {
+  const target = server as unknown as { createToolError?: (message: string) => ToolResultLike };
+  const original = target.createToolError;
+  if (typeof original !== 'function') return;
+  target.createToolError = (message: string) => {
+    const code = /Input validation error/.test(message) ? 'invalid_input'
+      : /\bTool \S+ (?:not found|disabled)\b/.test(message) ? 'unknown_tool'
+      : 'upstream_error';
+    const result = original.call(server, message);
+    return { ...result, structuredContent: { ...(result.structuredContent ?? {}), error: { code, message } } };
+  };
 }

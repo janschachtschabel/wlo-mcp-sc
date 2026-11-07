@@ -188,14 +188,14 @@ Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Bre
           // Named, not just empty: "there is no such record" and "this record is
           // in no collection" lead to different answers for the person asking.
           const payload = { nodeId: params.nodeId, count: 0, collections: [], reason: 'node_not_found' };
+          const message = `Kein Knoten mit der ID ${sanitizeText(params.nodeId)} gefunden (reason: node_not_found).`;
           return {
             content: [{
               type: 'text' as const,
-              text: (params.outputFormat ?? 'markdown') === 'json'
-                ? JSON.stringify(payload)
-                : `Kein Knoten mit der ID ${sanitizeText(params.nodeId)} gefunden (reason: node_not_found).`,
+              text: (params.outputFormat ?? 'markdown') === 'json' ? JSON.stringify(payload) : message,
             }],
             isError: true,
+            structuredContent: { error: { code: 'not_found', message } },
           };
         }
 

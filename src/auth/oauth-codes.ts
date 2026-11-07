@@ -54,6 +54,15 @@ export const CODE_TTL_MS = 60_000;
  */
 export const MAX_CODES = 1_000;
 
+/**
+ * How many codes ONE account may have outstanding. The global bound evicts the
+ * oldest code of anyone, so one signed-in account minting a thousand codes
+ * pushed out every other person's login in progress (audit 2026-11-05). Past
+ * this number an account makes room from its own oldest codes. A real login
+ * needs one; twenty covers a person retrying across several clients at once.
+ */
+export const MAX_CODES_PER_LABEL = 20;
+
 export interface CodeStore {
   /** Issue a code for this record and return it. The record is kept by hash. */
   mint(record: Omit<CodeRecord, 'expiresAt'>, now: number): string;
@@ -68,7 +77,11 @@ const CODE_BYTES = 32;
 
 const keyOf = (code: string): string => createHash('sha256').update(code).digest('hex');
 
-export function createCodeStore(ttlMs: number = CODE_TTL_MS, max: number = MAX_CODES): CodeStore {
+export function createCodeStore(
+  ttlMs: number = CODE_TTL_MS,
+  max: number = MAX_CODES,
+  perLabel: number = MAX_CODES_PER_LABEL,
+): CodeStore {
   // Insertion-ordered, which is what makes "evict the oldest" a first-key lookup.
   const codes = new Map<string, CodeRecord>();
 
@@ -81,6 +94,9 @@ export function createCodeStore(ttlMs: number = CODE_TTL_MS, max: number = MAX_C
   return {
     mint(record, now) {
       sweep(now);
+      // Insertion order is age order: the first matching keys are the oldest.
+      const own = [...codes].filter(([, r]) => r.label === record.label);
+      for (let i = 0; i <= own.length - perLabel; i++) codes.delete(own[i]![0]);
       // Sweeping usually suffices; the eviction below covers the case where a
       // burst arrives faster than the TTL expires anything.
       while (codes.size >= max) {

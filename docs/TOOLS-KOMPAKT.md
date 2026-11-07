@@ -2,7 +2,7 @@
 
 Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 
-## Lesend (28)
+## Lesend (32)
 
 ### Suchen
 
@@ -22,12 +22,14 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 | `browse_collection_tree` | Navigiert durch die Unterthemen einer Sammlung oder eines Fachportals. |
 | `get_subject_portals` | Zeigt, welche Fächer es gibt — die obersten Fach-Hubs. |
 | `get_collection_stats` | Fasst zusammen, woraus eine Sammlung besteht, nach Typ, Fach und Stufe. |
+| `get_collection_overview` | Zeigt eine Sammlung auf einen Blick: Pfad, Gliederung, Statistik, Skills, Untersammlungen und erste Inhalte. |
+| `count_wlo_content_matches` | Zählt für viele Suchanfragen auf einmal, wie viele passende Inhalte es gibt. |
 
 ### Details & Verwandtes
 
 | Tool | Funktion |
 |---|---|
-| `get_node_details` | Die Detailansicht eines Datensatzes: Titel, Fach, Stufe, Lizenz, Anbieter, Link. |
+| `get_node_details` | Die Detailansicht eines oder mehrerer Datensätze: Titel, Fach, Stufe, Lizenz, Anbieter, Link. |
 | `get_nodes_details` | Dasselbe für mehrere nodeIds parallel, in einem Aufruf. |
 | `get_related_content` | Findet ähnliche Materialien zu einem Inhalt. |
 | `get_node_breadcrumb` | Zeigt den Pfad von der Wurzel bis zum Knoten im Themenbaum. |
@@ -53,6 +55,8 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 | Tool | Funktion |
 |---|---|
 | `lookup_wlo_vocabulary` | Nennt die gültigen Werte eines Feldes — für Filter (Fach, Bildungsstufe, Inhaltstyp) und für die Qualitätsbewertungen beim Schreiben. |
+| `resolve_wlo_filters` | Löst alle Filter-Bezeichnungen eines Vorhabens in einem Aufruf auf und sagt je Wert, wie sicher (exakt, Alias, geraten). |
+| `find_content_by_url` | Prüft für bis zu 20 Adressen, ob es schon einen Datensatz gibt — exakt oder nach Bereinigung. |
 | `lookup_wlo_publishers` | Listet die Anbieter der Inhalte, je mit Anzahl. |
 
 ### Skills
@@ -61,7 +65,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 |---|---|
 | `search_skill` | Sucht Skills (Inhaltsart „KI-Skill") mit angehängter Anleitung — passend zu einer Aufgabe. |
 | `get_skill` | Lädt die Anleitung (SKILL.md) eines Skills zu seiner nodeId. |
-| `get_skill_registry` | Nennt die Skills, die eine Sammlung freigegeben hat; mit `context` nur die eines Arbeitszusammenhangs samt Anleitung. |
+| `get_skill_registry` | Nennt die Skills, die eine Sammlung freigegeben hat; mit `context` nur die eines Arbeitszusammenhangs samt Anleitung, mit `task` gleich die Anleitung des passenden. |
 
 Sammlungs-Werkzeuge (`get_collection_contents`, `search_wlo_within_collection`,
 `get_node_details`, `get_topic_page_content`, `get_related_content`) nehmen
@@ -82,7 +86,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `search` | Leichte Belegstellen-Treffer für belegte Antworten. |
 | `fetch` | Der Volltext zu einem Treffer per id. |
 
-## Kuratierend (14)
+## Kuratierend (20)
 
 ### Inhalte
 
@@ -101,7 +105,13 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_rename_collection` | Ändert Titel und Beschreibung einer Sammlung. |
 | `wlo_add_to_collection` | Nimmt ein vorhandenes Material in eine Sammlung auf. |
 | `wlo_remove_from_collection` | Nimmt ein Material wieder aus einer Sammlung heraus. |
+| `wlo_create_collection_tree` | Legt einen ganzen Sammlungsbaum mit einer Bestätigung an. |
+| `wlo_add_to_collections` | Nimmt viele Materialien mit einer Bestätigung in Sammlungen auf. |
 | `wlo_delete_collection` | Löscht eine Sammlung endgültig, samt Untersammlungen. |
+| `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: Stapel-Ablage vorbereiten (Vorschau + Freigabe). |
+| `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes über `POST /api/uploads`). |
+| `wlo_store_batch_manifest` | `vorgang.json` zum Stapel ablegen. |
+| `wlo_list_my_batches` | Zeigt die eigenen Ablagen, neueste zuerst. |
 
 ### Themenseiten & Kompendium
 

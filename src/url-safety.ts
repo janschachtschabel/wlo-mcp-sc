@@ -16,26 +16,15 @@
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { BlockList, isIP } from 'node:net';
 
 /** One DNS answer, narrowed to the part that matters here. */
 type ResolvedAddress = { address: string };
 
-/**
- * Rewrite an IPv4-mapped IPv6 address to the IPv4 it carries; anything else is
- * returned unchanged.
- *
- * Both spellings occur and neither is optional. `new URL()` normalises
- * `http://[::ffff:127.0.0.1]/` to hostname `[::ffff:7f00:1]`, so the dotted
- * quad is already gone before any check runs (measured 2026-08-03) — while
- * `dns.lookup` hands back the dotted form. Judging only the prefix would be
- * wrong in the other direction: `::ffff:808:808` is 8.8.8.8 and public.
- */
-function unwrapMappedIpv4(host: string): string {
-  const rest = /^::ffff:(.+)$/.exec(host)?.[1];
-  if (!rest) return host;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(rest)) return rest;
+/** Hex pair `xxxx:yyyy` → dotted quad, or null when it is not one. */
+function hexPairToIpv4(rest: string): string | null {
   const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest);
-  if (!hex) return host;
+  if (!hex) return null;
   // Built with arithmetic rather than shifts: `0xffff << 16` is negative in
   // JavaScript's 32-bit signed bitwise domain.
   const n = parseInt(hex[1]!, 16) * 65536 + parseInt(hex[2]!, 16);
@@ -46,6 +35,59 @@ function unwrapMappedIpv4(host: string): string {
     n % 256,
   ].join('.');
 }
+
+/**
+ * Rewrite an IPv6 address that CARRIES an IPv4 to that IPv4; anything else is
+ * returned unchanged. Three carriers exist, and each reaches a private host
+ * when only the IPv6 shape is judged (audit 2026-11-05, measured by executing
+ * the old check):
+ *
+ * - IPv4-mapped `::ffff:a.b.c.d` — `new URL()` normalises
+ *   `http://[::ffff:127.0.0.1]/` to `[::ffff:7f00:1]`, so the dotted quad is
+ *   already gone before any check runs (measured 2026-08-03), while
+ *   `dns.lookup` hands back the dotted form.
+ * - NAT64 `64:ff9b::a.b.c.d` (RFC 6052) — a NAT64 gateway forwards it to the
+ *   embedded IPv4.
+ * - IPv4-compatible `::a.b.c.d` (deprecated, still parsed) — `[::127.0.0.1]`
+ *   becomes `[::7f00:1]`.
+ *
+ * Judging only the prefix would be wrong in the other direction:
+ * `::ffff:808:808` is 8.8.8.8 and public.
+ */
+function unwrapEmbeddedIpv4(host: string): string {
+  const carried = /^(?:::ffff:|64:ff9b::|::)(.+)$/.exec(host)?.[1];
+  if (!carried) return host;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(carried)) return carried;
+  return hexPairToIpv4(carried) ?? host;
+}
+
+/**
+ * Every range a fetch must not reach, as CIDR — checked with the standard
+ * library's `net.BlockList` rather than hand-written comparisons, which is how
+ * 100.64.0.0/10 and most of fe80::/10 went missing.
+ */
+const PRIVATE_RANGES: ReadonlyArray<readonly [string, number, 'ipv4' | 'ipv6']> = [
+  ['0.0.0.0', 8, 'ipv4'],        // "this network"
+  ['10.0.0.0', 8, 'ipv4'],       // RFC 1918
+  ['100.64.0.0', 10, 'ipv4'],    // shared address space (CGNAT; Alibaba metadata 100.100.100.200)
+  ['127.0.0.0', 8, 'ipv4'],      // loopback
+  ['169.254.0.0', 16, 'ipv4'],   // link-local incl. cloud metadata
+  ['172.16.0.0', 12, 'ipv4'],    // RFC 1918
+  ['192.0.0.0', 24, 'ipv4'],     // IETF protocol assignments
+  ['192.168.0.0', 16, 'ipv4'],   // RFC 1918
+  ['198.18.0.0', 15, 'ipv4'],    // benchmarking
+  ['224.0.0.0', 4, 'ipv4'],      // multicast
+  ['240.0.0.0', 4, 'ipv4'],      // reserved, incl. broadcast
+  ['::', 128, 'ipv6'],           // unspecified
+  ['::1', 128, 'ipv6'],          // loopback
+  ['64:ff9b:1::', 48, 'ipv6'],   // NAT64 local-use (RFC 8215)
+  ['fc00::', 7, 'ipv6'],         // unique local
+  ['fe80::', 10, 'ipv6'],        // link-local
+  ['ff00::', 8, 'ipv6'],         // multicast
+];
+
+const blockList = new BlockList();
+for (const [address, prefix, family] of PRIVATE_RANGES) blockList.addSubnet(address, prefix, family);
 
 /**
  * Reject a hostname that points into a private network.
@@ -60,30 +102,13 @@ function unwrapMappedIpv4(host: string): string {
  * before a caller ever reads `.hostname` (measured 2026-08-03).
  */
 export function isPrivateHost(hostname: string): boolean {
-  const host = unwrapMappedIpv4(hostname.toLowerCase().replace(/^\[|\]$/g, ''));
+  const host = unwrapEmbeddedIpv4(hostname.toLowerCase().replace(/^\[|\]$/g, ''));
 
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
 
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return (
-      a === 0 ||                        // "this network"
-      a === 127 ||                      // loopback
-      a === 10 ||                       // RFC 1918
-      (a === 169 && b === 254) ||       // link-local incl. cloud metadata
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
-  }
-
-  if (host.includes(':')) {
-    return (
-      host === '::1' || host === '::' ||
-      /^f[cd]/.test(host) ||            // unique local (fc00::/7)
-      host.startsWith('fe80')           // link-local
-    );
-  }
+  const family = isIP(host);
+  if (family === 4) return blockList.check(host, 'ipv4');
+  if (family === 6) return blockList.check(host, 'ipv6');
   return false;
 }
 

@@ -42,6 +42,7 @@ import { createHash } from 'node:crypto';
 // a marker at all.
 import { cutAtWordBoundary } from '../../text-cap.js';
 import { flattenText } from '../../text-sanitize.js';
+import { IMAGE_SIGNATURES } from './file-signatures.js';
 
 /** Bytes ready to be attached to a record, with what the preview needs to name them. */
 export interface UploadFile {
@@ -89,40 +90,7 @@ export function isTextFormat(value: unknown): value is TextFormat {
   return typeof value === 'string' && value in TEXT_FORMATS;
 }
 
-/**
- * Image formats we can recognise with certainty from a fixed prefix. The list
- * IS the allow-list: detection and permission are the same decision, so a
- * format cannot be permitted without also being recognisable.
- */
-const IMAGE_SIGNATURES: { mimeType: string; ext: string; matches: (b: Buffer) => boolean }[] = [
-  {
-    mimeType: 'image/png',
-    ext: 'png',
-    matches: (b) => b.length >= 8 && b.subarray(0, 8).equals(
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    ),
-  },
-  {
-    mimeType: 'image/jpeg',
-    ext: 'jpg',
-    matches: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
-  },
-  {
-    mimeType: 'image/gif',
-    ext: 'gif',
-    matches: (b) => b.length >= 6
-      && (b.subarray(0, 6).toString('latin1') === 'GIF87a' || b.subarray(0, 6).toString('latin1') === 'GIF89a'),
-  },
-  {
-    // RIFF container with a WEBP chunk — both halves, because "RIFF" alone is
-    // also a WAV file.
-    mimeType: 'image/webp',
-    ext: 'webp',
-    matches: (b) => b.length >= 12
-      && b.subarray(0, 4).toString('latin1') === 'RIFF'
-      && b.subarray(8, 12).toString('latin1') === 'WEBP',
-  },
-];
+// The image signatures are shared with the batch upload (MA-1): `file-signatures.ts`.
 
 /**
  * Title → a file name that is only ever a base name.
@@ -132,7 +100,7 @@ const IMAGE_SIGNATURES: { mimeType: string; ext: string; matches: (b: Buffer) =>
  * single hyphen, which is also what removes every path separator, `.` and `..`
  * — the traversal question never arises because no caller-supplied name exists.
  */
-function fileNameFrom(title: string, ext: string): string {
+export function fileNameFrom(title: string, ext: string): string {
   const slug = title
     .toLowerCase()
     .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')

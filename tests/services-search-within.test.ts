@@ -103,3 +103,17 @@ test('searchWithinCollection: discloses when the collection is larger than the s
     mock.restore();
   }
 });
+
+test('searchWithinCollection: excludeNodeIds skips already-seen items, by id or original (BOERDi 12b)', async () => {
+  const ref = { ...makeNode('ref-3', 'Zellteilung Arbeitsblatt'), originalId: 'orig-3' };
+  const mock = installChildren([makeNode('m1', 'Zellteilung Video'), makeNode('m2', 'Zellteilung Text'), ref]);
+  try {
+    const res = await searchWithinCollection({
+      nodeId: 'coll-1', query: 'zellteilung', maxResults: 5, excludeNodeIds: ['m1', 'orig-3'],
+    });
+    assert.deepEqual(res.results.map(r => r.nodeId), ['m2']);
+    assert.equal(res.pagination.total, 1, 'the total counts what is still to come');
+  } finally {
+    mock.restore();
+  }
+});

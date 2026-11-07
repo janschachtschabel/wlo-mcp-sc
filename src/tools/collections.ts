@@ -85,6 +85,9 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
       // property is absent from the keyword projection, so it could never match.)
       const { criteria: collCriteria, labeled: collLabeledCriteria, unresolved } = buildFilterCriteria(params);
       const unresolvedHint = formatUnresolvedHint(unresolved);
+      // The contract half of the hint (feedback 2026-11-07): a client reading only
+      // `structuredContent` otherwise never learns that a filter did not apply.
+      const unresolvedField = unresolved.length ? { unresolvedFilters: unresolved } : {};
 
       const keepNode = (n: WloNode) =>
         !(excluded.size && excluded.has(n.ref?.id ?? '')) && nodeMatchesCriteria(n, collCriteria);
@@ -126,7 +129,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         const content = [{ type: 'text' as const, text }];
         if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
         content.push(meta);
-        return { content, structuredContent: { total, count: formatted.length, results: formatted } };
+        return { content, structuredContent: { total, count: formatted.length, results: formatted, ...unresolvedField } };
       };
 
       try {
@@ -167,7 +170,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           const text = `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`;
           const content = [{ type: 'text' as const, text }];
           if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
-          return { content, structuredContent: { total: 0, count: 0, results: [] } };
+          return { content, structuredContent: { total: 0, count: 0, results: [], ...unresolvedField } };
         }
 
         return await renderOut(matches, 'collection_tree_traversal');
@@ -310,6 +313,9 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
       license: z.string().optional().describe('Lizenz: "CC BY 4.0", "gemeinfrei", … oder "OER" für alle frei nachnutzbaren (CC0/PDM/CC BY/CC BY-SA)'),
       maxResults: z.number().int().min(1).max(50).optional().default(10).describe('Maximum results (1–50, default 10)'),
       skipCount: z.number().int().min(0).optional().default(0).describe('Backend offset for "more results" paging (default 0)'),
+      excludeNodeIds: z.array(z.string()).max(200).optional().describe(
+        'Skip these node IDs in the result (already-seen items) — also matches the original a reference points at. Max 200.'
+      ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
     outputSchema: nodeListSchema,
@@ -317,6 +323,7 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
     handler: async (params) => {
       try {
         const res = await searchWithinCollection({
+          excludeNodeIds: params.excludeNodeIds,
           nodeId: params.nodeId,
           query: params.query,
           educationalContext: params.educationalContext,
@@ -395,7 +402,8 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
         content.push(meta);
         return {
           content,
-          structuredContent: { total: res.pagination.total, count: res.results.length, results: res.results },
+          structuredContent: { total: res.pagination.total, count: res.results.length, results: res.results,
+            ...(res.unresolved.length ? { unresolvedFilters: res.unresolved } : {}) },
         };
       } catch (err) {
         return toolError('Fehler bei der Suche in der Sammlung', err);

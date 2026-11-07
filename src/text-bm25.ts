@@ -38,6 +38,8 @@ export interface Bm25Hit {
   /** Index into the `documents` array the caller passed in. */
   index: number;
   score: number;
+  /** The query terms this document carries (normalised, as in `unmatched`). */
+  matched: string[];
 }
 
 export interface Bm25Result {
@@ -56,6 +58,8 @@ export interface Bm25Result {
    * ranking already says which documents carried something.
    */
   unmatched: string[];
+  /** How many documents carry each query term — what tells a common word from a telling one. */
+  docFreq: Record<string, number>;
 }
 
 const tokenize = (text: string): string[] => text.toLowerCase().match(TOKEN) ?? [];
@@ -83,7 +87,7 @@ function normalizedTerms(query: string): string[] {
 /** Rank `documents` against `query`. Documents that carry no term are left out. */
 export function rankBm25(documents: readonly string[], query: string): Bm25Result {
   const terms = normalizedTerms(query);
-  if (!terms.length || !documents.length) return { hits: [], unmatched: [] };
+  if (!terms.length || !documents.length) return { hits: [], unmatched: [], docFreq: {} };
 
   const lengths: number[] = [];
   // freqs[docIndex][termIndex] — how many of the document's tokens the term matches.
@@ -111,7 +115,7 @@ export function rankBm25(documents: readonly string[], query: string): Bm25Resul
       const tf = freqs[di]![ti]!;
       if (tf > 0) score += idf[ti]! * (tf * (K1 + 1)) / (tf + norm);
     });
-    if (score > 0) hits.push({ index: di, score });
+    if (score > 0) hits.push({ index: di, score, matched: terms.filter((_, ti) => freqs[di]![ti]! > 0) });
   });
 
   // Stable: `sort` preserves the insertion order of equal elements, and the
@@ -119,5 +123,9 @@ export function rankBm25(documents: readonly string[], query: string): Bm25Resul
   // which of two equally relevant passages a caller sees first.
   hits.sort((a, b) => b.score - a.score);
 
-  return { hits, unmatched: terms.filter((_, ti) => docFreq[ti]! === 0) };
+  return {
+    hits,
+    unmatched: terms.filter((_, ti) => docFreq[ti]! === 0),
+    docFreq: Object.fromEntries(terms.map((t, ti) => [t, docFreq[ti]!])),
+  };
 }

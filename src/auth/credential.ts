@@ -328,6 +328,38 @@ export function configuredServiceCredential(): WloCredential | null {
   return serviceCredential;
 }
 
+/**
+ * Personal logins the repository has REJECTED (HTTP 401) during the request
+ * that carried them.
+ *
+ * Keyed on the credential OBJECT, which is what scopes it to one request: the
+ * HTTP entry point builds a fresh one per request (`credentialFromHeader`), so
+ * a rejection is forgotten with the request and a transient 401 cannot lock
+ * anyone out beyond it. A WeakSet, so nothing is retained after that.
+ *
+ * Personal logins only. The service account is ONE object shared by every
+ * request — marking it would end the server for everyone after a single 401 —
+ * and its rejection is an operator problem the boot log already reports
+ * (`verifyConfiguredCredential`).
+ *
+ * Why it exists (auth review 2026-11-05): a block stays listed after its owner
+ * changes their WLO password, and a search fans out into several upstream
+ * calls, each a failed login against the person's real account.
+ */
+const rejectedThisRequest = new WeakSet<WloCredential>();
+
+/** Record that the repository answered 401 to the credential in scope. */
+export function markCurrentCredentialRejected(): void {
+  const cred = currentCredential();
+  if (cred && cred.source === 'user') rejectedThisRequest.add(cred);
+}
+
+/** Has the repository rejected the personal login of the current request? */
+export function isCurrentCredentialRejected(): boolean {
+  const cred = currentCredential();
+  return Boolean(cred && cred.source === 'user' && rejectedThisRequest.has(cred));
+}
+
 /** Test seam — production code sets the credential from the environment only. */
 export function setServiceCredentialForTest(c: WloCredential | null): void {
   serviceCredential = c;

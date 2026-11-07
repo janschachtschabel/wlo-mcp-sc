@@ -32,6 +32,7 @@ import {
   reportMutation,
   errorText,
   timeoutOrError,
+  isPreviewCall,
 } from './curation-shared.js';
 
 export function registerCurationTopicPageTool(server: McpServer, challenge: WriteAuthChallenge): void {
@@ -77,7 +78,7 @@ export function registerCurationTopicPageTool(server: McpServer, challenge: Writ
         );
       } catch (err) {
         return timeoutOrError('Die Themenseiten-Variante konnte nicht umgestellt werden', err,
-          `Ob „${sanitizeText(collectionId)}“ jetzt eine andere Variante rendert, ist offen`);
+          `Ob „${sanitizeText(collectionId)}“ jetzt eine andere Variante rendert, ist offen`, { preview: isPreviewCall(params) });
       }
     },
   });

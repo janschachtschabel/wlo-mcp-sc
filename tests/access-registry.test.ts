@@ -33,6 +33,19 @@ async function opened(path: string): Promise<AccessRegistry> {
   return r;
 }
 
+// ── File permissions (audit 2026-11-05) ────────────────────────────────────
+
+test('the registry file is readable by its owner only', async (t) => {
+  // The ids are secrets (AUTH.md §4: revocation acts on them). POSIX only —
+  // Windows has no owner/group/other bits to assert, and CI runs on Linux.
+  if (process.platform === 'win32') { t.skip('no POSIX file modes on Windows'); return; }
+  const { statSync } = await import('node:fs');
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+  await registry.add(entry('private-id'));
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+});
+
 // ── T6: opening ────────────────────────────────────────────────────────────
 
 test('a missing file is the ordinary first start, not a failure', async (t) => {

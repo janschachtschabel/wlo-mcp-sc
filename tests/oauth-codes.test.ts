@@ -110,3 +110,15 @@ test('nothing the store exposes carries a code', () => {
     v instanceof Map ? Array.from(v.entries()) : v);
   assert.ok(!exposed.includes(code), `the store exposed a live code: ${exposed}`);
 });
+
+test('one account minting many codes evicts only its own (audit 2026-11-05)', async () => {
+  // The global bound let one signed-in account push out every other person's
+  // in-flight login. A per-label bound keeps the flood inside its own lane.
+  const { MAX_CODES_PER_LABEL } = await import('../src/auth/oauth-codes.js');
+  const store = createCodeStore();
+  const other = store.mint({ ...RECORD, label: 'jemand-anderes' }, 0);
+  const firstOwn = store.mint(RECORD, 0);
+  for (let i = 0; i < MAX_CODES_PER_LABEL; i++) store.mint(RECORD, 1);
+  assert.equal(store.consume(firstOwn, 2), null, 'the flooder lost their own oldest code');
+  assert.ok(store.consume(other, 2), "the other person's code survived");
+});
