@@ -58,29 +58,39 @@ export const TOOL_STATUS: Readonly<Record<string, ToolStatus>> = {
   // The curation tools. They have been listed for every caller since
   // 2026-08-05, so their status copy is no longer optional.
   //
-  // Deliberately non-committal about the outcome: each of these is two-step, so
-  // the FIRST call only produces a preview and writes nothing. "Gespeichert"
-  // would be a lie on that call — and the second call may still report that the
-  // repository dropped the value. What actually landed is in the reply text.
-  wlo_update_content: { invoking: 'Änderung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_create_content: { invoking: 'Inhalt wird angelegt…', invoked: 'Ergebnis liegt vor' },
-  wlo_submit_content: { invoking: 'Einreichung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_create_collection: { invoking: 'Sammlung wird angelegt…', invoked: 'Ergebnis liegt vor' },
-  wlo_rename_collection: { invoking: 'Sammlung wird umbenannt…', invoked: 'Ergebnis liegt vor' },
-  wlo_add_to_collection: { invoking: 'Material wird eingeordnet…', invoked: 'Ergebnis liegt vor' },
-  wlo_remove_from_collection: { invoking: 'Material wird herausgenommen…', invoked: 'Ergebnis liegt vor' },
-  wlo_create_collection_tree: { invoking: 'Sammlungsbaum wird angelegt…', invoked: 'Ergebnis liegt vor' },
-  wlo_add_to_collections: { invoking: 'Materialien werden eingeordnet…', invoked: 'Ergebnis liegt vor' },
-  wlo_update_contents: { invoking: 'Metadaten-Änderung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_attach_fulltext: { invoking: 'Volltext-Ablage wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_attach_fulltexts: { invoking: 'Volltext-Ablage wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_update_compendium: { invoking: 'Kompendialtext wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_set_topic_page: { invoking: 'Themenseiten-Variante wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_suggest_metadata: { invoking: 'Vorschlag wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
+  // Deliberately non-committal: the copy is stamped ONCE per tool
+  // (`tool-defaults.ts`), so the same words stand over the preview call (writes
+  // nothing) AND the confirmed call (writes, or deletes). "wird angelegt" was
+  // false over the first, "wird vorbereitet" over the second — "… wird
+  // bearbeitet" is true of both, and the reply text says what actually landed.
+  // Pinned for every two-step tool by `tests/tool-status.test.ts`.
+  wlo_update_content: { invoking: 'Änderung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_create_content: { invoking: 'Anlage des Inhalts wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_submit_content: { invoking: 'Einreichung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_create_collection: { invoking: 'Anlage der Sammlung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_rename_collection: { invoking: 'Umbenennung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_add_to_collection: { invoking: 'Einordnung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_remove_from_collection: { invoking: 'Herausnahme wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_create_collection_tree: { invoking: 'Sammlungsbaum wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_add_to_collections: { invoking: 'Einordnung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_update_contents: { invoking: 'Metadaten-Änderung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_attach_fulltext: { invoking: 'Volltext-Ablage wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_attach_fulltexts: { invoking: 'Volltext-Ablage wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_update_compendium: { invoking: 'Kompendialtext-Änderung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_set_topic_page: { invoking: 'Themenseiten-Variante wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_suggest_metadata: { invoking: 'Vorschlag wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
   wlo_list_suggestions: { invoking: 'Vorschläge werden geladen…', invoked: 'Vorschläge geladen' },
-  wlo_decide_suggestion: { invoking: 'Vorschlag wird entschieden…', invoked: 'Ergebnis liegt vor' },
-  wlo_delete_content: { invoking: 'Löschung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
-  wlo_delete_collection: { invoking: 'Löschung wird vorbereitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_decide_suggestion: { invoking: 'Entscheidung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_delete_content: { invoking: 'Löschung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_delete_collection: { invoking: 'Löschung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+
+  // The batch tools (`WLO_BATCH_UPLOAD_ENABLED`) are NOT two-step: the
+  // preparation only prepares (its key is redeemed by the store calls), and the
+  // two store calls write on their one call.
+  wlo_prepare_file_batch: { invoking: 'Stapel-Ablage wird vorbereitet…', invoked: 'Vorschau liegt vor' },
+  wlo_store_batch_file: { invoking: 'Datei wird abgelegt…', invoked: 'Ergebnis liegt vor' },
+  wlo_store_batch_manifest: { invoking: 'Vorgang wird abgelegt…', invoked: 'Ergebnis liegt vor' },
+  wlo_list_my_batches: { invoking: 'Ablagen werden geladen…', invoked: 'Ablagen geladen' },
 };
 
 /**

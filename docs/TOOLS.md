@@ -13,12 +13,14 @@ startet. Umgestellt am 2026-08-05: sie zu verstecken war der Grund, warum die
 Anmeldung nie begann — ein Modell, das ein Werkzeug nie sieht, ruft es nie auf,
 also fordert nichts jemals eine Anmeldung an.
 
-Was die Liste tatsächlich verändert, sind nur zwei Schalter:
+Was die Liste tatsächlich verändert, sind diese Schalter:
 
 | | Sichtbar |
 |---|---|
 | **Standard** | 51 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
 | **`WLO_SKILL_TOOL_MODE=one-tool`** | 51 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
+| **`WLO_DISABLE_SKILL_SEARCH=1`** | 50 Tools — ohne `search_skill` (nur der Registry-Weg) |
+| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 55) |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable

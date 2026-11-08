@@ -243,19 +243,26 @@ const COUNTED_DOCS = [
  * code; `createMcpServer` reads the mode from the environment at import time,
  * so the delta is taken from the one function the mode actually reaches.
  */
-function skillToolsPerMode(): { 'two-tool': number; 'one-tool': number } {
-  const count = (mode: 'two-tool' | 'one-tool'): number => {
+function skillToolsPerMode(): { 'two-tool': number; 'one-tool': number; 'no-search': number; 'no-search+one-tool': number } {
+  const count = (mode: 'two-tool' | 'one-tool', disableSearch = false): number => {
     const names: string[] = [];
     const probe = {
       tool: (name: string) => { names.push(name); },
     } as unknown as Parameters<typeof registerSkillTools>[0];
-    registerSkillTools(probe, { collectionId: '', mode });
+    registerSkillTools(probe, { collectionId: '', mode, disableSearch });
     return names.length;
   };
-  return { 'two-tool': count('two-tool'), 'one-tool': count('one-tool') };
+  // `WLO_DISABLE_SKILL_SEARCH` measured too — the skill table's expectations
+  // used to be ARITHMETIC (`total - 1`), the very thing this function replaced.
+  return {
+    'two-tool': count('two-tool'), 'one-tool': count('one-tool'),
+    'no-search': count('two-tool', true), 'no-search+one-tool': count('one-tool', true),
+  };
 }
 
-async function realCounts(): Promise<{ total: number; readTools: number; curation: number; oneTool: number }> {
+async function realCounts(): Promise<{
+  total: number; readTools: number; curation: number; oneTool: number; noSearch: number; noSearchOneTool: number;
+}> {
   const client = await connectedClient();
   try {
     const names = (await client.listTools()).tools.map(t => t.name);
@@ -266,6 +273,8 @@ async function realCounts(): Promise<{ total: number; readTools: number; curatio
       readTools: names.filter(n => !curation.includes(n)).length,
       curation: curation.length,
       oneTool: names.length - perMode['two-tool'] + perMode['one-tool'],
+      noSearch: names.length - perMode['two-tool'] + perMode['no-search'],
+      noSearchOneTool: names.length - perMode['two-tool'] + perMode['no-search+one-tool'],
     };
   } finally {
     await client.close();
@@ -273,7 +282,7 @@ async function realCounts(): Promise<{ total: number; readTools: number; curatio
 }
 
 test('no document states a tool count the server contradicts', async () => {
-  const { total, readTools, curation, oneTool } = await realCounts();
+  const { total, readTools, curation, oneTool, noSearch, noSearchOneTool } = await realCounts();
   // The tools only `WLO_BATCH_UPLOAD_ENABLED` registers: curation tools that are not always listed.
   const batch = curation - (total - readTools);
 
@@ -331,6 +340,14 @@ test('no document states a tool count the server contradicts', async () => {
     [/\| alle \d+ \| alle (\d+) \|/g, total - readTools, 'curation tools per login (reference)'],
     [/die (\d+) Kuratier-Werkzeuge/g, total - readTools, 'always-listed curation tools (reference)'],
     [/Alle (\d+) sind für jeden Aufrufer/g, total - readTools, 'always-listed curation tools (reference)'],
+    // The skill-mode table in `docs/MCP-REFERENZ.md` said 42/41/42 long after the
+    // server had 51 tools — a dated measurement nobody re-took (2026-11-08).
+    [/^\| nichts gesetzt \| [^|]+\| (\d+) \|/gm, total, 'skill table: default'],
+    [/^\| \*\*`WLO_DISABLE_SKILL_SEARCH=1`\*\* \| [^|]+\| \*\*(\d+)\*\* \|/gm, noSearch, 'skill table: search switched off'],
+    [/^\| dasselbe \*\*\+ `WLO_SKILL_TOOL_MODE=one-tool`\*\* \| [^|]+\| (\d+) \|/gm, noSearchOneTool, 'skill table: search off + one-tool'],
+    // The sentence wraps across a line; this pattern matched NOTHING in its
+    // first form ("(N Werkzeuge im Registry-Modus)") and stayed green.
+    [/heute\s+(\d+) Werkzeuge im Registry-Modus/g, noSearch, 'skill table: registry mode'],
     [/\ball (\d+) tools/gi, total, 'all tools (English)'],
     [/Die (\d+) MCP-Werkzeuge/g, total, 'the tool list heading'],
     [/\d+ der (\d+) Werkzeuge/g, total, 'a share of all tools'],
@@ -344,15 +361,27 @@ test('no document states a tool count the server contradicts', async () => {
     [/lesend, (\d+) kuratierend/g, total - readTools, 'always-listed curation tools in the summary table'],
     [/Lesen — (\d+) Werkzeuge/g, readTools, 'read tools (integration heading)'],
     [/Kuratieren — (\d+) Werkzeuge/g, total - readTools, 'always-listed curation tools (integration heading)'],
-    [/die Zahl bleibt bei (\d+)/g, oneTool, 'one-tool mode keeps the count'],
+    // Both READMEs said "the count stays 42" / "die Zahl bleibt 42" — no "bei",
+    // so the old pattern walked past it (review of the follow-ups, finding 3).
+    [/Zahl bleibt (?:bei )?(\d+)/g, oneTool, 'one-tool mode keeps the count'],
+    [/count stays (\d+)/gi, oneTool, 'one-tool mode keeps the count (English)'],
     [/`search_skill` heraus \(dann (\d+)\)/g, total - 1, 'WLO_DISABLE_SKILL_SEARCH drops one tool'],
   ];
 
+  // A pattern that matches nothing guards nothing. These must hit at least once
+  // — each was written for a spelling that IS in the docs, and one of them did
+  // not match it (review of the follow-ups, finding 2).
+  const mustMatch = new Set([
+    'skill table: default', 'skill table: search switched off', 'skill table: search off + one-tool',
+    'skill table: registry mode', 'one-tool mode keeps the count', 'one-tool mode keeps the count (English)',
+  ]);
+  const matched = new Set<string>();
   const wrong: string[] = [];
   for (const doc of COUNTED_DOCS) {
     const body = read(doc);
     for (const [pattern, expected, what] of claims) {
       for (const m of body.matchAll(pattern)) {
+        matched.add(what);
         if (Number(m[1]) !== expected) {
           wrong.push(`${doc}: "${m[0].trim()}" — ${what} is ${expected}`);
         }
@@ -360,6 +389,7 @@ test('no document states a tool count the server contradicts', async () => {
     }
   }
   assert.deepEqual(wrong, [], 'the source is the fact; these numbers are not');
+  assert.deepEqual([...mustMatch].filter(w => !matched.has(w)), [], 'a guard that matched nothing');
 });
 
 /**

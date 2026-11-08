@@ -29,3 +29,19 @@ export const CURATION_TOOLS = [
  * someone who may curate.
  */
 export const MUTATING_TOOLS = CURATION_TOOLS.filter(n => n !== 'wlo_list_suggestions');
+
+/**
+ * The write tools that are TWO-STEP: a call without `confirmToken` only builds a
+ * preview, the call with it writes. Today that is every mutating tool above —
+ * named separately because a rule about wording ("the status copy must fit both
+ * calls") is about this property, not about "changes something".
+ */
+export const TWO_STEP_TOOLS = MUTATING_TOOLS;
+
+/**
+ * The batch-upload tools (`WLO_BATCH_UPLOAD_ENABLED`). Curation tools too —
+ * `registerCurationTool`, `oauth2` — but listed only behind the switch, and NOT
+ * two-step: `wlo_store_batch_file`/`_manifest` write on their one call, by
+ * redeeming the `batchToken` the person approved in `wlo_prepare_file_batch`.
+ */
+export const BATCH_TOOLS = ['wlo_prepare_file_batch', 'wlo_store_batch_file', 'wlo_store_batch_manifest', 'wlo_list_my_batches'];

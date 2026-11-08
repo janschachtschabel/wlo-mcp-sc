@@ -89,6 +89,20 @@ to [Semantic Versioning](https://semver.org/).
   `includeTextContent` say the same: `textContentNote` for a file without text, `textContentError` for a failed read
   (the many-node path used to answer an empty string for both); the reading widget names both causes.
 
+### Fixed — status copy and tool counts (2026-11-08, follow-ups to W1–W4)
+
+- **The status copy of a two-step write tool fits both of its calls.** It is stamped once per tool, so the same words
+  stand over the preview (writes nothing) and the confirmed call (writes or deletes): "wird angelegt" was false over the
+  first, a first fix's "wird vorbereitet" over the second. All 18 two-step tools now say "… wird bearbeitet". The four
+  batch tools had no copy at all; they now have one that fits their single call. A test measures the registered
+  curation tools (batch switch on) and requires copy for each; the wording rule applies to the two-step ones.
+- **Tool counts per skill mode.** The skill-mode table in `docs/MCP-REFERENZ.md` said 42/41/42 (now 51/50/51, measured
+  through `tools/list`; four more with `WLO_BATCH_UPLOAD_ENABLED`), both READMEs "the count stays 42" (51), and
+  `docs/TOOLS.md` claimed only two switches change the list (`WLO_DISABLE_SKILL_SEARCH` and the batch switch do too).
+  The guard's expectations for these are measured through `registerSkillTools` rather than computed, its patterns
+  must each match at least once — one of them matched nothing in its first form and stayed green — and the README
+  spellings without "bei" are caught.
+
 ### Fixed — chatbot team feedback on S1–S7 (2026-11-07)
 
 - **Every 429 on `/auth*` now has the shared REST shape.** The address budget before `/auth/issue`,

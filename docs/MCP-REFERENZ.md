@@ -172,14 +172,16 @@ Suche als `get_skill_for_task` zurückbringen) und `WLO_SKILL_CACHE` ebenfalls �
 er ist an, solange man ihn nicht abschaltet. `WLO_SKILLS_COLLECTION_ID` wird
 gegenstandslos, weil es nur die Suche verengt.
 
-Gemessen 2026-08-19 über `tools/list`, nach dem Deploy am 2026-08-20 live
-bestätigt (41 Werkzeuge im Registry-Modus):
+Gemessen über `tools/list` (zuerst 2026-08-19, live bestätigt am 2026-08-20;
+neu gezählt am 2026-11-08 — damals 42/41/42, seither kamen Werkzeuge dazu; heute
+50 Werkzeuge im Registry-Modus). Ohne `WLO_BATCH_UPLOAD_ENABLED` gezählt; mit ihm
+je vier mehr:
 
 | Konfiguration | Skill-Werkzeuge | Gesamt |
 |---|---|---:|
-| nichts gesetzt | `get_skill` · `get_skill_registry` · `search_skill` | 42 |
-| **`WLO_DISABLE_SKILL_SEARCH=1`** | **`get_skill` · `get_skill_registry`** | **41** |
-| dasselbe **+ `WLO_SKILL_TOOL_MODE=one-tool`** | `get_skill` · `get_skill_for_task` · `get_skill_registry` | 42 |
+| nichts gesetzt | `get_skill` · `get_skill_registry` · `search_skill` | 51 |
+| **`WLO_DISABLE_SKILL_SEARCH=1`** | **`get_skill` · `get_skill_registry`** | **50** |
+| dasselbe **+ `WLO_SKILL_TOOL_MODE=one-tool`** | `get_skill` · `get_skill_for_task` · `get_skill_registry` | 51 |
 
 Den Cache füllen die Sammlungs-Antworten von `search_wlo_all`,
 `search_wlo_collections`, `get_collection_contents`,

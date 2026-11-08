@@ -4458,3 +4458,23 @@ Live-Test gibt bei `file_replaced` vorher/nachher aus, bevor er scheitert.
 ihr Restbudget an den Plan (dafür kein eigener Test: ein Vorbereiten über 40 s
 lässt sich ohne Uhr-Attrappe nicht nachstellen; die Regel selbst ist am
 `runPlan`-Test belegt).
+
+**Nachtrag 2026-11-08 (Kleinigkeiten nach dem Push a604598):** die Statustexte
+von neun älteren zweistufigen Schreibwerkzeugen kündigten die Handlung selbst an
+(„wird angelegt“), obwohl der erste Aufruf nur eine Vorschau baut — jetzt
+„… wird vorbereitet“, und ein Test hält die Regel für jedes ändernde
+Kuratier-Werkzeug. Die Skill-Tabelle in `docs/MCP-REFERENZ.md` (42/41/42) ist
+neu gezählt (51/50/51, über `tools/list` in allen drei Konfigurationen) und vom
+Zahlen-Wächter erfasst — erst rot gegen den alten Stand gesehen.
+
+**Review der Nachträge (unabhängiger Prüfer): 4 MINOR, 4 NIT — alle behoben,
+dazu ein älterer Befund.** Der Statustext steht EINMAL je Werkzeug, also über
+Vorschau UND Ausführung: „wird vorbereitet“ war über einer echten Löschung
+falsch — jetzt „… wird bearbeitet“ für alle 18 zweistufigen Werkzeuge. Die vier
+Stapel-Werkzeuge hatten gar keinen Text; der Test misst die registrierten
+Kuratier-Werkzeuge jetzt (Stapel-Schalter an) statt der Handliste zu glauben.
+Im Zahlen-Wächter traf das Muster für „50 Werkzeuge im Registry-Modus“ nichts
+(der Satz bricht um) — jetzt muss jedes neue Muster mindestens einmal treffen,
+beides per Gegenprobe rot gesehen; die Erwartungen je Skill-Modus sind gemessen
+statt gerechnet; „die Zahl bleibt 42“ in beiden READMEs ist 51; `docs/TOOLS.md`
+nennt alle Schalter, die die Liste verändern.
