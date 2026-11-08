@@ -19,7 +19,9 @@ import { readFilingTarget } from '../services/write/create-filing.js';
 import {
   findExisting, flattenTree, treeStep, type OnExisting, type TreeInput, type TreeItem,
 } from '../services/write/collection-tree.js';
-import { findPlan, hasPlanCapacity, runPlan, startPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
+import {
+  PLAN_BUDGET_MS, findPlan, hasPlanCapacity, runPlan, startPlan, type ItemState, type StoredPlan,
+} from '../services/write/plan-runner.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
 import {
@@ -90,6 +92,10 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     handler: async (params) => {
+      // What is LEFT of this call's budget after the reads (rule 3 of plan 2026-11-08):
+      // a confirmation that read 200 records must not add a full 40 s on top.
+      const started = Date.now();
+      const remaining = () => Math.max(0, PLAN_BUDGET_MS - (Date.now() - started));
       requireWrite();
       const parentId = String(params['parentCollectionId']).trim();
       const onExisting = (params['onExisting'] ?? 'merge') as OnExisting;
@@ -105,7 +111,7 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
       if (key) {
         const found = findPlan<TreeItem>(KIND, key, args);
         if (found && !found.ok) return planErrorReply(found.code);
-        if (found) return answer(found.plan, await runPlan(found.plan, step(found.plan)), parentId);
+        if (found) return answer(found.plan, await runPlan(found.plan, step(found.plan), remaining()), parentId);
         if (params['continuationToken']) return planErrorReply('plan_expired');
       }
 
@@ -133,6 +139,13 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
         });
         const token = String(params['confirmToken'] ?? '');
         if (!token) return previewReply(cs, 'Zum Anlegen bitte bestätigen.');
+        // A second call with the same key may have started the plan while this
+        // one was reading; without this look it reaches the spent key, answers
+        // `confirm_unknown` and asks for a new preview — whose confirmation would
+        // run the plan a second time (overall review W1–W4, 2026-11-08).
+        const running = findPlan<TreeItem>(KIND, token, args);
+        if (running && !running.ok) return planErrorReply(running.code);
+        if (running) return answer(running.plan, await runPlan(running.plan, step(running.plan), remaining()), parentId);
         // Checked BEFORE the key is redeemed: refused here, it stays valid.
         if (!hasPlanCapacity()) return planErrorReply('too_many_plans');
         const refusal = confirmOrExplain(token, cs);
@@ -144,7 +157,7 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
         const planId = startPlan(KIND, args, items, initial, token);
         const plan = findPlan<TreeItem>(KIND, planId, args);
         if (!plan?.ok) return planErrorReply('plan_expired');
-        return answer(plan.plan, await runPlan(plan.plan, step(plan.plan)), parentId);
+        return answer(plan.plan, await runPlan(plan.plan, step(plan.plan), remaining()), parentId);
       } catch (err) {
         return timeoutOrError('Fehler beim Anlegen des Sammlungsbaums', err,
           'Ob schon Sammlungen angelegt wurden', { preview: isPreviewCall(params) });

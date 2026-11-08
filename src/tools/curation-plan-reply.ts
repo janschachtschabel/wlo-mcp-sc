@@ -1,9 +1,10 @@
 /**
  * tools/curation-plan-reply.ts – what a planned, multi-call write answers
  * (`wlo_create_collection_tree`, `wlo_add_to_collections`; BOERDi wishlist
- * items 6 and 7, decision E4 = B, 2026-11-06).
+ * items 6 and 7, decision E4 = B, 2026-11-06 — and since 2026-11-08
+ * `wlo_update_contents` and `wlo_attach_fulltexts`, which list `items`).
  *
- * Both tools run on `services/write/plan-runner.ts` and must answer in ONE
+ * All of them run on `services/write/plan-runner.ts` and must answer in ONE
  * shape, because the chatbot drives both with the same loop: `complete`,
  * `progress`, one entry per plan step, and a `continuationToken` while
  * anything is open. A second copy of this shape is where the two would drift.
@@ -55,7 +56,7 @@ export function planReply(
   expiresAt: number,
   entries: PlanEntry[],
   label: (s: ItemState) => string,
-  /** The structured list's name: `nodes` for a tree, `pairs` for filings. */
+  /** The structured list's name: `nodes` for a tree, `pairs` for filings, `items` for metadata and full texts. */
   listKey = 'nodes',
 ): WloToolResult {
   const open = !report.complete;

@@ -12,18 +12,36 @@
  * `ccm:oeh_collection_compendium_text` is read by this server as a compendium.
  *
  * Writer (`batch-filing.ts`) and reader (`services/my-batches.ts`) share this
- * module, so the two cannot drift on what the summary holds. The summary carries
- * only what the list shows — 200 entries stay near 24 000 characters, inside
- * what was measured — and the full manifest stays the file.
+ * module, so the two cannot drift on what the summary holds.
+ *
+ * `@2` (plan 2026-11-08, W4) adds each entry's ROLE — structure document or
+ * content. Only the batch knows which file is the structure document; without
+ * it in the manifest that knowledge died with the chatbot's conversation. `@1`
+ * is still read (every entry `content`), because filed batches stay filed.
+ *
+ * The summary carries only what the list shows, and the full manifest stays the
+ * file. Its size at 200 entries (review 2026-11-08, computed with this
+ * function): 30 286 characters with 37-character titles, 47 086 with
+ * 121-character ones — inside the 53 950 measured as kept. Titles made of
+ * characters JSON escapes can pass that; the read-back then reports the
+ * manifest `unverified`, never filed. So the summary writes `rolle` ONLY for a
+ * structure document: `content` is the default the reader restores, and
+ * spelling it 200 times would cost ~3 600 characters of that margin.
  */
 
-export const MANIFEST_FORMAT = 'wlo.ablage-vorgang@1';
+export const MANIFEST_FORMAT = 'wlo.ablage-vorgang@2';
+/** Formats this reader understands; `@1` predates the role. */
+const READABLE_FORMATS: ReadonlySet<string> = new Set(['wlo.ablage-vorgang@1', MANIFEST_FORMAT]);
+
+/** What a file is to the batch (W4): the document describing the structure, or one of its contents. */
+export type BatchRole = 'structure' | 'content';
+export const BATCH_ROLES: readonly BatchRole[] = ['structure', 'content'];
 /** Where the summary lives on the vorgang.json record. */
 export const MANIFEST_SUMMARY_PROPERTY = 'cm:description';
 /** How a manifest record is recognised by name (`renameIfExists` appends " (1)"). */
 export const MANIFEST_NAME = /^vorgang( \(\d+\))?\.json$/i;
 
-export interface ManifestEntry { index: number; titel: string; nodeId?: string; stand: string }
+export interface ManifestEntry { index: number; titel: string; nodeId?: string; stand: string; rolle?: BatchRole }
 export interface ManifestSummary { format: string; ordner: string; layout: string; inhalte: ManifestEntry[] }
 
 /** The summary of a server-built manifest — the same entries, without checksum, size and file name. */
@@ -32,7 +50,8 @@ export function summarizeManifest(manifest: { ordner: string; layout: string; in
     format: MANIFEST_FORMAT,
     ordner: manifest.ordner,
     layout: manifest.layout,
-    inhalte: manifest.inhalte.map(e => ({ index: e.index, titel: e.titel, ...(e.nodeId ? { nodeId: e.nodeId } : {}), stand: e.stand })),
+    inhalte: manifest.inhalte.map(e => ({ index: e.index, titel: e.titel, ...(e.nodeId ? { nodeId: e.nodeId } : {}), stand: e.stand,
+      ...(e.rolle === 'structure' ? { rolle: e.rolle } : {}) })),
   };
 }
 
@@ -42,8 +61,11 @@ export function parseManifestSummary(text: string | undefined): ManifestSummary 
   let value: unknown;
   try { value = JSON.parse(text); } catch { return null; }
   const v = value as Partial<ManifestSummary> | null;
-  if (!v || v.format !== MANIFEST_FORMAT || typeof v.ordner !== 'string' || !Array.isArray(v.inhalte)) return null;
+  if (!v || !READABLE_FORMATS.has(String(v.format)) || typeof v.ordner !== 'string' || !Array.isArray(v.inhalte)) return null;
   const inhalte = v.inhalte.filter((e): e is ManifestEntry =>
-    !!e && typeof e.index === 'number' && typeof e.titel === 'string' && typeof e.stand === 'string');
-  return inhalte.length === v.inhalte.length ? { format: v.format, ordner: v.ordner, layout: String(v.layout ?? ''), inhalte } : null;
+    !!e && typeof e.index === 'number' && typeof e.titel === 'string' && typeof e.stand === 'string'
+    && (e.rolle === undefined || BATCH_ROLES.includes(e.rolle)));
+  if (inhalte.length !== v.inhalte.length) return null;
+  return { format: String(v.format), ordner: v.ordner, layout: String(v.layout ?? ''),
+    inhalte: inhalte.map(e => ({ ...e, rolle: e.rolle ?? 'content' })) };
 }

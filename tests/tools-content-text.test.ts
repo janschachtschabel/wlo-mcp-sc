@@ -212,3 +212,20 @@ test('get_wlo_content_text: a call WITHOUT maxChars delivers a long text uncut',
     mock.restore();
   }
 });
+
+test('not_extracted is said in words, never as the slug (review P2, finding 5)', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { content: '' } };
+    if (url.includes('/metadata')) return { json: { node: { ...makeNode('f9', 'Gliederung'), size: '2048' } } };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({ name: 'get_wlo_content_text', arguments: { nodeId: 'f9' } });
+    assert.match(toolText(r), /Datei ist vorhanden/);
+    assert.doesNotMatch(toolText(r), /not_extracted/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

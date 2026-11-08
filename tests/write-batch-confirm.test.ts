@@ -18,8 +18,8 @@ import { BatchConfirmations, batchFingerprint, type BatchPlan } from '../src/ser
 const PLAN: BatchPlan = {
   target: 'home', folderName: 'Physik 7', layout: 'folder',
   entries: [
-    { index: 0, title: 'Mechanik', sha256: 'a'.repeat(64), size: 10, ext: 'pdf', fileName: 'mechanik.pdf' },
-    { index: 1, title: 'Optik', sha256: 'b'.repeat(64), size: 20, ext: 'docx', fileName: 'optik.docx' },
+    { index: 0, title: 'Mechanik', sha256: 'a'.repeat(64), size: 10, ext: 'pdf', fileName: 'mechanik.pdf', role: 'content' },
+    { index: 1, title: 'Optik', sha256: 'b'.repeat(64), size: 20, ext: 'docx', fileName: 'optik.docx', role: 'content' },
   ],
 };
 
@@ -112,7 +112,7 @@ describe('batchFingerprint', () => {
   it('ignores the order of fields but not the order of the list', () => {
     const gedreht: BatchPlan = {
       layout: 'folder', entries: PLAN.entries.map((e) => ({ fileName: e.fileName, ext: e.ext, size: e.size,
-        sha256: e.sha256, title: e.title, index: e.index })), folderName: 'Physik 7', target: 'home',
+        sha256: e.sha256, title: e.title, index: e.index, role: e.role })), folderName: 'Physik 7', target: 'home',
     };
     assert.equal(batchFingerprint(gedreht), batchFingerprint(PLAN));
     const andersrum: BatchPlan = { ...PLAN, entries: [...PLAN.entries].reverse() };

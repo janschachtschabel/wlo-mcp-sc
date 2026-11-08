@@ -7,7 +7,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { buildRenderUrl, readNodeMetadata, readNodeTextContent } from '../wlo-api.js';
+import { buildRenderUrl, readNodeMetadata } from '../wlo-api.js';
+import { NOT_EXTRACTED_NOTE, isStoredText, readStoredText } from '../services/content-text.js';
 import {
   formatNode, nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines, renderToText, type FormattedNode,
 } from '../formatter.js';
@@ -51,6 +52,8 @@ const nodeDetailsListSchema = nodeListSchema.extend({
     renderUrl: z.string().optional(),
     textContent: z.string().optional(),
     textContentError: z.string().optional(),
+    /** Empty text on a record that HAS a file: the repository gained no text from it. */
+    textContentNote: z.string().optional(),
     parents: z.array(z.unknown()).optional(),
     parentsError: z.string().optional(),
     /** Single `nodeId` with `includeRaw`: the unresolved URIs and the licence key. */
@@ -165,9 +168,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         // answers, and only the first is a statement about the material.
         const renderUrl = buildRenderUrl(params.nodeId);
         const textRead = params.includeTextContent
-          ? await readNodeTextContent(params.nodeId)
+          ? await readStoredText(params.nodeId)
           : { text: null, status: 200 };
-        const fullText = textRead.text;
+        // Blank or binary debris is no text — the rule `get_wlo_content_text` applies.
+        const fullText = isStoredText(textRead.text) ? textRead.text : null;
         // Not `/parents`: that endpoint carries ancestors for a collection and
         // an empty list for a material, so it answered "in no collection" for
         // records that were in several. See `getParentCollections`.
@@ -199,6 +203,8 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
           // same reason `parentsError` exists.
           if (!fullText && textRead.status !== 200) {
             payload['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${textRead.status}).`;
+          } else if (!fullText && formatted.fileSize > 0) {
+            payload['textContentNote'] = NOT_EXTRACTED_NOTE;
           }
         }
         if (params.includeAccessInfo) payload['accessInfo'] = access;
@@ -310,9 +316,9 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         }
 
         if (params.includeTextContent && !fullText) {
-          lines.push('', textRead.status === 200
-            ? 'Kein gespeicherter Volltext verfügbar.'
-            : `Der gespeicherte Volltext konnte nicht gelesen werden (HTTP ${textRead.status}); ob einer hinterlegt ist, sagt das nicht.`);
+          lines.push('', textRead.status !== 200
+            ? `Der gespeicherte Volltext konnte nicht gelesen werden (HTTP ${textRead.status}); ob einer hinterlegt ist, sagt das nicht.`
+            : formatted.fileSize > 0 ? NOT_EXTRACTED_NOTE : 'Kein gespeicherter Volltext verfügbar.');
         }
 
         // Flatten every record line — see the note above. The stored full text is

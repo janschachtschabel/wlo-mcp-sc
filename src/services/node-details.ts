@@ -7,7 +7,8 @@
  * where the full-text bound quietly disappears.
  */
 
-import { getNodeTextContent, readNodeMetadata, type WloNode } from '../wlo-api.js';
+import { readNodeMetadata, type WloNode } from '../wlo-api.js';
+import { NOT_EXTRACTED_NOTE, isStoredText, readStoredText } from './content-text.js';
 import { formatNode } from '../formatter.js';
 import { accessInfo } from '../node-access.js';
 import { qualityInfo } from '../node-quality.js';
@@ -124,8 +125,18 @@ export async function loadNodeDetails(nodeIds: string[], opts: NodeDetailOptions
     const withText = new Set(textIds);
     await mapPool(resolvedIds, 10, async (id) => {
       if (withText.has(id)) {
-        const fullText = await getNodeTextContent(id);
-        results.get(id)!['textContent'] = fullText ? capText(fullText, TEXT_CONTENT_CAP).text : '';
+        // Never throws: a timeout must not take the parents (same callback) with it.
+        const read = await readStoredText(id);
+        const text = isStoredText(read.text) ? read.text : null;
+        const result = results.get(id)!;
+        result['textContent'] = text ? capText(text, TEXT_CONTENT_CAP).text : '';
+        // The same three answers the single-node path gives: a failed read, a
+        // file the repository gained no text from, or simply nothing stored.
+        if (!text && read.status !== 200) {
+          result['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${read.status}).`;
+        } else if (!text && Number(result['fileSize'] ?? 0) > 0) {
+          result['textContentNote'] = NOT_EXTRACTED_NOTE;
+        }
       }
       if (opts.includeParents) {
         const node = loaded.get(id);

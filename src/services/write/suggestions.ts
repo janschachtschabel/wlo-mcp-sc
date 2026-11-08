@@ -42,7 +42,12 @@ export interface SuggestionDraft {
 
 export type CreateOutcome =
   | { ok: true; suggestions: Suggestion[] }
-  | { ok: false; detail: string };
+  /**
+   * `open`: the repository may have stored proposals — a 5xx, or a 200 whose
+   * body we could not read. A 4xx (and 429, which is not processed) is a
+   * refusal: nothing stored.
+   */
+  | { ok: false; detail: string; open?: true };
 
 /**
  * Everything this server proposes carries the same version tag. The parameter is
@@ -142,7 +147,7 @@ export async function createSuggestions(
     headers: HEADERS,
     body: JSON.stringify(drafts),
   });
-  if (!res.ok) return { ok: false, detail: await failureDetail(res) };
+  if (!res.ok) return { ok: false, detail: await failureDetail(res), ...(res.status >= 500 ? { open: true as const } : {}) };
 
   const body = await readJson<unknown>(res, 'createSuggestions');
   if (body === null) {
@@ -150,6 +155,7 @@ export async function createSuggestions(
     // report the opposite of that to the confirm step.
     return {
       ok: false,
+      open: true,
       detail: 'Das Repository hat die Vorschläge angenommen, aber keine verwertbare Antwort zurückgegeben.',
     };
   }

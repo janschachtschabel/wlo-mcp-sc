@@ -51,9 +51,20 @@ let budgetOverride: number | null = null;
 /** Test seam: shrink the budget to exercise continuation. `null` restores it. */
 export function setPlanBudgetForTest(ms: number | null): void { budgetOverride = ms; }
 
-export type ItemStatus = 'pending' | 'created' | 'existing' | 'added' | 'already' | 'unverified' | 'failed';
+export type ItemStatus = 'pending' | 'created' | 'existing' | 'added' | 'already' | 'unverified' | 'failed'
+  // Metadata and full texts (plan 2026-11-08, W2/W3).
+  | 'stored' | 'suggested' | 'partly' | 'not_stored';
 
-export interface ItemState { status: ItemStatus; nodeId?: string; code?: string }
+export interface ItemState {
+  status: ItemStatus;
+  nodeId?: string;
+  code?: string;
+  /** Set where the outcome is not known to be "nothing written" (W2/W3, same reading as after a confirmation). */
+  outcomeOpen?: boolean;
+  /** W3: fields written and read back / values proposed. */
+  written?: number;
+  suggested?: number;
+}
 
 export interface PlanItem {
   /** Unique within the plan (a tree path, a pair). */
@@ -190,12 +201,20 @@ export interface PlanReport {
  * Run what is ready until the budget is spent. A second call while one runs gets
  * the current state with `inProgress` — two runners on one plan would race.
  */
-export async function runPlan<I extends PlanItem>(plan: StoredPlan<I>, step: Step<I>): Promise<PlanReport> {
+export async function runPlan<I extends PlanItem>(
+  plan: StoredPlan<I>, step: Step<I>,
+  /** What is LEFT of this call's budget — a tool that read first must not add a full 40 s on top. */
+  budgetMs?: number,
+): Promise<PlanReport> {
   if (plan.running) return { ...report(plan), inProgress: true };
   const run = (async () => {
-    const budget = budgetOverride ?? PLAN_BUDGET_MS;
+    const budget = budgetOverride ?? Math.min(PLAN_BUDGET_MS, budgetMs ?? PLAN_BUDGET_MS);
     const start = Date.now();
     const tried = new Set<string>();
+    // How long the last wave took: a next wave that would, judged by it, end past
+    // the budget is left to the next call. "Is the budget spent yet" alone let a
+    // wave START at 39 s and end at 80 — past the client's 60 s (review W2).
+    let lastWaveMs = 0;
     for (;;) {
       // Dependants of a failed item fail with it; their own call would only fail later.
       for (const item of plan.items) {
@@ -205,20 +224,31 @@ export async function runPlan<I extends PlanItem>(plan: StoredPlan<I>, step: Ste
           plan.state.set(item.key, { status: 'failed', code: 'parent_failed' });
         }
       }
+      // At most PLAN_POOL per wave: the budget is checked between waves, so an
+      // unbounded wave (200 independent items) made one call run as long as the
+      // whole plan, past every client limit (review of W3, 2026-11-08).
       const ready = plan.items.filter(i => {
         if (tried.has(i.key) || plan.state.get(i.key)!.status !== 'pending') return false;
         return !i.after || READY.has(plan.state.get(i.after)!.status);
-      });
+      }).slice(0, PLAN_POOL);
       if (!ready.length) break;
-      // The budget is checked BEFORE a wave, so every call does at least one wave
-      // — a budget of 0 still makes progress.
-      if (tried.size > 0 && Date.now() - start >= budget) break;
+      // The budget is checked BEFORE a wave, so a call with budget does at least
+      // one wave and every continuation makes progress. The exception is a caller
+      // that spent its WHOLE budget reading (a confirmation over 200 records): a
+      // forced wave on top would push its answer past the client limit, and the
+      // continuation that follows has a full budget anyway (review 3, finding 5).
+      // The test seam (`budgetOverride`) keeps the forced wave.
+      const elapsed = Date.now() - start;
+      if (tried.size === 0 && budgetOverride === null && budgetMs !== undefined && budgetMs <= 0) break;
+      if (tried.size > 0 && (elapsed >= budget || elapsed + lastWaveMs > budget)) break;
+      const waveStart = Date.now();
       await mapPool(ready, PLAN_POOL, async item => {
         tried.add(item.key);
         const before = item.after ? plan.state.get(item.after) : undefined;
         plan.state.set(item.key, await step(item, before));
         return null;
       });
+      lastWaveMs = Date.now() - waveStart;
     }
   })();
   plan.running = run.finally(() => { plan.running = null; });
@@ -230,6 +260,12 @@ function report<I extends PlanItem>(plan: StoredPlan<I>): PlanReport {
   const total = plan.items.length;
   const done = [...plan.state.values()].filter(s => s.status !== 'pending').length;
   return { planId: plan.planId, complete: done === total, progress: { done, total } };
+}
+
+/** The live plans of one kind (expired ones swept first) — for a caller that bounds what they hold. */
+export function livePlans<I extends PlanItem>(kind: string, now = Date.now()): ReadonlyArray<StoredPlan<I>> {
+  sweep(now);
+  return [...plans.values()].filter(p => p.kind === kind) as unknown as StoredPlan<I>[];
 }
 
 /** Read access for the tool's answer. */

@@ -70,6 +70,8 @@ const REASON_KEY: Readonly<Record<string, StringKey>> = {
   extraction_failed: 'reasonExtractionFailed',
   node_not_found: 'reasonNodeNotFound',
   no_text_no_url: 'reasonNoText',
+  not_extracted: 'reasonNotExtracted',
+  text_unreadable: 'reasonTextUnreadable',
 };
 
 function reasonText(reason: string | undefined, locale: Locale): string {

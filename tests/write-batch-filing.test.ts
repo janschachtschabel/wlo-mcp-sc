@@ -17,7 +17,7 @@ import { installFetchMock } from './fetchMock.js';
 import { createBatchFolder, fileBatchEntry, folderLayout } from '../src/services/write/batch-filing.js';
 
 const ENTRY = { index: 0, title: 'Mechanik Übung', sha256: 'a'.repeat(64), size: 5, ext: 'pdf',
-  fileName: 'mechanik-uebung.pdf' };
+  fileName: 'mechanik-uebung.pdf', role: 'content' as const };
 const SLOT = { data: Buffer.from('%PDF-'), sha256: 'a'.repeat(64), type: { mimeType: 'application/pdf', ext: 'pdf' } };
 
 test('the layout follows the folder permission, unreadable means flat', async () => {

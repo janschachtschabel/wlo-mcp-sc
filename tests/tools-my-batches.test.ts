@@ -177,9 +177,10 @@ test('filing vorgang.json also writes the manifest into cm:description, and the 
   await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref: slot.ok ? slot.slot.ref : '' } });
   const m = await c.callTool({ name: 'wlo_store_batch_manifest', arguments: { batchToken: token } });
   assert.notEqual(m.isError, true, toolText(m));
-  const stored = JSON.parse(description) as { format: string; inhalte: unknown[] };
-  assert.equal(stored.format, 'wlo.ablage-vorgang@1');
+  const stored = JSON.parse(description) as { format: string; inhalte: Array<Record<string, unknown>> };
+  assert.equal(stored.format, 'wlo.ablage-vorgang@2', 'the role came in with @2 (plan 2026-11-08, W4)');
   assert.equal(stored.inhalte.length, 1);
+  assert.equal(stored.inhalte[0]!['rolle'], undefined, 'content is the default and costs no characters in the summary');
 });
 
 
@@ -266,4 +267,89 @@ test('an unreadable batch in a folder is named after its folder (review)', async
   const r = await (await client()).callTool({ name: 'wlo_list_my_batches', arguments: {} });
   const [b] = (r.structuredContent as { batches: Batch[] }).batches;
   assert.deepEqual([b!.status, b!.title], ['unreadable', 'Chemie 8']);
+});
+
+// ── W4: the role per entry (plan 2026-11-08) ───────────────────────────────
+
+test('an @1 manifest reads every entry as content; an @2 manifest carries its roles', async (t) => {
+  const { parseManifestSummary } = await import('../src/services/write/batch-manifest.js');
+  const alt = parseManifestSummary(manifest('Alt', ['stored']));
+  assert.equal(alt?.inhalte[0]?.rolle, 'content');
+  const neu = parseManifestSummary(JSON.stringify({ format: 'wlo.ablage-vorgang@2', ordner: 'Neu', layout: 'flat',
+    inhalte: [{ index: 0, titel: 'Gliederung', stand: 'stored', nodeId: 'r0', rolle: 'structure' },
+      { index: 1, titel: 'Text', stand: 'stored', nodeId: 'r1', rolle: 'content' }] }));
+  assert.deepEqual(neu?.inhalte.map(e => e.rolle), ['structure', 'content']);
+  // A summary with a role outside the two is not one of ours — never a partial guess.
+  assert.equal(parseManifestSummary(JSON.stringify({ format: 'wlo.ablage-vorgang@2', ordner: 'X', layout: 'flat',
+    inhalte: [{ index: 0, titel: 'a', stand: 'stored', rolle: 'anhang' }] })), null);
+  assert.equal(parseManifestSummary(JSON.stringify({ format: 'wlo.ablage-vorgang@3', ordner: 'X', layout: 'flat', inhalte: [] })), null);
+  void t;
+});
+
+test('the detail of a batch names the role of every entry, and the structure document in its text', async (t) => {
+  setServiceCredentialForTest(USER);
+  const calls: string[] = [];
+  const mock = installFetchMock((url): MockResult => {
+    calls.push(url);
+    if (url.includes('/-userhome-/children') && url.includes('filter=files')) {
+      return { json: { nodes: [file('man-2', 'vorgang.json', '2026-11-08T10:00:00.000Z')], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    if (url.includes('/metadata')) {
+      return { json: { node: { ref: { id: 'man-2', repo: '-home-' }, properties: { 'cm:description': [JSON.stringify({
+        format: 'wlo.ablage-vorgang@2', ordner: 'Optik', layout: 'flat',
+        inhalte: [{ index: 0, titel: 'Gliederung Optik', stand: 'stored', nodeId: 'r0', rolle: 'structure' },
+          { index: 1, titel: 'Linsen', stand: 'stored', nodeId: 'r1', rolle: 'content' }] })] } } } };
+    }
+    return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const r = await (await client()).callTool({ name: 'wlo_list_my_batches', arguments: { nodeId: 'man-2' } });
+  const batch = (r.structuredContent as { batch: { entries: Array<{ role: string }> } }).batch;
+  assert.deepEqual(batch.entries.map(e => e.role), ['structure', 'content']);
+  assert.match(toolText(r), /Gliederung Optik.*Strukturdokument/);
+  assert.doesNotMatch(toolText(r), /Linsen.*Strukturdokument/);
+});
+
+test('a structure document keeps its role end to end — summary AND the vorgang.json bytes (review P1, finding 1)', async (t) => {
+  setServiceCredentialForTest(USER);
+  const PDF = Buffer.from('%PDF-1.7\ny\n%%EOF\n', 'latin1');
+  let description = '';
+  const mock = installFetchMock((url, init): MockResult => {
+    const method = init?.method ?? 'GET';
+    if (url.includes('validateSession')) return { json: { toolPermissions: [] } };
+    if (url.includes('/children?') && method === 'POST') return { json: { node: { ref: { id: `n-${Math.random()}` } } } };
+    if (url.includes('/metadata') && method !== 'GET') {
+      const props = JSON.parse(String(init?.body ?? '{}')) as Record<string, string[]>;
+      if (props['cm:description']) description = props['cm:description'][0]!;
+      return { json: {} };
+    }
+    if (method === 'GET' && url.includes('/metadata')) {
+      return { json: { node: { ref: { id: 'n' }, size: PDF.length, properties: {
+        'cclom:title': ['x'], ...(description ? { 'cm:description': [description] } : {}) } } } };
+    }
+    return { json: {} };
+  });
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const sha = createHash('sha256').update(PDF).digest('hex');
+  const prep = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { target: 'home', folderName: 'Optik',
+    entries: [{ title: 'Gliederung', sha256: sha, size: PDF.length, ext: 'pdf', role: 'structure' },
+      { title: 'Linsen', sha256: sha, size: PDF.length, ext: 'pdf' }] } });
+  const token = String((prep.structuredContent as Record<string, unknown>)['batchToken']);
+  for (const index of [0, 1]) {
+    const slot = await sharedUploadSlots().put(slotIdentity(USER)!, Readable.from([PDF]), 'a.pdf');
+    await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index, ref: slot.ok ? slot.slot.ref : '' } });
+  }
+  const m = await c.callTool({ name: 'wlo_store_batch_manifest', arguments: { batchToken: token } });
+  assert.notEqual(m.isError, true, toolText(m));
+  const summary = JSON.parse(description) as { inhalte: Array<Record<string, unknown>> };
+  assert.deepEqual(summary.inhalte.map(e => e['rolle']), ['structure', undefined]);
+  const upload = mock.calls.find(x => x.url.includes('/content?') && x.url.includes('application%2Fjson'));
+  assert.ok(upload, 'vorgang.json went up as JSON');
+  const body = upload!.init?.body;
+  const fileBlob = body instanceof FormData ? body.get('file') : null;
+  const raw = fileBlob instanceof Blob ? await fileBlob.text()
+    : Buffer.isBuffer(body) || body instanceof Uint8Array ? Buffer.from(body as Uint8Array).toString('utf8') : String(body);
+  const file = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) as { inhalte: Array<Record<string, unknown>> };
+  assert.deepEqual(file.inhalte.map(e => e['rolle']), ['structure', 'content'], 'the file carries every role');
 });

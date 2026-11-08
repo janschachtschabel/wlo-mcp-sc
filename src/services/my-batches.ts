@@ -10,8 +10,8 @@
  *   node store). The own area is listed flat (the layout without folder right,
  *   MA-0) and one folder level deep (the layout with it), each listing bounded,
  *   and a bound that was reached is DISCLOSED.
- * - Only the batches shown are read. A manifest's summary can run to 24 000
- *   characters, so the listing asks for names and dates only, and the summary
+ * - Only the batches shown are read. A manifest's summary can run to ~50 000
+ *   characters (`write/batch-manifest.ts`), so the listing asks for names and dates only, and the summary
  *   (`cm:description`, see `write/batch-manifest.ts`) is read for at most
  *   `limit` records.
  */
@@ -19,7 +19,7 @@
 import { getCollectionContents, readNodeMetadata, type WloNode } from '../wlo-api.js';
 import { mapPool } from '../concurrency.js';
 import {
-  MANIFEST_NAME, MANIFEST_SUMMARY_PROPERTY, parseManifestSummary, type ManifestSummary,
+  MANIFEST_NAME, MANIFEST_SUMMARY_PROPERTY, parseManifestSummary, type BatchRole, type ManifestSummary,
 } from './write/batch-manifest.js';
 
 const HOME = '-userhome-';
@@ -50,7 +50,7 @@ export interface BatchSummary {
 }
 
 export interface BatchDetail extends BatchSummary {
-  entries?: Array<{ index: number; title: string; nodeId?: string; status: BatchStatusCount }>;
+  entries?: Array<{ index: number; title: string; nodeId?: string; status: BatchStatusCount; role: BatchRole }>;
 }
 
 /** The manifest's German states, in the E6 English the answer uses. */
@@ -114,6 +114,7 @@ async function describe(f: Found, withEntries: boolean): Promise<BatchDetail> {
     ...base, title: summary.ordner, status: 'ok', counts: countsOf(summary),
     ...(withEntries ? { entries: summary.inhalte.map(e => ({
       index: e.index, title: e.titel, ...(e.nodeId ? { nodeId: e.nodeId } : {}), status: STATUS_OF[e.stand] ?? 'open',
+      role: e.rolle ?? 'content',
     })) } : {}),
   };
 }

@@ -11,7 +11,7 @@ It exposes **32 read tools** (all unconditional; `get_url_text` is removable via
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 32 sit **twenty curation tools** (four only with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
+On top of those 32 sit **19 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
 submitting, collections, compendium texts, metadata proposals, which variant a
 topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
@@ -573,8 +573,11 @@ is externally linked (`ccm:wwwurl`) falls back to the text-extraction service
 (`WLO_TEXT_EXTRACTION_URL`, empty disables it). `source` names which path was
 taken. A missing text is not an error but a `reason`: `access_denied` (exists but
 is not public — no converter helps, only rights), `no_text_no_url`,
-`extraction_failed`, `node_not_found`. Long texts are cut and flagged
-(`truncated`).
+`not_extracted` (a file is there, but the repository gained no text from it —
+regularly for Markdown, JSON and images), `text_unreadable` (the read itself
+failed — no statement about the material), `extraction_failed`, `node_not_found`.
+Long texts are cut and flagged (`truncated`). A text on the record itself counts
+even when short; the 200-character floor applies to a linked page's text only.
 
 **25. `get_node_collections`** — `nodeId`, `outputFormat?`. The
 reverse of browsing: given a material, which curated collections carry it. The
@@ -788,7 +791,7 @@ pasted block and the OAuth connection. No `refresh_token`, no expiry: the access
 ends when it is revoked or the WLO password changes.
 
 **A request with no credential still reads anonymously.** It gets the full list —
-all 48 tools, the 16 curation tools included (52 and 20 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
+all 51 tools, the 19 curation tools included (55 and 23 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
 everyone and refuse at call time with an OAuth challenge, which is what makes a
 host offer the login: a model that never sees a write tool never asks for one.
 The `401` fires only for a token that was presented and cannot be used, and it
@@ -863,6 +866,9 @@ names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_remove_from_collection` | Take material out of one collection. The material itself survives and stays in every other collection. |
 | `wlo_create_collection_tree` | Create a whole tree of sub-collections (≤ 250 nodes, depth 4, ≤ 15 children) under ONE approval. Runs in ~40 s slices; an unfinished plan returns a `continuationToken`, and a key presented again by the same identity continues or replays — never creates twice. `onExisting: merge` reuses a same-titled sub-collection. |
 | `wlo_add_to_collections` | File up to 200 `{nodeId, collectionId}` pairs under ONE approval, same plan mechanics. A reference id is filed as its original; a pair already in place is `already`; one failed pair does not stop the rest. Not yet live-verified (staging filing regression, 2026-11-06). |
+| `wlo_update_contents` | Metadata for up to 200 records under ONE approval, same plan mechanics. The server decides per field: title, description, keywords, subject, educational level and content type are WRITTEN and read back; licence, author, publisher, source URL, language, target group and quality become SUGGESTIONS for an editor. A reference is changed on its original. |
+| `wlo_attach_fulltext` | Put a Markdown full text into a record's own `textContent` — where `get_wlo_content_text` reads it — two-step, read back. Refused in the preview: a record carrying a file (`would_replace_file`, until a live run shows the file survives), a linked record (`link_record`), an existing text without `replace` (`exists`), the same text (`nothing_to_change`), more than 2 MB (`too_large`). A reference is changed on its original. |
+| `wlo_attach_fulltexts` | Full texts for up to 200 records under ONE approval (3 000 000 bytes per call), same plan mechanics and the same per-record rules as `wlo_attach_fulltext`; the preview counts new / replaced / unchanged / refused. |
 | `wlo_update_compendium` | Write, replace, or remove a collection's editorial compendium text (Markdown). |
 | `wlo_set_topic_page` | Choose **which variant** a topic page renders publicly. Creates, deletes and reorders nothing — it sets the active one. The only curation tool whose result is immediately public, so every check is local: the stored `ccm:page_config` document is edited rather than composed (unknown keys and the variant list survive), a variant that does not belong to this page is refused, an unparseable document is left alone, and the result is read back and re-parsed. The repository validates none of this — measured 2026-08-09, it stores the literal string `"not json at all"` and answers 200. |
 | `wlo_suggest_metadata` | Propose values with a rationale instead of writing them. The record stays untouched. |
@@ -872,7 +878,7 @@ names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_delete_collection` | Delete a collection and its sub-collections. The material it referenced survives. |
 | `wlo_prepare_file_batch` | Only with `WLO_BATCH_UPLOAD_ENABLED`: prepare filing several files into the personal area (preview + one approval key for exactly this list). Creates nothing. Personal login only. |
 | `wlo_store_batch_file` | File one file of the approved batch — its bytes arrived beforehand via `POST /api/uploads`; each index once, the checksum must match. A refused key does not spend the upload. |
-| `wlo_store_batch_manifest` | File `vorgang.json` (`wlo.ablage-vorgang@1`) beside the batch, once per batch, built by the server; the counts also go into the record's `cm:description`. |
+| `wlo_store_batch_manifest` | File `vorgang.json` (`wlo.ablage-vorgang@2`, with each file's role: structure document or content) beside the batch, once per batch, built by the server; the counts also go into the record's `cm:description`. |
 | `wlo_list_my_batches` | Read-only: find your own batch filings again, newest first; with `nodeId` one of them with its entries. |
 
 **Deleting is final here.** `recycle=true` is always sent, so the repository may keep an archive copy — but a person-scoped archive query found a deleted node once and then returned nothing for the same node minutes later, so recoverability could not be demonstrated. The tools therefore say the deletion cannot be undone through this server and promise no restore. Taking material out of a collection (`wlo_remove_from_collection`) is a different act and leaves the material intact.
@@ -1038,7 +1044,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   signature, OAuth only) — including what the design does **not** protect.
   German.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
-  chatbot developer**: all 48 tools grouped, every externally callable URL (MCP,
+  chatbot developer**: all 51 tools grouped, every externally callable URL (MCP,
   REST, pages, OAuth), and the behaviour an integration has to know — licence
   filtering, the disclosure fields, the two-step write, the limits, and what
   deliberately does not exist. German.
@@ -1108,7 +1114,7 @@ must not cost the other one its fallback.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 48 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 51 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

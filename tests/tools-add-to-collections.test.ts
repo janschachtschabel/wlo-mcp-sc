@@ -229,3 +229,18 @@ test('a filing whose answer never came is re-checked by the next call, not sent 
     } finally { globalThis.fetch = real; }
   } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
 });
+
+test('two confirmations with the same key at once run ONE plan; the second is not sent to a new preview (overall review W1–W4)', async () => {
+  setServiceCredentialForTest(MARIA);
+  const { mock, puts } = repository();
+  const c = await client();
+  try {
+    const token = sc(await c.callTool({ name: TOOL, arguments: { pairs: PAIRS } })).confirm!.token;
+    const [x, y] = await Promise.all([
+      c.callTool({ name: TOOL, arguments: { pairs: PAIRS, confirmToken: token } }),
+      c.callTool({ name: TOOL, arguments: { pairs: PAIRS, confirmToken: token } }),
+    ]);
+    for (const r of [x, y]) assert.equal(sc(r).error?.code, undefined, JSON.stringify(sc(r).error));
+    assert.equal(puts.length, 3, 'each filing done once');
+  } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
+});

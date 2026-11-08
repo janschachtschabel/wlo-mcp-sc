@@ -47,6 +47,8 @@ import { registerCurationDecisionTool } from './tools/curation-decide.js';
 import { registerCurationBatchTools } from './tools/curation-batch.js';
 import { registerCurationTreeTools } from './tools/curation-tree.js';
 import { registerCurationAddManyTool } from './tools/curation-add-many.js';
+import { registerCurationUpdateManyTool } from './tools/curation-update-many.js';
+import { registerCurationFulltextTools } from './tools/curation-fulltext.js';
 import { writeAuthChallenge } from './auth/oauth-metadata.js';
 import { registerWidgets } from './apps/resources.js';
 import { applyReadOnlyToolDefaults } from './apps/tool-defaults.js';
@@ -159,6 +161,8 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // on invocation. The refusal itself is unchanged and absolute; only the
   // invisibility is gone.
   registerCurationContentTools(server, challenge);    // wlo_update_content, wlo_create_content, wlo_submit_content
+  registerCurationUpdateManyTool(server, challenge);  // wlo_update_contents
+  registerCurationFulltextTools(server, challenge);   // wlo_attach_fulltext
   registerCurationCollectionTools(server, challenge); // create/rename collection, add/remove material
   // The planned pair (E4 = B): one approval, run in time-budgeted calls.
   registerCurationTreeTools(server, challenge);       // wlo_create_collection_tree

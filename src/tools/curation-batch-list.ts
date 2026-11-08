@@ -13,6 +13,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { BATCH_ROLES, type BatchRole } from '../services/write/batch-manifest.js';
 import { getMyBatch, listMyBatches, type BatchSummary } from '../services/my-batches.js';
 import { failureFields } from '../services/failure-code.js';
 import { oneLine } from '../formatter.js';
@@ -34,6 +35,8 @@ const batchSchema = z.object({
   entries: z.array(z.object({
     index: z.number(), title: z.string(), nodeId: z.string().optional(),
     status: z.enum(['stored', 'dropped', 'unverified', 'failed', 'open']),
+    /** Structure document or content (W4); an @1 manifest reads `content`. */
+    role: z.enum(BATCH_ROLES as [BatchRole, ...BatchRole[]]),
   })).optional(),
 });
 export const myBatchesSchema = z.object({
@@ -81,7 +84,7 @@ Grundlage ist der Vorgang (vorgang.json) bzw. seine Kennzahlen am Datensatz; ein
           const { batch, scanCut } = await getMyBatch(String(params.nodeId).trim());
           if (!batch) return failure('not_found', 'Keine eigene Ablage mit dieser manifestNodeId.');
           const text = [line(batch), ...(batch.entries ?? []).map(e =>
-            oneLine(`  ${e.index}. ${e.title} — ${e.status}${e.nodeId ? ` — nodeId: ${e.nodeId}` : ''}`)),
+            oneLine(`  ${e.index}. ${e.title}${e.role === 'structure' ? ' (Strukturdokument)' : ''} — ${e.status}${e.nodeId ? ` — nodeId: ${e.nodeId}` : ''}`)),
           ...(scanCut ? [cutNote] : [])].join('\n');
           return { content: [{ type: 'text' as const, text }], structuredContent: { batch, ...trunc(scanCut) } };
         }

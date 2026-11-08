@@ -86,7 +86,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `search` | Leichte Belegstellen-Treffer für belegte Antworten. |
 | `fetch` | Der Volltext zu einem Treffer per id. |
 
-## Kuratierend (20)
+## Kuratierend (23)
 
 ### Inhalte
 
@@ -107,6 +107,9 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_remove_from_collection` | Nimmt ein Material wieder aus einer Sammlung heraus. |
 | `wlo_create_collection_tree` | Legt einen ganzen Sammlungsbaum mit einer Bestätigung an. |
 | `wlo_add_to_collections` | Nimmt viele Materialien mit einer Bestätigung in Sammlungen auf. |
+| `wlo_update_contents` | Ändert Metadaten vieler Datensätze mit einer Bestätigung (schreibt bzw. schlägt vor). |
+| `wlo_attach_fulltext` | Legt einen Volltext im textContent eines Datensatzes ab. |
+| `wlo_attach_fulltexts` | Legt Volltexte für viele Datensätze mit einer Bestätigung ab. |
 | `wlo_delete_collection` | Löscht eine Sammlung endgültig, samt Untersammlungen. |
 | `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: Stapel-Ablage vorbereiten (Vorschau + Freigabe). |
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes über `POST /api/uploads`). |

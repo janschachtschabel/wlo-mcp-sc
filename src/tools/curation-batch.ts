@@ -16,7 +16,8 @@
  *     and type (else nothing is created and the index stays redeemable). The first file creates the
  *     folder; ONLY a refused folder (403) continues flat (`folderDenied`), any other failure fails the
  *     file and is retried with the next one.
- *  3. `wlo_store_batch_manifest {batchToken}` — `vorgang.json` (`wlo.ablage-vorgang@1`), built by the
+ *  3. `wlo_store_batch_manifest {batchToken}` — `vorgang.json` (`MANIFEST_FORMAT`, `@2` with each entry's
+ *     role since 2026-11-08), built by the
  *     SERVER from the plan and the results (the caller sends no content), once per batch, only after
  *     at least one stored file.
  */
@@ -29,6 +30,7 @@ import {
   BATCH_TTL_MS, BatchConfirmations, batchOwner, type BatchPlan, type FolderChoice, type StoreResult,
 } from '../services/write/batch-confirm.js';
 import { createBatchFolder, fileBatchEntry, fileManifest, folderLayout } from '../services/write/batch-filing.js';
+import { BATCH_ROLES, MANIFEST_FORMAT, type BatchRole } from '../services/write/batch-manifest.js';
 import { fileNameFrom } from '../services/write/content-source.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { batchUploadEnabled, sharedUploadSlots, slotIdentity } from '../services/write/upload-slot.js';
@@ -121,6 +123,8 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
         sha256: z.string().regex(/^[0-9a-f]{64}$/),
         size: z.number().int().positive(),
         ext: z.enum(EXT),
+        role: z.enum(BATCH_ROLES as [BatchRole, ...BatchRole[]]).optional()
+          .describe('structure = das Strukturdokument des Vorgangs, content = ein Inhalt (Vorgabe).'),
       })).min(1).max(MAX_ENTRIES),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -130,8 +134,9 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       const entries = (params['entries'] as Array<Record<string, unknown>>).map((e, index) => {
         const title = flattenText(sanitizeText(String(e['title']))).slice(0, 200);
         const ext = String(e['ext']);
+        const role: BatchRole = e['role'] === 'structure' ? 'structure' : 'content';
         return { index, title, sha256: String(e['sha256']), size: Number(e['size']), ext,
-          fileName: fileNameFrom(title, ext) };
+          fileName: fileNameFrom(title, ext), role };
       });
       const layout = await folderLayout();
       const plan: BatchPlan = { target: 'home', folderName: flattenText(sanitizeText(String(params['folderName'])))
@@ -140,21 +145,27 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       const mintedAt = Date.now();
       const token = batches.mint(wer.owner, plan);
       const total = entries.reduce((n, e) => n + e.size, 0);
-      const zeilen = entries.slice(0, PREVIEW_LINES)
-        .map((e) => `- ${e.title} (${e.ext}, ${megabytes(e.size)}, als „${e.fileName}“)`);
-      if (entries.length > PREVIEW_LINES) zeilen.push(`- … und ${entries.length - PREVIEW_LINES} weitere`);
+      const zeile = (e: typeof entries[number]) =>
+        `- ${e.title} (${e.ext}, ${megabytes(e.size)}, als „${e.fileName}“)${e.role === 'structure' ? ' — Strukturdokument' : ''}`;
+      const zeilen = entries.slice(0, PREVIEW_LINES).map(zeile);
+      if (entries.length > PREVIEW_LINES) {
+        // A structure document is named whatever its position: the role is part of
+        // the approval, and an approval must not cover what the preview cut off.
+        zeilen.push(...entries.slice(PREVIEW_LINES).filter(e => e.role === 'structure').map(zeile));
+        zeilen.push(`- … und ${entries.slice(PREVIEW_LINES).filter(e => e.role !== 'structure').length} weitere`);
+      }
       const ziel = layout === 'folder'
         ? `in einen neuen Ordner „${plan.folderName}“ in deinem persönlichen Bereich`
         : 'direkt in deinen persönlichen Bereich (ein eigener Ordner ist für dein Konto nicht freigeschaltet)';
       return result(
         [`Vorschau — ${entries.length} Dateien (${megabytes(total)}) ${ziel}:`, ...zeilen,
-          'Zum Schluss kommt vorgang.json dazu: Titel, Art, Größe, Prüfsumme, Ablageort und Stand jeder Datei ' +
-          'dieser Liste (vom Server gebaut, nichts anderes). Titel, Kennung und Stand jeder Datei stehen zusätzlich ' +
+          'Zum Schluss kommt vorgang.json dazu: Titel, Art, Größe, Prüfsumme, Rolle, Ablageort und Stand jeder Datei ' +
+          'dieser Liste (vom Server gebaut, nichts anderes). Titel, Kennung, Stand und Rolle (wo Strukturdokument) jeder Datei stehen zusätzlich ' +
           'in der Beschreibung des Datensatzes (cm:description) — darüber findet wlo_list_my_batches die Ablage wieder.',
           'Es ist noch nichts angelegt. Mit dem Freigabe-Schlüssel wird jede Datei einzeln abgelegt (30 Minuten gültig).']
           .join('\n'),
         { batchToken: token, layout, count: entries.length, totalBytes: total, folderName: plan.folderName,
-          entries: entries.map(({ index, title, ext, size, fileName }) => ({ index, title, ext, size, fileName })),
+          entries: entries.map(({ index, title, ext, size, fileName, role }) => ({ index, title, ext, size, fileName, role })),
           // The same shape every other write's preview carries (12a); `batchToken`
           // stays for existing callers. `tool` is stamped by `registerCurationTool`.
           confirm: {
@@ -239,7 +250,7 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
     name: 'wlo_store_batch_manifest',
     title: 'WLO Vorgang zum Stapel ablegen',
     description:
-      'Lege vorgang.json (wlo.ablage-vorgang@1) zum freigegebenen Stapel in denselben Ordner — vom Server aus ' +
+      `Lege vorgang.json (${MANIFEST_FORMAT}, mit der Rolle jeder Datei) zum freigegebenen Stapel in denselben Ordner — vom Server aus ` +
       'der Freigabe und den Ergebnissen gebaut, einmal je Stapel. Für das Upload-Modul des Chatbots.',
     inputSchema: { batchToken: z.string().min(10).max(200) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -274,11 +285,11 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
             { status: 'failed', reason: 'folder_failed' }, true);
         }
         const manifest = {
-          format: 'wlo.ablage-vorgang@1', ordner: plan.folderName, layout: choice.denied ? 'flat' : plan.layout,
+          format: MANIFEST_FORMAT, ordner: plan.folderName, layout: choice.denied ? 'flat' : plan.layout,
           inhalte: plan.entries.map((e) => {
             const r = results.get(e.index);
             return { index: e.index, titel: e.title, art: e.ext, groesse: e.size, sha256: e.sha256, name: e.fileName,
-              stand: r?.status ?? 'offen', ...(r?.nodeId ? { nodeId: r.nodeId } : {}) };
+              rolle: e.role, stand: r?.status ?? 'offen', ...(r?.nodeId ? { nodeId: r.nodeId } : {}) };
           }),
         };
         const out = await fileManifest(choice.parent, manifest);

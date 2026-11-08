@@ -8,7 +8,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { getContentText, type ContentTextMiss } from '../services/content-text.js';
+import { NOT_EXTRACTED_NOTE, getContentText, type ContentTextMiss } from '../services/content-text.js';
 import { oneLine } from '../formatter.js';
 import { registerWloTool } from '../apps/register.js';
 import { contentTextSchema } from '../apps/outputSchemas.js';
@@ -28,6 +28,8 @@ const NO_TEXT_REASONS: Record<ContentTextMiss, string> = {
   no_text_no_url: 'es gibt keinen gespeicherten Text und keine auswertbare verlinkte Seite',
   extraction_failed: 'die verlinkte Seite ließ sich nicht als Text lesen',
   node_not_found: 'das Material wurde nicht gefunden',
+  not_extracted: NOT_EXTRACTED_NOTE.replace(/^Die/, 'die').replace(/\.$/, ''),
+  text_unreadable: 'der Text konnte gerade nicht gelesen werden — das sagt nichts darüber, ob einer da ist',
 };
 
 /**
@@ -42,8 +44,8 @@ export function registerContentTextTool(server: McpServer, readingWidgetUri?: st
     description: `Der INHALT eines WLO-Materials — der eigentliche Text des Arbeitsblatts, Artikels oder Dokuments, nicht seine Metadaten. Der Knopf „Volltext anzeigen" führt hierher.
 NIMM DIES, sobald es um den Inhalt geht: „zeig mir den Inhalt", „was steht in dem Arbeitsblatt", „den ganzen Text", „lies das Dokument", „zusammenfassen", „mach Aufgaben daraus", „passe es an Klasse 7 an". Auch dann, wenn die nodeId schon aus einer früheren Antwort im Gespräch stammt — dann genügt sie.
 NICHT get_node_details: das liefert nur Metadaten (Titel, Fach, Lizenz, Link) und ist die Detailansicht, nicht der Inhalt.
-Der Text kommt aus dem Repository (~0,3 s) oder, bei extern verlinktem Material, von der verlinkten Seite (\`source\`). Lange Texte werden gekürzt (\`truncated\`, \`maxChars\`).
-Gibt es keinen Text, kommt \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_url\`, \`extraction_failed\`, \`node_not_found\`). Das ist kein Fehler, sondern die Auskunft, dass es wirklich keinen Text gibt: dann sag das — und **erfinde keinen Inhalt**.`,
+Der Text kommt aus dem Repository oder, bei verlinktem Material, von der verlinkten Seite (\`source\`). Lange Texte werden gekürzt (\`truncated\`, \`maxChars\`).
+Kein Text: \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_url\`, \`not_extracted\`, \`extraction_failed\`, \`node_not_found\`) — kein Fehler, sondern die Auskunft: sag das und **erfinde keinen Inhalt**. \`text_unreadable\` heißt nur: Abruf gescheitert, später erneut.`,
     inputSchema: {
       nodeId: z.string().describe('nodeId of the material (from any WLO search result).'),
       maxChars: z.number().int().min(500).max(200000).optional().default(DEFAULT_MAX_CHARS)

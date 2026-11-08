@@ -76,6 +76,8 @@ test('each empty cause gets its own wording, never a blank panel', () => {
     ['extraction_failed', /verlinkten Seite/i],
     ['node_not_found', /nicht gefunden/i],
     ['no_text_no_url', /kein Text/i],
+    ['not_extracted', /Datei ist vorhanden/i],
+    ['text_unreadable', /nicht gelesen werden/i],
   ];
   for (const [reason, expected] of cases) {
     const html = renderReading(payload({ text: '', reason }), 'de');

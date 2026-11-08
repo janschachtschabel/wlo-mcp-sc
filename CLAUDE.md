@@ -1450,6 +1450,42 @@ The current rebuild/extension is designed in:
   evict the block pasted into an AI host; never a new `k` for this, because an
   unknown `k` fails an old build closed.
 
+- **Volltext & Sammelmetadaten für hochgeladene Inhalte (W1–W4) — CODE COMPLETE
+  (2026-11-08), W1/W2 live erst nach dem Staging-Fix:**
+  `docs/plans/2026-11-08-volltext-und-sammelmetadaten.md` (Messungen, Entscheidungen
+  F1–F6, Aufgaben). Rules that bind any change. (1) **The full text goes into the
+  record's OWN `textContent`** (user decision F1), sent as the RAW text under
+  `Content-Type: application/json` with `mimetype=text/plain` — a JSON string body
+  is stored with its quotes (2026-07-31), text/plain|markdown bodies get 415, and
+  `GET textContent` extracts nothing from `text/markdown`. `POST textContent`
+  writes the record's CONTENT, and whether a record WITH content keeps its file is
+  UNMEASURED (staging answers every content write 500 since 2026-11-06), so the
+  safeguard `keepsBinary()` stays false and such a record is refused BEFORE any key
+  (`would_replace_file`) — content includes a text written here before. Lift it only
+  after `tests/live/fulltext.test.ts` passes (write landed, same type AND content
+  hash). A LINKED record is refused (`link_record`): the repository reads a link's
+  text from the page. (2) **The server decides per field** in `wlo_update_contents`
+  (F5, `field-routing.ts`): title, description, keywords, subject, educational
+  level, content type are written; everything editorial becomes a suggestion; the
+  preview shows before → after, and the old value is part of the approval.
+  (3) **Plans run in waves of at most `PLAN_POOL`** — the budget is checked between
+  waves, and an unbounded wave of 200 independent items had no time limit at all;
+  a call that read first gets only the rest of its budget, and a wave that would,
+  judged by the last one, end past it waits for the next call. A confirmation
+  looks for a plan its own key already started BEFORE it redeems the key — two
+  confirmations at once otherwise answer `confirm_unknown`, and the new preview
+  that invites writes every record twice. (6) **A plan re-checks right before
+  each write**: it writes up to 30 minutes after its approval, so W2 refuses a
+  record that gained content meanwhile (`would_replace_file`) and W3 a field that
+  no longer holds the approved "before" (`changed_since_preview`) — nothing is
+  sent, `outcomeOpen: false`. (4) After a key, a 4xx
+  is a refusal (`outcomeOpen: false`), a 5xx or an unreadable 200 is open — the
+  one exception is the repository's OWN 500 on a full-text write, where a
+  read-back that answers an EMPTY text proves nothing landed; a 502/503/504 may
+  be a proxy while the work continues, and a body naming no text is no answer. (5) The
+  batch role (W4, `wlo.ablage-vorgang@2`) lives in the manifest only, never as a
+  record property (F4).
+
 Per-package close-out (user protocol): at the end of EACH phase, update
 `STATUS.md`, keep it linked here, then stop and let the user clear context
 before the next package.
@@ -1542,7 +1578,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   convention shape therefore stays first and untouched in both modes, pinned by
   `tests/tools-knowledge-rich.test.ts`;
   `search_skill` becomes `get_skill_for_task` under
-  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 16 curation tools (`curation-*.ts`,
+  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 19 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm/report they share, `curation-fields.ts` the 13-field

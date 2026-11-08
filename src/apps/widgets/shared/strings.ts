@@ -63,6 +63,8 @@ const STRINGS = {
     reasonAccessDenied: 'Dieses Material ist nicht öffentlich zugänglich — der Text kann nicht gelesen werden.',
     reasonExtractionFailed: 'Der Text der verlinkten Seite konnte nicht gelesen werden.',
     reasonNodeNotFound: 'Dieses Material wurde nicht gefunden.',
+    reasonNotExtracted: 'Die Datei ist vorhanden, das Repository hat aber keinen Text daraus gewonnen.',
+    reasonTextUnreadable: 'Der Text konnte gerade nicht gelesen werden — bitte später erneut versuchen.',
     // Auswahl in der Kachelansicht
     selectLabel: 'Auswählen',
     treeMore: '… mehr vorhanden',
@@ -138,6 +140,8 @@ const STRINGS = {
     reasonAccessDenied: 'This material is not publicly accessible — its text cannot be read.',
     reasonExtractionFailed: 'The text of the linked page could not be read.',
     reasonNodeNotFound: 'This material was not found.',
+    reasonNotExtracted: 'The file is there, but the repository gained no text from it.',
+    reasonTextUnreadable: 'The text could not be read just now — please try again later.',
     // Tile selection
     selectLabel: 'Select',
     treeMore: '… more available',

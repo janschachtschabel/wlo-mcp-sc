@@ -19,7 +19,9 @@ import { requireWrite } from '../services/write/credential-gate.js';
 import {
   FILING_MAX_PAIRS, filingLine, filingStep, resolvePairs, type FilingItem, type PairInput,
 } from '../services/write/filing-plan.js';
-import { findPlan, hasPlanCapacity, runPlan, startPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
+import {
+  PLAN_BUDGET_MS, findPlan, hasPlanCapacity, runPlan, startPlan, type ItemState, type StoredPlan,
+} from '../services/write/plan-runner.js';
 import type { WloToolResult } from '../apps/register.js';
 import {
   confirmOrExplain, previewReply, rejectionReply, timeoutOrError, isPreviewCall, registerCurationTool, type WriteAuthChallenge,
@@ -65,6 +67,10 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     handler: async (params) => {
+      // What is LEFT of this call's budget after the reads (rule 3 of plan 2026-11-08):
+      // a confirmation that read 200 records must not add a full 40 s on top.
+      const started = Date.now();
+      const remaining = () => Math.max(0, PLAN_BUDGET_MS - (Date.now() - started));
       requireWrite();
       const pairs = params['pairs'] as PairInput[];
       // The plan is bound to the pairs as NAMED — resolving them again for a
@@ -75,7 +81,7 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
       if (key) {
         const found = findPlan<FilingItem>(KIND, key, args);
         if (found && !found.ok) return planErrorReply(found.code);
-        if (found) return answer(found.plan, await runPlan(found.plan, filingStep));
+        if (found) return answer(found.plan, await runPlan(found.plan, filingStep, remaining()));
         if (params['continuationToken']) return planErrorReply('plan_expired');
       }
 
@@ -90,6 +96,13 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
         });
         const token = String(params['confirmToken'] ?? '');
         if (!token) return previewReply(cs, 'Zum Aufnehmen bitte bestätigen.');
+        // A second call with the same key may have started the plan while this
+        // one was reading; without this look it reaches the spent key, answers
+        // `confirm_unknown` and asks for a new preview — whose confirmation would
+        // run the plan a second time (overall review W1–W4, 2026-11-08).
+        const running = findPlan<FilingItem>(KIND, token, args);
+        if (running && !running.ok) return planErrorReply(running.code);
+        if (running) return answer(running.plan, await runPlan(running.plan, filingStep, remaining()));
         // Checked BEFORE the key is redeemed: refused here, it stays valid.
         if (!hasPlanCapacity()) return planErrorReply('too_many_plans');
         const refusal = confirmOrExplain(token, cs);
@@ -98,7 +111,7 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
         const planId = startPlan(KIND, args, items, new Map(), token);
         const plan = findPlan<FilingItem>(KIND, planId, args);
         if (!plan?.ok) return planErrorReply('plan_expired');
-        return answer(plan.plan, await runPlan(plan.plan, filingStep));
+        return answer(plan.plan, await runPlan(plan.plan, filingStep, remaining()));
       } catch (err) {
         return timeoutOrError('Fehler beim Aufnehmen in Sammlungen', err, 'Ob schon Materialien aufgenommen wurden', { preview: isPreviewCall(params) });
       }

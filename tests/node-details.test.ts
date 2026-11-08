@@ -512,3 +512,108 @@ test('get_node_details states the restriction of an isPublic:false record', asyn
     mock.restore();
   }
 });
+
+// ── plan 2026-11-08, phase 2 review: includeTextContent says WHY it is empty ──
+
+/** `text`: what textContent holds; 'throw' makes the read fail on the network (a timeout looks the same). */
+function installFileNodeMock(textStatus = 200, text: string | 'throw' = '') {
+  return installFetchMock((url) => {
+    if (text === 'throw' && url.includes('/textContent')) throw new Error('The operation was aborted due to timeout');
+    const m = url.match(/-home-\/([^/]+)\/(metadata|textContent|parents)/);
+    const id = m ? decodeURIComponent(m[1]!) : '';
+    const kind = m ? m[2] : '';
+    if (kind === 'metadata') return { json: { node: { ...makeNode(id, `Titel ${id}`), size: '4096', mimetype: 'text/markdown' } } };
+    if (kind === 'textContent') return textStatus === 200 ? { json: { content: text } } : { status: textStatus, json: {} };
+    if (kind === 'parents') return { json: { nodes: [] } };
+    if (url.includes('/usage/v1/')) return { json: [] };
+    return { status: 404, json: {} };
+  });
+}
+
+test('get_node_details: a file without extracted text says so — markdown and JSON alike', async () => {
+  const mock = installFileNodeMock();
+  const client = await connectedClient();
+  try {
+    const md = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'f1', includeTextContent: true } });
+    assert.match(toolText(md as any), /Datei ist vorhanden/);
+    assert.doesNotMatch(toolText(md as any), /Kein gespeicherter Volltext/);
+    const json = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'f1', includeTextContent: true, outputFormat: 'json' } });
+    const sc = (json as { structuredContent?: { results?: Array<Record<string, unknown>> } }).structuredContent;
+    const first = sc?.results?.[0] ?? (sc as Record<string, unknown> | undefined);
+    assert.equal(first?.['textContentNote'] !== undefined, true, JSON.stringify(sc).slice(0, 300));
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_nodes_details: an empty text on a file carries the note, a failed read the error', async () => {
+  for (const [status, field] of [[200, 'textContentNote'], [503, 'textContentError']] as const) {
+    const mock = installFileNodeMock(status);
+    const client = await connectedClient();
+    try {
+      const result = await client.callTool({ name: 'get_nodes_details', arguments: { nodeIds: ['f1', 'f2'], includeTextContent: true } });
+      const payload = JSON.parse(toolText(result as any));
+      assert.equal(typeof payload.results.f1[field], 'string', `${status} → ${field}`);
+    } finally {
+      await client.close();
+      mock.restore();
+    }
+  }
+});
+
+// ── overall review W1–W4 ───────────────────────────────────────────────────
+
+test('get_node_details: a text read that times out costs the text, never the record (overall review, 3)', async () => {
+  const mock = installFileNodeMock(200, 'throw');
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'f1', includeTextContent: true, outputFormat: 'json' } });
+    assert.notEqual((r as { isError?: boolean }).isError, true, toolText(r as any));
+    const sc = (r as { structuredContent?: Record<string, any> }).structuredContent ?? {};
+    const rec = sc['results']?.[0] ?? sc;
+    assert.equal(rec['title'], 'Titel f1', 'the metadata is still there');
+    assert.equal(typeof rec['textContentError'], 'string');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_nodes_details: a text read that times out still reports the error and the parents (overall review, 3)', async () => {
+  const mock = installFileNodeMock(200, 'throw');
+  const client = await connectedClient();
+  try {
+    const result = await client.callTool({ name: 'get_nodes_details',
+      arguments: { nodeIds: ['f1', 'f2'], includeTextContent: true, includeParents: true } });
+    const payload = JSON.parse(toolText(result as any));
+    assert.equal(typeof payload.results.f1.textContentError, 'string');
+    assert.ok(Array.isArray(payload.results.f1.parents), 'the parents are not lost with the text');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+for (const [label, text] of [['blank', '   \n\t '], ['binary debris', '\uFFFD\u0001PNG']] as const) {
+  test(`includeTextContent: ${label} is no text — the same rule get_wlo_content_text applies (overall review, 11)`, async () => {
+    for (const tool of ['get_node_details', 'get_nodes_details'] as const) {
+      const mock = installFileNodeMock(200, text);
+      const client = await connectedClient();
+      try {
+        const args = tool === 'get_node_details'
+          ? { nodeId: 'f1', includeTextContent: true, outputFormat: 'json' }
+          : { nodeIds: ['f1'], includeTextContent: true };
+        const r = await client.callTool({ name: tool, arguments: args });
+        const rec = tool === 'get_node_details'
+          ? (((r as any).structuredContent?.results?.[0]) ?? (r as any).structuredContent)
+          : JSON.parse(toolText(r as any)).results.f1;
+        assert.equal(rec['textContent'], '', `${tool}: no text`);
+        assert.equal(typeof rec['textContentNote'], 'string', `${tool}: a file without text says so`);
+      } finally {
+        await client.close();
+        mock.restore();
+      }
+    }
+  });
+}

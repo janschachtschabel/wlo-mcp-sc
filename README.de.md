@@ -12,7 +12,7 @@ Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
 
-Dazu kommen **zwanzig kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`; Anlegen, Bearbeiten,
+Dazu kommen **23 kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`; Anlegen, Bearbeiten,
 Einreichen, Sammlungen, Kompendialtexte, Metadaten-Vorschläge, welche Variante
 eine Themenseite rendert, Löschen). Sie
 werden für alle Aufrufenden *gelistet* — nur so erfährt ein Client, dass sich
@@ -76,7 +76,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   `get_skill_for_task` — `get_skill` bleibt in jedem Modus. Dazu kommt
   `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
   deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
-- **20 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
+- **23 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
   anlegen, ändern, einreichen und löschen; Sammlungen anlegen, umbenennen,
   befüllen, leeren und löschen; Kompendialtexte schreiben; Metadaten
   vorschlagen, auflisten und entscheiden. Jede Änderung läuft über eine
@@ -595,8 +595,12 @@ verlinkt ist (`ccm:wwwurl`), fällt auf den Text-Extraktionsdienst zurück
 (`WLO_TEXT_EXTRACTION_URL`, leer schaltet ihn ab). `source` benennt den
 genommenen Weg. Ein fehlender Text ist kein Fehler, sondern ein `reason`:
 `access_denied` (vorhanden, aber nicht öffentlich — da hilft kein Konverter,
-nur Rechte), `no_text_no_url`, `extraction_failed`, `node_not_found`. Lange
-Texte werden gekürzt und als solche markiert (`truncated`).
+nur Rechte), `no_text_no_url`, `not_extracted` (Datei vorhanden, aber kein Text
+daraus gewonnen — bei Markdown, JSON und Bildern regelmäßig), `text_unreadable`
+(der Abruf scheiterte — keine Aussage über das Material), `extraction_failed`,
+`node_not_found`. Lange Texte werden gekürzt und als solche markiert (`truncated`).
+Ein Text am Material selbst zählt auch dann, wenn er kurz ist; die
+200-Zeichen-Schwelle gilt nur für den Text einer verlinkten Seite.
 
 **25. `get_node_collections`** — `nodeId`, `outputFormat?`. Der
 umgekehrte Weg zum Stöbern: zu einem Material die kuratierten Sammlungen, die es
@@ -819,8 +823,8 @@ OAuth-Verbindung. Es gibt kein `refresh_token` und keine Ablauffrist: der Zugang
 endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
 
 **Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
-`Authorization` bekommt die **vollständige** Liste — alle 48 Werkzeuge, die
-16 Kurations-Werkzeuge eingeschlossen (52 und 20 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
+`Authorization` bekommt die **vollständige** Liste — alle 51 Werkzeuge, die
+19 Kurations-Werkzeuge eingeschlossen (55 und 23 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
 verweigern erst beim Aufruf, mit einer OAuth-Aufforderung: genau daran bietet
 ein Host die Anmeldung an, denn ein Modell, das nie ein Schreibwerkzeug sieht,
 fragt auch nie danach. Der `401` entsteht nur bei einem vorgelegten, aber
@@ -903,6 +907,9 @@ bezeugen, dass eine Person hingesehen hat. |
 | `wlo_remove_from_collection` | Nimmt Material aus einer Sammlung heraus. Das Material bleibt bestehen und in allen anderen Sammlungen. |
 | `wlo_create_collection_tree` | Legt einen ganzen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder) mit EINER Bestätigung an. Läuft in Abschnitten von ~40 s; ein unfertiger Plan liefert einen `continuationToken`, und ein erneut vorgelegter Schlüssel derselben Anmeldung setzt fort oder wiederholt das Ergebnis — legt nie doppelt an. `onExisting: merge` übernimmt eine Untersammlung gleichen Titels. |
 | `wlo_add_to_collections` | Nimmt bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung auf, gleiche Planmechanik. Eine Verknüpfungs-id wird als Original aufgenommen; schon Enthaltenes kommt als `already`; ein gescheitertes Paar hält die übrigen nicht auf. Noch nicht live geprüft (Staging-Regression beim Aufnehmen, 06.11.2026). |
+| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung, gleiche Planmechanik. Der Server entscheidet je Feld: Titel, Beschreibung, Schlagworte, Fach, Bildungsstufe und Inhaltstyp werden GESCHRIEBEN und zurückgelesen; Lizenz, Urheber, Herausgeber, Quell-URL, Sprache, Zielgruppe und Qualität werden als VORSCHLAG für die Redaktion hinterlegt. Eine Verknüpfung wird am Original geändert. |
+| `wlo_attach_fulltext` | Legt einen Markdown-Volltext im `textContent` eines Datensatzes ab — dort, wo `get_wlo_content_text` ihn liest —, zweistufig und zurückgelesen. Schon in der Vorschau abgelehnt: ein Datensatz mit Datei (`would_replace_file`, bis gemessen ist, dass sie erhalten bleibt), ein verlinkter Datensatz (`link_record`), ein vorhandener Text ohne `replace` (`exists`), derselbe Text (`nothing_to_change`), mehr als 2 MB (`too_large`). Eine Verknüpfung wird am Original geändert. |
+| `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit EINER Bestätigung (3 000 000 Bytes je Aufruf), gleiche Planmechanik und je Datensatz dieselben Regeln wie `wlo_attach_fulltext`; die Vorschau zählt neu / ersetzt / unverändert / abgelehnt. |
 | `wlo_update_compendium` | Schreibt, ersetzt oder entfernt den redaktionellen Kompendialtext einer Sammlung (Markdown). |
 | `wlo_set_topic_page` | Legt fest, **welche Variante** eine Themenseite öffentlich rendert. Legt nichts an, löscht und sortiert nichts. Das einzige Kurationswerkzeug, dessen Ergebnis sofort öffentlich sichtbar ist — deshalb liegen alle Prüfungen hier: Das gespeicherte `ccm:page_config`-Dokument wird bearbeitet statt neu gebaut (unbekannte Schlüssel und die Variantenliste bleiben erhalten), eine fremde Variante wird abgelehnt, ein unlesbares Dokument nicht überschrieben, und danach wird zurückgelesen und neu geparst. Das Repository prüft davon nichts — gemessen am 09.08.2026 speichert es auch die Zeichenkette `"not json at all"` und antwortet mit 200. |
 | `wlo_suggest_metadata` | Schlägt Werte mit Begründung vor, statt sie zu schreiben. Der Datensatz bleibt unverändert. |
@@ -912,7 +919,7 @@ bezeugen, dass eine Person hingesehen hat. |
 | `wlo_delete_collection` | Löscht eine Sammlung samt Untersammlungen. Das darin verlinkte Material bleibt bestehen. |
 | `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: bereitet die Ablage mehrerer Dateien in den persönlichen Bereich vor (Vorschau + Freigabe-Schlüssel für genau diese Liste). Legt nichts an. |
 | `wlo_store_batch_file` | Legt eine Datei des freigegebenen Stapels ab — die Bytes kamen vorher über `POST /api/uploads`; jeder Index einmal, Prüfsumme muss passen. |
-| `wlo_store_batch_manifest` | Legt `vorgang.json` (`wlo.ablage-vorgang@1`) zum Stapel in denselben Ordner, einmal je Stapel; die Kennzahlen stehen zusätzlich in `cm:description` des Datensatzes. |
+| `wlo_store_batch_manifest` | Legt `vorgang.json` (`wlo.ablage-vorgang@2`, mit der Rolle jeder Datei: Strukturdokument oder Inhalt) zum Stapel in denselben Ordner, einmal je Stapel; die Kennzahlen stehen zusätzlich in `cm:description` des Datensatzes. |
 | `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen wiederfinden, neueste zuerst; mit `nodeId` eine samt Einträgen. |
 
 **Löschen ist hier endgültig.** `recycle=true` wird immer mitgeschickt, das Repository behält also möglicherweise eine Archivkopie — eine personenbezogene Archivabfrage fand einen gelöschten Knoten aber nur einmal und Minuten später für denselben Knoten nichts mehr. Wiederherstellbarkeit ließ sich damit nicht zeigen. Die Werkzeuge sagen deshalb, dass sich die Löschung über diesen Server nicht rückgängig machen lässt, und versprechen keine Wiederherstellung. Material aus einer Sammlung herauszunehmen (`wlo_remove_from_collection`) ist etwas anderes und lässt das Material unangetastet. Die vier Start-Skripte (`dev`, `dev:http`, `start`, `start:http`) laden eine vorhandene `.env` über Nodes `--env-file-if-exists`; `docker compose` liest sie ohnehin. `npm test` bewusst nicht — die Testsuite darf nicht von einer lokalen Datei abhängen.
@@ -1087,7 +1094,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Sitzungsspeicher, App-Signatur, nur OAuth), samt dem, was das Konzept
   **nicht** schützt.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **die Übergabe für das Team und
-  für Chatbot-Entwicklung**: alle 48 Werkzeuge gruppiert, jede von außen
+  für Chatbot-Entwicklung**: alle 51 Werkzeuge gruppiert, jede von außen
   aufrufbare Adresse (MCP, REST, Seiten, OAuth) und das Verhalten, das eine
   Integration kennen muss — Lizenzfilter, Offenlegungs-Felder, zweistufiges
   Schreiben, Grenzen, und was es bewusst nicht gibt.
@@ -1165,7 +1172,7 @@ Rückfallebene kosten.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 48 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 51 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

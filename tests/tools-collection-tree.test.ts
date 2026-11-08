@@ -465,3 +465,19 @@ test('a timeout in the PREVIEW says outcomeOpen: false; with a key it stays open
     assert.deepEqual([err(keyed)?.code, err(keyed)?.outcomeOpen], ['timeout', true]);
   } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
 });
+
+test('two confirmations with the same key at once run ONE plan; the second is not sent to a new preview (overall review W1–W4)', async () => {
+  setServiceCredentialForTest(MARIA);
+  const { mock, creates } = repository();
+  const c = await client();
+  try {
+    const args = { parentCollectionId: PARENT, tree: TREE };
+    const token = sc(await c.callTool({ name: 'wlo_create_collection_tree', arguments: args })).confirm!.token;
+    const [x, y] = await Promise.all([
+      c.callTool({ name: 'wlo_create_collection_tree', arguments: { ...args, confirmToken: token } }),
+      c.callTool({ name: 'wlo_create_collection_tree', arguments: { ...args, confirmToken: token } }),
+    ]);
+    for (const r of [x, y]) assert.equal(sc(r).error?.code, undefined, JSON.stringify(sc(r).error));
+    assert.equal(creates.length, 4, 'each collection created once');
+  } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
+});

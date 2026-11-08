@@ -211,6 +211,10 @@ test('the auth document exists and names the rules it is there to protect', () =
 const COUNTED_DOCS = [
   'README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md',
   'docs/INTEGRATION.md', 'docs/DEPLOYMENT.md', 'docs/PRIVACY.md',
+  // Added 2026-11-08: the reference the chatbot team works from said "48" and
+  // "16" in five places while every document above said 51 and 19 — nobody
+  // had listed it here, so nothing ever checked it.
+  'docs/MCP-REFERENZ.md',
 ];
 
 /**
@@ -270,6 +274,8 @@ async function realCounts(): Promise<{ total: number; readTools: number; curatio
 
 test('no document states a tool count the server contradicts', async () => {
   const { total, readTools, curation, oneTool } = await realCounts();
+  // The tools only `WLO_BATCH_UPLOAD_ENABLED` registers: curation tools that are not always listed.
+  const batch = curation - (total - readTools);
 
   const claims: ReadonlyArray<[RegExp, number, string]> = [
     [/(\d+)\s+(?:MCP\s+)?read tools/gi, readTools, 'read tools'],
@@ -305,7 +311,26 @@ test('no document states a tool count the server contradicts', async () => {
     // count, the "all N" of the anonymous listing, and the always-listed
     // curation tools (without the four batch tools that need their switch).
     [/\*\*(\d+) MCP-Tools\*\*/g, total, 'the headline count'],
-    [/\balle (\d+)(?: MCP-)?Werkzeuge/gi, total, 'all tools (German)'],
+    // The space between number and noun was missing here, so this matched only
+    // "alle N MCP-Werkzeuge" and never "alle 48 Werkzeuge" — green over three
+    // wrong counts (overall review W1–W4, 2026-11-08).
+    [/\balle (\d+) (?:MCP-)?Werkzeuge/gi, total, 'all tools (German)'],
+    [/(\d+) Kurations-Werkzeuge/g, total - readTools, 'always-listed curation tools (German)'],
+    // With the batch switch: the total and the curation count both grow by the batch tools.
+    [/\((\d+) (?:and|und) \d+ (?:with|mit) `WLO_BATCH_UPLOAD_ENABLED`/g, total + batch, 'all tools with the batch switch'],
+    [/\(\d+ (?:and|und) (\d+) (?:with|mit) `WLO_BATCH_UPLOAD_ENABLED`/g, curation, 'curation tools with the batch switch'],
+    [/\((\d+) mit `WLO_BATCH_UPLOAD_ENABLED`/g, total + batch, 'all tools with the batch switch'],
+    [/mit `WLO_BATCH_UPLOAD_ENABLED` (\d+)/g, total + batch, 'all tools with the batch switch'],
+    [/\*\*Standard\*\* \| (\d+) Tools/g, total, 'the default mode lists every tool'],
+    // `docs/MCP-REFERENZ.md`'s own spellings.
+    [/(\d+) lesend · \d+ kuratierend = \*\*\d+\*\*/g, readTools, 'read tools (reference summary)'],
+    [/\d+ lesend · (\d+) kuratierend = \*\*\d+\*\*/g, total - readTools, 'always-listed curation tools (reference summary)'],
+    [/\d+ lesend · \d+ kuratierend = \*\*(\d+)\*\*/g, total, 'all tools (reference summary)'],
+    [/alle (\d+), die Kuratier-Werkzeuge eingeschlossen/g, total, 'the anonymous listing is the whole list'],
+    [/\| alle (\d+) \| alle \d+ \|/g, readTools, 'read tools per login (reference)'],
+    [/\| alle \d+ \| alle (\d+) \|/g, total - readTools, 'curation tools per login (reference)'],
+    [/die (\d+) Kuratier-Werkzeuge/g, total - readTools, 'always-listed curation tools (reference)'],
+    [/Alle (\d+) sind für jeden Aufrufer/g, total - readTools, 'always-listed curation tools (reference)'],
     [/\ball (\d+) tools/gi, total, 'all tools (English)'],
     [/Die (\d+) MCP-Werkzeuge/g, total, 'the tool list heading'],
     [/\d+ der (\d+) Werkzeuge/g, total, 'a share of all tools'],

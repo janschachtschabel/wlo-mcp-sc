@@ -22,7 +22,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 48 — 32 lesend, 16 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 52 (vier für die Stapel-Ablage) |
+| **Werkzeuge** | 51 — 32 lesend, 19 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 55 (vier für die Stapel-Ablage) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -32,7 +32,7 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 
 ---
 
-## 1. Die 48 MCP-Werkzeuge
+## 1. Die 51 MCP-Werkzeuge
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -108,11 +108,11 @@ immer anonym.
 > für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
 >
 > `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **nur die Suche** durch
-> `get_skill_for_task` (die Zahl bleibt bei 48). `get_skill` und
+> `get_skill_for_task` (die Zahl bleibt bei 51). `get_skill` und
 > `get_skill_registry` bleiben — die Freigabeliste besteht aus nodeIds, und
 > `get_skill` ist das einzige Werkzeug, das eine annimmt.
 >
-> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 47), wenn
+> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 50), wenn
 > Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.
 >
 > **Der Katalog kommt bei Sammlungs-Ergebnissen mit — ohne Zusatzabruf.** Ein
@@ -150,7 +150,7 @@ immer anonym.
 | `wlo_health_check` | Erreichbarkeit des Repositorys |
 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf |
 
-### 1.2 Kuratieren — 16 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
+### 1.2 Kuratieren — 19 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
 
 Alle verlangen eine Anmeldung, alle laufen **zweistufig**: erst Vorschau mit
 Änderungsmenge und Einmal-Token, dann Bestätigung. Jeder Schreibvorgang wird
@@ -170,6 +170,9 @@ aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 | `wlo_remove_from_collection` | Material aus einer Sammlung nehmen |
 | `wlo_create_collection_tree` | Einen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4) mit **einer** Bestätigung anlegen |
 | `wlo_add_to_collections` | Bis zu 200 Materialien mit **einer** Bestätigung in Sammlungen aufnehmen |
+| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit **einer** Bestätigung: beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt |
+| `wlo_attach_fulltext` | Einen Volltext (Markdown) im `textContent` eines Datensatzes ablegen; Datensätze mit Datei vorerst abgelehnt, bis gemessen ist, dass die Datei erhalten bleibt |
+| `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit **einer** Bestätigung (≤ 3 MB je Aufruf, sonst mehrere Aufrufe) |
 | `wlo_update_compendium` | Kompendialtext schreiben |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert |
 | `wlo_suggest_metadata` | Metadaten *vorschlagen* statt ändern |
@@ -185,10 +188,10 @@ Bereich. Die Bytes kommen vorher über [`POST /api/uploads`](#26-upload-für-die
 
 | Werkzeug | Zweck |
 |---|---|
-| `wlo_prepare_file_batch` | Vorschau aller Einträge und **ein** Freigabe-Schlüssel (`batchToken`, 30 min) für genau diese Liste. Legt nichts an |
+| `wlo_prepare_file_batch` | Vorschau aller Einträge und **ein** Freigabe-Schlüssel (`batchToken`, 30 min) für genau diese Liste. Legt nichts an. Je Eintrag `role`: `structure` (Strukturdokument) oder `content` (Vorgabe) |
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen; jeder Index einmal, Prüfsumme und Art müssen passen |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel, vom Server aus der Freigabe gebaut — erst nach einer abgelegten Datei |
-| `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen, neueste zuerst; mit `nodeId` eine samt Einträgen |
+| `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen, neueste zuerst; mit `nodeId` eine samt Einträgen und deren `role` — so findet ein neues Gespräch, ein anderes Gerät oder ein Kestra-Flow das Strukturdokument wieder |
 
 ### 1.3 Widgets (4)
 
@@ -313,7 +316,7 @@ Nur mit `WLO_BATCH_UPLOAD_ENABLED`; sonst gibt es die Adresse nicht.
 
 ### 3.1 Ausgabeformat
 
-22 der 48 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+22 der 51 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).

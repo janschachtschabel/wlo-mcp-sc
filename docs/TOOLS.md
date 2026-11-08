@@ -1,11 +1,11 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **48 MCP-Tools**
-(52 mit `WLO_BATCH_UPLOAD_ENABLED`: 32 lesende, 20 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **51 MCP-Tools**
+(55 mit `WLO_BATCH_UPLOAD_ENABLED`: 32 lesende, 23 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
-**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 16
+**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 19
 Kurations-Tools stehen immer in `tools/list` (die vier Stapel-Werkzeuge nur mit ihrem Schalter), deklarieren `oauth2` und
 **verweigern beim Aufruf**, solange keine schreibberechtigte Anmeldung vorliegt;
 die Antwort trägt dann die Aufforderung, mit der der Client die Anmeldung
@@ -17,8 +17,8 @@ Was die Liste tatsächlich verändert, sind nur zwei Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 48 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 48 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
+| **Standard** | 51 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 51 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -121,7 +121,10 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 >
 > Kein Text ist kein Fehler, sondern ein `reason`: `access_denied` (Material
 > existiert, ist aber nicht öffentlich — daran ändert keine Konvertierung etwas,
-> nur Rechte), `no_text_no_url`, `extraction_failed`, `node_not_found`. Lange
+> nur Rechte), `no_text_no_url`, `not_extracted` (eine Datei ist da, das Repository
+> hat aber keinen Text daraus gewonnen — bei Markdown, JSON und Bildern regelmäßig),
+> `text_unreadable` (der Abruf selbst scheiterte — keine Aussage über das Material),
+> `extraction_failed`, `node_not_found`. Lange
 > Texte werden gekürzt (`truncated`, Grenze über `maxChars`).
 >
 > **Wann welches Werkzeug:** Für Titel, Fach, Lizenz oder Link genügt
@@ -516,7 +519,7 @@ gleich `get_skill_registry` — das liest immer live.
 
 ---
 
-## 1b. Kuratierende MCP-Tools (20) — mit Chat-Trigger
+## 1b. Kuratierende MCP-Tools (23) — mit Chat-Trigger
 
 **Für alle gelistet, beim Aufruf geschützt.** Seit dem 2026-08-05 stehen diese
 Tools für jeden in `tools/list`, auch ohne Anmeldung — ein Modell, das ein
@@ -575,6 +578,9 @@ zurück.
 | `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen | *„Nimm dieses Material aus der Sammlung heraus“* |
 | `wlo_create_collection_tree` | Ganzen Baum von Untersammlungen mit EINER Bestätigung anlegen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder). Abschnitte von ~40 s, `continuationToken` bis fertig; ein erneut vorgelegter Schlüssel setzt fort, legt nie doppelt an. Antwort `nodes [{path, nodeId, status, code}]` | *„Lege unter Optik diese Gliederung als Sammlungen an“* |
 | `wlo_add_to_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aufnehmen; Verknüpfung → Original (`filedId`), schon Enthaltenes `already`, Einzelfehler halten den Rest nicht auf. Noch nicht live geprüft | *„Nimm diese zwölf Materialien in die passenden Sammlungen auf“* |
+| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung; beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt (der Server entscheidet je Feld) | — (Chatbot-Ablauf, viele Datensätze) |
+| `wlo_attach_fulltext` | Volltext (Markdown) im `textContent` eines Datensatzes ablegen, zweistufig und zurückgelesen; Datensätze mit Datei vorerst abgelehnt (`would_replace_file`) | — (Chatbot-Ablauf, Volltexte) |
+| `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit EINER Bestätigung (≤ 3 MB je Aufruf), je Datensatz die Regeln von `wlo_attach_fulltext` | — (Chatbot-Ablauf, Volltexte) |
 | `wlo_delete_collection` | Sammlung samt Untersammlungen löschen. Das verlinkte Material bleibt bestehen | *„Lösche diese Sammlung“* |
 | `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: Stapel-Ablage in den persönlichen Bereich vorbereiten (Vorschau, ein Freigabe-Schlüssel) | — (Upload-Modul des Chatbots, nicht für ein Modell) |
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes vorher über `POST /api/uploads`) | — (Upload-Modul) |

@@ -56,3 +56,58 @@ test('an expired plan answers plan_expired by its confirm key after the sweep re
     assert.deepEqual(findPlan('k', 'jan-confirm', 'args', t0 + PLAN_TTL_MS + 2), { ok: false, code: 'plan_expired' });
   } finally { setServiceCredentialForTest(null); }
 });
+
+test('independent items run in waves of PLAN_POOL — the budget bounds a call, not only a tree (review P3)', async () => {
+  const { PLAN_POOL, runPlan, setPlanBudgetForTest } = await import('../src/services/write/plan-runner.js');
+  setServiceCredentialForTest(who('wellen'));
+  setPlanBudgetForTest(0);
+  try {
+    // 200 independent items used to be ONE wave: the budget was checked only
+    // between waves, so a whole metadata plan ran in one call past any limit.
+    const many = Array.from({ length: PLAN_POOL * 3 }, (_, i) => ({ key: `i${i}` }));
+    const id = startPlan('waves', 'a', many, new Map(), 'wellen-token');
+    const plan = findPlan<{ key: string }>('waves', id, 'a');
+    assert.ok(plan?.ok);
+    const first = await runPlan(plan.plan, async () => ({ status: 'stored' as const }));
+    assert.deepEqual(first.progress, { done: PLAN_POOL, total: PLAN_POOL * 3 });
+    assert.equal(first.complete, false);
+  } finally {
+    setPlanBudgetForTest(null);
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('no next wave when the last one says it would cross the budget (review W2, finding 3)', async () => {
+  const { runPlan } = await import('../src/services/write/plan-runner.js');
+  setServiceCredentialForTest(who('vorausschau'));
+  try {
+    // A wave takes ~100 ms, the budget is 150 ms: after the first wave 100 ms
+    // are spent, and a second would end near 200 — past the client's limit.
+    // Checking only "is the budget spent yet" started it anyway.
+    const many = Array.from({ length: 8 }, (_, i) => ({ key: `v${i}` }));
+    const id = startPlan('ahead', 'a', many, new Map(), 'vorausschau-token');
+    const plan = findPlan<{ key: string }>('ahead', id, 'a');
+    assert.ok(plan?.ok);
+    const slow = async () => { await new Promise(r => setTimeout(r, 100)); return { status: 'stored' as const }; };
+    const first = await runPlan(plan.plan, slow, 150);
+    assert.deepEqual(first.progress, { done: 4, total: 8 });
+  } finally { setServiceCredentialForTest(null); }
+});
+
+test('a call whose caller spent its whole budget reading starts the plan without a wave (review 3, finding 5)', async () => {
+  const { runPlan } = await import('../src/services/write/plan-runner.js');
+  setServiceCredentialForTest(who('ausgelesen'));
+  try {
+    const many = Array.from({ length: 4 }, (_, i) => ({ key: `a${i}` }));
+    const id = startPlan('spent', 'a', many, new Map(), 'ausgelesen-token');
+    const plan = findPlan<{ key: string }>('spent', id, 'a');
+    assert.ok(plan?.ok);
+    let ran = 0;
+    const first = await runPlan(plan.plan, async () => { ran++; return { status: 'stored' as const }; }, 0);
+    assert.equal(ran, 0, 'no wave on top of a budget already spent — the answer would miss the client limit');
+    assert.deepEqual([first.complete, first.progress.done], [false, 0]);
+    // The next call (a continuation) has its full budget and makes progress.
+    const next = await runPlan(plan.plan, async () => { ran++; return { status: 'stored' as const }; });
+    assert.equal(next.complete, true);
+  } finally { setServiceCredentialForTest(null); }
+});

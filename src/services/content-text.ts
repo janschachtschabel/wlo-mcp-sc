@@ -33,12 +33,38 @@ export type ContentTextSource = 'repository' | 'external-extraction' | 'none';
  *                            not read it. No converter can change that — only
  *                            rights can, so this is deliberately its own answer
  *                            rather than being folded into "no text".
+ *   - `not_extracted`      — the node HAS a file, but the repository gained no
+ *                            text from it: Markdown, JSON and images regularly
+ *                            (edu-sharing client library, measured 2026-08-27 and
+ *                            2026-09-11). "No stored text" would claim the file
+ *                            is missing (plan 2026-11-08, phase 2).
+ *   - `text_unreadable`    — the text READ failed (timeout, 5xx). No statement
+ *                            about the material at all: a large PDF timing out
+ *                            must not read as "the repository gained no text"
+ *                            (review P2, 2026-11-08).
  */
 export type ContentTextMiss =
   | 'node_not_found'
   | 'no_text_no_url'
   | 'extraction_failed'
-  | 'access_denied';
+  | 'access_denied'
+  | 'not_extracted'
+  | 'text_unreadable';
+
+/**
+ * The one sentence for "file there, no text from it" — the reading tool, the
+ * reading widget's caller and `includeTextContent` say it alike.
+ */
+export const NOT_EXTRACTED_NOTE =
+  'Die Datei ist vorhanden, das Repository hat aber keinen Text daraus gewonnen (bei Markdown, JSON und Bildern regelmäßig).';
+
+/**
+ * Replacement characters and control characters (other than tab/newline/CR):
+ * what `textContent` hands back for an image or other binary (skill
+ * `wlo-content-files`). Text carrying them is debris, however short.
+ */
+// eslint-disable-next-line no-control-regex -- matching control characters IS the point here
+const BINARY_DEBRIS = /[\uFFFD\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
 
 export interface ContentText {
   nodeId: string;
@@ -59,6 +85,25 @@ export interface ContentText {
  * rule — one floor, not two that drift apart.
  */
 export const MIN_USEFUL_CHARS = 200;
+
+/**
+ * Whether what `textContent` handed back is text at all: not blank, and — when
+ * short — not binary debris. ONE rule for every path that shows a stored text
+ * (`get_wlo_content_text` and `includeTextContent`), so one record cannot read
+ * as text in one tool and as "no text extracted" in its sibling.
+ */
+export function isStoredText(text: string | null | undefined): boolean {
+  const t = (text ?? '').trim();
+  return t.length > 0 && (t.length >= MIN_USEFUL_CHARS || !BINARY_DEBRIS.test(t));
+}
+
+/**
+ * A stored-text read that never throws: a timeout (a large PDF) is a failed
+ * read with status 0, reported as such — never the loss of the whole answer.
+ */
+export function readStoredText(nodeId: string): Promise<{ text: string | null; status: number }> {
+  return readNodeTextContent(nodeId, WLO_TEXT_TIMEOUT_MS).catch(() => ({ text: null, status: 0 }));
+}
 
 /** Fields read off the node: its title and the external URL for the fallback. */
 const NODE_PROPS = ['ccm:wwwurl', 'cclom:title', 'cm:title', 'cm:name'];
@@ -109,7 +154,7 @@ export async function getContentText(
   // In parallel: the text read is the slow one (median 4.6 s live), so pulling
   // the node's title and fallback URL alongside it costs no extra wall time.
   const [repo, node] = await Promise.all([
-    readNodeTextContent(nodeId, WLO_TEXT_TIMEOUT_MS).catch(() => ({ text: null, status: 0 })),
+    readStoredText(nodeId),
     getNodeMetadata(nodeId, NODE_PROPS),
   ]);
 
@@ -118,7 +163,12 @@ export async function getContentText(
   const miss = (reason: ContentTextMiss): ContentText =>
     ({ ...base, text: '', source: 'none', charCount: 0, truncated: false, reason });
 
-  if ((repo.text ?? '').trim().length >= MIN_USEFUL_CHARS) {
+  const repoText = (repo.text ?? '').trim();
+  const linked = Boolean(stripStoreRef(node?.properties?.['ccm:wwwurl']?.[0]));
+  // The floor is for CRAWLED text — a linked page's cookie banner. A node that
+  // links nowhere holds the text of its own file or the full text written to
+  // it (plan 2026-11-08, W1), and a short one is still that text.
+  if (repoText.length >= MIN_USEFUL_CHARS || (isStoredText(repoText) && node && !linked)) {
     return cap({ ...base, text: repo.text as string, source: 'repository' }, maxChars);
   }
   // A refused read outranks a missing one, and is checked FIRST: a node that is
@@ -128,7 +178,11 @@ export async function getContentText(
   if (!node) return miss('node_not_found');
 
   const wwwurl = stripStoreRef(node.properties?.['ccm:wwwurl']?.[0]);
-  if (!wwwurl) return miss('no_text_no_url');
+  if (!wwwurl) {
+    // Only an ANSWERED read may say what the record holds.
+    if (repo.status !== 200) return miss('text_unreadable');
+    return miss(Number(node.size ?? 0) > 0 ? 'not_extracted' : 'no_text_no_url');
+  }
 
   // SSRF (audit 2026-08-12, F-4): the check inside `extractTextFromUrl` judges
   // only the LITERAL host, so a PUBLIC name with a private A record walked

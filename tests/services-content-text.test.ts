@@ -22,6 +22,10 @@ const EXTRACTION_HOST = 'text-extraction.staging.openeduhub.net';
 interface MockOpts {
   repoText?: string;
   wwwurl?: string;
+  /** The node carries a file of this size (DTO field `size`). */
+  fileSize?: number;
+  /** HTTP status of the text read (default 200). */
+  repoStatus?: number;
   nodeMissing?: boolean;
   extractionText?: string;
   extractionStatus?: number;
@@ -30,14 +34,15 @@ interface MockOpts {
 function installMock(o: MockOpts) {
   return installFetchMock((url) => {
     if (url.includes('/textContent')) {
+      if (o.repoStatus && o.repoStatus !== 200) return { status: o.repoStatus, json: {} };
       return { json: { content: o.repoText ?? '' } };
     }
     if (url.includes('/metadata')) {
       if (o.nodeMissing) return { json: {} };
-      return { json: { node: makeNode('n1', 'Arbeitsblatt Prozentrechnung', {
+      return { json: { node: { ...makeNode('n1', 'Arbeitsblatt Prozentrechnung', {
         'cclom:title': ['Arbeitsblatt Prozentrechnung'],
         ...(o.wwwurl ? { 'ccm:wwwurl': [o.wwwurl] } : {}),
-      }) } };
+      }), ...(o.fileSize ? { size: o.fileSize } : {}) } } };
     }
     if (url.includes(EXTRACTION_HOST)) {
       if (o.extractionStatus && o.extractionStatus !== 200) return { status: o.extractionStatus, json: {} };
@@ -275,4 +280,65 @@ test('resolveExtractionUrl: an unusable value disables the service instead of bu
     'a base path survives, trailing slash stripped',
   );
   assert.equal(resolveExtractionUrl('http://localhost:8080'), 'http://localhost:8080', 'plain http is allowed');
+});
+
+// ── plan 2026-11-08, phase 2: a full text written to textContent is read ──
+
+test('getContentText: a SHORT repository text counts when the node links nowhere — it is no crawled page', async () => {
+  // The 200-character floor is for crawler output of a linked page (cookie
+  // banners). A full text attached to an uploaded file (W1) may be short and is
+  // still the text: below the floor it read as "no text".
+  const mock = installMock({ repoText: 'Kurzer Volltext einer Folie.', fileSize: 1200 });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.equal(r.source, 'repository');
+    assert.equal(r.text, 'Kurzer Volltext einer Folie.');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: a file without extracted text says not_extracted, not "no stored text"', async () => {
+  // Markdown, JSON and images yield no text at the repository (measured in the
+  // edu-sharing client library, 2026-08-27 and 2026-09-11) — the file is there.
+  const mock = installMock({ repoText: '', fileSize: 4096 });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.equal(r.source, 'none');
+    assert.equal(r.reason, 'not_extracted');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: a FAILED text read is text_unreadable — never a claim about the file (review P2, finding 1)', async () => {
+  const mock = installMock({ repoStatus: 503, fileSize: 4096 });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.equal(r.source, 'none');
+    assert.equal(r.reason, 'text_unreadable');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: a short text is not taken when the metadata could not be read (review P2, finding 5)', async () => {
+  const mock = installMock({ repoText: 'Kurz.', nodeMissing: true });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.notEqual(r.source, 'repository');
+  } finally {
+    mock.restore();
+  }
+});
+
+test('getContentText: a short text with replacement or control characters is binary debris, not the text (review P2, finding 4)', async () => {
+  const mock = installMock({ repoText: 'JFIF\uFFFD\u0001\u0002x', fileSize: 50_000 });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.equal(r.source, 'none');
+    assert.equal(r.reason, 'not_extracted');
+  } finally {
+    mock.restore();
+  }
 });

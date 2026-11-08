@@ -22,6 +22,8 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 
+import type { BatchRole } from './batch-manifest.js';
+
 export interface BatchEntry {
   index: number;
   title: string;
@@ -30,6 +32,8 @@ export interface BatchEntry {
   ext: string;
   /** `cm:name` the record will get (derived from the title, shown in the preview). */
   fileName: string;
+  /** Structure document or content (W4) — part of the approval like every other field. */
+  role: BatchRole;
 }
 
 export interface BatchPlan {

@@ -217,7 +217,7 @@ test('the preview returns the normalised plan with record names (finding 11)', a
   t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
   const s = (await prepare(await client())).structuredContent!;
   const [erste] = s['entries'] as Array<Record<string, unknown>>;
-  assert.deepEqual(erste, { index: 0, title: 'Mechanik', ext: 'pdf', size: PDF.length, fileName: 'mechanik.pdf' });
+  assert.deepEqual(erste, { index: 0, title: 'Mechanik', ext: 'pdf', size: PDF.length, fileName: 'mechanik.pdf', role: 'content' });
 });
 
 test('no manifest before a stored file', async (t) => {
@@ -327,4 +327,58 @@ test('a refused batch token does not spend the upload slot (feedback point 8)', 
   const r = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref } });
   assert.equal((r as { structuredContent?: Record<string, unknown> }).structuredContent?.['status'], 'stored');
   assert.ok(calls.some(x => x.startsWith('POST')));
+});
+
+// ── W4: the role of a file in the batch (plan 2026-11-08) ──────────────────
+
+test('a role per entry: content by default, structure when named, shown in the preview', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { mock } = repo();
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const r = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN,
+    entries: [{ ...PLAN.entries[0]!, role: 'structure' }, PLAN.entries[1]!] } });
+  const entries = (r.structuredContent as Record<string, unknown>)['entries'] as Array<Record<string, unknown>>;
+  assert.deepEqual(entries.map(e => e['role']), ['structure', 'content']);
+  assert.match(toolText(r), /Mechanik.*Strukturdokument/);
+  assert.doesNotMatch(toolText(r), /Optik.*Strukturdokument/);
+});
+
+test('the role is part of the approval — another role is another plan', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { mock } = repo();
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const fp = async (role?: string) => {
+    const r = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN,
+      entries: [{ ...PLAN.entries[0]!, ...(role ? { role } : {}) }, PLAN.entries[1]!] } });
+    return String((r.structuredContent as Record<string, unknown>)['batchToken']).split('.')[1];
+  };
+  assert.equal(await fp(), await fp('content'), 'the default IS content');
+  assert.notEqual(await fp('content'), await fp('structure'));
+});
+
+test('an unknown role is refused as invalid input before anything is planned', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { calls, mock } = repo();
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const r = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN,
+    entries: [{ ...PLAN.entries[0]!, role: 'anhang' }] } });
+  assert.equal(r.isError, true);
+  assert.equal((r.structuredContent as { error?: { code?: string } } | undefined)?.error?.code, 'invalid_input');
+  assert.equal(calls.length, 0, 'nothing asked upstream');
+});
+
+test('a structure document past the preview line cap is still named, and the preview says roles are filed (review P1, finding 2)', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { mock } = repo();
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const many = Array.from({ length: 25 }, (_, i) => ({ title: `Teil ${i}`, sha256: SHA, size: PDF.length, ext: 'pdf',
+    ...(i === 23 ? { role: 'structure' } : {}) }));
+  const r = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN, entries: many } });
+  const text = toolText(r);
+  assert.match(text, /Teil 23.*Strukturdokument/, 'the 24th entry is past the cap of 20 and still named');
+  assert.match(text, /Rolle/, 'what the manifest records includes the role');
 });

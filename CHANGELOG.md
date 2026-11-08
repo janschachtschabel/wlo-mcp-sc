@@ -6,6 +6,89 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — full texts and metadata for uploaded content (plan 2026-11-08)
+
+- **W4 — the role of a file in a batch.** `wlo_prepare_file_batch` takes `entries[].role` (`structure` = the
+  batch's structure document, `content` = default); the role is part of the approval. `vorgang.json` and its
+  summary in `cm:description` move to `wlo.ablage-vorgang@2` with `rolle` per entry (`@1` is still read, every entry
+  `content`), and `wlo_list_my_batches` returns `role` per entry. No property on the record itself (F4).
+- **W1 — `wlo_attach_fulltext`: a Markdown full text into the record's own `textContent`** (user decision F1), where
+  `get_wlo_content_text` and `includeTextContent` read it. Sent as the raw text with `mimetype=text/plain` under
+  `Content-Type: application/json` (a JSON string body is stored with its quotes; `text/markdown` yields no extracted
+  text), read back, and compared with line endings normalised. Refused in the preview, before any key and with
+  `outcomeOpen: false`: `would_replace_file` (the record carries a file — the safeguard `FULLTEXT_KEEPS_BINARY` stays
+  off until a live run shows the file survives), `link_record` (the repository reads a link's text from the page),
+  `exists` without `replace`, `too_large` (2 000 000 UTF-8 bytes), `not_found`,
+  `text_unreadable`, `forbidden`, `unreadable`, `unreadable_original`. "Content" includes a text written before (a
+  written record HAS a size), so replacing one is refused too until the measurement; `exists`/`nothing_to_change` are
+  checked first. The same text already there is no error: `{confirm: null, unchanged: true, code: "nothing_to_change"}`.
+  A record with a file is refused without having the repository extract its text (seconds per PDF). Right before the
+  POST the record is read again: content that appeared since the approval is `would_replace_file`, any other change
+  `changed_since_preview` — both send nothing. After a key: a 4xx refusal is `outcomeOpen: false`; after a 5xx the
+  read-back decides (text there → `stored`, nothing there → `false`, unreadable → `true`); with the safeguard lifted
+  every write compares the file's type AND content hash (`failed`/`file_replaced`, the shape W2 reports). Network
+  failures while planning are the refusal codes `unreadable`/`text_unreadable`, in W1 and W2 alike. A reference is changed on its original — read
+  once, and an original that cannot be read refuses (it never counts as "no file"). **Not writable on staging today** (every content write
+  answers 500 since 2026-11-06); `tests/live/fulltext.test.ts` holds the two open measurements and skips with the
+  reason while the defect lasts.
+- **W2 — `wlo_attach_fulltexts`: up to 200 full texts under ONE approval**, ≤ 3 000 000 UTF-8 bytes per call
+  (more = several calls; checked before anything is read), with W1's rules per record. The preview counts `new`,
+  `replaced`, `unchanged`, `refused` (incl. `duplicate`, also through a reference and also when the first mention
+  changes nothing; `unreadable` when the record could not be checked); the plan continues over `continuationToken` or
+  the redeemed `confirmToken`. The server holds at most 64 MiB of texts across all plans and drops a text the moment
+  its record is done — also when its step throws, which reports an open outcome instead of staying `pending` and being
+  sent again; over that bound the answer is `upstream_busy` with `retryAfter` (60 s) BEFORE the key is redeemed,
+  checked before the records are read and again after.
+- **W3 — `wlo_update_contents`: metadata for up to 200 records under ONE approval**, on the plan runner of
+  `wlo_add_to_collections` (`continuationToken`, `plan_*`, `too_many_plans`). No `mode`: the server decides per field
+  (user decision F5) — title, description, keywords, subject, educational level and content type are written and read
+  back; licence, author, publisher, source URL, language, target group and the quality fields become suggestions
+  (type `AI`, the item's `reason`). A reference is changed on its original. The preview lists `unchanged` and
+  `refused` (`not_found`, `forbidden`, `unreadable`, `duplicate`, `unreadable_original`); every entry answers `status`
+  (`stored`/`suggested`/`partly`/`not_stored`/`unverified`/`failed`), `code`, `outcomeOpen`, `written`, `suggested`.
+  The preview shows every replaced field as before → after (the old value is part of the approval), carries `plan`
+  per record, `unchangedItems` and `refused` (see above), and says
+  why when nothing is left to approve. A proposal answered with 5xx or an unreadable 200 is `outcomeOpen: true`.
+- **Overall review of W1–W4 (2026-11-08).** A plan writes for up to 30 minutes after its approval, so both plan tools
+  re-check right before each write: `wlo_attach_fulltexts` refuses a record that gained content meanwhile
+  (`would_replace_file`), `wlo_update_contents` a record whose field no longer holds the approved "before" value
+  (`changed_since_preview`) — nothing is sent, `outcomeOpen: false`. `wlo_update_contents` names keywords as the WHOLE
+  list sent (the existing ones are sent too, so they are part of the approval), names a reference by its original's
+  title, answers a 401/403 read as `forbidden`, and an empty list from the suggestion endpoint is `unverified`, no
+  longer counted as created. `includeTextContent` (`get_node_details`, `get_nodes_details`) survives a text read that
+  times out — it cost the whole record, and on the many-node path the parents too — and treats blank text and binary
+  debris as no text, the rule `get_wlo_content_text` applies (one function, `isStoredText`). The tool-count guard
+  missed "alle 48 Werkzeuge" (no space in its pattern) and every count with the batch switch; it now checks them, and
+  the stale counts in both READMEs, `docs/TOOLS.md` and `docs/INTEGRATION.md` are corrected (51, 19 always-listed
+  curation tools; 55 and 23 with `WLO_BATCH_UPLOAD_ENABLED`). `docs/MCP-REFERENZ.md` — the reference the chatbot team
+  works from — was not checked at all and still said 48 and 16 in five places; it is now in the guarded list, with
+  patterns for its own wordings, and corrected.
+- **Review 3 of W1–W4 (2026-11-08).** After a 5xx only the repository's own 500 lets the read-back decide; a 502/503/504
+  (possibly a proxy while the repository still writes) stays `outcomeOpen: true`, and a read-back whose body names no
+  text is no answer — it was read as "empty", i.e. as proof that nothing landed. The check right before a full-text
+  write compares type and hash only where there is content: a node without content has nothing to protect. A text
+  written here before is recognised with a charset in its type (`text/plain;charset=…`). A confirmation that spent its
+  whole budget reading starts the plan without a wave (a forced wave on top missed the client limit) — and
+  `wlo_add_to_collections`/`wlo_create_collection_tree` now pass the rest of their budget to the plan as well.
+- **Plans run in waves of at most four.** The budget (~40 s per call) was checked only between waves, and independent
+  items formed ONE wave — 200 filings or metadata changes ran in a single call past every client limit. Affects
+  `wlo_add_to_collections`, `wlo_create_collection_tree`, `wlo_update_contents` and `wlo_attach_fulltexts`; a call
+  that read first gets only the rest of its budget. A next
+  wave that would, judged by the last one, end past the budget is left to the next call — "is the budget spent yet"
+  alone let a wave start at 39 s and end past the client's 60 s.
+- **Two confirmations with the same key at once** (every plan tool: `wlo_update_contents`, `wlo_attach_fulltexts`,
+  `wlo_add_to_collections`, `wlo_create_collection_tree` — the last two found in the overall review): the second one used
+  to miss the plan the first had just started, reach the spent key and answer `confirm_unknown` — "ask for a new
+  preview", whose confirmation wrote every record a second time. It now finds the running plan and reports it.
+- **Reading a full text (phase 2).** `get_wlo_content_text` counts a short repository text on a record that links
+  nowhere — the 200-character floor was meant for a linked page's crawled text, and hid a short full text written to
+  an uploaded file. A record whose file yielded no text answers `reason: "not_extracted"` instead of
+  `no_text_no_url` (the file is there; Markdown, JSON and images are not extracted by the repository), and a
+  failed text read answers `text_unreadable` — never a claim about the material. A short text carrying replacement
+  or control characters (binary debris) still does not count. `get_node_details`/`get_nodes_details` with
+  `includeTextContent` say the same: `textContentNote` for a file without text, `textContentError` for a failed read
+  (the many-node path used to answer an empty string for both); the reading widget names both causes.
+
 ### Fixed — chatbot team feedback on S1–S7 (2026-11-07)
 
 - **Every 429 on `/auth*` now has the shared REST shape.** The address budget before `/auth/issue`,

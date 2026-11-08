@@ -4279,3 +4279,182 @@ kann bereits etwas geschrieben sein — erst nachsehen“. Die Referenzzeile zu
 kein Befund: `reportMutation`/`failed` bleibt `true`, weil derselbe Bericht auch
 NACH einem Anlegen prüft und `createContentNode` „2xx ohne id“ als `failed`
 meldet — `false` steht nur, wo es beweisbar ist.
+
+### 2026-11-08 — Volltext & Sammelmetadaten, Phase 1 (W4 Rolle im Stapel) erledigt
+
+Plan: `docs/plans/2026-11-08-volltext-und-sammelmetadaten.md`. Messungen vorab
+(Staging, Testkonto, eigene Wegwerf-Knoten): jeder Schreibweg für Inhalt —
+`POST …/textContent`, `POST …/content`, `ccm:fulltext_content` — antwortet 500
+mit derselben `InvalidTypeException` wie die Uploads seit dem 06.11.; F1 ist
+deshalb nach Nutzerentscheidung `textContent` am Knoten selbst, mit Sicherung für
+Knoten mit Datei (Plan 4.4). W4: `entries[].role` (`structure`|`content`) an
+`wlo_prepare_file_batch`, Teil des Fingerabdrucks; `vorgang.json` und
+Zusammenfassung `wlo.ablage-vorgang@2` (`@1` weiter gelesen); `role` je Eintrag
+in `wlo_list_my_batches`; keine Eigenschaft am Datensatz (F4). Review (unabhängiger
+Prüfer): 3 MINOR, 3 NIT, alle behoben — u. a. fehlte ein Test, der `structure`
+bis ins Manifest verfolgt (eine gelöschte Zeile wäre grün geblieben), ein
+Strukturdokument jenseits der 20 Vorschauzeilen wurde nicht genannt, und die
+Größenangabe der Zusammenfassung stimmte nicht (jetzt 30–47 k Zeichen bei 200
+Einträgen; `rolle` steht dort nur für `structure`). Mehrere Strukturdokumente je
+Stapel sind erlaubt. Gegenproben je rot.
+
+### 2026-11-08 — Volltext & Sammelmetadaten, Phase 2 (Lesen des Volltexts) erledigt
+
+`get_wlo_content_text`: ein kurzer Text an einem Datensatz ohne Link zählt (die
+200-Zeichen-Schwelle galt dem Crawler-Text einer verlinkten Seite und hätte einen
+kurzen W1-Volltext verschluckt), außer er trägt Ersatz- oder Steuerzeichen
+(Binärreste). Neue Gründe: `not_extracted` (Datei da, kein Text daraus — Markdown,
+JSON, Bilder) und `text_unreadable` (Abruf gescheitert, keine Aussage über das
+Material). `get_node_details`/`get_nodes_details` mit `includeTextContent` sagen
+dasselbe (`textContentNote`, `textContentError`; der Mehrfach-Pfad antwortete
+bisher für beides mit einem leeren Text). Review (unabhängiger Prüfer): 2 MAJOR,
+3 MINOR, 1 NIT, alle behoben — die beiden schweren: `not_extracted` hing nur an
+der Dateigröße, also hätte eine Zeitüberschreitung an einem großen PDF als „kein
+Text in der Datei“ gegolten; und der zweite Lesepfad war nicht angefasst. Bewusst
+nicht: der Ausschnitt `textContent` der Suchtreffer. Gegenproben je rot.
+
+### 2026-11-08 — Volltext & Sammelmetadaten, Phase 3 (W3 `wlo_update_contents`) umgesetzt
+
+Metadaten für bis zu 200 Datensätze unter einer Bestätigung, auf dem Plan-Läufer
+von `wlo_add_to_collections`. Der Server entscheidet je Feld
+(`services/write/field-routing.ts`, Nutzerentscheidung F5): Titel, Beschreibung,
+Schlagworte, Fach, Bildungsstufe, Inhaltstyp werden geschrieben und
+zurückgelesen, alles Redaktionelle wird Vorschlag (Typ `AI`). Verknüpfung →
+Original (F6), zwei Namen für einen Datensatz → `duplicate`. Zwei Funde beim
+Bauen: der Schritt schrieb die Original-id als `nodeId` in den Zustand und
+überschrieb damit in der Antwort die angefragte id (gefunden vom Test über eine
+Verknüpfung); und eine CC-Lizenz bringt ihre Version als zweiten Vorschlag mit
+(`applyLicenceDefaults`) — die Testerwartung war falsch, nicht der Code. Die
+Werkzeugzahlen der Doku sind nachgezogen (49 gesamt, 17 immer gelistete
+Kuratier-Werkzeuge). Gegenproben je rot. Review folgt.
+
+**Review Phase 3 (unabhängiger Prüfer): 5 MAJOR, 5 MINOR, 1 NIT — alle behoben.**
+Die schweren: ein Vorschlag, dessen POST mit 5xx oder einem leeren 200
+beantwortet wurde, galt als „nichts geschrieben“ (`outcomeOpen: false`) — jetzt
+`open`; die Vorschau zeigte nur den neuen Wert, also sah niemand, dass ein
+ersetztes Fach verloren geht, und der alte Wert war nicht im Fingerabdruck —
+jetzt vorher → nachher; „nichts zu bestätigen“ sprach über Ablehnungen von „steht
+schon so da“; und der Bestätigungsaufruf las zuerst alle Datensätze und bekam
+dann noch einmal volle 40 s. Dabei aufgefallen und behoben, und es betrifft auch
+`wlo_add_to_collections`: unabhängige Schritte bildeten EINE Welle, und das
+Budget wurde nur zwischen Wellen geprüft — 200 Einträge liefen in einem Aufruf
+ohne Zeitgrenze. Jetzt höchstens vier je Welle; der Test des Prüfers hatte zu
+Recht bemängelt, dass die Fortsetzung nie geprüft wurde (3 Einträge, Pool 4).
+Bewusste Abweichung vom Plantext: die Vorschau trägt jede Zeile vollständig
+(Projektregel „alles Gesendete steht in der Vorschau“). Gegenproben je rot.
+
+### 2026-11-08 — Volltext & Sammelmetadaten, Phase 4 (W1 `wlo_attach_fulltext`) umgesetzt
+
+Volltext in den `textContent` des Datensatzes selbst (Nutzerentscheidung F1).
+Gesendet als Rohtext unter `application/json` mit `mimetype=text/plain`, danach
+zurückgelesen. In der Vorschau abgewiesen: `would_replace_file` (Sicherung
+`FULLTEXT_KEEPS_BINARY = false`, bis ein Live-Lauf zeigt, dass die Datei
+erhalten bleibt), `link_record` (Messung 2026-07-31: ein verlinkter Datensatz
+liefert den Seitentext, nicht den geschriebenen), `exists`, `nothing_to_change`,
+`too_large`, `not_found`, `text_unreadable`. Folge, ehrlich gesagt: bis die
+Sicherung gelöst ist, schreibt W1 nur an Datensätzen ohne Datei und ohne Link.
+`tests/live/fulltext.test.ts` misst beides (Rücklesen + F3 Suche; Datei bleibt?)
+und überspringt sich mit Begründung, solange Staging Inhalte mit 500 ablehnt.
+Alle 10 Tests liefen gleich grün — deshalb 8 Gegenproben, je rot. Review folgt.
+
+### 2026-11-08 — Volltext & Sammelmetadaten, Phase 5 (W2 `wlo_attach_fulltexts`) umgesetzt
+
+Bis zu 200 Volltexte unter einer Bestätigung, ≤ 3 MB je Aufruf (vor jedem Abruf
+geprüft), je Datensatz die Regeln von W1 (`fulltext-plan.ts` plant nur viele und
+begrenzt den Speicher: 64 MB über alle Pläne, ein erledigter Text wird sofort
+verworfen, darüber `upstream_busy` VOR der Einlösung). Die Eingabeprüfung (URL,
+Sprache) teilen W1 und W2 (`curation-fulltext-input.ts`). Fünf Gegenproben je rot;
+ein Test für die Doppelnennung fehlte und ist ergänzt. Werkzeugzahlen nachgezogen
+(51 gesamt, 19 immer gelistete Kuratier-Werkzeuge). Review folgt.
+
+**Review Phase 4 (unabhängiger Prüfer): 5 MAJOR, 5 MINOR, 2 NIT — alle behoben.**
+Zwei trafen genau die Sicherung: ein zweiter Abruf des Originals, der kurz
+scheitert, machte die Dateigröße zu 0 — die Sperre griff nicht (jetzt ein Abruf,
+und ein nicht lesbares Original weist ab); und der Live-Test, der die Sicherung
+begründen soll, prüfte nicht, ob überhaupt geschrieben wurde — ein anders
+gescheiterter Schreibvorgang hätte sie fälschlich freigegeben (jetzt `stored`
+Pflicht, dazu Typ UND Inhalts-Hash). Ferner: ein 5xx galt als „nichts
+geschrieben“ (jetzt nur 4xx); nach dem ersten Ablegen hat ein Datensatz Inhalt,
+also lief jeder weitere Aufruf in `would_replace_file` — `exists` und
+`nothing_to_change` werden jetzt vorher geprüft, die Meldung sagt „Inhalt“;
+`forbidden`/`unreadable` statt `not_found`; leerer Text abgewiesen; Zeitbudgets
+(60 s für das Schreiben, Lesen mit `WLO_TEXT_TIMEOUT_MS`); Vergleich beidseitig
+getrimmt samt BOM. Die Gegenprobe zum Hash blieb zuerst grün (der Test änderte
+mit der Datei auch den Typ) — ein Fall „gleicher Typ, andere Bytes“ ist ergänzt.
+
+**Review Phase 5 (unabhängiger Prüfer): 4 MINOR, 4 NIT — alle behoben.**
+Der schwerste: zwei gleichzeitige Bestätigungen mit demselben Schlüssel — die
+zweite fand den eben gestarteten Plan nicht, lief in den verbrauchten Schlüssel
+und antwortete `confirm_unknown` („bitte neue Vorschau“), deren Bestätigung
+jeden Datensatz ein zweites Mal geschrieben hätte. Derselbe Fehler stand in W3
+(`wlo_update_contents`) und ist dort mit behoben; beide schauen jetzt VOR der
+Einlösung nach dem laufenden Plan. Ferner: ein werfender Schritt blieb
+`pending` und hielt seinen Text (jetzt offenes Ergebnis, Text verworfen); der
+Plan-Lauf startet keine Welle mehr, die nach der vorigen zu urteilen über das
+Budget liefe; der Speicher wird VOR dem Lesen der 200 Datensätze geprüft und
+danach noch einmal; ein nicht prüfbarer Datensatz heißt `unreadable`; eine
+zweite Nennung desselben Datensatzes ist `duplicate`, auch wenn die erste
+nichts ändert; `retryAfter` als benannte Konstante (60 s); 64 MiB statt „64 MB“.
+Jede neue Prüfung ist per Mutation rot geprüft — die späte Speicherprüfung erst,
+nachdem ein Test zwei gleichzeitige Pläne laufen ließ (sequentiell deckt die
+frühe sie zu; fünf Läufe stabil).
+
+**Phase 6 — Gesamt-Review über alle Pakete (unabhängiger Prüfer): 3 MAJOR, 10
+MINOR, 8 NIT — alle behoben.** Die drei MAJOR: (1) die Sicherung galt nur bei
+der Bestätigung, ein W2-Plan schreibt aber bis zu 30 min danach — jetzt prüft
+`writeFulltext` unmittelbar vor jedem POST (Inhalt hinzugekommen →
+`would_replace_file`, sonst geändert → `changed_since_preview`, beides ohne
+Senden); dieselbe Lücke in W3 (Titel/Beschreibung still überschrieben,
+entfernte Schlagworte wieder da) ist mit derselben Prüfung geschlossen. (2) Der
+Wächter für Werkzeugzahlen war seit seiner Einführung blind für „alle 48
+Werkzeuge“ (kein Leerzeichen im Muster) und für jede Zahl mit Stapel-Schalter —
+zehn falsche Zahlen in vier Dokumenten, jetzt rot geprüft und korrigiert. (3)
+`includeTextContent` verlor bei einer Zeitüberschreitung des Textabrufs den
+ganzen Datensatz (im Mehrfachpfad auch die Eltern). Ferner: W1 und W2 melden
+dieselbe Ursache gleich (`failed`/`file_replaced`, Netzfehler als
+`unreadable`/`text_unreadable`), `nothing_to_change` ist bei W1 kein Fehler
+mehr, ein PDF wird ohne Textextraktion abgelehnt (Kosten der Vorschau), nach
+einem 5xx entscheidet das Zurücklesen; W3: `forbidden`, ganze Schlagwortliste in
+der Vorschau, leere Vorschlagsliste = `unverified`, Titel des Originals;
+Beschreibungen (`text_unreadable`, „~40 s“), Codetabelle in MCP-REFERENZ,
+`isStoredText` als eine Regel für beide Lesepfade, Status-Texte, Plan-Doku.
+
+Beim Abgleich des Berichts gefunden und mit behoben: derselbe Wettlauf zweier
+gleichzeitiger Bestätigungen bestand auch in `wlo_add_to_collections` und
+`wlo_create_collection_tree` (beide lesen zwischen Plan-Suche und Einlösung) —
+reproduziert mit `confirm_unknown`, jetzt dieselbe Prüfung, beide per Mutation
+rot geprüft. Damit schauen alle vier Plan-Werkzeuge vor der Einlösung nach dem
+laufenden Plan.
+
+Beim Spiegeln der Referenz gefunden: `docs/MCP-REFERENZ.md` stand nicht in der
+Liste des Zahlen-Wächters und nannte an fünf Stellen noch 48 bzw. 16 Werkzeuge.
+Jetzt geprüft (mit Mustern für ihre eigenen Formulierungen, erst rot gesehen)
+und korrigiert; `get_nodes_details` nennt dort `textContentNote`/`textContentError`.
+
+**Abschluss Plan 2026-11-08 (T6.1, T6.2 erledigt).** Tests 2743 (2742 grün, 1
+Plattform-Skip), tsc, ESLint, Build sauber. Entwicklerbericht veröffentlicht:
+https://claude.ai/artifact/AJz45mccHLKqfRceY8NA2i; Nachtrag im Bericht S1–S7;
+HTML-Referenz (670d9a7a…) auf dem Stand von `MCP-REFERENZ.md`. Offen bleibt nur,
+was am Repository hängt: W1/W2 live schreiben, sobald Staging wieder Inhalte
+annimmt — dann `npm run test:live` (`tests/live/fulltext.test.ts`) und erst
+danach die Sicherung `FULLTEXT_KEEPS_BINARY` entscheiden; F3 (Suche im
+Volltext) misst derselbe Lauf. Kein Commit, kein Push (nur auf Zuruf).
+
+**Review 3 (nach dem Gesamt-Review, unabhängiger Prüfer): 5 MINOR, 5 NIT —
+alle behoben, dazu ein Hinweis auf vorher vorhandenen Code.** Der wichtigste:
+nach einem 5xx galt ein leeres Zurücklesen als Beweis, dass nichts ankam — bei
+einem 502/504 eines Proxys, während das Repository noch schreibt, und bei einem
+Körper ohne Textangabe (den `readNodeTextContent` als 200 mit `null` meldet)
+war das falsch. Jetzt entscheidet das Zurücklesen nur nach der eigenen 500 des
+Repositorys, und `null` ist keine Antwort. Ferner: die Prüfung vor dem
+Schreiben vergleicht Typ und Prüfsumme nur, wo es Inhalt gibt; der Zweig
+`changed_since_preview` und das unlesbare Ziel sind jetzt getestet; eine
+Bestätigung, die ihr ganzes Budget mit Lesen verbraucht hat, startet den Plan
+ohne Welle (eine erzwungene Welle schob die Antwort über das Client-Limit);
+`text/plain;charset=…` wird als früher geschriebener Text erkannt;
+`exists`-Text, Werkzeugbeschreibung, Codetabelle in MCP-REFERENZ, CHANGELOG; der
+Live-Test gibt bei `file_replaced` vorher/nachher aus, bevor er scheitert.
+`wlo_add_to_collections`/`wlo_create_collection_tree` geben jetzt ebenfalls nur
+ihr Restbudget an den Plan (dafür kein eigener Test: ein Vorbereiten über 40 s
+lässt sich ohne Uhr-Attrappe nicht nachstellen; die Regel selbst ist am
+`runPlan`-Test belegt).
