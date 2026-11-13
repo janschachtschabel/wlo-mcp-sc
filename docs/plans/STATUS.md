@@ -5013,3 +5013,20 @@ Fehlerantwort eines Werkzeugs mit Ausgabeschema; die Schemata tragen jetzt einen
 Drei unabhängige Reviews (26 Befunde), alle behoben. 3310 Tests, 3309 grün, 1 übersprungen.
 **Offen:** einheitlicher Vertrag (A-3) als neue Hauptversion; Tempo von Z4 messen; ob jeder Host ein `anyOf` auf
 oberster Ebene des Ausgabeschemas annimmt.
+
+**Abschlussprüfungen nach dem Nachtrag (2026-11-13, Abend).**
+- **Live-Tests gegen Staging: 16 von 16 grün.** Staging nimmt Inhalts-Uploads wieder an (der 500
+  `InvalidTypeException` seit dem 6.11. ist weg): Datei ersetzen, Verknüpfen, Volltext ohne Datei laufen live.
+- **Die seit dem 8.11. offene Messung ist beantwortet:** ein Volltext an einen Datensatz MIT Datei ERSETZT die Datei
+  (zweimal gemessen: text/x-web-markdown 47 Bytes → text/plain 29 Bytes, anderer Hash; die frühere Datei liegt in der
+  Versionsliste). `FULLTEXT_KEEPS_BINARY` bleibt `false` — als Regel, nicht mehr als Platzhalter. Der Live-Test hält
+  das fest und wird rot, falls ein Repository die Datei künftig behält. Für W4 heißt das: Volltext an Datensätze mit
+  Datei geht über `textContent` NICHT; dafür bräuchte es einen anderen Ablageort.
+- **Z4 gemessen** (fünf Suchen zu Optik, Fach Physik, je fünf Treffer, drei Runden, Reihenfolge gewechselt):
+  `search_wlo_content_many` 0,6–1,0 s gegen 1,3–2,9 s für fünf gleichzeitige Einzelsuchen. Ein Lauf, kleine Stichprobe.
+- **Nebenbefunde behoben:** `/api/wikipedia` und `/ready` tragen bei 503 `Retry-After`.
+- **CI:** GitHub startet den Job nicht („recent account payments have failed or your spending limit needs to be
+  increased") — Sache des Kontos, nicht des Codes; erneutes Anstoßen ändert nichts. Lokal: voller Lauf, Lint,
+  Typprüfung und Image-Starttest grün.
+- **Jetzt messbar, noch nicht gemessen:** MA-0 für den Stapel-Upload (Dateiarten, Größen) — die Voraussetzung
+  „Staging nimmt Uploads an" ist erfüllt.

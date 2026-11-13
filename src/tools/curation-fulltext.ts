@@ -4,8 +4,8 @@
  * A full text into the record's own `textContent`. The rules — the safeguard for
  * records with a file, the refusal of linked records, the raw body, the
  * read-back — live in `services/write/fulltext.ts`; this module validates,
- * previews and reports. Not live-verified: staging refuses every content write
- * since 2026-11-06 (STATUS).
+ * previews and reports. Live-measured 2026-11-13 (`tests/live/fulltext.test.ts`):
+ * a record without a file takes the text; on a record with one it REPLACES the file.
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -33,7 +33,7 @@ function registerCurationFulltextTool(server: McpServer, challenge: WriteAuthCha
     name: 'wlo_attach_fulltext',
     title: 'WLO Volltext anhängen',
     description: `Lege einen Volltext (Markdown) im textContent eines vorhandenen Datensatzes ab — dort, wo get_wlo_content_text und includeTextContent ihn lesen. Für Volltexte aus einer Datei, einer Webseite oder von Hand (source), bis ${FULLTEXT_MAX_BYTES} Bytes.
-ZWEISTUFIG: ohne confirmToken nur Vorschau (Datensatz, Größe, Prüfsumme, ob ersetzt wird). Schon in der Vorschau abgelehnt, mit Code: would_replace_file (der Datensatz trägt Inhalt — bis gemessen ist, dass eine Datei erhalten bleibt, wird nicht geschrieben; auch ein vorhandener Volltext lässt sich deshalb vorerst nicht ersetzen), link_record (verlinkter Datensatz: dessen Text liest das Repository von der Seite), exists, too_large, not_found, forbidden, unreadable, unreadable_original, text_unreadable. Steht derselbe Text schon da: confirm null, unchanged true. Unmittelbar vor dem Schreiben wird erneut geprüft (changed_since_preview), danach zurückgelesen; eine Verknüpfung wird am Original geändert. Erfordert eine Anmeldung.`,
+ZWEISTUFIG: ohne confirmToken nur Vorschau (Datensatz, Größe, Prüfsumme, ob ersetzt wird). Schon in der Vorschau abgelehnt, mit Code: would_replace_file (der Datensatz trägt eine Datei oder einen früheren Volltext — der Text würde sie ersetzen; möglich nur an einem Datensatz ohne Datei), link_record (verlinkter Datensatz: dessen Text liest das Repository von der Seite), exists, too_large, not_found, forbidden, unreadable, unreadable_original, text_unreadable. Steht derselbe Text schon da: confirm null, unchanged true. Unmittelbar vor dem Schreiben wird erneut geprüft (changed_since_preview), danach zurückgelesen; eine Verknüpfung wird am Original geändert. Erfordert eine Anmeldung.`,
     inputSchema: {
       nodeId: z.string().min(1).max(200),
       markdown: z.string().min(1).describe('Der Volltext als Markdown.'),

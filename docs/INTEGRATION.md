@@ -172,7 +172,7 @@ aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 | `wlo_create_collection_tree` | Einen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4) mit **einer** Bestätigung anlegen |
 | `wlo_add_to_collections` | Bis zu 200 Materialien mit **einer** Bestätigung in Sammlungen aufnehmen |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit **einer** Bestätigung: beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt |
-| `wlo_attach_fulltext` | Einen Volltext (Markdown) im `textContent` eines Datensatzes ablegen; Datensätze mit Datei vorerst abgelehnt, bis gemessen ist, dass die Datei erhalten bleibt |
+| `wlo_attach_fulltext` | Einen Volltext (Markdown) im `textContent` eines Datensatzes ablegen; Datensätze mit Datei werden abgelehnt (`would_replace_file`): der Text würde die Datei ersetzen (gemessen 2026-11-13) |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit **einer** Bestätigung (≤ 3 MB je Aufruf, sonst mehrere Aufrufe) |
 | `wlo_update_compendium` | Kompendialtext schreiben |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert |

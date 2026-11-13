@@ -69,19 +69,45 @@ function startProbe(now: number): Promise<Readiness> {
   return inFlight;
 }
 
-/** The current answer: cached if fresh, else probed — but never waited on for longer than `SLOW_MS`. */
-export async function readiness(now: number = Date.now()): Promise<Readiness> {
-  if (last && now - last.at < READY_CACHE_MS) return last.result;
+/**
+ * How soon to ask again after the synthetic `slow` answer. That answer is not
+ * cached and the probe behind it is still in flight, so the next call can
+ * already be answered differently — but only once the probe lands, and it has
+ * just shown itself to take longer than `SLOW_MS`. A short wait, not the cache time.
+ */
+export const SLOW_RETRY_MS = 5_000;
+
+/** An answer plus how long it stands: asking again sooner than `retryAfterMs` returns the same one. */
+export interface ReadinessAnswer {
+  result: Readiness;
+  retryAfterMs: number;
+}
+
+/**
+ * The current answer and when it can next change. The wait is counted from when
+ * the answer ARRIVED — the moment the cache was stamped —, never from
+ * `checkedAt`, which is when the probe STARTED.
+ */
+export async function readinessAnswer(now: number = Date.now()): Promise<ReadinessAnswer> {
+  if (last && now - last.at < READY_CACHE_MS) return { result: last.result, retryAfterMs: last.at + READY_CACHE_MS - now };
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const slow = new Promise<Readiness>(resolve => {
-    timeout = setTimeout(() => resolve({ ok: false, upstream: 'slow', checkedAt: new Date(now).toISOString() }), SLOW_MS);
+  const slow = new Promise<ReadinessAnswer>(resolve => {
+    timeout = setTimeout(() => resolve({
+      result: { ok: false, upstream: 'slow', checkedAt: new Date(now).toISOString() }, retryAfterMs: SLOW_RETRY_MS,
+    }), SLOW_MS);
     timeout.unref?.();
   });
   try {
-    return await Promise.race([startProbe(now), slow]);
+    // A probe that just landed was stamped this instant: it stands for the whole cache time.
+    return await Promise.race([startProbe(now).then(result => ({ result, retryAfterMs: READY_CACHE_MS })), slow]);
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+/** The current answer: cached if fresh, else probed — but never waited on for longer than `SLOW_MS`. */
+export async function readiness(now: number = Date.now()): Promise<Readiness> {
+  return (await readinessAnswer(now)).result;
 }
 
 /**

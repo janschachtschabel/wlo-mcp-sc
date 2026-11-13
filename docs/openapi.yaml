@@ -203,7 +203,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Readiness' }
         '503':
-          description: Not ready (`upstream` is `unreachable` or `slow`). No `Retry-After`.
+          description: >-
+            Not ready (`upstream` is `unreachable` or `slow`). `Retry-After` and
+            `retryAfter` give the whole seconds until asking again can return a
+            different answer: the rest of the 30 s the answer is held, counted
+            from when it arrived (1 to 30); or 5 when the probe has not answered
+            within 5 s and is still in flight — that `slow` answer is not held.
+          headers:
+            Retry-After: { schema: { type: integer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Readiness' }
@@ -559,8 +566,10 @@ paths:
         '500': { $ref: '#/components/responses/InternalError' }
         '503':
           description: >-
-            Wikipedia did not answer — `code: upstream_unreachable`. This one
-            carries neither `Retry-After` nor `retryAfter`.
+            Wikipedia did not answer — `code: upstream_unreachable`, with
+            `Retry-After` and `retryAfter` (an estimate, 10 s).
+          headers:
+            Retry-After: { schema: { type: integer } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1503,6 +1512,11 @@ components:
         upstream: { enum: [ok, slow, unreachable] }
         checkedAt: { type: string, format: date-time }
         latencyMs: { type: integer }
+        retryAfter:
+          type: integer
+          minimum: 1
+          maximum: 30
+          description: Present only when not ready. Seconds; equals the `Retry-After` header.
     AuthStatus:
       type: object
       required: [mode, authenticated, authority, credential, upstream]

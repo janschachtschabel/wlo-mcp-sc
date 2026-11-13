@@ -5,7 +5,7 @@
  *
  * What this pins: the preview refuses — before any key — everything that must
  * not or cannot be written: a record WITH a file (`would_replace_file`, the
- * safeguard until a live run shows POST textContent keeps the file), a linked
+ * rule since the live run of 2026-11-13: POST textContent REPLACES the file), a linked
  * record (`link_record`: the repository reads a link's text from the page,
  * measured 2026-07-31), a text over the bound, an existing text without
  * `replace`, and the same text again. What is written goes as the raw text with
@@ -154,7 +154,7 @@ test('an existing text needs replace; the same text again is nothing_to_change',
     // "Already there" is no error — the shape every sibling uses (overall review, 4c).
     assert.notEqual(same.isError, true, 'line endings and a trailing break do not make a new text');
     assert.deepEqual([sc(same)['confirm'], sc(same)['unchanged'], sc(same)['code']], [null, true, 'nothing_to_change']);
-    // Replacing a text that is the record's CONTENT is refused like a file, until measured (review W1, finding 3).
+    // Replacing a text that is the record's CONTENT is refused like a file — one content slot (review W1, finding 3).
     const replace = await c.callTool({ name: TOOL, arguments: { nodeId: 'hasText', markdown: MD, source: 'manual', replace: true } });
     assert.equal(sc(replace)['error']?.code, 'would_replace_file');
     assert.match(toolText(replace), /Inhalt/);

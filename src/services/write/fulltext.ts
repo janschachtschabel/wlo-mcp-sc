@@ -5,13 +5,15 @@
  *
  * What is known, and what the rules below rest on (plan §2):
  *  - `POST …/textContent` writes the record's CONTENT as text (`cclom:size` =
- *    the bytes sent, measured 2026-07-31). Whether a record that already HAS
- *    content keeps it is unmeasured — staging refuses every content write since
- *    2026-11-06 (500 `InvalidTypeException`). Until a live run settles it, the
- *    safeguard (`keepsBinary()` false) refuses such a record BEFORE any key
- *    (`would_replace_file`): an approval must not be able to cost a person their
- *    uploaded file. "Content" includes a text written here before — after a
- *    write the record HAS a size — so replacing one is refused too, for now.
+ *    the bytes sent, measured 2026-07-31). A record that already HAS a file
+ *    LOSES it: measured 2026-11-13 (`tests/live/fulltext.test.ts`, the first day
+ *    staging accepted content writes again) — text/x-web-markdown, 47 bytes
+ *    became text/plain, 29 bytes, with another hash; the file survives only in
+ *    the version list. There is one content slot, not two. So the safeguard
+ *    (`keepsBinary()` false) is the RULE, not a placeholder: such a record is
+ *    refused BEFORE any key (`would_replace_file`) — an approval must not be
+ *    able to cost a person their uploaded file. "Content" includes a text
+ *    written here before — after a write the record HAS a size.
  *  - The body is the RAW text with `Content-Type: application/json`: a
  *    JSON-encoded string body is stored with its quotes (measured 2026-07-31),
  *    and `text/plain` / `text/markdown` bodies answer 415 (measured 2026-11-08).
@@ -20,8 +22,9 @@
  *  - A LINKED record (`ccm:wwwurl`) reads its text from the page; text POSTed to
  *    it does not come back (measured 2026-07-31). Refused as `link_record`.
  *  - Every write is read back through the same `GET …/textContent` every reader
- *    uses; a difference is `not_stored`, never success. Once the safeguard is
- *    lifted, the file's hash and type are compared too (`file_replaced`).
+ *    uses; a difference is `not_stored`, never success. With the safeguard
+ *    lifted (the test seam only), the file's hash and type are compared too
+ *    (`file_replaced`).
  *  - The safeguard is checked again right before EVERY write, not only at the
  *    confirmation: a plan (W2) writes for up to 30 minutes after it, and a file
  *    uploaded in between must not be the one the approval costs (overall review).
@@ -46,8 +49,9 @@ export const FULLTEXT_MAX_BYTES = 2_000_000;
 const FULLTEXT_WRITE_TIMEOUT_MS = 60_000;
 
 /**
- * The safeguard (see the module head). Becomes `true` only after
- * `tests/live/fulltext.test.ts` shows a record's file survives the write.
+ * The safeguard (see the module head). Measured 2026-11-13: the write REPLACES
+ * the file, so this stays `false`. `tests/live/fulltext.test.ts` pins that and
+ * turns red if a repository ever keeps the file — the only reason to change it.
  */
 const FULLTEXT_KEEPS_BINARY = false;
 let keepsBinaryOverride: boolean | null = null;
@@ -82,7 +86,7 @@ export interface FulltextPlan {
   source: FulltextSource;
   sourceUrl?: string;
   language?: string;
-  /** The content before the write, for the after-check once the safeguard is lifted. */
+  /** The content before the write, for the check right before the write, and the after-check with the safeguard lifted. */
   before: { size: number; mimetype: string; hash: string };
 }
 
@@ -106,8 +110,9 @@ function readRefusal(status: number, what: string): { ok: false; code: RefusalCo
   return { ok: false, code: 'unreadable', reason: `${what} ließ sich gerade nicht lesen (HTTP ${status}).` };
 }
 
-const WOULD_REPLACE_FILE = 'Der Datensatz trägt Inhalt — eine Datei oder einen früher geschriebenen Volltext. Ob das Schreiben '
-  + 'ihn behält oder ersetzt, ist noch nicht gemessen; bis dahin wird nichts geschrieben, damit keine Datei verloren geht.';
+const WOULD_REPLACE_FILE = 'Der Datensatz trägt schon Inhalt — eine Datei oder einen früher geschriebenen Volltext. Der Volltext '
+  + 'würde ihn ersetzen (das Frühere bliebe nur in der Versionsliste), deshalb wird nichts geschrieben. Ein Volltext lässt sich '
+  + 'nur an einem Datensatz ohne Datei ablegen.';
 
 /** Everything the preview needs, and every refusal that must come before a key. */
 export async function planFulltext(input: FulltextInput): Promise<PlanOutcome> {
@@ -150,8 +155,8 @@ export async function planFulltext(input: FulltextInput): Promise<PlanOutcome> {
   // preview AND again at the confirmation — for an answer the extraction cannot
   // change (overall review, 12). Only a `text/plain` content can be a text
   // written here before, and for that the text below is the truer answer.
-  // `startsWith`: what type the repository reports after a text write is unmeasured
-  // (staging refuses content), and `text/plain;charset=UTF-8` is the likely spelling.
+  // `startsWith`: after a text write the repository reported `text/plain`
+  // (measured 2026-11-13); a `text/plain;charset=UTF-8` spelling is tolerated too.
   if (size > 0 && !keepsBinary() && !String(original.mimetype ?? '').startsWith('text/plain')) return refuseFile();
 
   // The text first: `nothing_to_change` and `exists` write nothing and are the
@@ -171,8 +176,8 @@ export async function planFulltext(input: FulltextInput): Promise<PlanOutcome> {
     // `would_replace_file` — do not send the caller round that loop (overall review, 5).
     return refuse('exists', keepsBinary()
       ? 'Der Datensatz hat schon einen Volltext; zum Ersetzen replace: true angeben.'
-      : 'Der Datensatz trägt schon einen Text (Volltext oder Textdatei). Ersetzen ist gesperrt, bis gemessen ist, dass eine Datei '
-        + 'dabei erhalten bleibt.');
+      : 'Der Datensatz trägt schon einen Text (Volltext oder Textdatei). Er wird nicht ersetzt: das Schreiben ersetzt den Inhalt '
+        + 'des Datensatzes, also auch eine Datei. Ein Volltext lässt sich nur an einem Datensatz ohne Inhalt ablegen.');
   }
 
   if (size > 0 && !keepsBinary()) return refuseFile();
@@ -287,10 +292,10 @@ export async function writeFulltext(plan: FulltextPlan, markdown: string): Promi
   return afterLanded(plan);
 }
 
-/** The text landed. Once the safeguard is lifted, prove the file survived too. */
+/** The text landed. With the safeguard lifted (test seam only), prove the file survived too. */
 async function afterLanded(plan: FulltextPlan): Promise<WriteOutcome> {
   if (keepsBinary() && plan.before.size > 0) {
-    // Only reachable once the safeguard is lifted: prove the file survived — its
+    // Only reachable with the safeguard lifted: prove the file survived — its
     // hash and type, both, because a text replacing it may keep the type.
     const after = (await readNodeMetadata(plan.targetId).catch(() => ({ node: null }))).node;
     const hashAfter = String(after?.content?.hash ?? '');

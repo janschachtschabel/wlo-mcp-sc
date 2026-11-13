@@ -6,6 +6,21 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — follow-ups of 2026-11-13 (checks after the addendum)
+
+- **`/api/wikipedia` and `/ready` answer a 503 with `Retry-After`** (header and `retryAfter`), like every other
+  503 of this server: Wikipedia with the usual estimate, `/ready` with the seconds until the next probe.
+
+### Measured — 2026-11-13, against staging
+
+- **A full text written to a record WITH a file replaces the file.** Staging accepts content writes again, so the
+  question open since 2026-11-08 has an answer: `POST textContent` writes the record's one content slot
+  (text/x-web-markdown, 47 bytes → text/plain, 29 bytes; the earlier file is in the version list). The safeguard
+  (`would_replace_file`) is therefore the rule, not a placeholder; `tests/live/fulltext.test.ts` pins it and turns
+  red if a repository ever keeps the file. A full text on a record WITHOUT a file works live.
+- **`search_wlo_content_many` against five single searches at once** (five queries on optics, subject Physik,
+  five hits each, three rounds, order alternated): 0.6–1.0 s for the one call, 1.3–2.9 s for the five.
+
 ### Added — the second half of the chatbot addendum (Z3, Z4, B1), 2026-11-13
 
 - **Z3 — a collection by NAME.** `get_collection_overview`, `get_collection_contents`, `get_compendium_text` and

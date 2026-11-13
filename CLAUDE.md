@@ -1442,7 +1442,7 @@ The current rebuild/extension is designed in:
   account `WLO_TEST_USER`): no folder right → batches lie FLAT in `-userhome-`, and
   the owner's search finds them at once. Staging rejects EVERY content upload
   (500 `InvalidTypeException … property name: content`, raw REST, both accounts) —
-  the same defect as the filing regression; file types/sizes stay unmeasured.
+  the same defect as the filing regression; file types/sizes stay unmeasured. (Lifted 2026-11-13: staging accepts content writes and filing again — the live suite is 16/16 — so file types and sizes are now MEASURABLE, and still not measured.)
   P2 adds two rules: a licence resolves EXACTLY or not at all (`resolveVocabMatch`
   has no fuzzy step for `license` — "CC BY NC" became `CC_BY`, the freer key),
   and the `ccm:wwwurl` search returns prefix NEIGHBOURS while a decorated
@@ -1533,19 +1533,22 @@ The current rebuild/extension is designed in:
   unknown `k` fails an old build closed.
 
 - **Volltext & Sammelmetadaten für hochgeladene Inhalte (W1–W4) — CODE COMPLETE
-  (2026-11-08), W1/W2 live erst nach dem Staging-Fix:**
+  (2026-11-08); staging accepts content writes again since 2026-11-13: W1 on a
+  record WITHOUT a file runs live, a record WITH a file is refused by rule:**
   `docs/plans/2026-11-08-volltext-und-sammelmetadaten.md` (Messungen, Entscheidungen
   F1–F6, Aufgaben). Rules that bind any change. (1) **The full text goes into the
   record's OWN `textContent`** (user decision F1), sent as the RAW text under
   `Content-Type: application/json` with `mimetype=text/plain` — a JSON string body
   is stored with its quotes (2026-07-31), text/plain|markdown bodies get 415, and
   `GET textContent` extracts nothing from `text/markdown`. `POST textContent`
-  writes the record's CONTENT, and whether a record WITH content keeps its file is
-  UNMEASURED (staging answers every content write 500 since 2026-11-06), so the
-  safeguard `keepsBinary()` stays false and such a record is refused BEFORE any key
-  (`would_replace_file`) — content includes a text written here before. Lift it only
-  after `tests/live/fulltext.test.ts` passes (write landed, same type AND content
-  hash). A LINKED record is refused (`link_record`): the repository reads a link's
+  writes the record's CONTENT, and a record WITH a file LOSES it — measured
+  2026-11-13, the first day staging accepted content writes again
+  (text/x-web-markdown 47 bytes → text/plain 29 bytes, another hash; the file
+  survives only in the version list). There is ONE content slot. So the
+  safeguard `keepsBinary()` stays false as a rule, not a placeholder, and such a
+  record is refused BEFORE any key (`would_replace_file`) — content includes a
+  text written here before. `tests/live/fulltext.test.ts` pins the answer and
+  turns red if a repository ever keeps the file. A LINKED record is refused (`link_record`): the repository reads a link's
   text from the page. (2) **The server decides per field** in `wlo_update_contents`
   (F5, `field-routing.ts`): title, description, keywords, subject, educational
   level, content type are written; everything editorial becomes a suggestion; the

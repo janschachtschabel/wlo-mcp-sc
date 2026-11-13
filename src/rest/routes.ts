@@ -161,6 +161,7 @@ export async function handleRestRequest(req: RestReq, res: RestRes): Promise<boo
       'Content-Type': 'application/json',
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
+      ...(result.retryAfter ? { 'Retry-After': String(result.retryAfter) } : {}),
     });
     res.end(JSON.stringify(result.json));
   }

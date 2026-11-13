@@ -58,7 +58,7 @@ export function registerCurationFulltextsTool(server: McpServer, challenge: Writ
     replay: false, // the key continues a stored plan (plan-runner.ts)
     name: 'wlo_attach_fulltexts',
     title: 'WLO Volltexte für viele Datensätze',
-    description: `Lege Volltexte (Markdown) für viele Datensätze mit EINER Bestätigung im textContent ab — bis zu ${FULLTEXTS_MAX_ITEMS} Einträge, zusammen höchstens ${FULLTEXTS_MAX_BYTES} Bytes (je Text ${FULLTEXT_MAX_BYTES}); mehr = mehrere Aufrufe. Je Datensatz dieselben Regeln wie wlo_attach_fulltext (Datensatz mit Datei vorerst abgelehnt, verlinkter Datensatz abgelehnt, zurückgelesen).
+    description: `Lege Volltexte (Markdown) für viele Datensätze mit EINER Bestätigung im textContent ab — bis zu ${FULLTEXTS_MAX_ITEMS} Einträge, zusammen höchstens ${FULLTEXTS_MAX_BYTES} Bytes (je Text ${FULLTEXT_MAX_BYTES}); mehr = mehrere Aufrufe. Je Datensatz dieselben Regeln wie wlo_attach_fulltext (Datensatz mit Datei abgelehnt,verlinkter Datensatz abgelehnt, zurückgelesen).
 Ohne Schlüssel: Vorschau mit counts {new, replaced, unchanged, refused}, refused [{nodeId, code}], unchangedItems. Mit confirmToken: liest jeden Datensatz erneut (kostet bei vielen Einträgen Zeit), schreibt dann ~40 s je Aufruf; complete: false → continuationToken (oder derselbe Aufruf) setzt ohne neue Bestätigung fort. Antwort: items [{nodeId, targetId?, status, code?, outcomeOpen?}].`,
     inputSchema: {
       items: z.array(itemSchema).min(1).max(FULLTEXTS_MAX_ITEMS),

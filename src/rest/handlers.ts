@@ -38,6 +38,7 @@ import {
 import { projectEnvelope, projectItems } from './project.js';
 import { renderSearchPage, type SearchPageData } from './search-page.js';
 import { type RestResult, badRequest } from './result.js';
+import { BUSY_RETRY_DEFAULT_S } from '../services/failure-code.js';
 
 const HTML_TYPE = 'text/html; charset=utf-8';
 
@@ -236,7 +237,11 @@ export async function handleWikipedia(params: URLSearchParams): Promise<RestResu
   const { summary, unreachable } = await fetchWikipediaSummaryResult(q.value, lang.value, sections);
   // "No article" is a statement about Wikipedia; an outage on the way is not one.
   if (!summary && unreachable) {
-    return { status: 503, json: { error: 'Wikipedia did not answer', code: 'upstream_unreachable' } };
+    // Like every other 503 here: the wait is an estimate, and it is said in both places a client looks.
+    return {
+      status: 503, retryAfter: BUSY_RETRY_DEFAULT_S,
+      json: { error: 'Wikipedia did not answer', code: 'upstream_unreachable', retryAfter: BUSY_RETRY_DEFAULT_S },
+    };
   }
   if (!summary) return { status: 404, json: { error: 'No Wikipedia article found' } };
   return { status: 200, json: summary };

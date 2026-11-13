@@ -1,6 +1,7 @@
 /**
- * tests/live/fulltext.test.ts – the two open measurements behind W1/W2 (plan
- * 2026-11-08, §2 and §4.4), against STAGING only (`guard.ts`).
+ * tests/live/fulltext.test.ts – the two measurements behind W1/W2 (plan
+ * 2026-11-08, §2 and §4.4), against STAGING only (`guard.ts`). Both are
+ * answered since 2026-11-13; the tests PIN the answers.
  *
  * 1. Does a full text written with `POST …/textContent` (raw body,
  *    `mimetype=text/plain`) come back unchanged from `GET …/textContent` — and
@@ -8,12 +9,13 @@
  *    first, as the tool does: it reads textContent before writing, and whether
  *    that read's cache survives the write is part of the measurement.
  * 2. Does a record that carries a FILE keep it — same type, same content hash —
- *    and does the text read back? Until this passes, the safeguard
- *    (`keepsBinary()`) stays off and W1 refuses such records.
+ *    and does the text read back? Measured 2026-11-13, twice: NO, the file is
+ *    REPLACED (one content slot). So `keepsBinary()` stays false and W1 refuses
+ *    such records by rule; test 2 turns red if a repository ever keeps the file.
  *
- * Staging refuses every content write since 2026-11-06 (500
+ * Staging refused every content write from 2026-11-06 to 2026-11-13 (500
  * `InvalidTypeException … content can't be updated via NodeService#setProperty`).
- * Exactly that answer SKIPS a test with the reason — any other failure fails, and
+ * Should that answer return, it SKIPS a test with the reason — any other failure fails, and
  * a write that did not land never counts as "the file survived".
  * Every throwaway record is deleted in `finally`; one that stays is reported.
  */
@@ -61,7 +63,7 @@ test('a full text written to textContent reads back unchanged, and the search ma
     assert.ok(planned.ok, 'a record without content must be plannable');
     const out = await writeFulltext(planned.plan, md);
     if (out.status !== 'stored' && STAGING_DEFECT.test(out.detail)) {
-      t.skip(`Staging nimmt keine Inhalte an (seit 2026-11-06): ${out.detail.slice(0, 120)}`);
+      t.skip(`Staging nimmt keine Inhalte an: ${out.detail.slice(0, 120)}`);
       return;
     }
     assert.equal(out.status, 'stored', JSON.stringify(out));
@@ -80,7 +82,14 @@ test('a full text written to textContent reads back unchanged, and the search ma
   }
 });
 
-test('a record WITH a file keeps it when its full text is written (decides the safeguard)', async (t) => {
+// MEASURED 2026-11-13, the first day staging accepted content writes again:
+// the text lands and the FILE IS REPLACED (before: text/x-web-markdown, 47
+// bytes; after: text/plain, 29 bytes, another hash — the earlier file is in the
+// version list). So the safeguard is not provisional any more: `POST
+// textContent` writes the record's content, there is no second slot. This test
+// pins that answer and turns red the day a repository KEEPS the file — then,
+// and only then, `FULLTEXT_KEEPS_BINARY` may become true.
+test('a full text written to a record WITH a file REPLACES the file — the safeguard stays', async (t) => {
   requireLiveTarget();
   const created = await createContentNode({ 'cclom:title': [`Live Datei ${runStamp}`] },
     { mode: 'user', file: markdownFile('Live Datei', '# Original\n\nDiese Datei muss erhalten bleiben.\n') });
@@ -96,7 +105,7 @@ test('a record WITH a file keeps it when its full text is written (decides the s
     const md = '# Volltext\n\nGewonnener Text.\n';
     const plan: FulltextPlan = { requestedId: id, targetId: id, title: 'live', bytes: Buffer.byteLength(md), sha256: 'x',
       replaces: false, source: 'binary', before: b };
-    // This IS the measurement the safeguard waits for: lift it for this one write,
+    // This IS the measurement the safeguard rests on: lift it for this one write,
     // or the check right before the POST refuses the record it is meant to judge.
     setKeepsBinaryForTest(true);
     const out = await writeFulltext(plan, md).finally(() => setKeepsBinaryForTest(null));
@@ -109,13 +118,15 @@ test('a record WITH a file keeps it when its full text is written (decides the s
     // Printed BEFORE any verdict: this run carries the decision, and "file
     // replaced" is exactly the outcome whose numbers someone has to see.
     t.diagnostic(`vorher ${JSON.stringify(b)}, nachher ${JSON.stringify(a)}, Ergebnis ${JSON.stringify(out)}`);
-    if (out.status !== 'stored' && out.code === 'file_replaced') {
-      assert.fail('the text landed and the FILE WAS REPLACED — the safeguard must stay on (FULLTEXT_KEEPS_BINARY = false)');
-    }
     // A write that failed some OTHER way proves nothing about the file.
-    assert.equal(out.status, 'stored', `the write must land before the file can be judged: ${JSON.stringify(out)}`);
-    assert.deepEqual([a.mimetype, a.hash], [b.mimetype, b.hash], 'the file was replaced — the safeguard must stay on');
-    assert.equal(normalizedText((await readNodeTextContent(id)).text ?? ''), normalizedText(md), 'and the text reads back');
+    assert.ok(out.status === 'stored' || (out.status === 'failed' && out.code === 'file_replaced'),
+      `the write must land before the file can be judged: ${JSON.stringify(out)}`);
+    assert.equal(normalizedText((await readNodeTextContent(id)).text ?? ''), normalizedText(md), 'the text itself landed');
+    // The measured answer. If this fails, the file SURVIVED: read the numbers
+    // above, run it again, and only then lift the safeguard in fulltext.ts.
+    assert.notDeepEqual([a.mimetype, a.hash], [b.mimetype, b.hash],
+      'the file was KEPT — the repository changed; the safeguard (FULLTEXT_KEEPS_BINARY) can be reconsidered');
+    assert.equal(out.status === 'failed' ? out.code : 'stored', 'file_replaced', 'and the write path noticed it');
   } finally {
     await cleanup(t, id);
   }
