@@ -10,8 +10,9 @@ import { createMcpServer } from './server.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
 import { startSkillRegistryCache } from './services/skill-registry-cache.js';
 import { log } from './logger.js';
-import { exitOnUnusableRepositoryUrl } from './startup-check.js';
+import { exitOnUnusableRepositoryUrl, warnOnUnknownLogLevel } from './startup-check.js';
 
+warnOnUnknownLogLevel();
 exitOnUnusableRepositoryUrl();
 
 async function main(): Promise<void> {

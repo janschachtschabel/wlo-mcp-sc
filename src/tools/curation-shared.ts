@@ -13,6 +13,8 @@
  */
 
 import { titleFromProperties } from '../node-match.js';
+import { titleOn } from '../services/write/collection-fields.js';
+import type { WloNode } from '../wlo-types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { validateField, applyLicenceDefaults, WRITABLE_FIELDS } from '../services/write/fields.js';
@@ -268,8 +270,9 @@ export function isPreviewCall(params: Record<string, unknown>): boolean {
  * A record's title for a preview or report, sanitized: it comes out of the
  * repository, written by someone else, and this text goes to the model.
  */
-export function recordTitle(properties: Record<string, string[]> | undefined): string {
-  const raw = titleFromProperties(properties);
+export function recordTitle(properties: Record<string, string[]> | undefined, node?: Pick<WloNode, 'type' | 'aspects'>): string {
+  // With the node: a collection is named by ITS title (`titleOn`), not by a stray record title.
+  const raw = node ? titleOn(node, properties) : titleFromProperties(properties);
   return raw ? sanitizeText(raw) : '(ohne Titel)';
 }
 

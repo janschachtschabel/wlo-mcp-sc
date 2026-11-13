@@ -266,6 +266,8 @@ export async function getCollectionThemePages(
   // metadata (wrong variantId, targetGroup "nicht gesetzt"). Reading one
   // level also drops the per-child fan-out (one upstream call instead of N).
   const listing = await getChildCollectionsResult(configId, 50, 0, TOPIC_PAGE_PROPS);
+  // Refused is an answer, like the 401/403/404 on the collection above: no page here for this login.
+  if (listing.refused) return [];
   if (!listing.reachable) {
     throw new Error(`Die Varianten der Themenseite von ${collectionId} ließen sich nicht lesen — ob sie eine hat, ist offen.`);
   }

@@ -74,13 +74,13 @@ test('every MCP request logs its method and which surface it was served', async 
     }).then((r) => r.json());
 
     const anonymous = await captureLog(async () => { await post(); });
-    const line = anonymous.find((l) => l['msg'] === 'mcp request');
+    const line = anonymous.find((l) => l['message'] === 'mcp request');
     assert.ok(line, `no "mcp request" line: ${JSON.stringify(anonymous)}`);
     assert.equal(line['method'], 'tools/list', 'the method is what makes a line useful');
     assert.equal(line['mode'], 'none', 'a request with no credential is served the read surface');
 
     const asUser = await captureLog(async () => { await post(bearer); });
-    const userLine = asUser.find((l) => l['msg'] === 'mcp request');
+    const userLine = asUser.find((l) => l['message'] === 'mcp request');
     assert.ok(userLine);
     assert.equal(userLine['mode'], 'user', 'a listed access block is served the write surface');
 

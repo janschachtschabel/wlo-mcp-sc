@@ -21,6 +21,7 @@ import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
+import { desiredOn } from '../services/write/collection-fields.js';
 import { createContentNode, resolveCreateParent, submitForReview, REVIEW_STATUS } from '../services/write/nodes-lifecycle.js';
 import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
 import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
@@ -49,6 +50,8 @@ import {
   isOutcomeOpen,
   timeoutOrError,
   isPreviewCall,
+  wrongKind,
+  wrongKindReply,
 } from './curation-shared.js';
 import { CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.js';
 
@@ -162,7 +165,8 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
       'Vorschau zurückgegeben und NICHTS geschrieben; erst ein zweiter Aufruf mit dem Schlüssel aus der ' +
       'Vorschau schreibt. Danach wird der Datensatz erneut gelesen und je Feld berichtet, was tatsächlich ' +
       'ankam. Eine id aus einer Sammlung ist eine Verknüpfung, nicht der Datensatz — geschrieben wird dann ' +
-      'am Original, und die Vorschau nennt beide ids. Erfordert eine Anmeldung. NICHT für neue Inhalte ' +
+      'am Original, und die Vorschau nennt beide ids. Gilt auch für SAMMLUNGEN (Fach, Bildungsstufe, ' +
+      'Schlagwörter …; Titel und Beschreibung landen im Sammlungsfeld). Erfordert eine Anmeldung. NICHT für neue Inhalte ' +
       '(dafür wlo_create_content) und nicht zum Löschen.',
     inputSchema: updateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -197,6 +201,15 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const baseline = await readWriteBaseline(node, nodeId);
         if (!baseline.ok) return errorText(baseline.reason);
         const { target, before } = baseline;
+        // A file belongs to a single record. The metadata of a collection is open
+        // to this tool; "replaces the record's content" over a collection is not
+        // something the preview could truthfully say (review of D2).
+        if (carriesFile) {
+          const wrong = wrongKind(baseline.written, 'content');
+          if (wrong) return wrongKindReply(target.targetId, wrong);
+        }
+        // A collection keeps title and description in cm:* — `collection-fields.ts`.
+        const desired = desiredOn(baseline.written, collected.desired);
 
         const commit = params['commit'] === true;
         const versionComment = typeof params['versionComment'] === 'string' ? params['versionComment'] : undefined;
@@ -224,7 +237,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // beside a change that has no such field (a file alone, a value the
         // record already holds) therefore creates no version, and the preview
         // promised one (audit 2026-11-12, K-14). It is said instead of promised.
-        const versions = commit && buildChangeSet(target.targetId, 'content', before, collected.desired)
+        const versions = commit && buildChangeSet(target.targetId, 'content', before, desired)
           .changes.some(c => c.route === 'mds');
         const extras = [
           file
@@ -243,7 +256,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // The token binds to the change set, so the target is fixed before it is
         // built: deciding later would move the write to a record the preview
         // never named.
-        const cs = buildChangeSet(target.targetId, 'content', before, collected.desired, {
+        const cs = buildChangeSet(target.targetId, 'content', before, desired, {
           ...(extras.length ? { action: extras.join(' ') } : {}),
           ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
         });
@@ -421,12 +434,12 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         let report;
         try {
           const verified = await verifyWrite(stored);
-          report = markWritten(reportOutcome(stored, result.statuses, verified));
+          report = markWritten(reportOutcome(stored, result.statuses, verified), result.nodeId);
         } catch (err) {
           // `markWritten` here too: the read-back failed, the create did not. Without
           // it the spent-key advice was "preview again" over a record this very
           // answer names (review of phase 3).
-          report = markWritten(unverifiedReply(err));
+          report = markWritten(unverifiedReply(err), result.nodeId);
         }
         if (result.incomplete) {
           // The record exists and a step after the create got no answer. An
@@ -467,7 +480,8 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
     name: 'wlo_submit_content',
     title: 'WLO Inhalt zur Prüfung einreichen',
     description:
-      'Reiche einen vorhandenen Datensatz zur redaktionellen Prüfung ein (WLO-Upload-Workflow). Das ist ein ' +
+      'Reiche einen vorhandenen Datensatz zur redaktionellen Prüfung ein (WLO-Upload-Workflow) — nur einzelne ' +
+      'Datensätze, keine Sammlungen oder Ordner. Das ist ein ' +
       'eigener Schritt: Anlegen und Bearbeiten reichen NICHTS automatisch ein, damit kein Entwurf ' +
       'versehentlich in der Redaktions-Warteschlange landet. ZWEISTUFIG: ohne confirmToken nur Vorschau. ' +
       'Erfordert eine Anmeldung.',
@@ -482,6 +496,10 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
 
         const node = await getNodeMetadata(nodeId);
         if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        // The editorial queue reviews single records. The metadata tools stay
+        // open for collections; this one does not (user decision 2026-11-13).
+        const wrong = wrongKind(node, 'content');
+        if (wrong) return wrongKindReply(nodeId, wrong);
 
         // Already in the queue: the read-back after a second submission would
         // find the status the FIRST one left, and report this call as the one

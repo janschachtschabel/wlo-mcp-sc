@@ -288,6 +288,8 @@ test('K-6: a read-back without an answer is still a record that EXISTS — never
   const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
   assert.match(toolText(r), new RegExp(`Angelegt: ${NODE}`), toolText(r));
   assert.equal(error?.['recordExists'], true, toolText(r));
+  // D3 (chatbot feedback 2026-11-13): wherever recordExists is true, the id is in the error itself.
+  assert.equal(error?.['nodeId'], NODE);
   assert.equal(error?.['requiresNewPreview'], false);
   assert.doesNotMatch(toolText(r), /neue Vorschau bestätigen/);
 });
@@ -380,6 +382,7 @@ function serveUpdate(opts: { stored?: boolean; uploadOk?: boolean } = {}) {
     if (method === 'GET') {
       return { json: { node: {
         ref: { id: NODE, repo: '-home-' },
+        type: 'ccm:io',
         properties: props,
         size: stored ? 42 : null,
         downloadUrl: stored ? 'https://repo.example/dl' : null,

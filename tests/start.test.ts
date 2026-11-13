@@ -46,7 +46,7 @@ const netguard = new URL('./netguard.mjs', import.meta.url).href;
  * machine (loopback stays allowed). It is killed when the test ends, however
  * the test ends.
  */
-function start(t: TestContext, entry: string, env: Record<string, string>): { child: ChildProcess; stderr: () => string; stdout: () => string } {
+function start(t: TestContext, entry: string, env: Record<string, string>): { child: ChildProcess; stderr: () => string; stdout: () => string; logged: () => string } {
   const child = spawn(process.execPath, ['--import', 'tsx', '--import', netguard, entry],
     { cwd: root, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
   child.on('error', () => { /* reported through `exited` */ });
@@ -54,7 +54,8 @@ function start(t: TestContext, entry: string, env: Record<string, string>): { ch
   let err = ''; let out = '';
   child.stderr!.on('data', (d: Buffer) => { err += d.toString(); });
   child.stdout!.on('data', (d: Buffer) => { out += d.toString(); });
-  return { child, stderr: () => err, stdout: () => out };
+  // Where the LOG goes: stdout over HTTP, stderr under stdio — there stdout is the protocol (D8).
+  return { child, stderr: () => err, stdout: () => out, logged: () => (entry.endsWith('http.ts') ? out : err) };
 }
 
 const freePort = () => new Promise<number>((resolve, reject) => {
@@ -87,14 +88,21 @@ const exited = (child: ChildProcess) => new Promise<number | null>(resolve => {
 
 test('the HTTP entry point starts, answers /health and lists its tools', { timeout: 60_000 }, async (t) => {
   const port = await freePort();
-  const { child, stderr } = start(t, 'src/http.ts', { PORT: String(port), RATE_LIMIT_RPM: '0' });
+  const internalPort = await freePort();
+  const { child, stderr, logged } = start(t, 'src/http.ts', { PORT: String(port), INTERNAL_PORT: String(internalPort), RATE_LIMIT_RPM: '0' });
   {
     const base = `http://127.0.0.1:${port}`;
     const health = await until(async () => {
-      if (child.exitCode !== null) assert.fail(`the server exited with ${child.exitCode}:\n${stderr()}`);
+      if (child.exitCode !== null) assert.fail(`the server exited with ${child.exitCode}:\n${logged()}${stderr()}`);
       try { const r = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5_000) }); return r.ok ? r : null; } catch { return null; }
-    }, 40_000, 'GET /health answers 200', stderr);
+    }, 40_000, 'GET /health answers 200', () => logged() + stderr());
     assert.equal(((await health.json()) as { status?: string }).status, 'ok');
+
+    // The second listener (D10): the operator's paths, and no MCP.
+    const internal = `http://127.0.0.1:${internalPort}`;
+    assert.equal((await fetch(`${internal}/health`, { signal: AbortSignal.timeout(5_000) })).status, 200);
+    assert.equal((await fetch(`${internal}/metrics`, { signal: AbortSignal.timeout(5_000) })).status, 200);
+    assert.equal((await fetch(`${internal}/mcp`, { method: 'POST', signal: AbortSignal.timeout(5_000) })).status, 404);
 
     const listed = await fetch(`${base}/mcp`, {
       method: 'POST',
@@ -108,8 +116,17 @@ test('the HTTP entry point starts, answers /health and lists its tools', { timeo
     assert.match(body, /"search_wlo_all"/);
     assert.match(body, /"wlo_update_content"/, 'the curation tools are listed for everyone');
 
-    assert.match(stderr(), /WLO MCP Server listening/);
-    assert.doesNotMatch(stderr(), /"level":"error"/, `no error at startup:\n${stderr()}`);
+    assert.match(logged(), /WLO MCP Server listening/);
+    assert.doesNotMatch(logged(), /"level":"error"/, `no error at startup:\n${logged()}`);
+    // Over HTTP the log is on STDOUT, every line of it — also what modules wrote while they loaded.
+    assert.doesNotMatch(stderr(), /"service":"wlo-mcp"/, `a log line on stderr:\n${stderr()}`);
+    // Complete lines only: background work still logs, and a chunk can end mid-line.
+    for (const line of logged().split('\n').slice(0, -1).filter(l => l.trim())) {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      assert.equal(entry['service'], 'wlo-mcp');
+      assert.equal(typeof entry['timestamp'], 'string');
+      assert.equal(typeof entry['message'], 'string');
+    }
   }
 });
 
@@ -145,21 +162,22 @@ test('the stdio entry point answers initialize and tools/list on stdout — and 
 
 for (const entry of ['src/http.ts', 'src/stdio.ts']) {
   test(`a repository address that cannot work stops ${entry} at startup, naming the variable`, { timeout: 60_000 }, async (t) => {
-    const { child, stderr } = start(t, entry, { PORT: '1', WLO_REPOSITORY_URL: 'htps://repository.example.org/edu-sharing' });
+    const { child, logged } = start(t, entry, { PORT: '1', WLO_REPOSITORY_URL: 'htps://repository.example.org/edu-sharing' });
     const code = await within(exited(child), 40_000);
-    assert.equal(code, 1, `a typo in the address must not start a server that fails every request:\n${stderr()}`);
-    assert.match(stderr(), /WLO_REPOSITORY_URL cannot be used/);
-    assert.doesNotMatch(stderr(), /listening/);
+    assert.equal(code, 1, `a typo in the address must not start a server that fails every request:\n${logged()}`);
+    assert.match(logged(), /WLO_REPOSITORY_URL cannot be used/);
+    assert.doesNotMatch(logged(), /listening/);
   });
 }
 
 test('an address with a password in it is refused — and the password is in NO log line of the start', { timeout: 60_000 }, async (t) => {
   // Not a WLO host, so the "root collection" warning fires too: it used to print the address in full.
-  const { child, stderr } = start(t, 'src/http.ts', { PORT: '1', WLO_REPOSITORY_URL: 'https://admin:hunter2secret@repo.example.org/edu-sharing' });
-  assert.equal(await within(exited(child), 40_000), 1, stderr());
-  assert.match(stderr(), /WLO_REPOSITORY_URL cannot be used/);
-  assert.doesNotMatch(stderr(), /hunter2secret/);
-  assert.doesNotMatch(stderr(), /admin:/);
+  const { child, stderr, logged } = start(t, 'src/http.ts', { PORT: '1', WLO_REPOSITORY_URL: 'https://admin:hunter2secret@repo.example.org/edu-sharing' });
+  assert.equal(await within(exited(child), 40_000), 1, logged());
+  assert.match(logged(), /WLO_REPOSITORY_URL cannot be used/);
+  // Neither stream: the log moved to stdout, and whatever is left on stderr must not carry it either.
+  assert.doesNotMatch(logged() + stderr(), /hunter2secret/);
+  assert.doesNotMatch(logged() + stderr(), /admin:/);
 });
 
 test('repositoryUrlProblem: what is refused, and what is not', () => {

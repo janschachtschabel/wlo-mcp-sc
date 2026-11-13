@@ -86,12 +86,14 @@ export function reportOutcome(
  * The call wrote something before this answer — a created record — so its
  * error, whatever the field report says, is not "nothing written". Without it a
  * create whose fields were all dropped read `outcomeOpen: false`, and a client
- * starting over would create a second record (finding 4).
+ * starting over would create a second record (finding 4). The id travels IN the
+ * error: wherever `recordExists` is true a program finds the record there, not
+ * only in the sentence (chatbot feedback 2026-11-13, D3).
  */
-export function markWritten(result: WloToolResult): WloToolResult {
+export function markWritten(result: WloToolResult, nodeId: string): WloToolResult {
   const sc = result.structuredContent as { error?: Record<string, unknown> } | undefined;
   if (!sc?.error) return result;
-  return { ...result, structuredContent: { ...sc, error: { ...sc.error, outcomeOpen: true, recordExists: true } } };
+  return { ...result, structuredContent: { ...sc, error: { ...sc.error, outcomeOpen: true, recordExists: true, nodeId } } };
 }
 
 /**

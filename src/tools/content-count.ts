@@ -31,7 +31,7 @@ export const countMatchesSchema = z.object({
   })),
   missing: z.array(z.object({
     part: z.string(),
-    code: z.enum(['unresolved_filter', 'timeout', 'forbidden', 'upstream_busy', 'upstream_error']),
+    code: z.enum(['unresolved_filter', 'timeout', 'forbidden', 'not_found', 'upstream_busy', 'upstream_error']),
     message: z.string().optional(),
   })),
 });

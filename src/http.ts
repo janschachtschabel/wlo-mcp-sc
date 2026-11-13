@@ -8,15 +8,17 @@
  * http-app.ts (where the testable dispatch wiring lives), and listens.
  */
 
+import './logger-stdout.js';
 import { issuerDependsOnHostHeader } from './auth/oauth-metadata.js';
 import http from 'node:http';
 import { WLO_REPOSITORY_URL, resolvePositiveInt, resolveNonNegativeInt } from './wlo-api.js';
 import { log } from './logger.js';
 import { addressForLog } from './wlo-config.js';
-import { exitOnUnusableRepositoryUrl } from './startup-check.js';
+import { exitOnUnusableRepositoryUrl, warnOnUnknownLogLevel } from './startup-check.js';
 import { createDistinctValueLimiter, createRateLimiter } from './rate-limit.js';
 import { streamableHttpOptions } from './mcp-transport.js';
 import { createHttpRequestHandler } from './http-app.js';
+import { createInternalHandler } from './rest/internal-port.js';
 import { metricsTokenFrom, metricsTokenRejected } from './rest/metrics-route.js';
 import { createClientBudgets, parseTrustedClientKeys, PROTOCOL_FACTOR } from './client-budget.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
@@ -28,6 +30,8 @@ import { startReadinessProbe } from './services/upstream-readiness.js';
 import { setAccessSupport } from './auth/credential.js';
 
 const PORT = resolvePositiveInt(process.env['PORT'], 3000, 'PORT');
+// Optional second listener for /health, /ready and /metrics only (`rest/internal-port.ts`). 0 = none.
+const INTERNAL_PORT = resolveNonNegativeInt(process.env['INTERNAL_PORT'], 0, 'INTERNAL_PORT');
 
 // Max buffered request-body size (bytes). MCP JSON-RPC requests are small;
 // this caps a memory-exhaustion DoS vector on the self-hosted HTTP path.
@@ -146,6 +150,7 @@ if (trustedClients.rejected.length) {
   });
 }
 
+warnOnUnknownLogLevel();
 exitOnUnusableRepositoryUrl();
 
 const metricsToken = metricsTokenFrom(process.env['METRICS_TOKEN']);
@@ -205,6 +210,25 @@ if (process.env['WLO_AUTH_PRIVATE_KEY']?.trim()
   && issuerDependsOnHostHeader({ configured: process.env['WLO_PUBLIC_BASE_URL'], trustProxy: TRUST_PROXY })) {
   log.warn('WLO_PUBLIC_BASE_URL is not set: the OAuth address is taken from the Host header of each request. '
     + 'That is only right behind a proxy that sets the header itself — set WLO_PUBLIC_BASE_URL to pin it.');
+}
+
+if (INTERNAL_PORT && INTERNAL_PORT !== PORT) {
+  const internal = http.createServer(createInternalHandler(metricsToken ? { metricsToken } : {}));
+  internal.requestTimeout = 30_000;
+  internal.headersTimeout = 15_000;
+  // Never what keeps the process alive — and it keeps answering /health while
+  // the public listener drains at shutdown, which is what a liveness probe wants.
+  internal.unref();
+  // Like any other unusable setting: stop. A process that serves the public
+  // port while every probe and the scraper get "connection refused" looks
+  // deployed and is not.
+  internal.on('error', (err) => {
+    log.error('INTERNAL_PORT could not be opened — not starting', { port: INTERNAL_PORT, error: err.message });
+    process.exit(1);
+  });
+  internal.listen(INTERNAL_PORT, () => log.info('internal port listening', { port: INTERNAL_PORT, paths: ['/health', '/ready', '/metrics'] }));
+} else if (INTERNAL_PORT) {
+  log.warn('INTERNAL_PORT equals PORT — no second listener is opened; the three paths are on the public port anyway');
 }
 
 httpServer.listen(PORT, () => {

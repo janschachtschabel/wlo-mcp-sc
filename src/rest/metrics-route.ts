@@ -10,6 +10,7 @@
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 
 import { renderMetrics } from '../metrics.js';
 import { upstreamGateStats } from '../upstream-gate.js';
@@ -38,9 +39,31 @@ function sameToken(given: string, expected: string): boolean {
   return timingSafeEqual(digest(given), digest(expected));
 }
 
+/**
+ * The event loop's delay, sampled only once somebody scrapes: the monitor is a
+ * timer of its own, and a server whose metrics are off should not run it.
+ * Mean since the previous scrape, then reset. Unref'd by Node itself.
+ */
+const LAG_RESOLUTION_MS = 20;
+let loopDelay: IntervalHistogram | null = null;
+
+/** Once, at load: recomputed per scrape it can flip by a second, and a start time that changes reads as a restart. */
+const STARTED_AT_S = Math.round(Date.now() / 1000 - process.uptime());
+function lagSeconds(): number {
+  if (!loopDelay) { loopDelay = monitorEventLoopDelay({ resolution: LAG_RESOLUTION_MS }); loopDelay.enable(); return 0; }
+  const mean = loopDelay.mean;
+  loopDelay.reset();
+  // Nanoseconds; NaN before the first sample. The monitor reports the time
+  // between its own ticks, so an idle loop reads as the resolution — taken off,
+  // or a server doing nothing shows 20–30 ms of "lag" (measured).
+  return Number.isFinite(mean) ? Math.max(0, mean - LAG_RESOLUTION_MS * 1e6) / 1e9 : 0;
+}
+
 /** Values that are a state, not a count — read at the moment of the scrape. */
 function gauges(): string {
   const gate = upstreamGateStats();
+  const memory = process.memoryUsage();
+  const cpu = process.cpuUsage();
   return [
     '# HELP wlo_build_info The running version.',
     '# TYPE wlo_build_info gauge',
@@ -50,7 +73,30 @@ function gauges(): string {
     `process_uptime_seconds ${Math.round(process.uptime())}`,
     '# HELP process_resident_memory_bytes Resident set size.',
     '# TYPE process_resident_memory_bytes gauge',
-    `process_resident_memory_bytes ${process.memoryUsage().rss}`,
+    `process_resident_memory_bytes ${memory.rss}`,
+    // The usual process metrics, under the names the Node Prometheus client uses,
+    // so a stock dashboard and the guide's alarm rules find them (D9).
+    '# HELP process_start_time_seconds Start time of the process since the unix epoch.',
+    '# TYPE process_start_time_seconds gauge',
+    `process_start_time_seconds ${STARTED_AT_S}`,
+    '# HELP process_cpu_user_seconds_total User CPU time spent.',
+    '# TYPE process_cpu_user_seconds_total counter',
+    `process_cpu_user_seconds_total ${cpu.user / 1e6}`,
+    '# HELP process_cpu_system_seconds_total System CPU time spent.',
+    '# TYPE process_cpu_system_seconds_total counter',
+    `process_cpu_system_seconds_total ${cpu.system / 1e6}`,
+    '# HELP nodejs_heap_size_total_bytes Heap size reserved by V8.',
+    '# TYPE nodejs_heap_size_total_bytes gauge',
+    `nodejs_heap_size_total_bytes ${memory.heapTotal}`,
+    '# HELP nodejs_heap_size_used_bytes Heap size in use.',
+    '# TYPE nodejs_heap_size_used_bytes gauge',
+    `nodejs_heap_size_used_bytes ${memory.heapUsed}`,
+    '# HELP nodejs_external_memory_bytes Memory of objects bound to JavaScript objects (buffers: an upload in hand counts here).',
+    '# TYPE nodejs_external_memory_bytes gauge',
+    `nodejs_external_memory_bytes ${memory.external}`,
+    '# HELP nodejs_eventloop_lag_seconds Mean event loop delay since the previous scrape.',
+    '# TYPE nodejs_eventloop_lag_seconds gauge',
+    `nodejs_eventloop_lag_seconds ${lagSeconds()}`,
     '# HELP wlo_upstream_in_flight Repository calls open right now.',
     '# TYPE wlo_upstream_in_flight gauge',
     `wlo_upstream_in_flight ${gate.inFlight}`,
@@ -72,6 +118,11 @@ export function handleMetrics(req: IncomingMessage, res: ServerResponse, token: 
     res.end(JSON.stringify({ error: 'Unauthorized' }));
     return;
   }
+  writeMetrics(res);
+}
+
+/** The metrics text itself — for a caller that has settled who may read it. */
+export function writeMetrics(res: ServerResponse): void {
   res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(gauges() + renderMetrics());
 }

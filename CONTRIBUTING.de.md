@@ -58,8 +58,8 @@ nicht von einem Verbindungsfehler).
 - Externe Eingaben an Vertrauensgrenzen validieren (zod-Schemata der Tools).
 - IDs vor der Interpolation in URLs kodieren (`encodeURIComponent`).
 - Alle Upstream-Requests über `wloFetch` (erzwingt Timeout).
-- Logging nur über `src/logger.ts` (JSON nach **stderr** — stdout gehört im
-  stdio-Modus dem MCP-Protokoll).
+- Logging nur über `src/logger.ts` (JSON-Zeilen; unter stdio nach stderr, weil
+  stdout dort dem MCP-Protokoll gehört — über HTTP nach stdout).
 
 ## Commits
 

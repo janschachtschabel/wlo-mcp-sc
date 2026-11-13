@@ -308,11 +308,15 @@ export function formatNodes(nodes: WloNode[]): FormattedNode[] {
  * Render a structured JSON envelope. Use when the caller wants to parse fields
  * directly instead of regex-matching the markdown output.
  */
-export function renderToJson(nodes: FormattedNode[], totalHits?: number): string {
+export function renderToJson(nodes: FormattedNode[], totalHits?: number, flags: { incomplete?: boolean } = {}): string {
   return JSON.stringify({
     total: totalHits ?? nodes.length,
     count: nodes.length,
     results: nodes,
+    // In the TEXT too: a client that parses block 0 and never looks at
+    // `structuredContent` otherwise reads a list a source left short as the
+    // whole list (chatbot feedback 2026-11-13, D7). Absent when complete.
+    ...(flags.incomplete ? { incomplete: true } : {}),
   });
 }
 

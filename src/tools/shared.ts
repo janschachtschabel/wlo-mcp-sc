@@ -422,7 +422,7 @@ export function codedErrorResult(code: string, text: string, extra: Record<strin
  * WITHOUT any server-side trace — so upstream failures were invisible in the
  * logs. This centralizes both: structured error log + the client-facing
  * `<context>: <detail>` message (behaviour-preserving for callers), plus
- * `structuredContent.error` with `failureCode`'s code (`timeout`/`forbidden`/`upstream_busy`/`upstream_error`;
+ * `structuredContent.error` with `failureCode`'s code (`timeout`/`forbidden`/`not_found`/`upstream_busy`/`upstream_error`;
  * a busy repository adds `retryAfter`).
  */
 export function toolError(

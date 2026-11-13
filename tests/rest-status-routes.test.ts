@@ -124,7 +124,7 @@ test('GET /auth/status is bounded by the login guard — refused and logged like
     assert.equal(refused?.status, 429);
     const body = await refused!.json() as Record<string, unknown>;
     assert.equal(body['code'], 'too_many_logins');
-    assert.ok(logs.some(l => l['msg'] === 'too many distinct credentials'), 'the refusal reaches the operator');
+    assert.ok(logs.some(l => l['message'] === 'too many distinct credentials'), 'the refusal reaches the operator');
   } finally { await close(); mock.restore(); }
 });
 

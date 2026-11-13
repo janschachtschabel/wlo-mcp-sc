@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
+import { propertyOn } from '../services/write/collection-fields.js';
 import { verifyWrite } from '../services/write/verify.js';
 import { validateField } from '../services/write/fields.js';
 import { suggestionsFor, setSuggestionStatus, valuesAfterAccept, STATUS_LABEL } from '../services/write/suggestions.js';
@@ -95,7 +96,7 @@ async function handleDecide(params: Record<string, unknown>) {
   }
   const before = node.properties ?? {};
   const label = fieldLabel(found.propertyId);
-  const title = recordTitle(before);
+  const title = recordTitle(before, node);
   // Everything about a stored proposal is foreign text, its id included. The
   // raw `found.id` still goes upstream; only what a person reads is flattened.
   const id = sanitizeText(found.id);
@@ -159,11 +160,14 @@ async function handleDecide(params: Record<string, unknown>) {
   // is the requested node's, which is the right one for the decline path — here
   // the id is the target's, so the title has to come from the target too, or a
   // person confirms a sentence naming a title that record does not carry.
-  const targetTitle = recordTitle(writeBefore);
+  const targetTitle = recordTitle(writeBefore, baseline.written);
   // One proposal is one value. For a field that holds several it is ADDED to
   // what the record has — written as the whole field it replaced the rest (K-8).
-  const current = writeBefore[found.propertyId] ?? [];
-  const after = valuesAfterAccept(found.propertyId, current, checked.values);
+  // Written where THIS node keeps the value: a proposal filed for `cclom:title`
+  // on a collection belongs in `cm:title` (`collection-fields.ts`).
+  const property = propertyOn(baseline.written, found.propertyId);
+  const current = writeBefore[property] ?? [];
+  const after = valuesAfterAccept(property, current, checked.values);
   // Three sentences for three things that happen. "Hinzugefügt" over a value the
   // record already holds was a claim about a write that does not take place.
   const alreadyThere = after.length === current.length && after.every((v, i) => v === current[i]);
@@ -171,7 +175,7 @@ async function handleDecide(params: Record<string, unknown>) {
   const what = alreadyThere ? 'steht bereits im Datensatz — nur der Vorschlag wird als angenommen vermerkt'
     : `wird in „${targetTitle}“ (${target.targetId}) ${added ? 'zu den vorhandenen Werten hinzugefügt' : 'geschrieben'} `
       + 'und der Vorschlag anschließend als angenommen vermerkt';
-  const cs = buildChangeSet(target.targetId, 'content', writeBefore, { [found.propertyId]: after }, {
+  const cs = buildChangeSet(target.targetId, 'content', writeBefore, { [property]: after }, {
     action: `Nimmt den Vorschlag ${id} für „${label}“ an: der Wert ${what}.`,
     ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
   });

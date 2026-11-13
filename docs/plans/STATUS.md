@@ -4898,3 +4898,43 @@ Metadaten-Werkzeugen), der Diensteleitfaden von Team 6 (zweiter Port,
 Log-Feldnamen/stdout, `LOG_LEVEL`, getrennte Readiness, Helm, OpenAPI,
 Dienst-ID), W1/W4 (warten auf den Staging-Fix), W2/W3 (hängen an Fragen ans
 Repository-Team), W7.
+
+**Rückmeldung des Chatbot-Teams vom 2026-11-13, zweite Fassung — D1–D7 umgesetzt (nach 1.1.0, unveröffentlicht).**
+D1: `wlo_submit_content` lehnt Sammlungen/Ordner ab (`is_a_collection`/`is_a_folder`). D2: Titel/Beschreibung einer
+Sammlung gehen in `cm:title`/`cm:description` (`services/write/collection-fields.ts`, vier Werkzeuge, Wächter in
+`shared-rule-discipline`). **Gemessen auf Staging 2026-11-13** (`tests/live/collection-metadata.test.ts`):
+`cclom:title` an einer Sammlung wird als ZWEITES Feld gespeichert; `collection.title` bleibt, der DTO-`title` des
+Knotens folgt ab dann dem neuen Feld und wird von einer späteren Umbenennung nicht mehr erreicht; `cm:title` /
+`cm:description` über die Metadaten-Route landen dort, wo die Sammlung liest. D3: `error.nodeId` bei jedem
+`recordExists`. D4: `scope` an `too_many_batches`. D5: `incompleteReason` bei `search_skill`. D6: 401/403/404 einer
+Unterliste ist kein Ausfall (`didNotAnswer`, `isRefusal`); Schreibpfade lesen eine Ablehnung weiter als „nicht
+herausgefunden". D7: `incomplete` im JSON-Text. Tests: `collection-metadata-routing` (10),
+`refused-is-not-unreachable` (18), zwei erweiterte; 22 Gegenproben rot.
+**Nebenbefund Live-Lauf:** `tests/live/fulltext.test.ts` „a full text written to textContent reads back" ist auf
+Staging GRÜN (der 500 auf `POST textContent` ist für Datensätze ohne Datei weg); der Test MIT Datei bleibt rot —
+W1/W4 also weiter offen, aber nicht mehr vollständig blockiert. Nicht weiter untersucht.
+**Review D1–D7 (unabhängig, 7 Befunde, alle behoben):** der Skill-Durchlauf zählte einen abgelehnten
+INHALTS-Abruf weiter als Ausfall (MAJOR); ein abgelehnter Startknoten trug den Code eines Ausfalls — `failureCode`
+kennt jetzt `not_found` für 404; Fachportal-Wurzel und `search_skill`-Wurzel sagen „nicht gefunden oder … nicht
+lesbar"; eine Sammlung wird in jedem bestätigten Satz mit IHREM Titel benannt (`titleOn`), nicht mit einem
+verirrten `cclom:title`; `wlo_update_content` lehnt eine Datei an einer Sammlung ab; Wächter zählt Zuordnungen je
+Baseline. 11 Gegenproben rot.
+
+**D8–D10 umgesetzt (2026-11-13).** D8: Log-Felder `timestamp`/`level`/`service`/`message` (vorher
+`ts`/`name`/`msg`), über HTTP nach stdout (`logger-stdout.ts` als ERSTER Import von `http.ts`), unter stdio weiter
+stderr, `LOG_LEVEL`. D9: Dauern als Histogramme (`wlo_tool_duration_seconds`, neu `wlo_upstream_duration_seconds`,
+`wlo_http_request_duration_seconds`; ein Bucket-Raster 0,05–60 s), Prozessmetriken unter den üblichen Namen,
+Event-Loop-Verzögerung. D10: `INTERNAL_PORT` — zweiter Listener nur für `/health`, `/ready`, `/metrics`
+(`rest/internal-port.ts`, `rest/health.ts`), Zusatz zum öffentlichen Port. 3100 Tests, 3099 grün, 1 übersprungen;
+Lint, Typprüfung, Build sauber.
+**Nicht gebaut, weil es eine Entscheidung braucht:** die Zeile „Logs tragen IP, Benutzername und Suchbegriff" aus
+der Leitfaden-Tabelle — was davon aus dem Log soll, ist eine Abwägung zwischen Datenschutz und Missbrauchsdiagnose.
+**Offen:** D11 (Ressourcen messen, Zustand beschreiben), D12 (OpenAPI der Nebenpfade, Antwortzeiten je Werkzeug),
+D13 (Entwurf Helm-Chart, Steckbrief).
+
+**Review D8–D10 (unabhängig, 9 Befunde, alle behoben, 2026-11-13):** `not_found` fehlte in den veröffentlichten
+`missing[].code`-Enums von `get_collection_overview` und `count_wlo_content_matches` (MAJOR — ein 404 an einem
+Teil hätte die ganze Antwort an der Schemaprüfung scheitern lassen); Event-Loop-Verzögerung um die Auflösung des
+Monitors bereinigt; ein nicht zu öffnender `INTERNAL_PORT` beendet den Start; Readiness gehört an den öffentlichen
+Port (Doku); interner Handler fängt Fehler; Startzeit einmal berechnet; Rest Text und Tests. 3101 Tests, 3100 grün,
+1 übersprungen; Image-Starttest bestanden (vor den Review-Korrekturen gelaufen).

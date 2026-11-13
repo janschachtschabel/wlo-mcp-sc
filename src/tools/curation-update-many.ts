@@ -68,8 +68,8 @@ export function registerCurationUpdateManyTool(server: McpServer, challenge: Wri
     name: 'wlo_update_contents',
     title: 'WLO Metadaten für viele Datensätze',
     description: `Ändere die Metadaten vieler vorhandener Datensätze — bis zu ${UPDATE_MANY_MAX} — mit EINER Bestätigung. Je Eintrag nodeId und Felder wie bei wlo_update_content.
-Der Server entscheidet je Feld: ${directLabels} werden direkt GESCHRIEBEN und zurückgelesen; alles, was redaktionell bestätigt werden muss (Lizenz, Urheber, Herausgeber, Quell-URL, Sprache, Zielgruppe, Qualität), wird als VORSCHLAG hinterlegt (reason = Begründung). Verknüpfung → Original.
-Ohne Schlüssel: Vorschau je Datensatz (was geschrieben, was vorgeschlagen wird), unchanged, refused. Mit confirmToken: liest jeden Datensatz erneut (kostet bei vielen Einträgen Zeit), schreibt dann ~40 s je Aufruf; complete: false → continuationToken (oder derselbe Aufruf) setzt ohne neue Bestätigung fort. Antwort: items [{nodeId, targetId?, status, code?, outcomeOpen?, written, suggested}], status stored|suggested|partly|not_stored|unverified|failed.
+Der Server entscheidet je Feld: ${directLabels} werden direkt GESCHRIEBEN und zurückgelesen; alles, was redaktionell bestätigt werden muss (Lizenz, Urheber, Herausgeber, Quell-URL, Sprache, Zielgruppe, Qualität), wird als VORSCHLAG hinterlegt (reason = Begründung). Verknüpfung → Original; auch Sammlungen.
+Ohne Schlüssel: Vorschau je Datensatz (was geschrieben, was vorgeschlagen wird), unchanged, refused. Mit confirmToken: liest jeden Datensatz erneut (kostet bei vielen Zeit), schreibt dann ~40 s je Aufruf; complete: false → continuationToken (oder derselbe Aufruf) setzt ohne neue Bestätigung fort. Antwort: items [{nodeId, targetId?, status, code?, outcomeOpen?, written, suggested}], status stored|suggested|partly|not_stored|unverified|failed.
 Für einen einzelnen Datensatz oder Dateiinhalt: wlo_update_content.`,
     inputSchema: {
       items: z.array(itemSchema).min(1).max(UPDATE_MANY_MAX),

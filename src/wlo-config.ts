@@ -88,9 +88,8 @@ export const WLO_REPOSITORY_URL: string = (() => {
   const cleaned = sanitizeRepositoryUrl(raw);
   const resolved = cleaned || _DEFAULT_REPOSITORY_URL;
 
-  // Soft validation — warn but don't crash. We log to stderr so stdio
-  // transport users still see the warning even if stdout is reserved
-  // for MCP framing.
+  // Soft validation — warn but don't crash. Through the logger, which keeps
+  // stdout free under stdio (it is the MCP framing there).
   const suspicious: string[] = [];
   if (/\/components($|\/)/i.test(resolved)) {
     suspicious.push('URL ends in "/components" — looks like a deep page link, not the repository root');

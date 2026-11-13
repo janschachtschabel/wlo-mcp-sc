@@ -1007,6 +1007,19 @@ The current rebuild/extension is designed in:
   (`-userhome-` …) wird in `registerCurationTool` für jedes id-Argument jedes
   Kuratier-Werkzeugs abgelehnt, nicht je Werkzeug.
 
+  **Die Metadaten-Werkzeuge bleiben für Sammlungen offen (Nutzerentscheidung
+  2026-11-13) — und schreiben Titel und Beschreibung dorthin, wo eine Sammlung
+  sie hält.** `services/write/collection-fields.ts` (`propertyOn`/`desiredOn`)
+  bildet `cclom:title` → `cm:title` und `cclom:general_description` →
+  `cm:description` ab, wenn der GESCHRIEBENE Knoten eine Sammlung ist; wer eine
+  Schreib-Baseline für Metadaten holt, geht dort durch (Wächter in
+  `tests/shared-rule-discipline.test.ts`). Gemessen auf Staging 2026-11-13
+  (`tests/live/collection-metadata.test.ts`): `cclom:title` an einer Sammlung
+  wird als ZWEITES Feld gespeichert — `collection.title` bleibt, das Zurücklesen
+  meldet „gespeichert", und der DTO-`title` des Knotens folgt ab dann dem neuen
+  Feld, außer Reichweite jeder späteren Umbenennung. Nur das Einreichen
+  (`wlo_submit_content`) lehnt Sammlungen und Ordner ab.
+
   **P1 ist gebaut (2026-08-17), und drei Regeln binden jede Änderung daran.**
   (a) Die Auflösung entscheidet sich am **DTO-Feld `originalId`**
   (`resolveWriteTarget`, `services/write/nodes.ts`), niemals an der Property
@@ -1696,6 +1709,19 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   catalogue), and only ids that really answered count as checked — the forced
   pass as a whole used to be taken for an answer, so a failed lookup read as
   "checked, none there".
+- **Refused is not unreachable (chatbot feedback 2026-11-13, D6).** A child
+  listing answered 401/403/404 carries `refused` beside `reachable: false`.
+  Whoever REPORTS an outage (`incomplete`, `childrenUnread`,
+  `source_unreachable`, the skill walk's `unreachable`) asks `didNotAnswer`
+  (`wlo-node.ts`), never `!reachable` — "try again" over a listing a login may
+  not read never comes true. Deliberately opt-in: a caller that only checks
+  `reachable` keeps reading a refusal as "could not find out", which is what the
+  write paths need (`listChildCollections`, the variant check of
+  `wlo_set_topic_page`). A refused START node is an error that says so
+  (`notReadable`, which carries `HTTP <status>` so `failureCode` answers
+  `not_found` / `forbidden` — a 404 is `not_found` wherever a failure is coded,
+  never the `upstream_error` of an outage). The four notice wordings a client recognises are pinned in
+  `tests/refused-is-not-unreachable.test.ts` — change them only with notice.
 - `src/services/collection-search.ts` — "which collections match this word?",
   asked of BOTH repository backends and merged. The one place that knows there
   are two; see the plan entry above for the three rules that bind it.
@@ -1905,7 +1931,21 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   rules: a label value comes from OUR code (route class, tool name, status
   class), never from the caller — a path or a query as a label is unbounded
   memory and a record of who did what; and a metric is declared in `METRICS`.
-  `src/logger.ts`, `src/rate-limit.ts`, `src/read-body.ts` — support.
+  `src/logger.ts` — one JSON object per line, in the service guide's field
+  names (`timestamp`, `level`, `service`, `message`; D8, 2026-11-13). The
+  default stream is stderr and that is the safe one: under stdio, stdout is the
+  protocol. Only `http.ts` moves the log to stdout, through
+  `logger-stdout.ts` as its FIRST import — modules log while they load, and a
+  call further down would leave those lines on stderr (`tests/logger.test.ts`
+  pins the position, and that `stdio.ts` never imports it). `LOG_LEVEL` sets
+  the threshold. `src/rest/internal-port.ts` — `INTERNAL_PORT`: a second
+  listener for `/health`, `/ready`, `/metrics` ONLY, beside the public port
+  (D10). Its own handler, not a mode of `createHttpRequestHandler`: no CORS,
+  budget, credential scope or request counter belongs there. `unref`'d, so it
+  answers `/health` while the public listener drains and never holds the
+  process. Durations in `metrics.ts` are histograms on ONE bucket layout
+  (`DURATION_BUCKETS_S`, sized by what was measured here; D9).
+  `src/rate-limit.ts`, `src/read-body.ts` — support.
 - `docs/plans/` — design documents, including the
   [full-codebase review plan](docs/plans/2026-08-02-full-review-plan.md) (12
   packages, R1–R12) and its live progress table.

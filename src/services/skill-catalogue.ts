@@ -11,7 +11,10 @@
  */
 
 import type { WloNode } from '../wlo-api.js';
-import { DISPLAY_PROPS, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
+import { DISPLAY_PROPS, didNotAnswer, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
+import { isRefusal } from '../upstream-error.js';
+import { failureStatus } from './failure-code.js';
+import { notReadable } from './collection-traversal.js';
 import { nodeMatchesCriteria } from '../node-match.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
@@ -88,9 +91,17 @@ const SKILL_POOL = 10;
  * an arbitrary window that may hold no skills at all, and its fixed projection
  * carries no `ccm:oeh_extendedType` to filter on.
  */
+/**
+ * Why a walk is incomplete: `unreachable` — a part did not answer, asking again
+ * may complete it; `limit` — a bound of the walk (page size, depth, visit cap),
+ * asking again changes nothing. Both at once reports `unreachable`, the one a
+ * caller can act on (chatbot feedback 2026-11-13, D5).
+ */
+export type IncompleteReason = 'unreachable' | 'limit';
+
 export async function collectSkillNodes(
   rootId: string, includeSubcollections: boolean,
-): Promise<{ nodes: WloNode[]; incomplete: boolean }> {
+): Promise<{ nodes: WloNode[]; incomplete: boolean; reason?: IncompleteReason }> {
   const visited = new Set<string>([rootId]);
   const found: WloNode[] = [];
   let candidates = 0;
@@ -100,6 +111,7 @@ export async function collectSkillNodes(
   let failed = 0;    // collections whose read threw
   let read = 0;      // collections successfully read
   let cutShort = 0;  // collections holding more files than one page reads
+  let rootRefused: number | null = null;
 
   while (level.length && depth <= SKILL_DEPTH_MAX && found.length < SKILL_CATALOGUE_MAX) {
     // A collection's files and its sub-collections are two independent reads,
@@ -107,7 +119,16 @@ export async function collectSkillNodes(
     // to one collection, the sub-collection listing is not requested at all —
     // "the skills of THIS topic" is one call, and it should cost one.
     const results = await mapPool(level, SKILL_POOL, async (id) => Promise.all([
-      getCollectionContents(id, 'files', SKILL_PAGE_MAX, 0, SKILL_PROPS),
+      // Throws on every non-OK status. A REFUSAL (401/403/404) is an answer —
+      // this login reads nothing there — and is kept apart from the reads that
+      // failed: counted as an outage it promised "ask again" over a collection
+      // that stays closed (review of D5/D6).
+      getCollectionContents(id, 'files', SKILL_PAGE_MAX, 0, SKILL_PROPS).catch((err: unknown) => {
+        const status = failureStatus(err);
+        if (status === null || !isRefusal(status)) throw err;
+        if (id === rootId) rootRefused = status;
+        return null;
+      }),
       includeSubcollections
         ? getChildCollectionsResult(id, SKILL_PAGE_MAX, 0, ['sys:node-uuid'])
         : Promise.resolve({ nodes: [] as WloNode[], reachable: true }),
@@ -118,8 +139,10 @@ export async function collectSkillNodes(
       if (!result) { failed += 1; continue; }   // mapPool nulls a failed collection
       read += 1;
       const [listing, subListing] = result;
+      if (!listing) continue;   // refused: nothing to read here, and nothing to retry
       // Sub-collections that could not be LISTED are skillsets nobody looked into.
-      if (!subListing.reachable) failed += 1;
+      // A REFUSED listing is not one of them — it is no outage (D6).
+      if (didNotAnswer(subListing)) failed += 1;
       const subs = subListing.nodes;
       candidates += listing.nodes.length;
       // ONE page per collection. A collection holding more than that was read
@@ -148,6 +171,7 @@ export async function collectSkillNodes(
   // Nothing readable at all is a statement about the SERVER, and returning []
   // would turn it into a statement about the catalogue ("no skills here"). Same
   // reasoning as `getCollectionContents`, which throws rather than degrading.
+  if (rootRefused !== null) throw new Error(notReadable(rootId, rootRefused));
   if (read === 0 && failed > 0) {
     throw new Error(`Die Sammlung ${rootId} ist derzeit nicht abrufbar.`);
   }
@@ -172,5 +196,5 @@ export async function collectSkillNodes(
       rootId, candidates, expected: SKILL_CONTENT_TYPE_URI,
     });
   }
-  return { nodes: found, incomplete };
+  return { nodes: found, incomplete, ...(incomplete ? { reason: failed > 0 ? 'unreachable' as const : 'limit' as const } : {}) };
 }

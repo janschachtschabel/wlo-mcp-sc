@@ -14,7 +14,7 @@ import { isOutcomeOpen, isUpstreamTimeout } from './write/timeouts.js';
  * "busy, try again shortly", not "broken". A caller can say so and wait
  * `retryAfterOf(err)` seconds instead of reporting a failure.
  */
-export type FailureCode = 'timeout' | 'forbidden' | 'upstream_busy' | 'upstream_error';
+export type FailureCode = 'timeout' | 'forbidden' | 'not_found' | 'upstream_busy' | 'upstream_error';
 
 /**
  * The wait when the repository named none. An estimate, and documented as one:
@@ -31,6 +31,10 @@ const messageOf = (err: unknown) => (err instanceof Error ? err.message : String
  * repository body quoted after it can hold `Impl.java:503`, and the
  * `retry-after=429` suffix counts seconds (review 2026-11-07).
  */
+export function failureStatus(err: unknown): number | null {
+  return statusOf(messageOf(err));
+}
+
 function statusOf(message: string): number | null {
   const m = /(?:\bfailed: |\bHTTP )(\d{3})\b/.exec(message);
   return m ? Number(m[1]) : null;
@@ -40,6 +44,9 @@ export function failureCode(err: unknown): FailureCode {
   if (isUpstreamTimeout(err)) return 'timeout';
   const status = statusOf(messageOf(err));
   if (status === 429 || status === 503) return 'upstream_busy';
+  // A 404 is an ANSWER — the thing is not there — and no outage (review of D6, 2026-11-13):
+  // as `upstream_error` it read like a 5xx, and a client retried what never comes.
+  if (status === 404) return 'not_found';
   return status === 401 || status === 403 ? 'forbidden' : 'upstream_error';
 }
 

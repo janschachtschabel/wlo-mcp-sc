@@ -41,7 +41,7 @@ async function curationClient(): Promise<Client> {
 function serve(stored: Record<string, string[]> = STORED, onWrite?: (url: string) => MockResult) {
   return installFetchMock((url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: stored } } };
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: stored } } };
     }
     return onWrite ? onWrite(url) : { json: {} };
   });
@@ -84,7 +84,7 @@ test('the token from the preview performs the write', async () => {
   const written: Record<string, string[]> = { ...STORED };
   const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: written } } };
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: written } } };
     }
     Object.assign(written, JSON.parse(String(init?.body ?? '{}')));
     return { json: {} };
@@ -324,7 +324,7 @@ test('a timed-out edit says the outcome is open, not that nothing was saved', as
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: STORED } } };
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: STORED } } };
     }
     throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
   });
@@ -355,7 +355,7 @@ test('an edit the repository refused is still reported as a plain failure', asyn
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: STORED } } };
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: STORED } } };
     }
     return { status: 403, json: {} };
   });

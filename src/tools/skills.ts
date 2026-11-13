@@ -89,6 +89,16 @@ const UNTRUSTED_NOTE =
 const INCOMPLETE_WALK_NOTE = 'Hinweis: Die Sammlung wurde nicht vollständig gelesen (Seitengröße, Tiefe oder ein '
   + 'nicht lesbarer Teil) — die Liste kann Skills auslassen, und eine leere Liste ist hier KEIN Befund „keine Skills“. '
   + 'Die Freigabeliste einer Sammlung liefert get_skill_registry.';
+/** The same disclosure, naming its cause where one is known: only an outage is worth a second try (D5). */
+const incompleteWalkNote = (reason?: 'unreachable' | 'limit'): string => (reason === 'unreachable'
+  ? 'Hinweis: Ein Teil der Sammlung hat gerade nicht geantwortet — die Liste kann Skills auslassen, und eine leere '
+    + 'Liste ist hier KEIN Befund „keine Skills“. Ein erneuter Aufruf kann sie vervollständigen. '
+    + 'Die Freigabeliste einer Sammlung liefert get_skill_registry.'
+  : reason === 'limit'
+    ? 'Hinweis: Die Sammlung ist größer als das, was ein Aufruf liest (Seitengröße oder Tiefe) — die Liste kann Skills '
+      + 'auslassen, und eine leere Liste ist hier KEIN Befund „keine Skills“. Ein erneuter Aufruf ändert daran nichts. '
+      + 'Die Freigabeliste einer Sammlung liefert get_skill_registry.'
+    : INCOMPLETE_WALK_NOTE);
 
 function renderCatalogue(skills: SkillSummary[], query: string | undefined): string {
   if (!skills.length) {
@@ -317,7 +327,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
     { readOnlyHint: true },
     async (params) => {
       try {
-        const { skills, unresolved, incomplete } = await searchSkillsDetailed({
+        const { skills, unresolved, incomplete, incompleteReason } = await searchSkillsDetailed({
           query: params.query,
           maxResults: params.maxResults ?? 10,
           discipline: params.discipline,
@@ -334,7 +344,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
           // skill out of a list that has none.
           return { content: [{ type: 'text' as const, text: JSON.stringify({
             query: params.query ?? null, skills, unresolved,
-            ...(incomplete ? { incomplete: true, incompleteNote: INCOMPLETE_WALK_NOTE } : {}),
+            ...(incomplete ? { incomplete: true, incompleteReason, incompleteNote: incompleteWalkNote(incompleteReason) } : {}),
             ...(skills.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
           }) }] };
         }
@@ -346,7 +356,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
 
 ` : '') + renderCatalogue(skills, params.query) + (incomplete ? `
 
-${INCOMPLETE_WALK_NOTE}` : '') }] };
+${incompleteWalkNote(incompleteReason)}` : '') }] };
       } catch (err) {
         return toolError('Fehler bei der Skill-Suche', err);
       }

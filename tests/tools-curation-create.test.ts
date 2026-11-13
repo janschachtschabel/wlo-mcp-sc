@@ -53,7 +53,7 @@ function serveAll(duplicateUrls: string[] = []) {
       return { json: { node: { ref: { id: NODE, repo: '-home-' } } } };
     }
     if (method === 'GET') {
-      return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: stored } } };
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: stored } } };
     }
     if (url.includes('/metadata')) Object.assign(stored, JSON.parse(String(init?.body ?? '{}')));
     return { json: {} };
@@ -159,7 +159,7 @@ test('a duplicate that appears between preview and confirmation answers exists, 
         pagination: { total: dup ? 1 : 0, from: 0, count: dup ? 1 : 0 } } };
     }
     if (url.includes('/children') && (init?.method ?? 'GET') === 'POST') return { json: { node: { ref: { id: NODE, repo: '-home-' } } } };
-    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: {} } } };
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: {} } } };
   });
   const client = await curationClient();
   try {
@@ -207,7 +207,7 @@ test('a timed-out create says the outcome is open, not that nothing was created'
     if (url.includes('/children') && (init?.method ?? 'GET') === 'POST') {
       throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
     }
-    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: {} } } };
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: {} } } };
   });
   const client = await curationClient();
   try {
@@ -236,7 +236,7 @@ test('an ordinary create failure still says plainly that it failed', async () =>
       return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
     }
     if (url.includes('/children') && (init?.method ?? 'GET') === 'POST') return { status: 403, json: {} };
-    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: {} } } };
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: {} } } };
   });
   const client = await curationClient();
   try {
@@ -382,7 +382,7 @@ function serveSubmit(opts: { applies?: boolean; readableAfter?: boolean } = {}) 
     }
     if (method === 'GET') {
       if (submitted && opts.readableAfter === false) return { status: 500, json: {} };
-      return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: stored } } };
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: stored } } };
     }
     return { json: {} };
   });
@@ -492,7 +492,7 @@ test('a created record whose fields did not land is outcomeOpen: true — a new 
     if (url.includes('/search/v1/')) return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
     if (url.includes('/children') && (init?.method ?? 'GET') === 'POST') return { json: { node: { ref: { id: NODE, repo: '-home-' } } } };
     // The read-back finds none of the fields: by the field report alone, "nothing written".
-    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: {} } } };
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: {} } } };
   });
   const client = await curationClient();
   try {
@@ -513,7 +513,7 @@ test('K-14: a record already in the queue is not "submitted" a second time on th
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE, repo: '-home-' },
+      return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io',
         properties: { 'cclom:title': ['Brüche verstehen'], 'ccm:wf_status': ['200_tocheck'] } } } };
     }
     return { json: {} };

@@ -267,10 +267,30 @@ collection's listing), then start from a new preview.
 - **Metrics.** Set `METRICS_TOKEN` (16+ characters) and scrape
   `GET /metrics` with `Authorization: Bearer <token>`; without the variable the
   path answers 404. `wlo_http_requests_total{route,status}`,
-  `wlo_tool_calls_total{tool,outcome}`, `wlo_tool_duration_seconds_sum/_count`,
+  `wlo_tool_calls_total{tool,outcome}`,
   `wlo_upstream_requests_total{outcome}` (`shed` = not sent, our own limit),
-  plus gauges for the upstream queue, uptime and memory. Counters start at zero
-  with the process. Labels never carry a caller, a path or a query.
+  three duration **histograms** on one bucket layout (0.05 s … 60 s) —
+  `wlo_tool_duration_seconds{tool}`, `wlo_upstream_duration_seconds{outcome}`,
+  `wlo_http_request_duration_seconds{route}` — plus gauges for the upstream
+  queue and the usual process metrics (`process_*`, `nodejs_heap_*`,
+  `nodejs_eventloop_lag_seconds`). Counters start at zero with the process.
+  Labels never carry a caller, a path or a query.
+- **A port for probes and the scraper.** `INTERNAL_PORT` opens a second
+  listener that serves only `GET /health`, `GET /ready` and `GET /metrics`.
+  The three paths stay on the public port too. On the internal port `/metrics`
+  asks for no token unless `METRICS_TOKEN` is set — so keep it off the host
+  and off the proxy (the compose file passes the variable and publishes
+  nothing). The internal port keeps answering while the public listener
+  drains after a stop signal — right for a LIVENESS probe, wrong for a
+  readiness probe, which would keep traffic coming to a port that no longer
+  accepts it: point readiness at `/health` on the PUBLIC port. For either
+  probe use `/health`, not `/ready`: `/ready` answers
+  503 while the REPOSITORY is unreachable, and a probe on it would take every
+  instance out of service for a fault that is not theirs. Alert on it instead.
+- **The log.** One JSON object per line on **stdout** — `timestamp`, `level`,
+  `service`, `message`, `req`, and `trace_id`/`span_id` when the caller sent B3
+  headers. `LOG_LEVEL` (`info` by default) sets the threshold. Under stdio the
+  log is on stderr, because stdout is the protocol there.
 - **An outside check.** Nothing in the container can report that the container
   is gone. Point an external monitor at `GET /ready` (503 while the repository
   is unreachable) or `GET /health` (the process itself) and alert from there.

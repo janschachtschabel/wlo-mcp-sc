@@ -8,7 +8,7 @@
  */
 
 import { BASE_URL, DISPLAY_PROPS, WLO_REPOSITORY_URL, appendPropertyFilter } from './wlo-config.js';
-import { upstreamErrorMessage } from './upstream-error.js';
+import { isRefusal, upstreamErrorMessage } from './upstream-error.js';
 import { wloFetch, logUpstreamMiss } from './wlo-fetch.js';
 import { readJson } from './read-json.js';
 import type { SearchResponse, WloNode } from './wlo-types.js';
@@ -100,6 +100,18 @@ export interface ChildCollectionsResult {
    * collection — callers that turn emptiness into a statement must check this.
    */
   reachable: boolean;
+  /**
+   * The status with which the repository REFUSED the listing (401/403/404).
+   * `reachable` is false then too — nothing was learned about the children —
+   * but it is no outage: asking again changes nothing. Whoever reports "did not
+   * answer" asks `didNotAnswer`, never `!reachable` (D6).
+   */
+  refused?: number;
+}
+
+/** An OUTAGE: no answer, as opposed to a refusal. The one question behind `incomplete` / `childrenUnread` / `source_unreachable`. */
+export function didNotAnswer(listing: { reachable: boolean; refused?: number }): boolean {
+  return !listing.reachable && listing.refused === undefined;
 }
 
 /**
@@ -125,7 +137,10 @@ export async function getChildCollectionsResult(
   const res = await wloFetch(url, { headers: { Accept: 'application/json' } });
   // Degrades to [] rather than throwing, unlike getCollectionContents above:
   // this is a secondary/navigational read whose absence must not fail the call.
-  if (!res.ok) { logUpstreamMiss('getChildCollections', res); return { nodes: [], reachable: false }; }
+  if (!res.ok) {
+    logUpstreamMiss('getChildCollections', res);
+    return { nodes: [], reachable: false, ...(isRefusal(res.status) ? { refused: res.status } : {}) };
+  }
 
   const data = await readJson<{ nodes?: WloNode[] }>(res, 'getChildCollections');
   // A body that is not JSON is the same class of failure as a non-OK status:

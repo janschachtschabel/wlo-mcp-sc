@@ -10,7 +10,7 @@
  */
 
 import { outgoingTraceHeaders } from './request-id.js';
-import { count } from './metrics.js';
+import { count, observe } from './metrics.js';
 import { log } from './logger.js';
 import {
   currentCredential, isCurrentCredentialRejected, markCurrentCredentialRejected, type WloCredential,
@@ -87,7 +87,7 @@ export async function wloFetch(url: string, init: RequestInit = {}): Promise<Res
     const slow = requestSignal?.aborted ? null : slowUpstreamEntry(url, Date.now() - startedAt, 0);
     if (slow) log.warn('slow upstream', slow);
     // A caller who hung up is no statement about the repository — like the slow-call line above.
-    if (counted) count('wlo_upstream_requests_total', { outcome: requestSignal?.aborted ? 'cancelled' : 'error' });
+    if (counted) timed(requestSignal?.aborted ? 'cancelled' : 'error', startedAt);
     throw err;
   } finally {
     // Given back once the HEADERS are in (or the call failed): the repository
@@ -97,7 +97,7 @@ export async function wloFetch(url: string, init: RequestInit = {}): Promise<Res
   }
   const slow = slowUpstreamEntry(url, Date.now() - startedAt, res.status);
   if (slow) log.warn('slow upstream', slow);
-  if (counted) count('wlo_upstream_requests_total', { outcome: `${Math.floor(res.status / 100)}xx` });
+  if (counted) timed(`${Math.floor(res.status / 100)}xx`, startedAt);
   if (carriesScopedLogin && res.status === 401 && await loginRefused(url)) markCurrentCredentialRejected();
   return res;
 }
@@ -221,6 +221,12 @@ function withTrace(url: string, headers: HeadersInit | undefined): HeadersInit |
  * `[]`/`null`). Without this an outage is invisible — indistinguishable from a
  * legitimately empty result — so on-call can't tell "broken" from "empty".
  */
+/** One repository call that was SENT: counted, and timed until its headers were in (or it failed). */
+function timed(outcome: string, startedAt: number): void {
+  count('wlo_upstream_requests_total', { outcome });
+  observe('wlo_upstream_duration_seconds', { outcome }, (Date.now() - startedAt) / 1000);
+}
+
 export function logUpstreamMiss(context: string, res: Response): void {
   log.warn('upstream returned non-OK', { context, status: res.status });
 }

@@ -37,6 +37,7 @@ import {
   type SuggestionStatus,
 } from '../services/write/suggestions.js';
 import { readWriteBaseline } from '../services/write/nodes.js';
+import { propertyOn } from '../services/write/collection-fields.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import {
@@ -73,7 +74,7 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
       'Schlage Metadaten für einen WLO-Datensatz VOR, ohne ihn zu ändern. Die Vorschläge werden mit ' +
       'Begründung im Repository hinterlegt und können später angenommen oder abgelehnt werden — nutze das, ' +
       'wenn jemand anders entscheiden soll oder die Entscheidung nicht jetzt fällt. Sollen die Werte direkt ' +
-      'in den Datensatz, ist wlo_update_content das richtige Werkzeug. ZWEISTUFIG: ohne confirmToken nur ' +
+      'in den Datensatz, ist wlo_update_content das richtige Werkzeug. Gilt auch für Sammlungen. ZWEISTUFIG: ohne confirmToken nur ' +
       'Vorschau. Erfordert eine Anmeldung.',
     inputSchema: {
       nodeId: z.string().describe('nodeId des Datensatzes, für den vorgeschlagen wird.'),
@@ -228,8 +229,9 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   const home = target.targetId;
 
   // Values the record already carries are dropped, per value — proposing those
-  // would put a decision in front of someone that has nothing to decide.
-  const kept = newProposals(before, drafts);
+  // would put a decision in front of someone that has nothing to decide. Filed
+  // under the property this node keeps the value in (`collection-fields.ts`).
+  const kept = newProposals(before, drafts.map(d => ({ ...d, propertyId: propertyOn(baseline.written, d.propertyId) })));
   // What the record would hold if every proposal were accepted. For a field
   // holding several values that is the list WITH the proposed one, which is
   // what the change line has to show — not the proposed value in place of it.
@@ -257,7 +259,7 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   // rationale for a value the record already holds is not part of what happens.
   const cs: ChangeSet = {
     ...planned,
-    action: `Schlägt für „${recordTitle(before)}“ (${home}) die folgenden Werte zur Prüfung vor. `
+    action: `Schlägt für „${recordTitle(before, baseline.written)}“ (${home}) die folgenden Werte zur Prüfung vor. `
       + 'Der Datensatz selbst wird dabei NICHT verändert. '
       + `Begründungen: ${kept.map(reasonLine).join('; ')}`,
   };
@@ -272,7 +274,7 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
     // its answer to the POST, and in this direction nobody here reads it. Naming
     // ids we never saw would be the one thing worse than not naming them.
     return preparedReply(createSuggestionsRequest(home, kept), [
-      `Als Vorschlag ${target.redirected ? `am Original ${home} ` : ''}hinterlegt (Status: offen) — „${recordTitle(before)}“ ist unverändert.`,
+      `Als Vorschlag ${target.redirected ? `am Original ${home} ` : ''}hinterlegt (Status: offen) — „${recordTitle(before, baseline.written)}“ ist unverändert.`,
       'Mit wlo_list_suggestions lassen sich die Vorschläge samt ID ansehen.',
     ].join(' '));
   }

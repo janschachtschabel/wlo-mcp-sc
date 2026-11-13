@@ -34,7 +34,7 @@ import { formatNode } from '../formatter.js';
 import { nodeMatchesCriteria, queryTerms, termMatches } from '../node-match.js';
 import type { UnresolvedFilter } from '../filter-criteria.js';
 import { buildFilterCriteria } from '../filter-criteria.js';
-import { SKILL_CONTENT_TYPE_URI, SKILL_PROPS, collectSkillNodes } from './skill-catalogue.js';
+import { SKILL_CONTENT_TYPE_URI, SKILL_PROPS, collectSkillNodes, type IncompleteReason } from './skill-catalogue.js';
 import { skillActivationLine } from './skill-activation.js';
 import type { SkillFile } from './skill-files.js';
 import { readSkillBundle } from './skill-files.js';
@@ -181,7 +181,7 @@ function rankSkills(skills: SkillSummary[], query: string | undefined): SkillSum
  */
 export async function searchSkillsDetailed(
   opts: SearchSkillsOptions,
-): Promise<{ skills: SkillSummary[]; unresolved: UnresolvedFilter[]; incomplete?: true }> {
+): Promise<{ skills: SkillSummary[]; unresolved: UnresolvedFilter[]; incomplete?: true; incompleteReason?: IncompleteReason }> {
   const query = (opts.query ?? '').trim();
   const maxResults = opts.maxResults ?? 10;
   const collectionId = (opts.collectionId ?? '').trim();
@@ -217,7 +217,7 @@ export async function searchSkillsDetailed(
     skills: rankSkills(dedupeByOriginal(summaries), query).slice(0, maxResults), unresolved,
     // The walk hit one of its bounds (a page, the depth, the visit cap, a read
     // that failed): the list may lack skills, and an empty one is no finding.
-    ...(walk?.incomplete ? { incomplete: true as const } : {}),
+    ...(walk?.incomplete ? { incomplete: true as const, incompleteReason: walk.reason ?? 'limit' } : {}),
   };
 }
 

@@ -13,7 +13,7 @@
  * guarded at runtime (typeof / Array.isArray), which is the actual contract. */
 
 import type { WloNode } from './wlo-api.js';
-import { getChildCollectionsResult, getNodeMetadata, stripStoreRef } from './wlo-api.js';
+import { didNotAnswer, getChildCollectionsResult, getNodeMetadata, stripStoreRef } from './wlo-api.js';
 import { nodeTitle } from './node-match.js';
 import { TOPIC_PAGE_PROPS, isUsableVariant, type TargetGroup } from './topic-page-variant.js';
 import { orderVariants, readPageConfigOrder } from './topic-page-config.js';
@@ -161,7 +161,9 @@ export async function getTopicPageContent(
     const configId = stripStoreRef(ref);
     const listing = await getChildCollectionsResult(configId, 50, 0, TOPIC_PAGE_PROPS);
     // The variants could not be READ: that is not "this page has no variant".
-    if (!listing.reachable) return { structure: null, reason: 'source_unreachable' };
+    // A REFUSED listing (not released for this login) is: to this caller the
+    // page has no variant, and "try again in a moment" would never come true (D6).
+    if (didNotAnswer(listing)) return { structure: null, reason: 'source_unreachable' };
     const found = listing.nodes.filter(isUsableVariant);
     // Which one the page actually renders is recorded on the config folder
     // (`ccm:page_config.default`), not derivable from the children order — that

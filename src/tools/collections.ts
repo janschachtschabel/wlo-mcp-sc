@@ -27,6 +27,7 @@ import {
   RECURSIVE_SKIP_MAX,
   collectRecursiveContents,
   findCollectionsByTreeTraversal,
+  notReadable,
 } from '../services/collection-traversal.js';
 import { registerWloTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
@@ -118,7 +119,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         const unchecked = formatted.filter(n => n.nodeType === 'collection' && !n.skillRegistry
           && !forced.answered.has(n.nodeId) && !remembered.has(n.nodeId));
         const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(formatted, total)
+          ? renderToJson(formatted, total, { incomplete })
           // The pointer covers exactly the collections whose lookup did NOT
           // answer. Suppressing it whenever the lookup was REQUESTED reported a
           // failed lookup as "checked, none there" (audit 2026-11-12, K-15).
@@ -177,6 +178,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         // are statements about the catalogue ("no collections", "try a broader
         // term") that the caller will act on, and neither is true when the
         // repository simply did not answer.
+        if (level1.refused) throw new Error(notReadable(startId, level1.refused));
         if (!level1.reachable) {
           throw new Error(`Die Sammlungsliste zu ${startId} ist derzeit nicht erreichbar.`);
         }
@@ -199,7 +201,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           // JSON mode keeps a parseable first block (an empty list) and carries the
           // sentence as its own block — prose alone broke every client that parses block 0.
           const content = (params.outputFormat ?? 'markdown') === 'json'
-            ? [{ type: 'text' as const, text: renderToJson([], 0) }, { type: 'text' as const, text }]
+            ? [{ type: 'text' as const, text: renderToJson([], 0, { incomplete: searchIncomplete }) }, { type: 'text' as const, text }]
             : [{ type: 'text' as const, text }];
           if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
           return { content, structuredContent: { total: 0, count: 0, results: [], ...(searchIncomplete ? { incomplete: true as const } : {}), ...unresolvedField } };
@@ -294,7 +296,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
         const subjectRegistry = await subjectRegistryText(params.nodeId, params.skillContext);
 
         const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(allNodes, totalHits)
+          ? renderToJson(allNodes, totalHits, { incomplete: walkIncomplete })
           // "Sammlung ist leer" is a statement about the collection — not over a walk that could not read all of it.
           : (renderToText(allNodes, totalHits) || (walkIncomplete ? '' : 'Sammlung ist leer oder nodeId nicht gefunden.'));
         const meta = queryMetaContent({

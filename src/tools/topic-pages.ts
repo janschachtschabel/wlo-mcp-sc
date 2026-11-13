@@ -217,7 +217,7 @@ Kein „discipline"-Parameter: über educationalContext und targetGroup eingrenz
           const registry = registries.get(page.collectionId);
           if (registry) page.skillRegistry = registry;
         }
-        const rendered = renderThemePages(out, tpMeta, params.outputFormat);
+        const rendered = renderThemePages(out, tpMeta, params.outputFormat, incomplete);
         // Hits beside a source that did not answer: the list may lack pages.
         const partial = incomplete ? [{ type: 'text' as const, text: incompleteNotice('Themenseiten', false) }] : [];
         return {

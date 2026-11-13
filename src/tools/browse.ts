@@ -16,7 +16,7 @@ import { sortByTitle } from '../reranker.js';
 import { formatNode, nodeIdLine, oneLine, registrySummaryLines } from '../formatter.js';
 import { cachedRegistriesFor } from '../services/skill-registry-cache.js';
 import type { CollectionTreeNode } from '../services/collection-traversal.js';
-import { buildCollectionTree } from '../services/collection-traversal.js';
+import { buildCollectionTree, notReadable } from '../services/collection-traversal.js';
 import { resolveVocab } from '../vocabs.js';
 import { log } from '../logger.js';
 import { mapPool } from '../concurrency.js';
@@ -92,6 +92,7 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
         // "No portals" is a statement about WLO; an unread listing is a
         // statement about the server. Fail loudly rather than answering
         // "WLO Fachportale: 0" — that reads as a fact and is acted on as one.
+        if (listing.refused) throw new Error(notReadable(WLO_ROOT_COLLECTION_ID, listing.refused));
         if (!listing.reachable) throw new Error('Die Fachportal-Liste ist derzeit nicht abrufbar.');
         const portals = listing.nodes;
 
@@ -228,6 +229,7 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
           const listing = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, 100);
           // Without the portal list there is no "not found" to report — only an
           // unanswered question. Saying "Verfügbar: ." would invent an answer.
+          if (listing.refused) throw new Error(notReadable(WLO_ROOT_COLLECTION_ID, listing.refused));
           if (!listing.reachable) throw new Error('Die Fachportal-Liste ist derzeit nicht abrufbar.');
           const portals = listing.nodes;
           const hit = matchSubjectPortal(portals, params.subject);

@@ -6,6 +6,65 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — the log follows the service guide (chatbot feedback 2026-11-13, D8)
+
+- **Field names:** `timestamp`, `level`, `service`, `message` (were `ts`, `level`, `name`, `msg`). `req`,
+  `trace_id`, `span_id` and `client_trace_id` are unchanged. **Whoever parses the log by the old names has to
+  follow** — nothing else changes for a client.
+- **Stream:** over HTTP the log goes to **stdout** (`logger-stdout.ts`, the first import of `http.ts`, so lines
+  written while modules load go there too); under stdio it stays on stderr, where stdout is the protocol channel.
+- **`LOG_LEVEL`** (`debug` | `info` | `warn` | `error`, default `info`); an unknown value is ignored with a warning.
+
+### Added — metrics and a port for the operator (D9, D10)
+
+- **Durations are histograms.** `wlo_tool_duration_seconds` (was a sum/count pair), and new
+  `wlo_upstream_duration_seconds` (by outcome, until the repository's headers are in) and
+  `wlo_http_request_duration_seconds` (by route class). One bucket layout, 0.05 s … 60 s.
+- **The usual process metrics** under their stock names: `process_start_time_seconds`,
+  `process_cpu_user_seconds_total`, `process_cpu_system_seconds_total`, `nodejs_heap_size_total_bytes`,
+  `nodejs_heap_size_used_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_lag_seconds`.
+- **`INTERNAL_PORT`:** a second listener for `GET /health`, `/ready`, `/metrics` only (`rest/internal-port.ts`).
+  An addition — the public port keeps the three paths. No token for `/metrics` there unless `METRICS_TOKEN` is set.
+
+### Fixed — review of D1–D7
+
+- **A refusal has the code of a refusal.** A 404 from the repository is `not_found` wherever a failure is coded
+  (was `upstream_error`, the code of an outage); a refused start node (`browse_collection_tree`,
+  `search_wlo_collections`, `get_subject_portals`, `search_skill`) says "nicht gefunden oder … nicht lesbar".
+- **The skill walk does not count a refused CONTENTS read as an outage** — only the sub-listing had been fixed.
+- **A collection is named by its own title** in every sentence a confirmation binds to, not by a stray
+  `cclom:title` the earlier tools left on it.
+- **`wlo_update_content` refuses a file onto a collection** (`is_a_collection`); its metadata stay open.
+
+### Changed — chatbot team feedback of 2026-11-13, second round (D1–D7; additive, or a wrong write that goes away)
+
+- **D1 — `wlo_submit_content` takes single records only.** A collection is refused with `is_a_collection`, a folder
+  with `is_a_folder`, before any key. The metadata tools stay open for collections (user decision 2026-11-13).
+- **D2 — a collection's title and description are written where the collection keeps them.** `wlo_update_content`,
+  `wlo_update_contents`, `wlo_suggest_metadata` and `wlo_decide_suggestion` map `title` → `cm:title` and
+  `description` → `cm:description` when the node is a collection (`services/write/collection-fields.ts`). Measured
+  against staging 2026-11-13 (`tests/live/collection-metadata.test.ts`): `cclom:title` on a collection is stored as
+  a SECOND field — the collection's title stays, the write reads back as stored, and the node's own DTO `title`
+  follows the new field from then on, out of reach of a later rename. The descriptions of the three tools say that
+  they apply to collections.
+- **D3 — `error.nodeId` wherever `error.recordExists` is true.** A create whose fields did not land, or whose
+  read-back failed, carried the id only in the sentence.
+- **D4 — `too_many_batches` carries `scope`** (`owner` | `server`), top-level and in `error`: the person can finish
+  a batch of their own, or can only wait.
+- **D5 — `search_skill` says why its walk is incomplete:** `incompleteReason` `unreachable` (a part did not answer;
+  asking again may complete it) or `limit` (page size, depth, visit cap; asking again changes nothing). The note in
+  the text names the same cause. Both at once reports `unreachable`.
+- **D6 — refused is not unreachable.** A child listing the repository answered with 401/403/404 is no outage:
+  `incomplete` (recursive `get_collection_contents`, tree search of `search_wlo_collections`, skill walk),
+  `childrenUnread` (`browse_collection_tree`) and `source_unreachable` (`get_topic_page_content`, which answers
+  `no_variant`) are no longer set for it. A START node that is refused is an error that says so ("nicht gefunden
+  oder mit dieser Anmeldung nicht lesbar") instead of "derzeit nicht abrufbar". One question, `didNotAnswer`
+  (`wlo-node.ts`); write paths keep reading a refused listing as "could not find out". The collection search
+  indexes are unchanged: a 403/404 there is a deployment fault, not a thing a login may not read.
+- **D7 — `incomplete: true` in the JSON TEXT** of `search_wlo_collections` (with hits, without, and for the recursive
+  listing of `get_collection_contents`) and of a partial `search_wlo_topic_pages` answer — it was in
+  `structuredContent` only.
+
 ## [1.1.0] - 2026-11-13
 
 The first cut version: everything since the server was taken over, up to and including the audit follow-up

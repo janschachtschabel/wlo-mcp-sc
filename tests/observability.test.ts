@@ -75,7 +75,7 @@ test('every response carries a request id, and the log lines of that request car
       await res.text();
     });
     assert.match(id, /^[A-Za-z0-9._-]{8,64}$/);
-    const line = lines.find((l) => l['msg'] === 'mcp request');
+    const line = lines.find((l) => l['message'] === 'mcp request');
     assert.ok(line, JSON.stringify(lines));
     assert.equal(line['req'], id);
 
@@ -135,6 +135,33 @@ test('the metrics text: counters with labels, escaped, with HELP and TYPE', () =
   assert.ok(text.endsWith('\n'));
 });
 
+test('a duration is a HISTOGRAM: cumulative buckets, +Inf equal to the count (D9)', () => {
+  resetMetricsForTest();
+  observe('wlo_tool_duration_seconds', { tool: 'search_wlo_all' }, 0.25);
+  observe('wlo_tool_duration_seconds', { tool: 'search_wlo_all' }, 0.5);
+  observe('wlo_tool_duration_seconds', { tool: 'search_wlo_all' }, 45);
+  observe('wlo_upstream_duration_seconds', { outcome: '2xx' }, 0.02);
+  observe('wlo_http_request_duration_seconds', { route: 'mcp' }, 700);
+  const text = renderMetrics();
+  assert.match(text, /^# TYPE wlo_tool_duration_seconds histogram$/m);
+  const bucket = (le: string) => Number(new RegExp(`^wlo_tool_duration_seconds_bucket\\{tool="search_wlo_all",le="${le}"\\} (\\d+)$`, 'm').exec(text)?.[1]);
+  // A value ON a boundary belongs to that bucket (`le` = less or equal).
+  assert.equal(bucket('0.1'), 0);
+  assert.equal(bucket('0.25'), 1);
+  assert.equal(bucket('0.5'), 2);
+  assert.equal(bucket('30'), 2);
+  assert.equal(bucket('60'), 3);
+  assert.equal(bucket('\\+Inf'), 3);
+  assert.match(text, /^wlo_tool_duration_seconds_count\{tool="search_wlo_all"\} 3$/m);
+  assert.match(text, /^wlo_upstream_duration_seconds_bucket\{outcome="2xx",le="0.05"\} 1$/m);
+  // Past the last boundary: only +Inf holds it (an SSE stream held for minutes).
+  assert.match(text, /^wlo_http_request_duration_seconds_bucket\{route="mcp",le="60"\} 0$/m);
+  assert.match(text, /^wlo_http_request_duration_seconds_bucket\{route="mcp",le="\+Inf"\} 1$/m);
+  // Buckets in ascending order — the format requires it.
+  const les = [...text.matchAll(/^wlo_tool_duration_seconds_bucket\{tool="search_wlo_all",le="([^"]+)"\}/gm)].map(m => m[1]);
+  assert.deepEqual(les, [...les].sort((a, b) => (a === '+Inf' ? 1 : b === '+Inf' ? -1 : Number(a) - Number(b))));
+});
+
 test('/metrics does not exist without a token, and answers only to the token', async () => {
   const off = await serving();
   try { assert.equal((await fetch(`${off.base}/metrics`)).status, 404); }
@@ -155,6 +182,13 @@ test('/metrics does not exist without a token, and answers only to the token', a
     const text = await ok.text();
     assert.match(text, /^wlo_build_info\{version="[^"]+"\} 1$/m);
     assert.match(text, /^process_uptime_seconds \d/m);
+    // The usual process metrics, under the stock names (D9).
+    for (const name of ['process_start_time_seconds', 'process_cpu_user_seconds_total', 'process_cpu_system_seconds_total',
+      'process_resident_memory_bytes', 'nodejs_heap_size_used_bytes', 'nodejs_heap_size_total_bytes',
+      'nodejs_external_memory_bytes', 'nodejs_eventloop_lag_seconds']) {
+      assert.match(text, new RegExp(`^${name} [0-9]+([.][0-9]+)?(e-?[0-9]+)?$`, 'm'), name);
+      assert.match(text, new RegExp(`^# TYPE ${name} (gauge|counter)$`, 'm'), name);
+    }
     assert.match(text, /^wlo_upstream_in_flight \d+$/m);
   } finally { await on.close(); }
 });

@@ -430,6 +430,9 @@ test('K-13: a sixth batch is refused while five are under way — none of them i
   const sixth = await prepare(c);
   assert.equal(sixth.isError, true);
   assert.equal(sixth.structuredContent?.['reason'], 'too_many_batches');
+  // D4: whose limit it is — the person can finish a batch of their own, or can only wait.
+  assert.equal(sixth.structuredContent?.['scope'], 'owner');
+  assert.equal((sixth.structuredContent?.['error'] as Record<string, unknown>)['scope'], 'owner');
   assert.equal((sixth.structuredContent?.['error'] as Record<string, unknown>)['outcomeOpen'], false);
   const r = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: tokens[0], index: 1, ref: await slot() } });
   assert.equal((r as { structuredContent?: Record<string, unknown> }).structuredContent?.['status'], 'stored', 'the oldest can still be finished');

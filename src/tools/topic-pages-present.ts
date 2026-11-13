@@ -207,6 +207,7 @@ export function renderThemePages(
   out: PresentedThemePage[],
   meta: TextContent,
   format: 'markdown' | 'json',
+  incomplete = false,
 ): { content: TextContent[] } {
   if (format === 'json') {
     return {
@@ -215,6 +216,8 @@ export function renderThemePages(
         text: JSON.stringify({
           total: out.length,
           results: out,
+          // In the text as in `structuredContent` (D7).
+          ...(incomplete ? { incomplete: true } : {}),
         }),
       }, meta],
     };

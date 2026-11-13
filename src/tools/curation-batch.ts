@@ -65,7 +65,9 @@ function result(text: string, structured: Record<string, unknown>, isError = fal
   const { open: serviceSaysOpen, ...shown } = structured;
   const open = outcomeOpen ?? serviceSaysOpen === true;
   return { content: [{ type: 'text' as const, text }],
-    structuredContent: isError ? { ...shown, error: { code, message: text, outcomeOpen: open } } : shown,
+    structuredContent: isError
+      ? { ...shown, error: { code, message: text, outcomeOpen: open, ...(typeof shown['scope'] === 'string' ? { scope: shown['scope'] } : {}) } }
+      : shown,
     ...(isError ? { isError: true } : {}) };
 }
 
@@ -179,7 +181,8 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
           ? 'Es sind bereits mehrere Stapel dieser Anmeldung in Arbeit. Bitte erst einen davon abschließen '
             + '(wlo_store_batch_manifest) oder auslaufen lassen (30 Minuten) — sonst ginge dessen Freigabe verloren.'
           : 'Der Server hält gerade zu viele laufende Stapel. Bitte in einigen Minuten erneut versuchen.',
-          { status: 'failed', reason: 'too_many_batches' }, true, false);
+          // `scope`: whose limit — `owner` can finish a batch of their own, `server` can only wait (D4).
+          { status: 'failed', reason: 'too_many_batches', scope: err.scope }, true, false);
       }
       const total = entries.reduce((n, e) => n + e.size, 0);
       const zeile = (e: typeof entries[number]) =>

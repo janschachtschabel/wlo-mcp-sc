@@ -18,6 +18,7 @@ import { readNodeMetadata } from '../../wlo-node.js';
 import { nodeTitle } from '../../node-match.js';
 import { failureCode, writeFailureCode } from '../failure-code.js';
 import { buildChangeSet, displayValue, type ChangeSet } from './change-set.js';
+import { desiredOn, propertyOn, titleOn } from './collection-fields.js';
 import { routeFields } from './field-routing.js';
 import { readWriteBaseline, updateNodeMetadata } from './nodes.js';
 import type { ItemState, PlanItem, Step } from './plan-runner.js';
@@ -60,7 +61,7 @@ export async function prepareUpdates(inputs: UpdateInput[]): Promise<Prepared> {
     const baseline = await readWriteBaseline(node, input.nodeId);
     // The ORIGINAL's title — the record that is written. A reference written
     // directly once (F2) carries a title of its own (overall review, 19).
-    return { input, outcome: baseline, title: nodeTitle(baseline.ok ? { ...node, properties: baseline.before } : node) };
+    return { input, outcome: baseline, title: baseline.ok ? (titleOn(baseline.written, baseline.before) || nodeTitle(baseline.written)) : nodeTitle(node) };
   });
 
   const out: Prepared = { items: [], unchanged: [], refused: [] };
@@ -84,7 +85,7 @@ export async function prepareUpdates(inputs: UpdateInput[]): Promise<Prepared> {
       out.refused.push({ nodeId: input.nodeId, code: 'unreadable_original', reason: r.outcome.reason });
       return;
     }
-    const { target, before } = r.outcome;
+    const { target, before, written } = r.outcome;
     // Two names for one record would race each other's read-back.
     if (seen.has(target.targetId)) {
       out.refused.push({ nodeId: input.nodeId, code: 'duplicate', reason: `derselbe Datensatz wie ein früherer Eintrag (${target.targetId})` });
@@ -92,12 +93,13 @@ export async function prepareUpdates(inputs: UpdateInput[]): Promise<Prepared> {
     }
     seen.add(target.targetId);
     const routed = routeFields(input.desired);
-    const write = buildChangeSet(target.targetId, 'content', before, routed.write,
+    // Routed by the field's MEANING, written where this node keeps it (`collection-fields.ts`).
+    const write = buildChangeSet(target.targetId, 'content', before, desiredOn(written, routed.write),
       target.redirected ? { redirectedFrom: target.requestedId } : {});
     const reason = input.reason?.trim() || DEFAULT_REASON;
     // The same rule as `wlo_suggest_metadata`: per value, against the original.
     const suggest = newProposals(before, Object.entries(routed.suggest)
-      .flatMap(([propertyId, values]) => values.map(value => ({ propertyId, value, description: reason }))));
+      .flatMap(([property, values]) => values.map(value => ({ propertyId: propertyOn(written, property), value, description: reason }))));
     const title = r.title || input.nodeId;
     if (write.changes.length === 0 && suggest.length === 0) {
       out.unchanged.push({ nodeId: input.nodeId, title });

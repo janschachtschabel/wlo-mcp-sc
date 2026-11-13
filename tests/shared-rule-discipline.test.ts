@@ -562,6 +562,27 @@ test('a redirected change set is diffed against the node it will WRITE', () => {
   assert.deepEqual(wrong, [], `Baseline und Schreibziel müssen derselbe Knoten sein:\n${wrong.join('\n')}`);
 });
 
+test('a metadata write or proposal goes through the collection field mapping', () => {
+  // The metadata tools are open for collections, and a collection keeps title
+  // and description in cm:* (measured 2026-11-13: `cclom:title` there is stored
+  // as a second field nobody reads, and reads back as a success). Whoever reads
+  // a write baseline for metadata therefore maps through `collection-fields.ts`.
+  // The compendium tool is exempt: it writes one named property of a collection.
+  const exempt = ['services/write/nodes.ts', 'tools/curation-compendium.ts'];
+  const wrong: string[] = [];
+  for (const file of sourceFiles(srcDir)) {
+    const name = rel(file);
+    if (exempt.includes(name)) continue;
+    const text = readFileSync(file, 'utf8');
+    if (!text.includes('readWriteBaseline(')) continue;
+    // One mapping per baseline at least: a file with two write paths and one mapping must not pass.
+    const baselines = text.split('readWriteBaseline(').length - 1;
+    const mappings = text.split('desiredOn(').length + text.split('propertyOn(').length - 2;
+    if (mappings < baselines) wrong.push(name);
+  }
+  assert.deepEqual(wrong, [], `Schreibt Metadaten ohne die Sammlungs-Zuordnung (collection-fields.ts): ${wrong.join(', ')}`);
+});
+
 test('every write that can carry ccm:wwwurl keeps the larger timeout', () => {
   // Measured 2026-08-17: setting `ccm:wwwurl` makes the repository render a
   // preview of the page while the write is in flight — 8.8 s warm, 46.5 s cold

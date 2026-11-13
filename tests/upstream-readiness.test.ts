@@ -91,7 +91,7 @@ test('a call that runs past the threshold and then FAILS is logged as slow too â
     const logs = await captureLog(async () => {
       await assert.rejects(wloFetch('https://repo.example/edu-sharing/rest/search/v1/x?q=geheim'));
     });
-    const slow = logs.find(l => l['msg'] === 'slow upstream');
+    const slow = logs.find(l => l['message'] === 'slow upstream');
     assert.ok(slow, 'the slow call reaches the log even though it threw');
     assert.equal(slow['status'], 0, 'status 0 = no answer');
     assert.equal(slow['path'], '/edu-sharing/rest/search/v1/x');

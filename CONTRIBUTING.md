@@ -63,8 +63,8 @@ validation error from a connection error).
 - Validate external input at trust boundaries (the tools' zod schemas).
 - URL-encode IDs before interpolating them into URLs (`encodeURIComponent`).
 - Route all upstream requests through `wloFetch` (enforces the timeout).
-- Log only via `src/logger.ts` (JSON to **stderr** — stdout belongs to the MCP
-  stdio framing).
+- Log only via `src/logger.ts` (JSON lines; stderr under stdio, where stdout
+  belongs to the MCP framing — stdout over HTTP).
 
 ## Commits
 

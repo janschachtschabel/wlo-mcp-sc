@@ -15,7 +15,7 @@
  */
 
 import type { WloNode } from '../wlo-api.js';
-import { getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
+import { didNotAnswer, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
 import { rerankNodes, sortByTitle } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode, formatNodes } from '../formatter.js';
@@ -65,7 +65,9 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
     if (r.status === 'fulfilled' && r.value.reachable) {
       allLevel2Nodes.push(...r.value.nodes);
       addMatches(r.value.nodes);
-    } else {
+    } else if (r.status === 'rejected' || didNotAnswer(r.value)) {
+      // A REFUSED sub-list (not readable for this login) is not counted: it is
+      // no outage, and "try again" over it would be wrong for good (D6).
       unread++;
     }
   }
@@ -91,7 +93,7 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
     );
     for (const r of level3Results) {
       if (r.status === 'fulfilled' && r.value.reachable) addMatches(r.value.nodes);
-      else unread++;
+      else if (r.status === 'rejected' || didNotAnswer(r.value)) unread++;
     }
   }
 
@@ -201,7 +203,7 @@ export async function collectRecursiveContents(
         // The branch below a listing that did not answer (a 5xx, our own full
         // gate) is not walked — and that is said, not passed off as "no
         // sub-collections" (chatbot feedback 2026-11-13).
-        if (!subs.reachable) unreadSubs += 1;
+        if (didNotAnswer(subs)) unreadSubs += 1;
         for (const sub of subs.nodes) {
           const subId = sub.ref?.id ?? sub.properties?.['sys:node-uuid']?.[0];
           if (subId && !visited.has(subId) && !next.includes(subId)) next.push(subId);
@@ -300,6 +302,13 @@ function depth3Slice(level1: number): number {
  * an unread one must not be rendered as a collection that happens to have no
  * sub-topics.
  */
+/** The sentence for a start node the repository refused to list — an answer, not an outage (D6). */
+export function notReadable(id: string, status: number): string {
+  // `HTTP <status>` is the position `failureCode` reads: the code is then
+  // `not_found` / `forbidden`, not the `upstream_error` of an outage.
+  return `Die Sammlung ${id} wurde nicht gefunden oder ist mit dieser Anmeldung nicht lesbar (HTTP ${status}).`;
+}
+
 export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<CollectionTree> {
   const { parentId, depth, maxResults, includeContentCounts, contentPreview } = opts;
 
@@ -307,6 +316,7 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
   // longer than `maxResults` was cut SILENTLY — the overview's
   // `subcollectionsTruncated` could never be set (review R-C, 2026-11-06).
   const level1Listing = await getChildCollectionsResult(parentId, maxResults + 1);
+  if (level1Listing.refused) throw new Error(notReadable(parentId, level1Listing.refused));
   if (!level1Listing.reachable) {
     throw new Error(`Die Unter-Sammlungen von ${parentId} sind derzeit nicht abrufbar.`);
   }
@@ -345,7 +355,7 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
       const listing = await getChildCollectionsResult(id, childSlice + 1);
       const fetched = listing.nodes;
       // Not read is not empty: the branch may have children this tree does not show.
-      if (!listing.reachable) f.childrenUnread = true;
+      if (didNotAnswer(listing)) f.childrenUnread = true;
       if (fetched.length > childSlice) f.hasMoreChildren = true;
       // Claim each child in `visited` at SCHEDULING time (synchronously in
       // this filter), not when its own enrichOne starts — otherwise two

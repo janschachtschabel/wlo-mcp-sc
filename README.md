@@ -164,6 +164,8 @@ else has sensible defaults.
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | all | Per-request timeout (ms) for every upstream edu-sharing call. Prevents a hung backend socket from blocking a tool call. Sized from measurement (staging, 2026-08-02): creating a record takes 4.2–8.0 s, every other call under 2.5 s. |
 | `WLO_UPSTREAM_CONCURRENCY` | `24` | all | How many calls the whole **process** may have open at the repository at once. Every other bound is per call or per client; one search with the OER filter alone starts about 25. A call that gets no slot within 5 s — or meets a queue of four times the limit — is not sent; tools that report failures by code answer `upstream_busy` with the wait. `0` switches the bound off. |
 | `METRICS_TOKEN` | _(unset)_ | http | Switches `GET /metrics` on (Prometheus text format) and is the Bearer token it answers to; at least 16 characters. Unset: the path does not exist. Counts requests by route class, tool calls by tool and outcome, repository calls by outcome — never a caller, a path or a query. |
+| `LOG_LEVEL` | `info` | all | Lowest level that is logged: `debug`, `info`, `warn` or `error` (no line is written at `debug` today). An unknown value is ignored with a warning. The log is one JSON object per line — `timestamp`, `level`, `service`, `message`, plus `trace_id`/`span_id` when the caller sent B3 headers and `req`, the request id. Over HTTP it goes to **stdout**, under stdio to **stderr** (stdout is the protocol channel there). |
+| `INTERNAL_PORT` | _(unset)_ | http | A second port that serves **only** `GET /health`, `GET /ready` and `GET /metrics` — for probes and the scraper, away from the public proxy. An addition: the three paths stay on `PORT`. On this port `/metrics` needs no token unless `METRICS_TOKEN` is set, so it must not be published. Requests here are not counted in `wlo_http_requests_total`. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | all | Optional service account. Unset (default) → the server reads **anonymously**, public content only, exactly as before. Both set → every call authenticates as that one account via HTTP Basic, so **all** users of this MCP see the same elevated content. Use a purpose-made, read-only account: whatever it can see, every user can see, and edu-sharing's audit trail shows the service account rather than the person. Half a credential is treated as none. **Wrong credentials do not downgrade to public content** — the repository answers `401` (measured against production 2026-07-31, on the identity and the search endpoints alike), so every query fails and the server returns nothing at all. Unset both variables to run anonymously instead. Check with the `wlo_auth_status` tool: `mode: "service"` together with `authenticated: false` and `upstream: "ok"` means the credentials are being rejected (`upstream: "unreachable"` means the repository did not answer — no verdict on the credentials). HTTP Basic is used because it is the only scheme besides the session cookie that edu-sharing's own OpenAPI declares. **Scope:** the service account applies to the MCP endpoint only. The public REST layer (`GET /api/*`) and the launcher stay anonymous by design — they are reachable from the internet without any login, so letting them inherit the account would make everything it can see world-readable. A credential over a non-`https` repository URL is sent in the clear (Basic is base64, not encryption); the server warns about this at startup. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page), either by pasting the block back or by logging in to end every access of the account at once. The second way is the only one open to OAuth users, who never see their block. Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
@@ -1119,8 +1121,9 @@ must not cost the other one its fallback.
 - **Monitoring & logging:** `GET /health` (HTTP mode) returns `200` with a small
   JSON status — use it for uptime monitoring; the Docker `HEALTHCHECK` targets
   it. For "is WLO reachable" (upstream, not proxy) use the `wlo_health_check`
-  tool. Logs are structured JSON lines on **stderr** (`ts`, `level`, `name`,
-  `msg` + fields); stdout is reserved for the MCP stdio framing.
+  tool. Logs are structured JSON lines (`timestamp`, `level`, `service`,
+  `message` + fields; `LOG_LEVEL` sets the threshold) — on **stdout** over HTTP, on **stderr** under stdio, where stdout is
+  reserved for the MCP framing.
 
 ## Architecture
 
@@ -1177,7 +1180,7 @@ wlo-mcp-server/
 │   ├── node-match.ts         # local node matching (text + criteria) for /children fallbacks
 │   ├── text-bm25.ts          # Okapi BM25 over a small in-memory corpus (pure)
 │   ├── formatter.ts          # WloNode → FormattedNode → markdown / json
-│   ├── logger.ts             # minimal structured JSON logger (stderr only)
+│   ├── logger.ts             # minimal structured JSON logger (stdout over HTTP, stderr under stdio)
 │   ├── rate-limit.ts         # in-memory per-IP rate limiter + client-IP resolution
 │   ├── read-body.ts          # bounded request-body reader (413 support)
 │   ├── mcp-transport.ts      # Streamable-HTTP transport options (MCP_SSE → JSON vs SSE)
@@ -1268,7 +1271,7 @@ the code), grouped by module.
 | `readBodyWithLimit` | `read-body.ts` | Read the request body bounded by `MAX_BODY_BYTES` |
 | `parseRequestUrl` | `request-url.ts` | Parse a request target once; `null` when node:http accepted what `new URL()` refuses |
 | `installGracefulShutdown` | `shutdown.ts` | On SIGTERM/SIGINT: stop accepting, let the work in hand finish, exit; cut after 70 s |
-| `log` | `logger.ts` | Structured JSON logger (stderr) |
+| `log` | `logger.ts` | Structured JSON logger (stdout over HTTP, stderr under stdio) |
 | `buildFilterCriteria` | `filter-criteria.ts` | German labels/filters → search criteria |
 | `queryMetaContent` | `tools/shared.ts` | Build the `_queryMeta` block |
 | `toolError` | `tools/shared.ts` | Log + build a uniform tool-error result |

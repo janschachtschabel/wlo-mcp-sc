@@ -112,6 +112,15 @@ test('a failing part is named, the rest still comes', async () => {
   assert.equal(sc.contents?.total, 212, 'the other parts are unaffected');
 });
 
+test('a PART the repository answered 404 is `not_found` — and the answer still validates against the schema', async () => {
+  // `failureCode` knows `not_found` since 2026-11-13; the advertised enum has to
+  // know it too, or the SDK rejects the whole answer over one missing part.
+  const { r, sc } = await overview({ collectionId: COLL, include: ['breadcrumb', 'contents'] }, url =>
+    (url.includes('/parents') ? { status: 404, json: {} } : undefined));
+  assert.notEqual(r.isError, true, JSON.stringify(sc).slice(0, 300));
+  assert.deepEqual(sc.missing?.find(m => m.part === 'breadcrumb'), { part: 'breadcrumb', code: 'not_found' });
+});
+
 test('include narrows what is read', async () => {
   const { sc, calls } = await overview({ collectionId: COLL, include: ['breadcrumb'] });
   assert.ok(sc.breadcrumb);

@@ -21,7 +21,7 @@ import {
 import { resolveWriteMode, ALLOW_SERVICE_WRITES } from './services/write/credential-gate.js';
 import { ClientGoneError, runWithRequestSignal } from './request-scope.js';
 import { requestIdFrom, runWithRequestId, traceFrom } from './request-id.js';
-import { count } from './metrics.js';
+import { count, observe } from './metrics.js';
 import { METRICS_PATH, handleMetrics } from './rest/metrics-route.js';
 import { log } from './logger.js';
 import type { DistinctValueLimiter, RateLimiter } from './rate-limit.js';
@@ -38,14 +38,13 @@ import { handleRestRequest } from './rest/routes.js';
 import { handleUploadRequest, UPLOAD_PATH, uploadTimeoutMs } from './rest/upload-route.js';
 import { batchUploadEnabled, sharedUploadSlots } from './services/write/upload-slot.js';
 import { handleStaticRequest } from './rest/static.js';
-import { widgetBuildIds } from './apps/resources.js';
 import { AUTH_STATUS_PATH, handleAuthStatus } from './rest/auth-status.js';
 import { handleReady, READY_PATH } from './rest/ready.js';
+import { HEALTH_PATH, writeHealth } from './rest/health.js';
 import { refuseRateLimited, refuseTooManyLogins } from './rest/rate-limited.js';
 import {
   budgetBucket, CLIENT_KEY_HEADER, countToolCalls, type ClientBudgets, type TrustedClient,
 } from './client-budget.js';
-import { SERVER_VERSION } from './version.js';
 
 export interface HttpAppOptions {
   /**
@@ -200,10 +199,12 @@ export function createHttpRequestHandler(
     res.setHeader('X-Request-Id', id);
     // Counted when the response is over, by what it ended as. `close` without a
     // finished response is the client hanging up first.
-    res.once('close', () => count('wlo_http_requests_total', {
-      route: routeClass(req.method, parseRequestUrl(req.url)?.pathname),
-      status: res.writableFinished ? String(res.statusCode) : 'aborted',
-    }));
+    const acceptedAt = Date.now();
+    res.once('close', () => {
+      const route = routeClass(req.method, parseRequestUrl(req.url)?.pathname);
+      count('wlo_http_requests_total', { route, status: res.writableFinished ? String(res.statusCode) : 'aborted' });
+      observe('wlo_http_request_duration_seconds', { route }, (Date.now() - acceptedAt) / 1000);
+    });
     return runWithRequestId(id, () => runAnonymous(() => handle(req, res)), traceFrom(req.headers));
   };
 
@@ -279,12 +280,9 @@ export function createHttpRequestHandler(
       return;
     }
 
-    // Health check — carries the widget build hashes as the DEPLOY FINGERPRINT
-    // (content-addressed → changes with every widget/meta change), so whether
-    // a fix is actually live is one curl instead of a byte-diff probe.
-    if (req.method === 'GET' && path === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: SERVER_VERSION, widgets: widgetBuildIds() }));
+    // Health check (`rest/health.ts` — the internal port answers the same).
+    if (req.method === 'GET' && path === HEALTH_PATH) {
+      writeHealth(res);
       return;
     }
 
