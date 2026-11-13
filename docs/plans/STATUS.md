@@ -5059,3 +5059,11 @@ oberster Ebene des Ausgabeschemas annimmt.
   ein 200 ohne Textfeld ist auf allen Wegen „nicht lesbar"; das Rücklesen eines Volltexts zählt einen Schnitt als
   nicht lesbar; `fetch` folgt derselben Regel; Bytes mit Steuerzeichen werden nie als Text ausgegeben; kein
   Datei-Rückgriff bei verlinkten Datensätzen; ein Text, dem nur die schließende Klammer fehlt, gilt als ganz.
+
+**Entschieden 2026-11-13 (Nutzer): der einheitliche Vertrag (A-3) und die Ausgabeschemata für die übrigen
+Lesewerkzeuge werden NICHT umgesetzt.** Kein offener Punkt mehr. Gründe: niemand hat danach gefragt (der Punkt stammt
+aus dem eigenen Audit, nicht aus den Rückmeldungen des Chatbot-Teams); was ein Client einheitlich braucht, ist es
+bereits (Fehlercodes, Wartezeiten, „nicht gefunden / nicht erreichbar / abgelehnt"); Modelle lesen die Beschreibung je
+Werkzeug; weitere Schemata nützen nur streng prüfenden Clients und vergrößern die Werkzeugliste (heute ~26 000 Tokens je
+Anfrage). Wieder aufgreifen nur gezielt, wenn ein Abnehmer eine konkrete Uneinheitlichkeit als Hindernis meldet.
+Der Alias „Gemeinschaftskunde → Politik" ist bestätigt; er war seit Z1 eingetragen (`src/vocabs.ts`).
