@@ -1,11 +1,13 @@
 /**
  * services/content-text.ts – The actual TEXT of a material, not its metadata.
  *
- * Two sources, repository first:
+ * Three sources, repository first:
  *   1. edu-sharing's own `/textContent` — it already holds converted text for
  *      the large majority (29 of 32 sampled live records, 2026-07-28), for
  *      linked pages as well as attached files.
- *   2. The external extraction service, but only for records that are merely
+ *   2. The file itself, where it IS text the repository does not extract — a
+ *      Markdown file of a public record (`fileTextFor`).
+ *   3. The external extraction service, but only for records that are merely
  *      LINKED (`ccm:wwwurl`) and whose text the repository does not have.
  *
  * No in-process conversion (no PDF parser, no Markitdown): that would be
@@ -13,7 +15,7 @@
  * paths here are remote HTTP, i.e. asynchronous I/O.
  */
 
-import { WLO_TEXT_TIMEOUT_MS, getNodeMetadata, readNodeTextContent, stripStoreRef } from '../wlo-api.js';
+import { WLO_TEXT_TIMEOUT_MS, getNodeMetadata, readNodeDownload, readNodeTextContent, stripStoreRef } from '../wlo-api.js';
 import { extractTextFromUrl } from '../text-extraction-api.js';
 import { nodeTitle } from '../node-match.js';
 import { capText } from '../text-cap.js';
@@ -34,10 +36,12 @@ export type ContentTextSource = 'repository' | 'external-extraction' | 'none';
  *                            rights can, so this is deliberately its own answer
  *                            rather than being folded into "no text".
  *   - `not_extracted`      — the node HAS a file, but the repository gained no
- *                            text from it: Markdown, JSON and images regularly
- *                            (edu-sharing client library, measured 2026-08-27 and
- *                            2026-09-11). "No stored text" would claim the file
- *                            is missing (plan 2026-11-08, phase 2).
+ *                            text from it. Measured on staging 2026-11-13
+ *                            (`npm run measure:uploads`): images, audio, video,
+ *                            a PDF without a text layer, and Markdown — the
+ *                            last is read as the file it is where the record
+ *                            is public (`fileTextFor`). "No stored text"
+ *                            would claim the file is missing.
  *   - `text_unreadable`    — the text READ failed (timeout, 5xx). No statement
  *                            about the material at all: a large PDF timing out
  *                            must not read as "the repository gained no text"
@@ -56,7 +60,7 @@ export type ContentTextMiss =
  * reading widget's caller and `includeTextContent` say it alike.
  */
 export const NOT_EXTRACTED_NOTE =
-  'Die Datei ist vorhanden, das Repository hat aber keinen Text daraus gewonnen (bei Markdown, JSON und Bildern regelmäßig).';
+  'Die Datei ist vorhanden, das Repository hat aber keinen Text daraus gewonnen (regelmäßig bei Bildern, Audio, Video, PDFs ohne Textebene und nicht öffentlichen Markdown-Dateien).';
 
 /**
  * Replacement characters and control characters (other than tab/newline/CR):
@@ -75,6 +79,12 @@ export interface ContentText {
   sourceUrl: string | null;
   /** Length BEFORE truncation, so the caller can see what it is missing. */
   charCount: number;
+  /**
+   * Set when the SOURCE was larger than what is read of it (`TEXT_CONTENT_MAX_BYTES`,
+   * `FILE_TEXT_MAX_BYTES`): `charCount` is then the length that was read — the
+   * text is at least that long.
+   */
+  charCountIsLowerBound?: true;
   truncated: boolean;
   reason?: ContentTextMiss;
 }
@@ -101,8 +111,53 @@ export function isStoredText(text: string | null | undefined): boolean {
  * A stored-text read that never throws: a timeout (a large PDF) is a failed
  * read with status 0, reported as such — never the loss of the whole answer.
  */
-export function readStoredText(nodeId: string): Promise<{ text: string | null; status: number }> {
+export function readStoredText(nodeId: string): Promise<{ text: string | null; status: number; none?: true; cut?: true }> {
   return readNodeTextContent(nodeId, WLO_TEXT_TIMEOUT_MS).catch(() => ({ text: null, status: 0 }));
+}
+
+/**
+ * File types that ARE text and that the repository extracts nothing from.
+ * Measured 2026-11-13: a Markdown upload is stored as `text/x-web-markdown`
+ * whatever type the upload names, and `/textContent` answers `{"text":null}`.
+ * An ALLOW list on purpose: for every other type the download is bytes, or
+ * markup (`text/html`) the repository already turns into text itself.
+ */
+const VERBATIM_TEXT_TYPES = new Set(['text/x-web-markdown', 'text/markdown', 'text/x-markdown']);
+
+/** The most that is read of such a file; what lies past it is cut by the caller's own cap anyway. */
+export const FILE_TEXT_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The file itself as text, for a type the repository does not extract — or
+ * null. Works for a PUBLIC record only: no login reads a private file's bytes
+ * (`eduservlet/download` 403, measured 2026-11-06 and again 2026-11-13), and
+ * then the honest answer stays "no text extracted". Never throws.
+ *
+ * The ONE way out every path that shows a stored text takes
+ * (`get_wlo_content_text`, `includeTextContent` on details and on search hits,
+ * the `fetch` tool), with its conditions in one place: a record that carries a
+ * file and links nowhere — a linked record's text is the page's. The type is
+ * the repository's verdict, apparently by file name, so the bytes are checked
+ * too: control characters anywhere mean this is no text, however long.
+ */
+export async function fileTextFor(
+  nodeId: string, file: { mimeType?: string; fileSize?: number; linked: boolean },
+): Promise<{ text: string; cut: boolean } | null> {
+  if (file.linked || !(Number(file.fileSize ?? 0) > 0)) return null;
+  const type = (file.mimeType ?? '').split(';')[0]!.trim().toLowerCase();
+  if (!VERBATIM_TEXT_TYPES.has(type)) return null;
+  const read = await readNodeDownload(nodeId, FILE_TEXT_MAX_BYTES).catch(() => null);
+  if (!read || !read.text.trim() || BINARY_DEBRIS.test(read.text)) return null;
+  return { text: read.text, cut: read.truncated };
+}
+
+/**
+ * Whether a stored-text read ANSWERED: a text, or the repository's own "there
+ * is none" (`{"text":null}`). A 200 that names no text field — an HTML login
+ * page, another JSON — says nothing about the record.
+ */
+export function storedTextAnswered(read: { text: string | null; status: number; none?: true }): boolean {
+  return read.status === 200 && (read.text !== null || read.none === true);
 }
 
 /** Fields read off the node: its title and the external URL for the fallback. */
@@ -169,7 +224,7 @@ export async function getContentText(
   // links nowhere holds the text of its own file or the full text written to
   // it (plan 2026-11-08, W1), and a short one is still that text.
   if (repoText.length >= MIN_USEFUL_CHARS || (isStoredText(repoText) && node && !linked)) {
-    return cap({ ...base, text: repo.text as string, source: 'repository' }, maxChars);
+    return cap({ ...base, text: repo.text as string, source: 'repository' }, maxChars, repo.cut);
   }
   // A refused read outranks a missing one, and is checked FIRST: a node that is
   // not public refuses its metadata too (live-verified), so the "not found"
@@ -180,7 +235,9 @@ export async function getContentText(
   const wwwurl = stripStoreRef(node.properties?.['ccm:wwwurl']?.[0]);
   if (!wwwurl) {
     // Only an ANSWERED read may say what the record holds.
-    if (repo.status !== 200) return miss('text_unreadable');
+    if (!storedTextAnswered(repo)) return miss('text_unreadable');
+    const file = await fileTextFor(nodeId, { mimeType: node.mimetype, fileSize: Number(node.size ?? 0), linked: false });
+    if (file) return cap({ ...base, text: file.text, source: 'repository' }, maxChars, file.cut);
     return miss(Number(node.size ?? 0) > 0 ? 'not_extracted' : 'no_text_no_url');
   }
 
@@ -203,6 +260,7 @@ export async function getContentText(
 function cap(
   r: { nodeId: string; title: string; text: string; source: ContentTextSource; sourceUrl: string | null },
   maxChars: number,
+  sourceCut = false,
 ): ContentText {
-  return { ...r, ...capText(r.text, maxChars) };
+  return { ...r, ...capText(r.text, maxChars), ...(sourceCut ? { charCountIsLowerBound: true as const } : {}) };
 }

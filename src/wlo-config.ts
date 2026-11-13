@@ -475,7 +475,7 @@ export const WLO_TEXT_EXTRACTION_URL: string = resolveExtractionUrl(process.env[
 
 /**
  * The key for the extraction service when it is reached THROUGH the B-API proxy
- * (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/<service>`), sent as
+ * (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/text-extraction`), sent as
  * `X-API-KEY`. Unset — the service is called directly, as before. A secret:
  * never logged, and sent to the configured service address only.
  *

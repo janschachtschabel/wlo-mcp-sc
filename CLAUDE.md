@@ -1442,7 +1442,7 @@ The current rebuild/extension is designed in:
   account `WLO_TEST_USER`): no folder right → batches lie FLAT in `-userhome-`, and
   the owner's search finds them at once. Staging rejects EVERY content upload
   (500 `InvalidTypeException … property name: content`, raw REST, both accounts) —
-  the same defect as the filing regression; file types/sizes stay unmeasured. (Lifted 2026-11-13: staging accepts content writes and filing again — the live suite is 16/16 — so file types and sizes are now MEASURABLE, and still not measured.)
+  the same defect as the filing regression; file types/sizes stay unmeasured. (Lifted 2026-11-13: staging accepts content writes and filing again — the live suite is 16/16 — so file types and sizes were measured the same day: `npm run measure:uploads`, table in the plan file — eleven of the fifteen accepted kinds tried, each stored as detected; 50 MB takes 85 s.)
   P2 adds two rules: a licence resolves EXACTLY or not at all (`resolveVocabMatch`
   has no fuzzy step for `license` — "CC BY NC" became `CC_BY`, the freer key),
   and the `ccm:wwwurl` search returns prefix NEIGHBOURS while a decorated
@@ -1769,7 +1769,20 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 - `src/wlo-api.ts` — barrel over the edu-sharing REST client: `wlo-search.ts` +
   `wlo-node.ts` (endpoints), `wlo-config.ts` (env, `DISPLAY_PROPS`, URL
   sanitization), `wlo-types.ts` (`WloNode`/`SearchResponse`), and
-  `wlo-node-text.ts` (`/textContent` + the anonymous download, byte-capped), and
+  `wlo-node-text.ts` (`/textContent` + the file download, BOTH byte-capped
+  since 2026-11-13: `/textContent` answers the whole text as one JSON value — a
+  50 MB text file answered 52 million characters — so the read stops at
+  `TEXT_CONTENT_MAX_BYTES` and reports `cut` — which every caller must
+  honour: the tool says "at least N characters", a skill instruction is refused
+  whole, a write's read-back counts as unreadable; `{"text":null}` is the
+  repository saying "none" (`none`), which is what Markdown, images, audio and
+  video answer, and is not the same as a body naming no text field
+  (`storedTextAnswered` — that one is "could not be read" on every path). A
+  file that IS text and is not extracted — Markdown, an ALLOW list — is read as
+  itself for a public, unlinked record through `fileTextFor`
+  (`services/content-text.ts`), the one way out all four paths that show a
+  stored text take: `get_wlo_content_text`, `includeTextContent` on details
+  and on search hits, and `fetch`), and
   **`wlo-fetch.ts` — `wloFetch` plus the credential boundary**: the only place
   the operator's password is attached, and only ever to the repository host.
   `src/topic-page-api.ts` — topic-page discovery (repository I/O only);

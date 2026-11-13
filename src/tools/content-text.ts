@@ -79,7 +79,7 @@ Kein Text: \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_ur
         // attribute the text. The document below keeps its own line breaks.
         const lines = [`# ${result.title || result.nodeId}`, '', `Quelle: ${origin}`]
           .map(oneLine);
-        if (result.truncated) lines.push(`Hinweis: gekürzt auf ${params.maxChars ?? DEFAULT_MAX_CHARS} von ${result.charCount} Zeichen.`);
+        if (result.truncated) lines.push(`Hinweis: gekürzt auf ${params.maxChars ?? DEFAULT_MAX_CHARS} von ${result.charCountIsLowerBound ? 'mindestens ' : ''}${result.charCount} Zeichen.`);
         lines.push('');
         lines.push(result.text || [
           `Dieses Material hat keinen hinterlegten Volltext — ${result.reason ? NO_TEXT_REASONS[result.reason] : 'Grund unbekannt'}.`,

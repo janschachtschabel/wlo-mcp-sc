@@ -27,7 +27,7 @@
  */
 
 import type { WloNode } from '../wlo-api.js';
-import { getNodeMetadata, getNodeTextContent, ngsearch, readNodeDownload, stripStoreRef } from '../wlo-api.js';
+import { getNodeMetadata, ngsearch, readNodeDownload, readNodeTextContent, stripStoreRef } from '../wlo-api.js';
 import { log } from '../logger.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode } from '../formatter.js';
@@ -262,12 +262,12 @@ export async function readSkillText(nodeId: string): Promise<SkillTextRead> {
   // `||`, not `??`: a download that answers 200 with an EMPTY body is no text
   // either, and the extract may still hold one.
   if (read?.text) return { text: read.text };
-  // The fallback is the repository's extract, read as one JSON value — it has no
-  // stream to stop, so the bound is applied to what came back. The promise
-  // "past the bound it is refused" must not depend on which read answered
-  // (review of audit package 3).
-  const extract = await getNodeTextContent(nodeId);
-  if (extract !== null && Buffer.byteLength(extract, 'utf-8') > SKILL_TEXT_MAX_BYTES) {
+  // The fallback is the repository's extract. The promise "past the bound it is
+  // refused" must not depend on which read answered (review of audit package
+  // 3) — and an extract the read itself had to CUT is past it by definition,
+  // however short its decoded beginning came out (escapes count as bytes there).
+  const { text: extract, cut } = await readNodeTextContent(nodeId);
+  if (cut || (extract !== null && Buffer.byteLength(extract, 'utf-8') > SKILL_TEXT_MAX_BYTES)) {
     log.warn('skill text refused — extract larger than the bound', { nodeId, maxBytes: SKILL_TEXT_MAX_BYTES });
     return { text: null, refused: 'too_large' };
   }

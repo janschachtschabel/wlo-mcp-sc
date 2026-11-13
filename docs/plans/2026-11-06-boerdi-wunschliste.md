@@ -336,3 +336,24 @@ Baum mit ~40 Knoten unter einer eigenen Test-Elternsammlung `BOERDi-Messung …`
 ein zweiter Lauf mit `merge` legt nichts doppelt an; Abbruch simulieren (kleines
 Budget), Fortsetzung mit demselben Schlüssel; danach alles löschen (nur ids dieses
 Laufs, Titelpräfix geprüft).
+
+## MA-0 — gemessen (2026-11-13)
+
+`npm run measure:uploads` gegen Staging, Dienstkonto, Wegwerf-Datensätze im eigenen Bereich (alle gelöscht).
+
+| Datei | gespeichert als | Upload | `textContent` |
+|---|---|---|---|
+| txt (37 B) | text/plain | 2,4 s | Text |
+| md (70 B), gesendet als markdown / text/plain / octet-stream | text/x-web-markdown | 1,6–2,1 s | `{"text":null}` |
+| pdf mit Textebene | application/pdf | 1,8 s | Text |
+| pdf ohne Textebene | application/pdf | 1,7 s | zwei Zeilenumbrüche |
+| docx | …wordprocessingml.document | 1,7 s | Text (Überschrift als Zeile) |
+| xlsx | …spreadsheetml.sheet | 2,7 s | Blattname, dann Zellen |
+| pptx (handgebautes Minimum) | …presentationml.presentation | 3,5 s | nichts — nicht aussagekräftig |
+| odt | …opendocument.text | 2,3 s | Text (Überschrift ohne Trennung) |
+| png, jpg | image/png, image/jpeg | 1,8–2,2 s | `{"text":null}` |
+| mp3, mp4 | audio/mpeg, video/mp4 | 1,8 s | `{"text":null}` |
+| txt 1 MB / 10 MB / 50 MB | text/plain | 3,3 s / 18 s / 85 s | ganzer Text in einem JSON-Wert (0,4 / 0,8 / 1,6 s) |
+
+Folgen: die Upload-Frist (20 s + 2 s je MB) reicht bei jeder Größe; Punkt 9 ist von der Messung her nicht mehr
+blockiert. Rechte anderer Konten (Testkonto ohne Ordnerrecht) sind unverändert der Stand vom 6.11.

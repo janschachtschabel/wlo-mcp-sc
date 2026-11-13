@@ -6,6 +6,49 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 2026-11-13 (upload and full-text measurement)
+
+- **A stored full text is read under a byte bound** (`TEXT_CONTENT_MAX_BYTES`, 4 MiB). `GET …/textContent`
+  answers the whole text as one JSON value, and its size is the uploader's choice: a 50 MB text file answered
+  52 428 837 characters, all of it held in memory twice for tools whose largest answer is 200 000 characters. The
+  read now stops at the bound; what was read is still the beginning of the text, and `get_wlo_content_text` says so:
+  `charCountIsLowerBound: true`, "von mindestens N Zeichen". A skill instruction whose extract had to be cut is
+  refused whole, as before; a full-text read-back that had to be cut counts as unreadable.
+- **The search no longer calls a record "unreadable" whose repository answer is "there is no text".** A Markdown
+  file, an image, audio and video answer `{"text":null}`; `includeTextContent` reported that as
+  `textContentUnreadable` — "try again" for a state that stays. It is an empty `textContent` now; a body that names
+  no text field at all stays unreadable — and is now unreadable on the other paths too (`text_unreadable`,
+  `textContentError`), where it used to read as "no text extracted".
+
+### Added — 2026-11-13
+
+- **A public Markdown file is read as the text it is.** The repository extracts nothing from Markdown (stored as
+  `text/x-web-markdown`, whatever type the upload names), so `get_wlo_content_text`, `includeTextContent` and
+  `fetch` answered "no text extracted" (or the description) for a file that is text. They now read the file itself —
+  for a public record that links nowhere; no login reads a private file's bytes, and there the answer stays
+  `not_extracted`. Bytes carrying control characters are not handed over, whatever the file is called.
+- `npm run measure:uploads` (which files a repository takes, how long, what `textContent` makes of each),
+  `npm run dump:tools` (the tool list as JSON, without a network) and `scripts/check-host-compat.mjs` (does a model
+  host take that list).
+
+### Measured — 2026-11-13, against staging
+
+- **Uploads (MA-0).** Eleven of the fifteen kinds the upload accepts were tried, and each is stored with the type
+  we detect: txt, md, pdf, docx, xlsx, pptx, odt, png, jpg, mp3, mp4 (not tried: gif, webp, ods, odp). Duration about 1.6–3.5 s for a small file, 3.3 s for 1 MB, 18 s for 10 MB, 85 s for
+  50 MB (the deadline of 20 s + 2 s per MB leaves room at every size).
+- **What `textContent` returns:** the text for txt, pdf with a text layer, docx, xlsx (sheet name first), odt —
+  without any structure; nothing (`{"text":null}`) for Markdown, png, jpg, mp3, mp4; two line breaks for a PDF
+  without a text layer. Markdown stays `text/x-web-markdown` and without text whether it is sent as
+  `text/markdown`, `text/plain` or `application/octet-stream`. Our hand-built minimal pptx returned nothing — not
+  conclusive for PowerPoint files in general.
+- **The extraction service through the B-API proxy works** with `WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/text-extraction`
+  and the key as `X-API-KEY`: 0.5 s (`simple`) and 1.3 s (`browser`) for one page; 401 without the key.
+- **OpenAI takes the tool list:** all 52 tools as functions on the chat and the responses API (gpt-4o-mini,
+  gpt-5-mini; about 26 000 prompt tokens for the list), and the hosted MCP client lists and calls the deployed
+  server. The documented limits of OpenAI and Anthropic (name pattern, description ≤ 1024, object schemas, no
+  top-level anyOf in an input) hold for every tool. Not yet exercised by a host: the `anyOf` in the published
+  output schemas — the deployed server is an older build.
+
 ### Fixed — follow-ups of 2026-11-13 (checks after the addendum)
 
 - **`/api/wikipedia` and `/ready` answer a 503 with `Retry-After`** (header and `retryAfter`), like every other
@@ -57,7 +100,7 @@ to [Semantic Versioning](https://semver.org/).
 ### Added — the text-extraction service behind the B-API proxy
 
 - **`WLO_TEXT_EXTRACTION_API_KEY`:** with it set, the call to the extraction service carries `X-API-KEY`, so the
-  service can be reached through the B-API proxy (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/<service>`;
+  service can be reached through the B-API proxy (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/text-extraction`;
   the server appends `/from-url`). The key goes to the configured service address only, a redirect is not followed
   with it, and it is never logged. Unset, the service is called directly as before. Not tried against a real proxy.
 

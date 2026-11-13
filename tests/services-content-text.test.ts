@@ -342,3 +342,51 @@ test('getContentText: a short text with replacement or control characters is bin
     mock.restore();
   }
 });
+
+// ── A file that IS text and that the repository does not extract ────────────
+// Measured on staging 2026-11-13 (`npm run measure:uploads`): a Markdown file is
+// stored as `text/x-web-markdown` whatever type the upload names, and
+// `GET …/textContent` answers `{"text":null}` for it. The file itself is the
+// text — readable through the download for a PUBLIC record only.
+
+function installFileMock(o: { mimetype: string; download?: string; downloadStatus?: number }) {
+  return installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { text: null } };
+    if (url.includes('/metadata')) {
+      return { json: { node: { ...makeNode('n1', 'Notiz', { 'cclom:title': ['Notiz'] }), size: 70, mimetype: o.mimetype } } };
+    }
+    if (url.includes('eduservlet/download')) {
+      return o.downloadStatus ? { status: o.downloadStatus, json: {} } : { text: o.download ?? '' };
+    }
+    return { json: {} };
+  });
+}
+
+test('getContentText: a Markdown file the repository extracts nothing from is read as the file it is', async () => {
+  const mock = installFileMock({ mimetype: 'text/x-web-markdown', download: '# Optik\n\nLichtbrechung am Prisma\n' });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.equal(r.source, 'repository');
+    assert.equal(r.text, '# Optik\n\nLichtbrechung am Prisma', 'capped like every text: trimmed');
+    assert.equal(r.reason, undefined);
+  } finally { mock.restore(); }
+});
+
+test('getContentText: a Markdown file that is not public stays "not extracted" — no login reads its bytes', async () => {
+  const mock = installFileMock({ mimetype: 'text/x-web-markdown', downloadStatus: 403 });
+  try {
+    const r = await getContentText('n1', 8000);
+    assert.deepEqual([r.source, r.reason, r.text], ['none', 'not_extracted', '']);
+  } finally { mock.restore(); }
+});
+
+test('getContentText: no other file type is downloaded — an image or a scan has no text to hand over', async () => {
+  for (const mimetype of ['image/png', 'application/pdf', 'video/mp4', 'text/html']) {
+    const mock = installFileMock({ mimetype, download: 'bytes' });
+    try {
+      const r = await getContentText('n1', 8000);
+      assert.equal(r.reason, 'not_extracted', mimetype);
+      assert.equal(mock.calls.filter(c => c.url.includes('eduservlet/download')).length, 0, mimetype);
+    } finally { mock.restore(); }
+  }
+});

@@ -124,7 +124,9 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 > Kein Text ist kein Fehler, sondern ein `reason`: `access_denied` (Material
 > existiert, ist aber nicht öffentlich — daran ändert keine Konvertierung etwas,
 > nur Rechte), `no_text_no_url`, `not_extracted` (eine Datei ist da, das Repository
-> hat aber keinen Text daraus gewonnen — bei Markdown, JSON und Bildern regelmäßig),
+> hat aber keinen Text daraus gewonnen — regelmäßig bei Bildern, Audio, Video, PDFs ohne Textebene und nicht
+> öffentlichen Markdown-Dateien; eine öffentliche Markdown-Datei wird als ihr eigener Text gelesen;
+> `charCountIsLowerBound: true` heißt, die Quelle war größer als das Gelesene — `charCount` ist dann eine Untergrenze),
 > `text_unreadable` (der Abruf selbst scheiterte — keine Aussage über das Material),
 > `extraction_failed`, `node_not_found`. Lange
 > Texte werden gekürzt (`truncated`, Grenze über `maxChars`).

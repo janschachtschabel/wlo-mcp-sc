@@ -56,6 +56,8 @@ function repository(opts: {
   throwOn?: Set<string>;
   /** GET textContent answers `{text: null}` — a body that names no text at all. */
   nullText?: boolean;
+  /** The read-back after a POST is larger than the read bound, and what was read of it is blank. */
+  cutReadBack?: boolean;
 } = {}) {
   const recs: Record<string, Rec> = {
     plain: {}, withFile: { size: 4096, hash: 'h-pdf', mimetype: 'application/pdf' }, link: { wwwurl: 'https://example.org/a' },
@@ -82,6 +84,7 @@ function repository(opts: {
     }
     if (tc && opts.throwOn?.has(`text:${tc[1]}`)) throw new Error('socket hang up');
     if (tc && posts.length && opts.readBackStatus) return { status: opts.readBackStatus, json: {} };
+    if (tc && posts.length && opts.cutReadBack) return { text: `{"text":"${' '.repeat(5 * 1024 * 1024)}Text"}` };
     // A record without text answers an EMPTY text; `nullText` a body that names none.
     if (tc) return { json: { text: opts.nullText ? null : recs[tc[1]!]?.text ?? '' } };
     const meta = /\/nodes\/-home-\/([^/]+)\/metadata/.exec(url);
@@ -220,6 +223,8 @@ for (const [status, code, open, extra] of [
   [504, 'upstream_error', true, {}],
   // A read-back that names no text is no "empty" — it is no answer (review 3, finding 1).
   [500, 'upstream_error', true, { nullText: true }],
+  // A read-back that had to be cut cannot be compared: its blank beginning is no proof (review 2026-11-13).
+  [500, 'upstream_error', true, { cutReadBack: true }],
 ] as const) {
   test(`a write answered ${status} is ${code} with outcomeOpen ${open} (${JSON.stringify(extra)})`, async () => {
     setServiceCredentialForTest(MARIA);

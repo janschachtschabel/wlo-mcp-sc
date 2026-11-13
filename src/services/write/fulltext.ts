@@ -240,9 +240,11 @@ async function stillAsApproved(plan: FulltextPlan): Promise<WriteOutcome | null>
 /** Whether the read-back shows the text, shows nothing new, or cannot tell. */
 async function readBack(plan: FulltextPlan, markdown: string): Promise<'landed' | 'absent' | 'other' | 'unreadable'> {
   const back = await readNodeTextContent(plan.targetId, WLO_TEXT_TIMEOUT_MS).catch(() => ({ text: null, status: 0 }));
-  // A 200 whose body names no text (not JSON, neither `content` nor `text`) is no
-  // answer — reading it as "empty" would turn it into proof that nothing landed.
-  if (back.status !== 200 || back.text === null) return 'unreadable';
+  // A 200 without a text is no answer here — neither a body that names none, nor
+  // the repository's `{"text":null}`: right after a write, "none" may be the
+  // extract not built yet, and reading it as "empty" would turn it into proof
+  // that nothing landed. A read that had to be CUT cannot be compared at all.
+  if (back.status !== 200 || back.text === null || ('cut' in back && back.cut)) return 'unreadable';
   const text = normalizedText(back.text ?? '');
   if (text === normalizedText(markdown)) return 'landed';
   // "Nothing landed" is provable only where nothing was there before.

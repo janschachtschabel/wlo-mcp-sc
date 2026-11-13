@@ -7,8 +7,8 @@
  * where the full-text bound quietly disappears.
  */
 
-import { readNodeMetadata, type WloNode } from '../wlo-api.js';
-import { NOT_EXTRACTED_NOTE, isStoredText, readStoredText } from './content-text.js';
+import { WLO_REPOSITORY_URL, readNodeMetadata, type WloNode } from '../wlo-api.js';
+import { NOT_EXTRACTED_NOTE, fileTextFor, isStoredText, readStoredText, storedTextAnswered } from './content-text.js';
 import { formatNode, type FormattedNode } from '../formatter.js';
 import { accessInfo } from '../node-access.js';
 import { qualityInfo } from '../node-quality.js';
@@ -82,8 +82,24 @@ export interface NodeDetailBatch {
  * nothing stored. Never throws: a timeout must not take a sibling enrichment
  * with it.
  */
-export async function storedTextFields(nodeId: string, fileSize: number): Promise<Record<string, string>> {
-  return (await readStoredTextAnswer(nodeId, fileSize)).fields;
+export async function storedTextFields(nodeId: string, file: StoredFile): Promise<Record<string, string>> {
+  return (await readStoredTextAnswer(nodeId, file)).fields;
+}
+
+/** What the file fallback needs to know about the record (`fileTextFor`). */
+export interface StoredFile { fileSize?: number; mimeType?: string; linked: boolean }
+
+/**
+ * The same, read off a formatted node. Its `url` is the linked address
+ * (`ccm:wwwurl`) or, for a file, the repository's own content URL — so a
+ * record is LINKED when the address leads anywhere else.
+ */
+export function storedFileOf(n: { fileSize?: unknown; mimeType?: unknown; url?: unknown }): StoredFile {
+  const url = typeof n.url === 'string' ? n.url : '';
+  return {
+    fileSize: Number(n.fileSize ?? 0), mimeType: String(n.mimeType ?? ''),
+    linked: url !== '' && !url.startsWith(WLO_REPOSITORY_URL),
+  };
 }
 
 /**
@@ -92,14 +108,20 @@ export async function storedTextFields(nodeId: string, fileSize: number): Promis
  * HTTP status in a sentence.
  */
 export async function readStoredTextAnswer(
-  nodeId: string, fileSize: number,
+  nodeId: string, file: StoredFile,
 ): Promise<{ text: string | null; status: number; fields: Record<string, string> }> {
   const read = await readStoredText(nodeId);
-  // Blank or binary debris is no text — the rule `get_wlo_content_text` applies.
-  const text = isStoredText(read.text) ? read.text : null;
+  const answered = storedTextAnswered(read);
+  // Blank or binary debris is no text — the rule `get_wlo_content_text` applies,
+  // and so does its way out for a file that IS text (a public Markdown file).
+  const text = isStoredText(read.text) ? read.text
+    : answered ? (await fileTextFor(nodeId, file))?.text ?? null : null;
+  // A 200 that names no text field is no answer about the record either.
   const fields: Record<string, string> = text ? { textContent: capText(text, TEXT_CONTENT_CAP).text }
-    : read.status !== 200 ? { textContent: '', textContentError: `Der Volltext konnte nicht gelesen werden (HTTP ${read.status}).` }
-      : fileSize > 0 ? { textContent: '', textContentNote: NOT_EXTRACTED_NOTE } : { textContent: '' };
+    : !answered ? { textContent: '', textContentError: read.status === 200
+      ? 'Der Volltext konnte nicht gelesen werden (die Antwort des Repositorys nennt keinen Text).'
+      : `Der Volltext konnte nicht gelesen werden (HTTP ${read.status}).` }
+      : Number(file.fileSize ?? 0) > 0 ? { textContent: '', textContentNote: NOT_EXTRACTED_NOTE } : { textContent: '' };
   return { text, status: read.status, fields };
 }
 
@@ -138,7 +160,7 @@ export async function loadSingleNodeDetail(
   // it" are different answers, and only the first is a statement about the
   // material.
   const textRead = opts.includeTextContent
-    ? await readStoredTextAnswer(nodeId, formatted.fileSize)
+    ? await readStoredTextAnswer(nodeId, storedFileOf(formatted))
     : { text: null, status: 200, fields: {} };
   // Not `/parents`: that endpoint carries ancestors for a collection and
   // an empty list for a material, so it answered "in no collection" for
@@ -203,7 +225,7 @@ export async function loadNodeDetails(nodeIds: string[], opts: NodeDetailOptions
     await mapPool(resolvedIds, 10, async (id) => {
       if (withText.has(id)) {
         const result = results.get(id)!;
-        Object.assign(result, await storedTextFields(id, Number(result['fileSize'] ?? 0)));
+        Object.assign(result, await storedTextFields(id, storedFileOf(result)));
       }
       if (opts.includeParents) {
         const node = loaded.get(id);

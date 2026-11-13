@@ -34,7 +34,8 @@ import { dedupeByUrl } from '../result-dedupe.js';
 import { mapPool } from '../concurrency.js';
 import { capText } from '../text-cap.js';
 import { searchWithLicense } from './license-search.js';
-import { isStoredText, readStoredText } from './content-text.js';
+import { fileTextFor, isStoredText, readStoredText, storedTextAnswered } from './content-text.js';
+import { storedFileOf } from './node-details.js';
 import { TEXT_CONTENT_CAP, TEXT_ENRICH_MAX } from './node-details.js';
 
 /**
@@ -179,12 +180,16 @@ export interface StoredTextReport {
 export async function enrichStoredText(nodes: FormattedNode[]): Promise<StoredTextReport> {
   const unreadable: string[] = [];
   await mapPool(nodes.slice(0, TEXT_ENRICH_MAX), 10, async (n) => {
-    const read = await readStoredText(n.nodeId).catch(() => ({ text: null, status: 0 }));
-    // A 200 whose body names no text at all is no answer either (the rule of the
-    // full-text write's read-back) — not "this record has none".
-    if (read.status !== 200 || read.text === null) { unreadable.push(n.nodeId); return null; }
-    // Blank or binary debris is no text: the ONE rule of every path that shows stored text.
-    n.textContent = isStoredText(read.text) ? capText(read.text, TEXT_CONTENT_CAP).text : '';
+    const read = await readStoredText(n.nodeId);
+    // A 200 whose body names no text FIELD at all is no answer either — not
+    // "this record has none". `{"text":null}` IS that answer: what the
+    // repository says for a file it extracts nothing from (measured 2026-11-13;
+    // it was reported as unreadable, i.e. "try again", for a state that stays).
+    if (!storedTextAnswered(read)) { unreadable.push(n.nodeId); return null; }
+    // Blank or binary debris is no text: the ONE rule of every path that shows
+    // stored text — and so is the way out for a file that IS text.
+    const text = isStoredText(read.text) ? read.text : (await fileTextFor(n.nodeId, storedFileOf(n)))?.text ?? null;
+    n.textContent = text ? capText(text, TEXT_CONTENT_CAP).text : '';
     return null;
   });
   return { skipped: nodes.slice(TEXT_ENRICH_MAX).map(n => n.nodeId), unreadable: unreadable.sort() };

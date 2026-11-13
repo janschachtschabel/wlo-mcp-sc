@@ -799,3 +799,21 @@ test('K-16: a collection read in full is not flagged', async () => {
     assert.equal('incomplete' in await searchSkillsDetailed({ collectionId: 'skills-root' }), false);
   } finally { mock.restore(); }
 });
+
+test('an extract the read had to cut is refused whole, however short its decoded beginning is (review 2026-11-13)', async () => {
+  // The read bound counts JSON bytes: an extract of escapes decodes to a sixth
+  // of them, and would pass the 2 MiB check as if it were the whole instruction.
+  const { TEXT_CONTENT_MAX_BYTES } = await import('../src/wlo-node-text.js');
+  const body = `{"text":"${'\\u000c'.repeat(Math.ceil(1.5 * TEXT_CONTENT_MAX_BYTES / 6))}"}`;
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: skillNode('s-plan', 'Stunde planen', 'Plant.') } };
+    if (url.includes('/eduservlet/download')) return { status: 403, json: {} };
+    if (url.includes('/textContent')) return { text: body };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-plan', { includeFiles: false });
+    assert.equal(skill!.content, null);
+    assert.equal(skill!.contentRefused, 'too_large');
+  } finally { mock.restore(); }
+});

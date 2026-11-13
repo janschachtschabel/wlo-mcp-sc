@@ -5030,3 +5030,32 @@ oberster Ebene des Ausgabeschemas annimmt.
   Typprüfung und Image-Starttest grün.
 - **Jetzt messbar, noch nicht gemessen:** MA-0 für den Stapel-Upload (Dateiarten, Größen) — die Voraussetzung
   „Staging nimmt Uploads an" ist erfüllt.
+
+**Messdurchgang Upload/Volltext, Host-Verträglichkeit (2026-11-13, spät).**
+- **CI wieder grün:** das Repository ist öffentlich, der Lauf für `bcdcecb` ist nach erneutem Anstoßen durchgelaufen.
+- **MA-0 gemessen** (`npm run measure:uploads`, Wegwerf-Datensätze, alle gelöscht): elf der fünfzehn angenommenen Dateiarten
+  geprüft (nicht: gif, webp, ods, odp), jede wird mit dem von uns erkannten Typ gespeichert. Dauer klein 1,6–3,5 s · 1 MB 3,3 s · 10 MB 18 s · 50 MB 85 s
+  (Frist 20 s + 2 s/MB reicht überall). Punkt 9 der Wunschliste ist damit von der Messung her frei.
+- **`textContent` je Format** (deckt sich mit dem Team-Dokument vom 10.11.): Text bei txt, PDF mit Textebene, docx,
+  xlsx (Blattname voran), odt; `{"text":null}` bei Markdown, Bildern, Audio, Video; zwei Zeilenumbrüche bei PDF ohne
+  Textebene. Markdown bleibt `text/x-web-markdown` und ohne Text, gleich mit welchem Typ es gesendet wird — die
+  offene Frage des Dokuments („kommt .md als octet-stream als Text an?") ist für Staging mit NEIN beantwortet.
+  Unser handgebautes Minimal-pptx lieferte nichts; für echte PowerPoint-Dateien nicht aussagekräftig.
+- **Daraus gebaut:** (1) öffentliche Markdown-Datei wird als ihr eigener Text gelesen (`fileTextFor`, vier
+  Lesewege — Volltext-Werkzeug, Details, Suchtreffer, `fetch` —, eine Regel); privat bleibt `not_extracted`, weil kein Login die Bytes liest (erneut gemessen: 403/405).
+  (2) `textContent` wird unter 4 MiB gelesen — eine 50-MB-Textdatei antwortete 52 Mio. Zeichen in EINEM JSON-Wert.
+  (3) `{"text":null}` ist in der Suche „kein Text", nicht mehr „nicht lesbar".
+- **Extraktionsdienst hinter dem B-API-Proxy: erprobt.** Route `/api/v1/proxy/text-extraction`, Schlüssel als
+  `X-API-KEY`; 0,5 s (`simple`) / 1,3 s (`browser`); ohne Schlüssel 401. Der Dienstname stammt aus dem Team-Dokument.
+- **OpenAI:** alle 52 Werkzeuge als Funktionen angenommen (Chat- und Responses-API, zwei Modelle, ~26 000 Tokens für
+  die Liste); der gehostete MCP-Client listet und ruft den bereitgestellten Server. Statische Grenzen von OpenAI und
+  Anthropic für alle Werkzeuge eingehalten. **Offen:** das `anyOf` der veröffentlichten Ausgabeschemata hat noch kein
+  Host gesehen — der bereitgestellte Server ist ein älterer Stand (50 Werkzeuge). Nach dem nächsten Deploy:
+  `node scripts/check-host-compat.mjs tools.json https://<server>/mcp`. Anthropic-API: kein Schlüssel vorhanden.
+- **Weiter offen, braucht Entscheidung:** einheitlicher Vertrag (A-3) als neue Hauptversion; Alias
+  „Gemeinschaftskunde → Politik".
+- **Unabhängiges Review dazu: 0 kritisch, 0 groß, 8 klein, 6 Randnotizen — alle behoben**, je mit Gegenprobe: ein
+  abgeschnittener Extrakt wird als Skill-Anleitung ganz verweigert; `charCountIsLowerBound` + „mindestens" im Satz;
+  ein 200 ohne Textfeld ist auf allen Wegen „nicht lesbar"; das Rücklesen eines Volltexts zählt einen Schnitt als
+  nicht lesbar; `fetch` folgt derselben Regel; Bytes mit Steuerzeichen werden nie als Text ausgegeben; kein
+  Datei-Rückgriff bei verlinkten Datensätzen; ein Text, dem nur die schließende Klammer fehlt, gilt als ganz.

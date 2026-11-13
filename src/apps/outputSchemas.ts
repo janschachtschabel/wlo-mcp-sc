@@ -164,6 +164,8 @@ export const contentTextSchema = z.object({
   sourceUrl: z.string().nullable(),
   /** Length BEFORE truncation, so the caller sees what it is missing. */
   charCount: z.number(),
+  /** The source was larger than what is read of it: `charCount` is a lower bound. */
+  charCountIsLowerBound: z.literal(true).optional(),
   truncated: z.boolean(),
   /** Only when there is no text: which of the three causes it was. */
   reason: z.string().optional(),

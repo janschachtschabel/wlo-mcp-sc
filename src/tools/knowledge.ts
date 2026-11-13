@@ -10,7 +10,8 @@ import { incompleteNotice } from '../services/collection-search.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { buildRenderUrl, getNodeTextContent, readNodeMetadata } from '../wlo-api.js';
+import { buildRenderUrl, readNodeMetadata } from '../wlo-api.js';
+import { fileTextFor, isStoredText, readStoredText, storedTextAnswered } from '../services/content-text.js';
 import { formatNode } from '../formatter.js';
 import { searchAll } from '../services/search.js';
 import { inlineRestrictedPreviews } from '../services/preview-inline.js';
@@ -21,7 +22,7 @@ import {
   fetchDocumentSchema, fetchDocumentRichSchema,
 } from '../apps/outputSchemas.js';
 import { codedErrorResult, nodeLookupMiss, toolError } from './shared.js';
-import { codeOfStatus } from '../services/node-details.js';
+import { codeOfStatus, storedFileOf } from '../services/node-details.js';
 
 /**
  * Cap on the fetched document text. 100 000 (user decision 2026-08-20 — 10 000
@@ -184,7 +185,13 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
         // here — the same rule `getCompendiumTexts` and the detail preview
         // already follow).
         let text = node.properties?.['ccm:oeh_collection_compendium_text']?.[0] ?? '';
-        if (!text) text = (await getNodeTextContent(params.id)) ?? '';
+        // The stored text by the rule every path that shows one follows — a
+        // public Markdown file included (`fileTextFor`).
+        if (!text) {
+          const read = await readStoredText(params.id);
+          text = isStoredText(read.text) ? read.text as string
+            : storedTextAnswered(read) ? (await fileTextFor(params.id, storedFileOf(f)))?.text ?? '' : '';
+        }
         if (!text) text = f.description ?? '';
         text = capText(text, FETCH_TEXT_CAP).text;
 
