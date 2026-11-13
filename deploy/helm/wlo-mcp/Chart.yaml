@@ -1,0 +1,16 @@
+apiVersion: v2
+name: wlo-mcp
+description: >-
+  DRAFT — WLO MCP server: access to one edu-sharing repository for MCP clients.
+  Exactly one instance by design (state lives in process memory).
+type: application
+# Chart version: the draft. Bump on every chart change.
+version: 0.1.0
+# Equals package.json "version" (pinned by tests/helm-chart.test.ts) and is the
+# default image tag.
+appVersion: "1.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - mcp
+  - edu-sharing
+  - wlo

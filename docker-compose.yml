@@ -245,7 +245,7 @@ services:
     # Resource + privilege hardening. The server is a DoS/amplification surface,
     # so cap memory/CPU (a spike can't OOM the host, only the container), drop all
     # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege
-    # escalation, and run a read-only root filesystem (the app writes nothing; a
+    # escalation, and run a read-only root filesystem (the app writes only the access registry on the /data volume; a
     # small tmpfs covers /tmp).
     mem_limit: 512m
     cpus: 1.0

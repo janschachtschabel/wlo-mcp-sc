@@ -4938,3 +4938,33 @@ Teil hätte die ganze Antwort an der Schemaprüfung scheitern lassen); Event-Loo
 Monitors bereinigt; ein nicht zu öffnender `INTERNAL_PORT` beendet den Start; Readiness gehört an den öffentlichen
 Port (Doku); interner Handler fängt Fehler; Startzeit einmal berechnet; Rest Text und Tests. 3101 Tests, 3100 grün,
 1 übersprungen; Image-Starttest bestanden (vor den Review-Korrekturen gelaufen).
+
+**D1–D10 gepusht (2026-11-13):** Commit `645d326` auf `janschachtschabel/wlo-mcp-sc`, CI grün (inkl. Image-Starttest).
+
+**D11 — Ressourcen gemessen, Zustand beschrieben (2026-11-13).** `npm run measure:resources`
+(`scripts/measure-resources.mjs`, meldet nur). Gemessen (gebauter Server, anonym, Lesen gegen Staging): Leerlauf
+72 MB, nach einer Runde Lesewerkzeuge 100 MB, Spitze bei 3 × 10 gleichzeitigen `search_wlo_all` 172 MB, 0,3 Kerne.
+Speicher an ihren Grenzen, je in eigenem Prozess: Upload-Slots 128 MB gehalten → +156 MB (gehaltene Bytes plus die
+Größe der zuletzt abgelegten Datei; wo diese Kopie liegt, ist nicht verfolgt — begrenzt durch eine Datei);
+Volltexte 64 MiB → +67 MB bei reinem Latin-1, **+131 MB sobald ein Zeichen außerhalb liegt** (V8 hält die
+Zeichenkette dann mit zwei Bytes je Zeichen; die Grenze zählt UTF-8-Bytes). Schlimmster Fall zusammen rund 480 MB —
+`mem_limit: 512m` reicht ohne Stapel-Upload bequem, mit ihm nur knapp; Empfehlung 768 MB (dokumentiert, Compose
+NICHT geändert). `docs/DEPLOYMENT.md` §5.0.2: Zahlen, was im Speicher liegt und wie lange, warum eine Instanz.
+
+**D12 + D13 (2026-11-13), mit unabhängigem Review über D11–D13 (11 Befunde + 4 Kleinigkeiten, alle behoben).**
+D12: `docs/openapi.yaml` (OpenAPI 3.1, 40 Pfade außerhalb von MCP), `tests/openapi.test.ts` (Pfade in beide
+Richtungen gegen den Quelltext, jeder `$ref` löst auf — nicht Methoden oder Statuscodes), `docs/INTEGRATION.md` §7
+(gemessene Dauern mit Quelle, Budgets). D13: Entwurf `deploy/helm/wlo-mcp/` (eine Replik, `Recreate`, PVC, zwei
+Services, Proben nur auf `/health`, Secrets aus bestehendem Secret, optional Ingress/ServiceMonitor/PrometheusRule/
+NetworkPolicy), `docs/STECKBRIEF.md`, `tests/helm-chart.test.ts`; `helm lint` ohne Fehler, auf keinem Cluster
+installiert, PromQL nicht gegen ein Prometheus ausgewertet. Aus dem Review: vier nicht definierte `$ref`s; die
+NetworkPolicy war standardmäßig AN mit geratenen Namespaces (hätte nach der Installation allen Verkehr gesperrt) —
+jetzt aus, Namespaces Pflicht; `TRUST_PROXY` hinter einem Ingress, der nur eine Knotenadresse sieht, legt alle
+Nutzer in einen Budget-Topf (dokumentiert, aus dem Code hergeleitet); Alarme, die das erste Ereignis nach einem
+Neustart verpasst hätten. Das Messskript maß nach der Überarbeitung +1317 MB für die Upload-Slots (abgelehnte,
+ungelesene Körper blieben im Speicher und wurden mitgezählt) — behoben, jetzt 127 MB gehalten → +129 MB.
+3127 Tests, 3126 grün, 1 übersprungen.
+**Offene Entscheidungen des Nutzers (unverändert):** Entscheide 1/2/4 (A-3, Ausgabeschemata, `WLO_PUBLIC_BASE_URL`
+erzwingen); Staging-Vorgabe im Code streichen; Dienst-ID; Image-Registry; was das Log an IP/Benutzername/
+Suchbegriff tragen darf; `mem_limit` 768 MB bei Stapel-Upload. **Nebenbefunde, nicht geändert:** `/api/wikipedia`
+503 und `/ready` 503 ohne `Retry-After`; die No-CORS-Regel auf `/auth*` trifft auch die statischen Skripte.

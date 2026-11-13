@@ -1,0 +1,260 @@
+# values.yaml — DRAFT chart for the WLO MCP server.
+#
+# Two values are REQUIRED and have no default on purpose:
+#   image.repository   no registry is decided yet
+#   repositoryUrl      one MCP per repository — the address is the deployment's identity
+# and, as soon as anybody signs in or the service account is used:
+#   existingSecret     the chart never creates a Secret from values
+#
+# What this chart deliberately does NOT offer (replicas, autoscaling, a /ready
+# probe, secrets in values) is listed with the reasons in README.md.
+
+nameOverride: ""
+# Service id. Every object is named after it, whatever the release is called.
+fullnameOverride: "wlo-mcp"
+
+image:
+  # REQUIRED. No default: where the image is published is undecided.
+  repository: ""
+  # Defaults to the chart's appVersion (= package.json version).
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# REQUIRED. The edu-sharing repository this instance serves (WLO_REPOSITORY_URL),
+# e.g. https://repository.staging.openeduhub.net/edu-sharing. The CODE falls back
+# to staging when the variable is missing; the chart refuses to render instead,
+# so a forgotten value cannot land anywhere.
+repositoryUrl: ""
+
+# Name of an EXISTING Secret in the release namespace. Its keys are the variable
+# names; every key is optional, a missing one leaves that feature off:
+#   WLO_SERVICE_USER, WLO_SERVICE_PASSWORD   shared service account
+#   WLO_AUTH_PRIVATE_KEY                     personal logins (PKCS#8 PEM)
+#   WLO_AUTH_PRIVATE_KEY_PREVIOUS            only during a key rotation
+#   METRICS_TOKEN                            Bearer token for /metrics (16+ characters)
+#   TRUSTED_CLIENT_KEYS                      name:rpm:key[,…] for trusted backends
+# Empty = none of the six is set (anonymous reading only).
+existingSecret: ""
+
+# Non-secret settings → one ConfigMap. Every value is a STRING (quote numbers);
+# an empty string means "not set": the variable is not emitted and the default in
+# the code applies. Leave the numbers empty unless there is a reason — a value
+# here beats a default that may later be corrected by measurement.
+# What each one means: .env.example and docs/MCP-REFERENZ.md in the repository.
+config:
+  # ── 1 — repository ─────────────────────────────────────────────────────────
+  # Only on an edu-sharing that is neither WLO instance.
+  WLO_ROOT_COLLECTION_ID: ""
+  # ── 3 — service account behaviour, batch upload ────────────────────────────
+  WLO_ALLOW_SERVICE_WRITES: ""
+  WLO_ALLOW_PREPARED_WRITES: ""
+  WLO_INBOX_ID: ""
+  WLO_BATCH_UPLOAD_ENABLED: ""
+  UPLOAD_MAX_BYTES: ""
+  UPLOAD_MAX_TOTAL_BYTES: ""
+  UPLOAD_REQUEST_TIMEOUT_MS: ""
+  # ── 4 — which tools exist ──────────────────────────────────────────────────
+  # "all" is the deployment default (as in docker-compose.yml), the opposite of
+  # the code's: get_url_text reads a caller-chosen URL. "" switches such tools on.
+  WLO_DISABLE_UNSAFE_TOOLS: "all"
+  WLO_SKILLS_COLLECTION_ID: ""
+  WLO_SKILL_TOOL_MODE: ""
+  WLO_DISABLE_SKILL_SEARCH: ""
+  WLO_SKILL_CACHE: ""
+  WLO_SKILL_CACHE_REFRESH_MS: ""
+  WLO_SKILL_CACHE_TTL_MS: ""
+  WLO_SEARCH_OUTPUT_MODE: ""
+  # Pair it with repositoryUrl: same environment, or leave empty.
+  WLO_TEXT_EXTRACTION_URL: ""
+  # ── 5 — network ────────────────────────────────────────────────────────────
+  # Real SSE; the Ingress must not buffer.
+  MCP_SSE: "1"
+  # "1" because the pod sits behind an ingress controller that appends
+  # X-Forwarded-For. Set "0" if nothing in front does.
+  # READ THE README ("TRUST_PROXY and the client address") BEFORE GOING LIVE: the
+  # server counts every limit by the LAST X-Forwarded-For entry. If the
+  # controller itself only sees a node or load-balancer address, all users share
+  # one budget.
+  TRUST_PROXY: "1"
+  # The public origin clients type in (https://host, no path). OAuth names it in
+  # its discovery documents. Empty: with TRUST_PROXY on, the origin is taken from
+  # each request's Host header (the server warns at startup); with TRUST_PROXY
+  # off, every OAuth path answers 404.
+  WLO_PUBLIC_BASE_URL: ""
+  # ── 6 — limits and timings (leave empty) ───────────────────────────────────
+  RATE_LIMIT_RPM: ""
+  API_RATE_LIMIT_RPM: ""
+  AUTH_CREDENTIAL_LIMIT: ""
+  TICKET_CREDENTIAL_LIMIT: ""
+  TICKET_ALLOWED_ORIGINS: ""
+  WIDGET_OAUTH_ORIGINS: ""
+  MAX_BODY_BYTES: ""
+  WLO_FETCH_TIMEOUT_MS: ""
+  WLO_TEXT_TIMEOUT_MS: ""
+  WLO_UPSTREAM_CONCURRENCY: ""
+  WLO_READY_PROBE_MS: ""
+  WLO_POOL_SIZE: ""
+  WLO_TOPIC_POOL: ""
+  WLO_COMPENDIUM_SECTION_MAX: ""
+  LOG_LEVEL: ""
+  # ── 7 — widgets / ChatGPT submission ───────────────────────────────────────
+  WLO_WIDGET_DOMAIN: ""
+  WLO_WIDGET_MIME: ""
+  WLO_WIDGET_IMAGE_DOMAINS: ""
+
+service:
+  # Public: /mcp, /api/*, /auth*, /oauth/* (and the launcher pages).
+  public:
+    type: ClusterIP
+    port: 3000
+  # Internal: ONLY /health, /ready, /metrics (INTERNAL_PORT). A ClusterIP service
+  # of its own; never referenced by the Ingress.
+  internal:
+    port: 9090
+
+# The access registry (WLO_AUTH_REGISTRY_PATH) — the one file on disk, kilobytes.
+# It is an allow-list: losing it invalidates every issued access block. Back the
+# volume up (docs/DEPLOYMENT.md §3.1).
+persistence:
+  enabled: true
+  # ReadWriteOnce is part of the one-instance rule, not a storage preference.
+  accessMode: ReadWriteOnce
+  size: 100Mi
+  # "" = cluster default
+  storageClass: ""
+  existingClaim: ""
+  # Keep the claim on `helm uninstall`.
+  keep: true
+
+# Measured 2026-11-13 (docs/DEPLOYMENT.md §5.0.2, `npm run measure:resources`):
+# 72 MB idle, 172 MB under a search burst, about 480 MB worst case — 172 MB
+# search peak + 178 MB upload store at its bound (128 MB held plus up to one
+# more file of UPLOAD_MAX_BYTES, 50 MB) + 131 MB full-text plans at theirs —
+# before request bodies in flight.
+# CPU: 0.3 core during the burst; the time goes to the repository.
+# docker-compose.yml caps at 512m, which is only just enough with batch upload
+# on; 768 MB is the documented figure for that case. Proposals — re-measure on
+# the target hardware.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 768Mi
+
+# Must exceed SHUTDOWN_GRACE_MS (70 s, src/shutdown.ts) — the server lets a
+# running write finish before it exits — and the compose file's 75 s.
+terminationGracePeriodSeconds: 90
+
+# uid/gid of the image's `node` user (Dockerfile: USER node = 1000).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  # Makes the claim writable for uid 1000; the Dockerfile's chown of /data only
+  # initialises a Docker named volume, not a PersistentVolume.
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+probes:
+  liveness:
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# OFF by default: the policy admits traffic by NAMESPACE, and this chart does
+# not know the cluster's. A guessed name cuts the traffic silently (the ingress
+# answers 504, the scrape fails), so there is no default to guess with — with
+# `enabled: true` both namespaces are REQUIRED and the render fails without them.
+networkPolicy:
+  enabled: false
+  # Namespace of the ingress controller (matched by kubernetes.io/metadata.name),
+  # e.g. ingress-nginx. REQUIRED when enabled.
+  ingressNamespace: ""
+  # Namespace of Prometheus, e.g. monitoring. REQUIRED when enabled.
+  monitoringNamespace: ""
+  # Kubelet probes come from the node. Most CNIs always admit node → own pods;
+  # where one does not, list the node CIDRs here.
+  probeSourceCIDRs: []
+  egress:
+    # HTTPS destinations: the repository, Wikipedia, the optional text-extraction
+    # service. A NetworkPolicy matches addresses, not host names — narrow this to
+    # the repository's CIDR where it is stable, or use the CNI's FQDN policy.
+    # Both address families: 0.0.0.0/0 alone leaves an IPv6 destination closed.
+    httpsCIDRs: ["0.0.0.0/0", "::/0"]
+    # Further raw egress rules (e.g. a repository reached on another port).
+    extra: []
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # e.g. the label your Prometheus selects monitors by
+    labels: {}
+    # Only when METRICS_TOKEN is set in existingSecret: then the internal port
+    # asks for the token too. Reads it from that same Secret.
+    bearerToken:
+      enabled: false
+      secretKey: METRICS_TOKEN
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # Every threshold is a PROPOSAL without operating history behind it.
+    thresholds:
+      # share of repository calls ending 5xx or without an answer
+      upstreamErrorRatio: 0.2
+      # share of tool calls answered isError or thrown
+      toolErrorRatio: 0.25
+      # /mcp, p95 over 10 min
+      httpP95Seconds: 20
+      # per tool, p95 over 10 min
+      toolP95Seconds: 20
+      # 85 % of the 768Mi limit (805306368 × 0.85, rounded down) — keep in step
+      # with resources.limits.memory. A quoted string: a bare number of this size
+      # can render in scientific notation.
+      memoryBytes: "684510412"
+      eventLoopLagSeconds: 0.1
+      # WloMcpRecentlyStarted (info): the process is younger than this.
+      recentStartSeconds: 600
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tls:
+    enabled: false
+    secretName: ""
+  # CONTROLLER-SPECIFIC: these are ingress-nginx annotations, the translation of
+  # docs/DEPLOYMENT.md §4. Another controller needs its own equivalents; the
+  # requirements themselves are not optional:
+  #   - the /mcp response is an SSE stream and must NOT be buffered
+  #   - a long read timeout (3600 s) for that stream
+  #   - request bodies up to MAX_BODY_BYTES (4 MiB → 5m); with batch upload on,
+  #     at least UPLOAD_MAX_BYTES (→ 100m) and no request buffering
+  # ingress-nginx applies them to the whole Ingress, not to /mcp alone.
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-body-size: "5m"

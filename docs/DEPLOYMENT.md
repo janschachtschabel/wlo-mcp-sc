@@ -298,6 +298,78 @@ collection's listing), then start from a new preview.
   you start the image another way, pass `--log-opt max-size=10m --log-opt
   max-file=5` yourself — Docker's default keeps everything.
 
+### 5.0.2 Sizing: what it needs, and why it is ONE instance
+
+Measured on 2026-11-13 with `npm run measure:resources` (a built server, anonymous, reads against
+staging; the two stores filled to their bounds in a process of their own). The script reports and
+writes nothing — run it again before trusting these numbers on other hardware or another Node.
+
+| State | Resident memory |
+|---|---|
+| Idle, 10 s after start | 72 MB |
+| After one round of read tools | 100 MB |
+| Peak during 3 × 10 concurrent `search_wlo_all` | 172 MB |
+| Upload slots at their bound (128 MB of files held) | + 156 MB (up to + 178 MB, see below) |
+| Full texts of unfinished plans at their bound (64 MiB), Latin-1 text | + 67 MB |
+| The same, each text holding one character beyond Latin-1 (`„`, `–`, `€`) | + 131 MB |
+
+- **CPU:** 0.3 of a core during the search burst; the work is waiting for the repository. One core is ample.
+- **The upload store costs its content plus one more file.** Measured in three fillings: the external
+  memory is the bytes held PLUS the size of the file stored last (50 + 50 + 28 MB held → + 156 MB;
+  50 + 50 → + 150 MB; 28 → + 56 MB). Where that copy is kept was not traced; it is bounded by one file
+  (`UPLOAD_MAX_BYTES`, 50 MB), so plan for 178 MB.
+- **A full text costs up to twice its size.** The bound counts UTF-8 bytes; the server holds JavaScript
+  strings, which take two bytes per character as soon as ONE character is outside Latin-1 — and German
+  quotation marks and dashes are. Size by the last row, not the one above it.
+- **Worst case together: about 480 MB** — 172 MB search peak + 178 MB upload store + 131 MB full texts
+  (the script prints the same sum, by the same rule) — before the request
+  bodies in flight (a tool call up to `MAX_BODY_BYTES`, an upload up to `UPLOAD_MAX_BYTES`). The
+  compose file's `mem_limit: 512m` therefore fits a server WITHOUT the batch upload
+  (`WLO_BATCH_UPLOAD_ENABLED` unset) with a wide margin, and one WITH it only just. With the batch upload
+  on, give it **768 MB**: being killed for memory in the middle of a write is the outcome every other rule
+  here works to avoid.
+
+The same two runs timed one call of each read tool (anonymous, staging, in this order, so the first
+is the coldest — a single call each, not a distribution):
+
+| Tool | First run | Second run |
+|---|---|---|
+| `search_wlo_all` | 15.5 s | 2.4 s |
+| `search_wlo_content` (with `license: OER`) | 2.4 s | 1.5 s |
+| `search_wlo_collections` | 4.0 s | 1.2 s |
+| `get_subject_portals` | 0.55 s | 0.58 s |
+| `search_wlo_topic_pages` (with `query`) | 3.5 s | 1.6 s |
+| `lookup_wlo_vocabulary` | 0.02 s | 0.03 s |
+| `get_wikipedia_summary` | 0.20 s | 0.18 s |
+| `search_skill` | 0.30 s | 0.15 s |
+
+**What lives in memory** — and is therefore gone after a restart, and not shared between processes:
+
+| What | Lifetime | Lost on restart means |
+|---|---|---|
+| Confirmation keys of previews | 10 min | the preview has to be asked for again; nothing was written |
+| Tombstones of expired confirmation keys and of ended plans (bare ids, at most 2000 each) | 60 min | such a key no longer answers `confirm_expired` / `plan_expired` but `confirm_unknown` — look before repeating |
+| Results of redeemed keys (replay) | 30 min | a re-presented key is unknown — look before repeating |
+| Plans under way (trees, filing, metadata, full texts) | 30 min | the remaining items are not done; the answer names which were |
+| Batches under way and their upload slots | 30 min / until filed | files not yet stored have to be uploaded again |
+| OAuth authorization codes | 60 s | a login in progress starts over |
+| Rate and credential limiters, login-status cache | 1–10 min windows | budgets start fresh |
+| Upload logins the repository confirmed (`/api/uploads`) | 10 min | the next upload proves its login at the repository again |
+| Upload logins the repository refused | 60 s | a refused login is checked at the repository again at once instead of being refused from memory |
+| Readiness answer (`/ready`) | 30 s (`READY_CACHE_MS`) | the first `/ready` after the start probes the repository itself |
+| Metrics counters and histograms (`/metrics`) | the process | every counter starts at zero, and a series exists only from its first event on — an alert built on `increase()`/`rate()` alone misses the first event after a restart (the chart's rules account for it) |
+| Skill registry cache, short caches | minutes | the first calls are slower |
+
+On disk there is exactly one thing: the access registry (`/data/access-registry.json`, §3.1).
+
+**Run one instance.** Every row above is per process. With two, a preview issued by one is unknown to
+the other, a plan continues on the instance that does not hold it, an upload lands where the batch
+tool does not look, and each instance grants the full rate budget on its own. Nothing here is slow
+enough to need a second instance — the time goes to the repository, and the bound on calls open
+there (`WLO_UPSTREAM_CONCURRENCY`) is per process too. For availability rely on a fast restart
+(72 MB, ready in seconds) rather than on replicas; a deployment template has to say `replicas: 1`
+and must not roll with two pods alive at once for longer than the stop grace period.
+
 ### 5.1 Rolling back
 
 The image is the unit of rollback; there is no migration and no persistent state
@@ -376,7 +448,7 @@ when its input closes), and Node as PID 1 ignores `SIGTERM` without one — a
 | Symptom | Cause / fix |
 |---------|-------------|
 | Client connects to `/mcp` but never gets a response | Proxy is buffering SSE — set `proxy_buffering off;` and a long `proxy_read_timeout` on the `/mcp` location (§4). |
-| Widgets don't render in the host | `dist-widgets/` missing from the image — rebuild (`docker compose build --no-cache`); `resources/list` should list 3 `ui://` widgets. |
+| Widgets don't render in the host | `dist-widgets/` missing from the image — rebuild (`docker compose build --no-cache`); `resources/list` should list 4 `ui://` widgets. |
 | `/launcher.html` or `/api/skills` returns 500 | `public/` missing from the image — rebuild. |
 | Frequent `429` | Lower traffic, raise `RATE_LIMIT_RPM` / `API_RATE_LIMIT_RPM`, or give a known backend its own budget with `TRUSTED_CLIENT_KEYS`; confirm `TRUST_PROXY=1` so limits key on the real client IP, not the proxy. The log line `rate limit reached` names the bucket kind (`client`/`address`). |
 | Rate limits keyed on one IP (the proxy) | `TRUST_PROXY` is `0` behind a proxy — set it to `1`. |

@@ -1,0 +1,1687 @@
+openapi: 3.1.0
+info:
+  title: WLO MCP Server — HTTP surface outside MCP
+  version: 1.1.0
+  summary: Every path the server answers besides the MCP protocol itself.
+  description: |
+    Read from the source (`src/http-app.ts` and `src/rest/*`), not from a wish
+    list. What `tests/openapi.test.ts` pins is narrower than that sentence:
+    the PATHS agree both ways (a path the code compares against or lists in a
+    route table is named here, and every path named here is one the code
+    serves), and every `$ref` in this file resolves. Methods, parameters,
+    status codes and schemas are NOT checked by any test — they were read from
+    the code by hand and can drift.
+
+    The MCP tools are NOT described here — `tools/list` on `POST /mcp` is their
+    contract. `POST /mcp` appears as one path only.
+
+    **Rules that hold for every path on the public port**
+
+    - Every response carries `X-Request-Id`. A caller's own `X-Request-Id`
+      request header is adopted when it is a plain token, otherwise one is made.
+    - `OPTIONS` on any path answers `204` with no body (the CORS preflight).
+    - A request target that cannot be parsed answers `400`
+      `{"error": "Malformed request target"}`.
+    - A path or method nothing owns answers `404`
+      `{"error": "Not found. Use POST /mcp"}`.
+    - A `429` carries `Retry-After` (seconds, the rest of the limiter's window)
+      and repeats it as `retryAfter` in the body.
+
+    **CORS.** Paths marked `x-cors: wildcard` send
+    `Access-Control-Allow-Origin: *`, `Allow-Methods: POST, GET, OPTIONS`,
+    `Allow-Headers: Content-Type, Accept, Mcp-Session-Id` and
+    `Expose-Headers: X-Request-Id`. `Authorization` is deliberately not an
+    allowed header. Paths marked `x-cors: none` send no CORS header at all:
+    everything under `/auth*`, `/oauth/authorize` and `/api/uploads` (a
+    credential is checked there, and the limiters count per client address).
+    `/auth/ticket` is the one exception under `/auth*` (`x-cors: ticket`).
+    The rule is a prefix match on `/auth`, so it also covers the static
+    files `/auth.css`, `/auth.js`, `/auth-revoke.js`, `/auth-i18n.js` and
+    `/authorize.js`.
+
+    **Environment switches.** `x-requires-env` names the variable without
+    which a path does not exist (it then answers `404`).
+
+    **Internal port.** With `INTERNAL_PORT` set (and different from `PORT`) a
+    second listener answers `GET /health`, `GET /ready` and `GET /metrics` and
+    nothing else (`404 {"error": "Not found"}`, on a failure
+    `500 {"error": "Internal error"}`). It sends no CORS headers and no
+    `X-Request-Id`. There `/metrics` needs no token unless `METRICS_TOKEN` is
+    configured. The same three paths stay on the public port.
+servers:
+  - url: http://localhost:3000
+    description: Local server (`PORT`, default 3000)
+tags:
+  - name: mcp
+    description: The MCP endpoint and the two status paths beside it.
+  - name: operations
+    description: Liveness, readiness, metrics.
+  - name: rest
+    description: Public read-only REST layer (`/api/*`), anonymous, GET only.
+  - name: upload
+    description: Batch upload slot (server-to-server).
+  - name: access-block
+    description: Access-block endpoints (`/auth*`).
+  - name: oauth
+    description: OAuth 2.1 surface and its discovery documents.
+  - name: pages
+    description: Static pages and their assets, from a fixed allow-list.
+paths:
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcpPost
+      summary: MCP endpoint (Streamable HTTP, stateless)
+      description: |
+        JSON-RPC 2.0 as defined by the Model Context Protocol
+        (https://modelcontextprotocol.io/specification). The tools, their
+        inputs and outputs are described by `tools/list`, not here.
+
+        Without `Authorization` the request is served anonymously (or with the
+        configured service account). A JSON-RPC batch may hold at most 10
+        messages. The body is capped at `MAX_BODY_BYTES` (default 4 MiB). The
+        optional `X-WLO-Client-Key` header selects a trusted client's own
+        budget (`TRUSTED_CLIENT_KEYS`). Any other method on `/mcp` answers
+        `405` with `Allow: POST`.
+      x-cors: wildcard
+      security:
+        - {}
+        - accessBlock: []
+        - basic: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: One JSON-RPC message, or an array of at most 10.
+      responses:
+        '200':
+          description: >-
+            JSON-RPC response — `application/json`, or `text/event-stream`
+            when the server runs with `MCP_SSE`. Status and content type are
+            the MCP SDK transport's; it can also answer other codes of its own
+            (for example `202` for a notification).
+        '400':
+          description: Body is not JSON, or the batch exceeds 10 messages.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: >-
+            A Bearer token was presented and cannot be used (invalid, revoked,
+            foreign). `WWW-Authenticate` carries the OAuth `resource_metadata`
+            pointer when the public origin is known.
+          headers:
+            WWW-Authenticate: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: Body exceeds `MAX_BODY_BYTES`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: >-
+            Protocol budget, tool budget or the distinct-login guard. The body
+            is a JSON-RPC error (`error.code` -32029,
+            `error.data = {code, retryAfter}` with `code` `rate_limited` or
+            `too_many_logins`), not the REST shape.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '500':
+          description: Request handling failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /:
+    post:
+      tags: [mcp]
+      operationId: mcpPostRoot
+      summary: MCP endpoint, same as `POST /mcp`
+      description: For clients that append no path. Identical to `POST /mcp` in every respect.
+      x-cors: wildcard
+      security:
+        - {}
+        - accessBlock: []
+        - basic: []
+      responses:
+        '200':
+          description: See `POST /mcp` (all its status codes apply).
+    get:
+      tags: [pages]
+      operationId: launcherRoot
+      summary: Prompt launcher page (`launcher.html`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Html' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /health:
+    get:
+      tags: [operations]
+      operationId: health
+      summary: Liveness — the process is up, and which build it is
+      description: Says nothing about the repository (that is `/ready`). No budget.
+      x-cors: wildcard
+      security: []
+      responses:
+        '200':
+          description: Always, while the process answers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, server, version, widgets]
+                properties:
+                  status: { const: ok }
+                  server: { const: wlo-mcp }
+                  version: { type: string }
+                  widgets:
+                    description: Widget build hashes (the deploy fingerprint).
+                    type: object
+                    additionalProperties: true
+  /ready:
+    get:
+      tags: [operations]
+      operationId: ready
+      summary: Readiness — can the repository be reached?
+      description: >-
+        No budget; the repository is asked at most once per 30 s, and a probe
+        that takes longer than 5 s counts as `slow`. `Cache-Control: no-store`.
+      x-cors: wildcard
+      security: []
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: Not ready (`upstream` is `unreachable` or `slow`). No `Retry-After`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+  /metrics:
+    get:
+      tags: [operations]
+      operationId: metrics
+      summary: Prometheus metrics for the operator's scraper
+      description: >-
+        On the public port only when `METRICS_TOKEN` is set (at least 16
+        characters), and then only to that token. On the internal port
+        (`INTERNAL_PORT`) it answers without a token unless one is configured.
+      x-requires-env: METRICS_TOKEN
+      x-cors: wildcard
+      security:
+        - metricsToken: []
+      responses:
+        '200':
+          description: 'Prometheus text exposition format 0.0.4. `Cache-Control: no-store`.'
+          content:
+            text/plain:
+              schema: { type: string }
+        '401':
+          description: 'Missing or wrong token. `WWW-Authenticate: Bearer realm="metrics"`.'
+          headers:
+            WWW-Authenticate: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /auth/status:
+    get:
+      tags: [mcp]
+      operationId: authStatus
+      summary: Login status in one request
+      description: >-
+        Same credential rules as `POST /mcp` — the caller's header, else the
+        configured service account, else anonymous; a `Basic` header that
+        cannot be parsed reads as anonymous. Spends the protocol budget (3 ×
+        `RATE_LIMIT_RPM`, or a trusted client's own). The answer is cached
+        60 s per presented header, 10 s when `upstream` is `unreachable`.
+        Exists whether or not `WLO_AUTH_PRIVATE_KEY` is set.
+      x-cors: none
+      security:
+        - {}
+        - accessBlock: []
+        - basic: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      responses:
+        '200':
+          description: 'The status. `Cache-Control: no-store`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatus' }
+        '401':
+          description: A Bearer token was presented and cannot be used.
+          headers:
+            WWW-Authenticate: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Protocol budget (`rate_limited`) or distinct-login guard (`too_many_logins`).
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/search:
+    get:
+      tags: [rest]
+      operationId: apiSearch
+      summary: Search content, collections and topic pages in one call
+      description: >-
+        A MISSING search term answers `200` with an empty guidance envelope
+        (`query: ""` plus `warnings`), not `400` — fetch layers that strip the
+        query string would otherwise hit a dead end. Integer parameters are
+        clamped into their range, never rejected; a non-numeric value falls
+        back to the default.
+      x-cors: wildcard
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/QueryAlias'
+        - $ref: '#/components/parameters/SearchFormat'
+        - $ref: '#/components/parameters/Fields'
+        - $ref: '#/components/parameters/IncludeFacets'
+        - $ref: '#/components/parameters/EducationalContext'
+        - $ref: '#/components/parameters/Discipline'
+        - $ref: '#/components/parameters/LearningResourceType'
+        - $ref: '#/components/parameters/UserRole'
+        - $ref: '#/components/parameters/Publisher'
+        - $ref: '#/components/parameters/License'
+        - $ref: '#/components/parameters/MaxContent'
+        - $ref: '#/components/parameters/MaxCollections'
+        - $ref: '#/components/parameters/SkipCount'
+        - $ref: '#/components/parameters/Include'
+        - $ref: '#/components/parameters/IncludeCompendium'
+        - $ref: '#/components/parameters/IncludeTextContent'
+        - $ref: '#/components/parameters/IncludeWikipedia'
+        - $ref: '#/components/parameters/IncludeTopicPageContent'
+        - $ref: '#/components/parameters/MaxPerSwimlane'
+      responses:
+        '200': { $ref: '#/components/responses/SearchEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/search/{term}:
+    get:
+      tags: [rest]
+      operationId: apiSearchByPath
+      summary: Search with the term in the path
+      description: >-
+        The stripping-proof form of `/api/search`: the percent-decoded path
+        segment becomes `q` unless a non-empty `q` query parameter is present.
+        The segment is everything after `/api/search/`, slashes included
+        (`/api/search/a/b` searches for `a/b`). All other parameters as on
+        `/api/search`. A malformed percent escape answers `400`.
+      x-cors: wildcard
+      security: []
+      parameters:
+        - name: term
+          in: path
+          required: true
+          description: >-
+            The search term, percent-encoded — the whole rest of the path, so
+            it may contain slashes. At most 200 characters after trimming.
+          schema: { type: string, minLength: 1 }
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/SearchFormat'
+        - $ref: '#/components/parameters/Fields'
+        - $ref: '#/components/parameters/IncludeFacets'
+        - $ref: '#/components/parameters/EducationalContext'
+        - $ref: '#/components/parameters/Discipline'
+        - $ref: '#/components/parameters/LearningResourceType'
+        - $ref: '#/components/parameters/UserRole'
+        - $ref: '#/components/parameters/Publisher'
+        - $ref: '#/components/parameters/License'
+        - $ref: '#/components/parameters/MaxContent'
+        - $ref: '#/components/parameters/MaxCollections'
+        - $ref: '#/components/parameters/SkipCount'
+        - $ref: '#/components/parameters/Include'
+        - $ref: '#/components/parameters/IncludeCompendium'
+        - $ref: '#/components/parameters/IncludeTextContent'
+        - $ref: '#/components/parameters/IncludeWikipedia'
+        - $ref: '#/components/parameters/IncludeTopicPageContent'
+        - $ref: '#/components/parameters/MaxPerSwimlane'
+      responses:
+        '200': { $ref: '#/components/responses/SearchEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/collection:
+    get:
+      tags: [rest]
+      operationId: apiCollection
+      summary: List or search the direct contents of one collection
+      description: >-
+        With `q` or any filter the collection's direct file children are
+        matched locally (one bounded page, so the answer can be a sample —
+        see `truncated`); without either the children are listed.
+      x-cors: wildcard
+      security: []
+      parameters:
+        - name: nodeId
+          in: query
+          description: >-
+            The collection. Defaults to `WLO_SKILLS_COLLECTION_ID`; `400` when
+            neither is given.
+          schema: { type: string, maxLength: 50 }
+        - name: q
+          in: query
+          description: Optional search term (alias `query`).
+          schema: { type: string, maxLength: 200 }
+        - $ref: '#/components/parameters/QueryAlias'
+        - name: max
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - $ref: '#/components/parameters/Fields'
+        - $ref: '#/components/parameters/EducationalContext'
+        - $ref: '#/components/parameters/Discipline'
+        - $ref: '#/components/parameters/LearningResourceType'
+        - $ref: '#/components/parameters/UserRole'
+        - $ref: '#/components/parameters/Publisher'
+        - $ref: '#/components/parameters/License'
+      responses:
+        '200':
+          description: The collection's contents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collectionId, query, total, results]
+                properties:
+                  collectionId: { type: string }
+                  query: { type: [string, 'null'] }
+                  total: { type: integer }
+                  truncated:
+                    description: Only on the local-matching branch — the page read was a sample.
+                    type: boolean
+                  collectionTotal:
+                    description: Only on the local-matching branch.
+                    type: integer
+                  licenseFilter:
+                    description: Only when `license` was given.
+                    type: object
+                    properties:
+                      checked: { type: integer }
+                      kept: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      description: >-
+                        `nodeId`, `title`, `description`,
+                        `learningResourceTypes`, `publisher`, `url`,
+                        `downloadUrl` — reduced to the requested `fields`.
+                      type: object
+                      additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/compendium:
+    get:
+      tags: [rest]
+      operationId: apiCompendium
+      summary: Compendium texts of up to 25 collections
+      x-cors: wildcard
+      security: []
+      parameters:
+        - name: ids
+          in: query
+          description: >-
+            Comma-separated node ids — at least one, at most 25, each at most
+            50 characters. Takes precedence over `nodeId`.
+          schema: { type: string }
+        - name: nodeId
+          in: query
+          description: A single node id, used when `ids` is absent.
+          schema: { type: string, maxLength: 50 }
+      responses:
+        '200':
+          description: One entry per id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        nodeId: { type: string }
+                        title: { type: string }
+                        compendiumText: { type: [string, 'null'] }
+                      additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/topic-page:
+    get:
+      tags: [rest]
+      operationId: apiTopicPage
+      summary: Swimlanes of one topic page
+      description: >-
+        `collectionId` or `variantId` is required. When no variant or an empty
+        configuration is found the answer is still `200`, with
+        `swimlaneCount: 0`, `swimlanes: []` and a `reason`.
+      x-cors: wildcard
+      security: []
+      parameters:
+        - name: collectionId
+          in: query
+          schema: { type: string, maxLength: 50 }
+        - name: variantId
+          in: query
+          schema: { type: string, maxLength: 50 }
+        - name: targetGroup
+          in: query
+          schema: { type: string, enum: [teacher, learner, general] }
+        - $ref: '#/components/parameters/MaxPerSwimlane'
+      responses:
+        '200':
+          description: >-
+            The page. The keys listed are the ones the empty case writes; the
+            resolved case is produced by `resolveTopicPageSwimlanes` and is
+            not enumerated here.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  variantId: { type: string }
+                  collectionId: { type: [string, 'null'] }
+                  variantTitle: { type: string }
+                  collectionTitle: { type: string }
+                  description: { type: string }
+                  topicPageUrl: { type: [string, 'null'] }
+                  swimlaneCount: { type: integer }
+                  swimlanesTotal: { type: integer }
+                  swimlanes: { type: array, items: { type: object, additionalProperties: true } }
+                  reason: {}
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/wikipedia:
+    get:
+      tags: [rest]
+      operationId: apiWikipedia
+      summary: Wikipedia summary for a term
+      x-cors: wildcard
+      security: []
+      parameters:
+        - name: q
+          in: query
+          description: The term (alias `query`). Required.
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - $ref: '#/components/parameters/QueryAlias'
+        - name: lang
+          in: query
+          description: Language code, lower-cased before the check.
+          schema: { type: string, pattern: '^[a-z]{2,3}$', default: de }
+        - name: sections
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 3, default: 1 }
+      responses:
+        '200':
+          description: The summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title: { type: string }
+                  extract: { type: string }
+                  thumbnail: { type: string }
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: Wikipedia has no article for the term.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503':
+          description: >-
+            Wikipedia did not answer — `code: upstream_unreachable`. This one
+            carries neither `Retry-After` nor `retryAfter`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/skills:
+    get:
+      tags: [rest]
+      operationId: apiSkills
+      summary: The launcher's built-in skill files
+      description: >-
+        A closed list shipped with the server (`public/skills/`), not the
+        repository's skill records — those are the MCP tools `search_skill` /
+        `get_skill`.
+      x-cors: wildcard
+      security: []
+      responses:
+        '200':
+          description: The catalogue.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [skills]
+                properties:
+                  skills:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, description, path]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        description: { type: string }
+                        path: { type: string, description: '`/api/skills/<id>`' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/skills/{id}:
+    get:
+      tags: [rest]
+      operationId: apiSkillRaw
+      summary: Raw Markdown of one built-in skill
+      x-cors: wildcard
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: An `id` from `/api/skills`, percent-encoded.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The skill file.
+          content:
+            text/markdown:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404':
+          description: Unknown id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/uploads:
+    post:
+      tags: [upload]
+      operationId: apiUpload
+      summary: Put one file of a batch into an upload slot
+      description: >-
+        Server-to-server. The raw bytes are held in memory until the batch
+        tool files them by `ref`. Requires a PERSONAL login the repository
+        confirms; none, the anonymous token, the service account or an
+        unconfirmed login answer `403`. Spends the protocol budget before the
+        login is looked at, and — because the path lies under `/api/` — is
+        NOT on the `/api/*` address bucket while the switch is on. Every
+        refusal answers with `Connection: close` — except the `405` for
+        another method, which carries `Allow: POST` and leaves the connection
+        open. In refusals `error` is a CODE string here.
+      x-requires-env: WLO_BATCH_UPLOAD_ENABLED
+      x-cors: none
+      security:
+        - accessBlock: []
+        - basic: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+        - name: X-Upload-Name
+          in: header
+          description: >-
+            The client's file name, URL-encoded (first 200 characters used).
+            Only tells markdown from plain text; never stored or echoed.
+          schema: { type: string }
+        - name: Content-Length
+          in: header
+          description: When present and above the per-file limit the request is refused before the body is read.
+          schema: { type: integer }
+      requestBody:
+        required: true
+        description: >-
+          The file's bytes, at most `UPLOAD_MAX_BYTES` (default 50 MB, at most
+          100 MB). The whole body must arrive within
+          `UPLOAD_REQUEST_TIMEOUT_MS` (default 25 s, at most 28 s).
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: 'Stored. `Cache-Control: no-store`.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ref, sha256, size, mimeType, ext]
+                properties:
+                  ref: { type: string }
+                  sha256: { type: string }
+                  size: { type: integer }
+                  mimeType: { type: string }
+                  ext: { type: string }
+        '403':
+          description: '`login_required` — no personal login the repository confirmed.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '405':
+          description: '`method_not_allowed`.'
+          headers:
+            Allow: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '408':
+          description: '`timeout` — the body took longer than the upload deadline.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '413':
+          description: '`too_large` — by `Content-Length`, or when the stream passed the limit.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '415':
+          description: >-
+            `octet_stream_required` (wrong `Content-Type`) or
+            `unsupported_type` (the bytes are no accepted file type).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '429':
+          description: >-
+            `rate_limited` (request budget) and `too_many_logins`
+            (distinct-login guard) carry `code`, `retryAfter` and
+            `Retry-After`; `too_many` (no free slot) carries `error` only.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '500':
+          description: '`failed` — the slot could not be written.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+        '503':
+          description: >-
+            `upstream_unreachable` — the repository did not answer the login
+            check; no verdict on the login. `Retry-After: 10`.
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadRefusal' }
+  /auth/public-key:
+    get:
+      tags: [access-block]
+      operationId: authPublicKey
+      summary: The public key the access-block page encrypts with
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: none
+      security: []
+      responses:
+        '200':
+          description: The key.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publicKey]
+                properties:
+                  publicKey: { type: string, description: PEM }
+        '404': { $ref: '#/components/responses/FeatureOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth/issue:
+    post:
+      tags: [access-block]
+      operationId: authIssue
+      summary: Verify a block's login and list its id
+      description: >-
+        The block is built in the browser (password encrypted against
+        `/auth/public-key`). The login is proven at the repository before the
+        id is put on the allow-list. Body cap 64 KiB (or `MAX_BODY_BYTES` if
+        lower); an oversized or unreadable body answers `400`.
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: none
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenBody' }
+      responses:
+        '200':
+          description: Listed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, label]
+                properties:
+                  ok: { const: true }
+                  label: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/FeatureOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '415': { $ref: '#/components/responses/JsonRequired' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/UpstreamUnreachable' }
+  /auth/revoke:
+    post:
+      tags: [access-block]
+      operationId: authRevoke
+      summary: Revoke one access block
+      description: >-
+        Two forms. (1) The block as `Authorization: Bearer` with no body —
+        always `200 {revoked}`, whatever the block's state. (2) The block as
+        `token` in a JSON body — `400` when it cannot be opened, else
+        `200 {revoked}`; `revoked` is `false` for an id that was not listed.
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: none
+      security:
+        - {}
+        - accessBlock: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenBody' }
+      responses:
+        '200':
+          description: Done.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/FeatureOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '415': { $ref: '#/components/responses/JsonRequired' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [pages]
+      operationId: authRevokePage
+      summary: Revocation page (`auth-revoke.html`)
+      description: Served whether or not the feature is configured.
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Html' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth/revoke-all:
+    post:
+      tags: [access-block]
+      operationId: authRevokeAll
+      summary: Verify a login, then revoke every block of that account
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: none
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenBody' }
+      responses:
+        '200':
+          description: Done.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer, description: How many ids were struck. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/FeatureOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '415': { $ref: '#/components/responses/JsonRequired' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/UpstreamUnreachable' }
+  /auth/ticket:
+    post:
+      tags: [access-block]
+      operationId: authTicket
+      summary: Exchange an edu-sharing ticket for a ticket block
+      description: >-
+        For a widget embedded in an edu-sharing page. The ticket is proven at
+        the repository and wrapped in an access block. Distinct tickets per
+        address are bounded by `TICKET_CREDENTIAL_LIMIT`.
+
+        CORS: the one path under `/auth*` that sends CORS headers — the
+        wildcard, or with `TICKET_ALLOWED_ORIGINS` set only the request's own
+        `Origin` when it is listed (plus `Vary: Origin`). With that list set a
+        request from any other browser origin answers `403`; a request without
+        `Origin` is never refused for it.
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: ticket
+      security: []
+      parameters:
+        - name: Origin
+          in: header
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket]
+              properties:
+                ticket: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: The block.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, block, authority]
+                properties:
+                  ok: { const: true }
+                  block: { type: string, description: Send as `Authorization` Bearer token. }
+                  authority: { type: string }
+                  displayName: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: '`code: origin_not_allowed`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/FeatureOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '415': { $ref: '#/components/responses/JsonRequired' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/UpstreamUnreachable' }
+  /.well-known/oauth-authorization-server:
+    get:
+      tags: [oauth]
+      operationId: oauthServerMetadata
+      summary: RFC 8414 authorization-server metadata
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/ServerMetadata' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ConnectorRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /.well-known/oauth-authorization-server/mcp:
+    get:
+      tags: [oauth]
+      operationId: oauthServerMetadataMcp
+      summary: Same document as `/.well-known/oauth-authorization-server`
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/ServerMetadata' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ConnectorRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [oauth]
+      operationId: oauthResourceMetadata
+      summary: RFC 9728 protected-resource metadata
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/ResourceMetadata' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ConnectorRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      tags: [oauth]
+      operationId: oauthResourceMetadataMcp
+      summary: Same document as `/.well-known/oauth-protected-resource`
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/ResourceMetadata' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ConnectorRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /oauth/register:
+    post:
+      tags: [oauth]
+      operationId: oauthRegister
+      summary: Dynamic client registration (RFC 7591), open
+      description: >-
+        Public clients with PKCE only; no `client_secret` is issued. The
+        `Content-Type` is not checked — the body must parse as a JSON object.
+        Body cap 64 KiB (or `MAX_BODY_BYTES` if lower).
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: wildcard
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [redirect_uris]
+              properties:
+                redirect_uris:
+                  description: Absolute https URLs (http only on localhost), no fragment.
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items: { type: string, format: uri }
+                client_name:
+                  description: Cut to 100 characters; `MCP-Client` when absent or empty.
+                  type: string
+              additionalProperties: true
+      responses:
+        '201':
+          description: 'Registered. `Cache-Control: no-store`.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [client_id, client_name, redirect_uris, token_endpoint_auth_method, grant_types, response_types]
+                properties:
+                  client_id: { type: string }
+                  client_name: { type: string }
+                  redirect_uris: { type: array, items: { type: string } }
+                  token_endpoint_auth_method: { const: none }
+                  grant_types: { type: array, items: { const: authorization_code } }
+                  response_types: { type: array, items: { const: code } }
+        '400':
+          description: '`invalid_client_metadata` (body is no JSON object) or `invalid_redirect_uri`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '413':
+          description: '`invalid_client_metadata` — the body is too large.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '429': { $ref: '#/components/responses/ConnectorRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /oauth/authorize:
+    get:
+      tags: [oauth]
+      operationId: oauthAuthorizeShow
+      summary: Check an authorization request, then show the consent page
+      description: >-
+        The request is checked before anyone is shown a password field, and a
+        refused one is answered with a page — never with a redirect. With
+        `Accept: application/json` the same URL answers what was recognised
+        (the consent page's own fetch).
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: none
+      security: []
+      parameters:
+        - { name: client_id, in: query, required: true, schema: { type: string } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string } }
+        - { name: response_type, in: query, required: true, schema: { const: code } }
+        - { name: code_challenge, in: query, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' } }
+        - { name: code_challenge_method, in: query, required: true, schema: { const: S256 } }
+        - { name: state, in: query, schema: { type: string } }
+        - name: Accept
+          in: header
+          description: Containing `application/json` selects the JSON answers.
+          schema: { type: string }
+      responses:
+        '200':
+          description: 'The consent page, or with `Accept: application/json` who is asking.'
+          content:
+            text/html:
+              schema: { type: string }
+            application/json:
+              schema:
+                type: object
+                required: [client_name, redirect_uri]
+                properties:
+                  client_name: { type: string }
+                  redirect_uri: { type: string }
+        '400':
+          description: 'The request was refused — a page, or `{error}` with `Accept: application/json`.'
+          content:
+            text/html:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [oauth]
+      operationId: oauthAuthorizeGrant
+      summary: Give consent — returns the redirect TARGET, not a redirect
+      description: >-
+        JSON only (`415` otherwise). The parameters are checked again. Either
+        `token` (an access block whose login is then proven at the repository)
+        or `anonymous: true` (a token that grants what a request without
+        `Authorization` grants). An oversized or unreadable body answers `400`.
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: none
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id, redirect_uri, response_type, code_challenge, code_challenge_method]
+              properties:
+                client_id: { type: string }
+                redirect_uri: { type: string }
+                response_type: { const: code }
+                code_challenge: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+                code_challenge_method: { const: S256 }
+                state: { type: string }
+                token: { type: string, description: The access block. Required unless `anonymous` is `true`. }
+                anonymous: { type: boolean }
+              additionalProperties: true
+      responses:
+        '200':
+          description: 'Where the page navigates next (carries `code` and `state`). `Cache-Control: no-store`.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [redirect]
+                properties:
+                  redirect: { type: string, format: uri }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '415': { $ref: '#/components/responses/JsonRequired' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/UpstreamUnreachable' }
+  /oauth/token:
+    post:
+      tags: [oauth]
+      operationId: oauthToken
+      summary: Exchange an authorization code for the access token
+      description: >-
+        The access token IS the access block. No `refresh_token`, no
+        `expires_in`. The code is spent by the first attempt, whatever its
+        outcome.
+      x-requires-env: WLO_AUTH_PRIVATE_KEY
+      x-cors: wildcard
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, code, client_id, redirect_uri, code_verifier]
+              properties:
+                grant_type: { const: authorization_code }
+                code: { type: string }
+                client_id: { type: string }
+                redirect_uri: { type: string }
+                code_verifier: { type: string, minLength: 43, maxLength: 128 }
+      responses:
+        '200':
+          description: 'The token. `Cache-Control: no-store`, `Pragma: no-cache`.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, scope]
+                properties:
+                  access_token: { type: string }
+                  token_type: { const: Bearer }
+                  scope: { const: wlo }
+        '400':
+          description: >-
+            `invalid_request` (no body, or too large), `unsupported_grant_type`
+            or `invalid_grant` (one text for every failed check).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '404': { $ref: '#/components/responses/OAuthOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '429': { $ref: '#/components/responses/ConnectorRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /launcher.html:
+    get:
+      tags: [pages]
+      operationId: launcherPage
+      summary: Prompt launcher page
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Html' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /bookmarklet.md:
+    get:
+      tags: [pages]
+      operationId: bookmarklet
+      summary: Bookmarklet instructions (`text/markdown`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /robots.txt:
+    get:
+      tags: [pages]
+      operationId: robots
+      summary: robots.txt (`text/plain`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /llms.txt:
+    get:
+      tags: [pages]
+      operationId: llmsTxt
+      summary: Self-description for AI fetchers (`text/plain`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth:
+    get:
+      tags: [pages]
+      operationId: authPageShort
+      summary: Access-block page (`auth.html`)
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Html' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth.html:
+    get:
+      tags: [pages]
+      operationId: authPage
+      summary: Access-block page
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Html' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth-revoke.html:
+    get:
+      tags: [pages]
+      operationId: authRevokeHtml
+      summary: Revocation page
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Html' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth.css:
+    get:
+      tags: [pages]
+      operationId: authCss
+      summary: Stylesheet of the access-block pages (`text/css`)
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth.js:
+    get:
+      tags: [pages]
+      operationId: authJs
+      summary: Script of the access-block page (`text/javascript`)
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth-revoke.js:
+    get:
+      tags: [pages]
+      operationId: authRevokeJs
+      summary: Script of the revocation page (`text/javascript`)
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /authorize.js:
+    get:
+      tags: [pages]
+      operationId: authorizeJs
+      summary: Script of the OAuth consent page (`text/javascript`)
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /access-block.js:
+    get:
+      tags: [pages]
+      operationId: accessBlockJs
+      summary: Browser-side access-block encryption (`text/javascript`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth-i18n.js:
+    get:
+      tags: [pages]
+      operationId: authI18nJs
+      summary: Texts of the access-block pages (`text/javascript`)
+      x-cors: none
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    accessBlock:
+      type: http
+      scheme: bearer
+      description: >-
+        A `wlo2.…` access block — pasted from `/auth`, obtained through OAuth
+        (`/oauth/token`) or from `/auth/ticket`. Revocable at `/auth/revoke`.
+    basic:
+      type: http
+      scheme: basic
+      description: A WLO account's own login, forwarded to the repository.
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: The operator's `METRICS_TOKEN` (at least 16 characters). Only for `/metrics`.
+  headers:
+    RetryAfter:
+      description: Seconds to wait.
+      schema: { type: integer, minimum: 0 }
+    MetadataCache:
+      description: Both discovery documents may be cached for five minutes.
+      schema: { const: max-age=300 }
+  parameters:
+    ClientKey:
+      name: X-WLO-Client-Key
+      in: header
+      description: A trusted client's key (`TRUSTED_CLIENT_KEYS`); selects its own budget instead of the address's.
+      schema: { type: string }
+    Q:
+      name: q
+      in: query
+      description: The search term (alias `query`). Trimmed; at most 200 characters.
+      schema: { type: string, maxLength: 200 }
+    QueryAlias:
+      name: query
+      in: query
+      description: >-
+        Alias of `q`, read only when `q` is ABSENT. A `q` that is present
+        but empty (`?q=&query=x`) wins, and `query` is then ignored.
+      schema: { type: string, maxLength: 200 }
+    SearchFormat:
+      name: format
+      in: query
+      description: '`html` renders the same envelope as a self-contained page (`text/html`).'
+      schema: { type: string, enum: [html] }
+    Fields:
+      name: fields
+      in: query
+      description: >-
+        Comma-separated result fields to keep; `nodeId` is always kept.
+        Unknown names are ignored; `400` when none is valid. Accepted:
+        nodeId, title, description, keywords, disciplines,
+        educationalContexts, userRoles, learningResourceTypes, url,
+        downloadUrl, contentUrl, previewUrl, previewIsIcon, isPublic,
+        contentsCount, mimeType, fileSize, license, publisher, nodeType,
+        topicPageUrl, textContent, compendiumText, topicPageContent.
+      schema: { type: string }
+    IncludeFacets:
+      name: includeFacets
+      in: query
+      schema: { $ref: '#/components/schemas/Flag' }
+    EducationalContext:
+      name: educationalContext
+      in: query
+      description: Vocabulary label or URI. An unknown value is reported in `unresolvedFilters`, not refused.
+      schema: { type: string, maxLength: 100 }
+    Discipline:
+      name: discipline
+      in: query
+      schema: { type: string, maxLength: 100 }
+    LearningResourceType:
+      name: learningResourceType
+      in: query
+      schema: { type: string, maxLength: 100 }
+    UserRole:
+      name: userRole
+      in: query
+      schema: { type: string, maxLength: 100 }
+    Publisher:
+      name: publisher
+      in: query
+      schema: { type: string, maxLength: 100 }
+    License:
+      name: license
+      in: query
+      schema: { type: string, maxLength: 100 }
+    MaxContent:
+      name: maxContent
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 25, default: 8 }
+    MaxCollections:
+      name: maxCollections
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 25, default: 5 }
+    SkipCount:
+      name: skipCount
+      in: query
+      schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+    Include:
+      name: include
+      in: query
+      description: >-
+        Comma-separated subset of `content`, `collections`, `topicPages`.
+        Unknown entries are ignored; absent or all-unknown means all three.
+      schema: { type: string }
+    IncludeCompendium:
+      name: includeCompendium
+      in: query
+      schema: { $ref: '#/components/schemas/Flag' }
+    IncludeTextContent:
+      name: includeTextContent
+      in: query
+      schema: { $ref: '#/components/schemas/Flag' }
+    IncludeWikipedia:
+      name: includeWikipedia
+      in: query
+      schema: { $ref: '#/components/schemas/Flag' }
+    IncludeTopicPageContent:
+      name: includeTopicPageContent
+      in: query
+      schema: { $ref: '#/components/schemas/Flag' }
+    MaxPerSwimlane:
+      name: maxPerSwimlane
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 10, default: 3 }
+  schemas:
+    Error:
+      description: >-
+        The REST error shape. `code` and `retryAfter` are present on a `429`
+        and on a `503` from a login check; a plain refusal carries `error`
+        only. On `/auth*` and `/oauth/authorize` `error` is a German sentence
+        for a person.
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          description: >-
+            `rate_limited`, `too_many_logins`, `upstream_unreachable`,
+            `origin_not_allowed`.
+        retryAfter: { type: integer, description: Seconds; equals the `Retry-After` header. }
+    UploadRefusal:
+      description: '`/api/uploads` only: `error` is the code string itself.'
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: >-
+            `method_not_allowed`, `rate_limited`, `too_many_logins`,
+            `upstream_unreachable`, `login_required`, `octet_stream_required`,
+            `too_large`, `unsupported_type`, `too_many`, `failed`, `timeout`.
+        code: { type: string, description: Same as `error`, on the retryable refusals. }
+        retryAfter: { type: integer }
+    OAuthError:
+      description: RFC 6749 §5.2 / RFC 7591 §3.2.2 error.
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        error_description: { type: string }
+    Flag:
+      description: 'True for `1`, `true`, `yes`, `on` (case-insensitive); anything else is false.'
+      type: string
+    TokenBody:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 1, description: The access block. }
+    Readiness:
+      type: object
+      required: [status, ok, upstream, checkedAt]
+      properties:
+        status: { enum: [ready, not_ready] }
+        ok: { type: boolean }
+        upstream: { enum: [ok, slow, unreachable] }
+        checkedAt: { type: string, format: date-time }
+        latencyMs: { type: integer }
+    AuthStatus:
+      type: object
+      required: [mode, authenticated, authority, credential, upstream]
+      properties:
+        mode: { enum: [anonymous, service, user] }
+        authenticated: { type: boolean }
+        configuredAs: { type: string }
+        authority: { type: [string, 'null'] }
+        displayName: { type: string }
+        credential: { enum: [none, basic, access-block, ticket, service] }
+        upstream:
+          description: '`unreachable` = the repository gave no verdict; not a refused login.'
+          enum: [ok, unreachable]
+        expiresAt: { type: string, format: date-time }
+    SearchEnvelope:
+      description: >-
+        Top-level keys as `handleSearch` writes them. With `fields` the result
+        items are reduced; the items themselves are not specified here.
+      type: object
+      required: [query, content, collections, topicPages]
+      properties:
+        query: { type: string }
+        content: { $ref: '#/components/schemas/SearchBucket' }
+        collections: { $ref: '#/components/schemas/SearchBucket' }
+        topicPages: { $ref: '#/components/schemas/SearchBucket' }
+        wikipedia: { type: object, additionalProperties: true }
+        warnings:
+          description: Present on the guidance envelope of a request without a term.
+          type: array
+          items: { type: string }
+        unresolvedFilters:
+          description: Filters that did not resolve to a vocabulary URI.
+          type: array
+          items: {}
+        facets:
+          description: Only with `includeFacets` and when non-empty.
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+    SearchBucket:
+      type: object
+      required: [total, count, results]
+      properties:
+        total: { type: integer }
+        count: { type: integer }
+        results:
+          type: array
+          items: { type: object, additionalProperties: true }
+      additionalProperties: true
+  responses:
+    ServerMetadata:
+      description: >-
+        RFC 8414 authorization-server metadata, exactly the fields
+        `authorizationServerMetadata` writes. `issuer` is the public origin
+        (`WLO_PUBLIC_BASE_URL`, else the `Host` header under `TRUST_PROXY`).
+      headers:
+        Cache-Control: { $ref: '#/components/headers/MetadataCache' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - issuer
+              - authorization_endpoint
+              - token_endpoint
+              - registration_endpoint
+              - response_types_supported
+              - grant_types_supported
+              - code_challenge_methods_supported
+              - token_endpoint_auth_methods_supported
+              - scopes_supported
+            properties:
+              issuer: { type: string, format: uri }
+              authorization_endpoint: { type: string, format: uri, description: '`<issuer>/oauth/authorize`' }
+              token_endpoint: { type: string, format: uri, description: '`<issuer>/oauth/token`' }
+              registration_endpoint: { type: string, format: uri, description: '`<issuer>/oauth/register`' }
+              response_types_supported: { type: array, items: { const: code } }
+              grant_types_supported: { type: array, items: { const: authorization_code } }
+              code_challenge_methods_supported: { type: array, items: { const: S256 } }
+              token_endpoint_auth_methods_supported: { type: array, items: { const: none } }
+              scopes_supported: { type: array, items: { const: wlo } }
+    ResourceMetadata:
+      description: >-
+        RFC 9728 protected-resource metadata, exactly the fields
+        `protectedResourceMetadata` writes.
+      headers:
+        Cache-Control: { $ref: '#/components/headers/MetadataCache' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [resource, authorization_servers, scopes_supported, bearer_methods_supported]
+            properties:
+              resource: { type: string, format: uri, description: '`<issuer>/mcp`' }
+              authorization_servers: { type: array, items: { type: string, format: uri }, description: The issuer, alone. }
+              scopes_supported: { type: array, items: { const: wlo } }
+              bearer_methods_supported: { type: array, items: { const: header } }
+    SearchEnvelope:
+      description: >-
+        The envelope — or, with `format=html`, the same content as a page.
+        `Cache-Control: no-store`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SearchEnvelope' }
+        text/html:
+          schema: { type: string }
+    BadRequest:
+      description: The request was refused; `error` says why.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UseGet:
+      description: 'Method not allowed — GET only. (Static files add `Allow: GET`.)'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    WrongMethod:
+      description: Method not allowed; `Allow` names the accepted one(s).
+      headers:
+        Allow: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    JsonRequired:
+      description: 'The body must be declared `Content-Type: application/json`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    FeatureOff:
+      description: Access blocks are not issued on this server (`WLO_AUTH_PRIVATE_KEY` unset or the registry unreadable).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    OAuthOff:
+      description: >-
+        OAuth is not set up — no key material (`WLO_AUTH_PRIVATE_KEY`), or the
+        public origin is unknown (`WLO_PUBLIC_BASE_URL` unset and no
+        `TRUST_PROXY`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ApiRateLimited:
+      description: >-
+        `rate_limited` — `API_RATE_LIMIT_RPM` requests per minute and address
+        (default 30). On a path that checks a login also `too_many_logins`
+        (distinct logins per address in ten minutes).
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ConnectorRateLimited:
+      description: '`rate_limited` — the connector budget, `RATE_LIMIT_RPM` per minute and address.'
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamUnreachable:
+      description: >-
+        `upstream_unreachable` — the repository did not answer the login
+        check. No verdict on the login; retry once after `retryAfter` (10 s).
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Internal failure; the reason is in the server log only.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Html:
+      description: 'An HTML page with a Content-Security-Policy and `X-Content-Type-Options: nosniff`.'
+      content:
+        text/html:
+          schema: { type: string }
+    Asset:
+      description: 'The file, with the content type named in the summary and `X-Content-Type-Options: nosniff`.'
+      content:
+        '*/*':
+          schema: { type: string }

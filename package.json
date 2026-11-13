@@ -23,7 +23,8 @@
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "lint": "eslint .",
     "sync:vocabs": "node --import tsx --env-file-if-exists=.env scripts/sync-vocabs.mjs",
-    "survey:metadata": "node --import tsx --env-file-if-exists=.env scripts/survey-metadata.mjs"
+    "survey:metadata": "node --import tsx --env-file-if-exists=.env scripts/survey-metadata.mjs",
+    "measure:resources": "node --env-file-if-exists=.env scripts/measure-resources.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

@@ -3,7 +3,7 @@
 Für das Team und für Entwicklerinnen und Entwickler, die einen Chatbot oder eine
 andere Anwendung anbinden. Ein Dokument, drei Fragen:
 
-1. **[Welche Werkzeuge gibt es?](#1-die-48-mcp-werkzeuge)** — alle 48, gruppiert.
+1. **[Welche Werkzeuge gibt es?](#1-die-51-mcp-werkzeuge)** — alle 51, gruppiert.
 2. **[Welche Adressen kann ich von außen aufrufen?](#2-alle-adressen-von-außen)** — MCP, REST, Seiten, OAuth.
 3. **[Was muss ich über das Verhalten wissen?](#3-verhalten-das-die-integration-betrifft)** — die Regeln, an denen Integrationen sonst scheitern.
 
@@ -531,3 +531,77 @@ Damit niemand darauf plant:
 | `503 upstream_unreachable` auf `/api/uploads`, `/auth/issue`, `/auth/revoke-all`, `/auth/ticket`, `POST /oauth/authorize` | edu-sharing hat die Anmeldeprüfung nicht beantwortet — **kein** Urteil über die Anmeldung. Nicht neu anmelden lassen, sondern einmal nach `retryAfter` (10 s) erneut versuchen |
 | Suche liefert nichts trotz Lizenzfilter | Auf den Hinweis achten: mit ihm gibt es nichts *mit genau dieser Lizenz*, ohne ihn nichts zum Thema. Steht die Lizenz in `unresolvedFilters`, wurde sie nicht erkannt |
 | Das Modell ruft keine Werkzeuge auf | In ChatGPT muss der Connector pro Unterhaltung einmal bestätigt werden — einmal nach WLO fragen und die Karte bestätigen |
+
+---
+
+## 7. Antwortzeiten
+
+Die HTTP-Adressen außerhalb von MCP sind in [openapi.yaml](openapi.yaml)
+beschrieben (OpenAPI 3.1). Ein Test hält davon genau zweierlei am Quelltext
+fest: die **Pfade** stimmen in beide Richtungen überein (jeder Pfad, den der
+Code vergleicht oder in einer Routentabelle führt, steht im Dokument, und das
+Dokument nennt keinen, den der Code nicht bedient), und jeder `$ref` im
+Dokument löst auf. Methoden, Parameter und Statuscodes sind von Hand aus dem
+Code gelesen und **nicht** per Test abgesichert. Dieser
+Abschnitt sagt, wie lange Aufrufe dauern.
+
+**Hier stehen nur Zahlen, die gemessen und in diesem Repository
+aufgeschrieben sind** — die Quelle steht in jeder Zeile. Wo nichts gemessen
+ist, steht „nicht gemessen“ und keine Schätzung. Die Messungen sind einzelne
+Läufe zu verschiedenen Zeitpunkten gegen verschiedene Instanzen; sie sind keine
+Zusage. Was die Dauer bestimmt, ist fast immer edu-sharing: der Server wartet
+(gemessen 0,3 Kerne unter Last, `DEPLOYMENT.md` §5.0.2), und die Antwortzeit
+von Staging schwankt stark — ein einzelner Suchlauf brauchte dort 7,0 s
+(`CLAUDE.md`, Abschnitt Skill-Registry).
+
+### 7.1 Gemessene Dauern
+
+| Werkzeug / Gruppe | typisch | ungünstigster gemessener Fall | Instanz · Quelle |
+|---|---|---|---|
+| `search_wlo_all` | 1,3 s (voller Aufruf); 2,4 s | 7,0 s (einzelner Lauf); **15,5 s** als erster Aufruf nach dem Start | Staging · `docs/plans/STATUS.md` (2026-08-21), `CLAUDE.md`; `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `search_wlo_content` (mit `license: OER`) | 1,5 s | 2,4 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `search_wlo_collections` | 1,2 s; die Abfrage des zweiten Index kostet für sich +0,6 bis +1,2 s | 4,0 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen); `CLAUDE.md` (2026-08-11) |
+| `search_wlo_topic_pages` mit `query` | 1,2 s (Produktion); 1,6 s (Staging, zweiter Lauf) | 3,5 s (Staging, erster Lauf) | Produktion · `PERFORMANCE.md` O9; Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `search_wlo_topic_pages` ohne `query` (Liste) | 0,66 s / 1,4 s bei `maxResults` 5 / 10; 0,55 s mit `educationalContext` | 3,2 s bei `maxResults` 20 | Produktion · `PERFORMANCE.md` O8 |
+| `get_topic_page_content` mit `query` | 2,2 s | 2,2 s (langsamstes der Werkzeuge mit Widget) | Produktion · `PERFORMANCE.md` O9; Staging · `STATUS.md` (2026-08-21) |
+| `browse_collection_tree` | 0,9 s (Tiefe 1), 2,0 s (Tiefe 2) | 4,0 s (Tiefe 2 mit Zählung), 6,5 s (Tiefe 2 mit Inhaltsvorschau) | Produktion · `PERFORMANCE.md` O9, O10 |
+| `get_compendium_text` | 0,47–0,83 s mit `query` | 1,1 s ohne `query` am größten Text (65 250 Zeichen) | Staging · `PERFORMANCE.md` O11 |
+| `get_node_details` | 0,3 s für vier ids | nicht gemessen | Staging · `STATUS.md` |
+| `resolve_wlo_filters` | 0,1 s | nicht gemessen | Staging · `STATUS.md` |
+| `find_content_by_url` | 0,8 s für vier Adressen | nicht gemessen | Staging · `STATUS.md` |
+| `get_url_text` | nicht gemessen | 1,6 s (eine schwere Wikipedia-Seite) | Staging · `STATUS.md` (2026-08-21) |
+| Sammlungs-Werkzeuge mit benanntem `skillContext` | +1,0 bis +1,4 s gegenüber dem Aufruf ohne | nicht gemessen | Staging · `CLAUDE.md` (2026-08-18) |
+| `wlo_create_collection` (Anlegen + Zurücklesen) | 1,2 s (Median, n = 12) | 1,4 s; 2,8 s auf oberster Ebene | Staging · `STATUS.md` |
+| `wlo_create_content` **ohne** Quell-URL | 0,5 s (Anlegen) | nicht gemessen | Staging · `CLAUDE.md` (2026-08-17) |
+| `wlo_create_content` / `wlo_update_content` **mit** `ccm:wwwurl` | 8,8 s (Adresse schon gerendert) | 46,5 s (Adresse zum ersten Mal); über vier Läufe 12,2–18,6 s | Staging · `CLAUDE.md` (2026-08-17) |
+| `get_subject_portals` | 0,6 s | 0,6 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `lookup_wlo_vocabulary` | unter 0,05 s | — | **keine Instanz:** das Werkzeug ruft nichts auf, es liest die im Code hinterlegten Vokabulare — die Zahl ist die Laufzeit des Servers selbst · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `get_wikipedia_summary` | 0,2 s | 0,2 s | **Wikipedia, nicht das Repository:** das Werkzeug ruft `de.wikipedia.org` auf und sagt nichts über Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `search_skill` | 0,15 s | 0,3 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| alle übrigen Werkzeuge | nicht gemessen | nicht gemessen | — |
+
+Zu „alle übrigen“: `PERFORMANCE.md` O9 hält für den Stand vom 2026-07-27 fest,
+dass jedes damals vorhandene Werkzeug außer den vier dort genannten bei
+höchstens ~1,2 s lag (Produktion). Für die seither hinzugekommenen Werkzeuge
+gibt es keine Einzelmessung.
+
+**Gleichzeitigkeit** (`PERFORMANCE.md` O9): fünf gleichzeitige Aufrufe kosten
+je Aufruf dasselbe wie einer (Faktor 0,96), zehn das 1,65-Fache — was dann
+langsamer wird, ist edu-sharing.
+
+### 7.2 Fristen, mit denen ein Client planen muss
+
+| Frist | Wert | Konstante · Datei |
+|---|---|---|
+| Ein einzelner Aufruf an edu-sharing | 20 s, danach Abbruch. Ein Werkzeug macht meist mehrere, zum Teil nacheinander — das ist **keine** Obergrenze für den Werkzeugaufruf | `WLO_FETCH_TIMEOUT_MS` (einstellbar) · `src/wlo-config.ts` |
+| Schreiben mit `ccm:wwwurl` (Anlegen und Metadaten) | bis 60 s — edu-sharing rendert dabei die Seite. Nie unter dem eingestellten `WLO_FETCH_TIMEOUT_MS` | `WWWURL_WRITE_TIMEOUT_MS` · `src/services/write/nodes.ts` |
+| Ein Plan (Sammlungsbaum, Sammel-Ablage, Sammel-Metadaten, Volltexte) | rund 40 s Arbeit je Aufruf; danach `complete: false` mit `continuationToken`, Fortsetzen ohne neue Bestätigung, bis 30 Minuten nach der Bestätigung | `PLAN_BUDGET_MS`, `PLAN_TTL_MS` · `src/services/write/plan-runner.ts` |
+| Warten auf einen freien Platz zu edu-sharing | höchstens 5 s, dann `upstream_busy` mit `retryAfter` statt eines späten Abbruchs. Schreibende Aufrufe werden nicht abgewiesen, sie warten | `GATE_MAX_WAIT_MS` · `src/upstream-gate.ts` |
+| Rumpf eines Uploads auf `/api/uploads` | 25 s (höchstens 28 s), danach `408 timeout` | `UPLOAD_REQUEST_TIMEOUT_MS` (einstellbar) · `src/rest/upload-route.ts` |
+| Wiederholen nach `upstream_unreachable` | 10 s (`retryAfter`) | `BUSY_RETRY_DEFAULT_S` · `src/services/failure-code.ts` |
+
+Für das Zeitlimit des Clients heißt das: für Lesen gibt es keine feste Obergrenze (siehe erste Zeile);
+wer schreibt, braucht **mindestens 60 s**, sonst bricht der Client einen
+`ccm:wwwurl`-Schreibvorgang ab, den edu-sharing zu Ende bringt — das Ergebnis
+ist dann offen (`outcomeOpen`, §3.4), und eine blinde Wiederholung legt eine
+Dublette an.

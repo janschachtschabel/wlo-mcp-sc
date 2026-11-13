@@ -1,0 +1,31 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "wlo-mcp.fullname" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "wlo-mcp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: internal
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: internal
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+      {{- if .Values.monitoring.serviceMonitor.bearerToken.enabled }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ required "monitoring.serviceMonitor.bearerToken needs existingSecret" .Values.existingSecret | quote }}
+          key: {{ .Values.monitoring.serviceMonitor.bearerToken.secretKey }}
+      {{- end }}
+{{- end }}

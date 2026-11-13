@@ -1946,6 +1946,17 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   process. Durations in `metrics.ts` are histograms on ONE bucket layout
   (`DURATION_BUCKETS_S`, sized by what was measured here; D9).
   `src/rate-limit.ts`, `src/read-body.ts` — support.
+- `docs/openapi.yaml` — the HTTP surface outside MCP; `tests/openapi.test.ts`
+  fails a route the code dispatches and the document does not name (and the
+  reverse). A new path in `http-app.ts` or `rest/` goes into the document in
+  the same change. `deploy/helm/wlo-mcp/` — a DRAFT chart (D13, 2026-11-13,
+  installed nowhere); `tests/helm-chart.test.ts` pins what follows from this
+  server's design and must not drift: ONE replica with `Recreate`, probes on
+  `/health` and never `/ready`, a termination grace above `SHUTDOWN_GRACE_MS`,
+  no secret in values. `docs/STECKBRIEF.md` is the fact sheet for a platform
+  team. Sizing is measured, not estimated: `npm run measure:resources`,
+  `docs/DEPLOYMENT.md` §5.0.2 — a held full text costs up to twice its UTF-8
+  size (one character outside Latin-1 makes the string two bytes each).
 - `docs/plans/` — design documents, including the
   [full-codebase review plan](docs/plans/2026-08-02-full-review-plan.md) (12
   packages, R1–R12) and its live progress table.

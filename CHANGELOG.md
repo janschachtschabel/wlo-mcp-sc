@@ -26,6 +26,34 @@ to [Semantic Versioning](https://semver.org/).
 - **`INTERNAL_PORT`:** a second listener for `GET /health`, `/ready`, `/metrics` only (`rest/internal-port.ts`).
   An addition — the public port keeps the three paths. No token for `/metrics` there unless `METRICS_TOKEN` is set.
 
+### Added — sizing (D11)
+
+- **`npm run measure:resources`** (`scripts/measure-resources.mjs`): memory and CPU of the running server idle,
+  warm and under a burst of searches, plus what the two in-memory stores cost at their bounds. Reports only.
+- **`docs/DEPLOYMENT.md` §5.0.2:** the measured numbers (72 MB idle, 172 MB under a search burst, about 480 MB
+  worst case with the batch upload and full-text plans at their bounds), what the server holds in memory and for
+  how long, and why it runs as one instance. One finding worth a line: a held full text costs up to TWICE its
+  UTF-8 size, because one character outside Latin-1 makes the whole string two bytes per character.
+
+### Added — the HTTP surface described, and a deployment draft (D12, D13)
+
+- **`docs/openapi.yaml`** — OpenAPI 3.1 for everything the server answers outside MCP (`/api/*`, `/auth*`,
+  `/oauth/*`, `/.well-known/*`, `/health`, `/ready`, `/metrics`, the static pages). `tests/openapi.test.ts` holds it
+  against the routes the code dispatches, both ways, and checks that every `$ref` resolves — paths, not methods or
+  status codes. The MCP tools stay described by `tools/list`.
+- **`docs/INTEGRATION.md` §7** — measured durations per tool with their source, and the budgets a client plans for.
+  Unmeasured tools say so.
+- **`deploy/helm/wlo-mcp/`** — a DRAFT chart, not installed anywhere: one replica with `Recreate`, a small volume
+  for the access registry, two services (public, internal), probes on `/health` only, secrets from an existing
+  Secret, optional Ingress, ServiceMonitor, PrometheusRule and NetworkPolicy (off by default — its namespaces are
+  the installer's to name). `tests/helm-chart.test.ts` pins what must not drift.
+- **`docs/STECKBRIEF.md`** — the service fact sheet for a platform team, with what is still to be decided.
+
+### Fixed — documentation the new files contradicted
+
+- `.env.example` named 1 MB as the default of `MAX_BODY_BYTES`; the code's default is 4 MiB.
+- `docs/DEPLOYMENT.md` §8 said three widgets, there are four; `docs/INTEGRATION.md` linked "48 tools", there are 51.
+
 ### Fixed — review of D1–D7
 
 - **A refusal has the code of a refusal.** A 404 from the repository is `not_found` wherever a failure is coded

@@ -1,0 +1,31 @@
+{{- $secret := splitList " " (include "wlo-mcp.secretKeys" .) -}}
+{{- $fixed := splitList " " (include "wlo-mcp.fixedKeys" .) -}}
+{{- if eq (int .Values.service.internal.port) (int .Values.service.public.port) -}}
+{{- fail "service.internal.port must differ from service.public.port — with equal ports the server opens no second listener" -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wlo-mcp.fullname" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+data:
+  # Set by the chart, not by `config`: each is tied to another object.
+  WLO_REPOSITORY_URL: {{ required "repositoryUrl is required — one MCP per repository; the chart has no default, so a forgotten value cannot fall back to the one in the code" .Values.repositoryUrl | quote }}
+  PORT: {{ .Values.service.public.port | quote }}
+  INTERNAL_PORT: {{ .Values.service.internal.port | quote }}
+  WLO_AUTH_REGISTRY_PATH: "/data/access-registry.json"
+  {{- range $name, $value := .Values.config }}
+  {{- if has $name $secret }}
+  {{- fail (printf "config.%s: this is a credential — put it into the Secret named by existingSecret, never into values" $name) }}
+  {{- end }}
+  {{- if has $name $fixed }}
+  {{- fail (printf "config.%s is set by the chart itself (repositoryUrl, service.*.port, the /data mount)" $name) }}
+  {{- end }}
+  {{- if not (kindIs "string" $value) }}
+  {{- fail (printf "config.%s must be a string — quote it (or use --set-string); a bare number can render in scientific notation" $name) }}
+  {{- end }}
+  {{- if ne $value "" }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
