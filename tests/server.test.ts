@@ -16,6 +16,8 @@ const EXPECTED_TOOLS = [
   'find_content_by_url',
   'get_collection_overview',
   'count_wlo_content_matches',
+  // Z4 (2026-11-13): several content searches in one call.
+  'search_wlo_content_many',
   'search_wlo_topic_pages',
   'get_subject_portals',
   'browse_collection_tree',
@@ -47,7 +49,7 @@ const EXPECTED_TOOLS = [
   'get_skill_registry',
 ];
 
-test('createMcpServer registers exactly the 32 read tools and the 14 curation tools', async () => {
+test('createMcpServer registers exactly the 33 read tools and the curation tools', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(t => t.name).sort(), [...EXPECTED_TOOLS, ...CURATION_TOOLS].sort());

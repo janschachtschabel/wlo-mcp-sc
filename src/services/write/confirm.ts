@@ -96,6 +96,8 @@ function bury(token: string, now: number): void {
  * order the caller happened to name them in does not change the identity of the
  * change; everything else that distinguishes one write from another — the node,
  * the kind, whether it deletes, each old and new value — is inside the hash.
+ * So is whether a change ADDS or replaces: both can end in the same list, but
+ * the previews read differently, and the key belongs to the one that was shown.
  */
 function fingerprint(cs: ChangeSet, identity: string): string {
   const canonical = JSON.stringify({
@@ -113,7 +115,7 @@ function fingerprint(cs: ChangeSet, identity: string): string {
     items: cs.items ?? null,
     changes: [...cs.changes]
       .sort((a, b) => a.property.localeCompare(b.property))
-      .map(c => [c.property, c.before, c.after, c.route]),
+      .map(c => [c.property, c.before, c.after, c.route, c.mode ?? null]),
   });
   return createHash('sha256').update(canonical).digest('hex');
 }

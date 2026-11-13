@@ -28,6 +28,7 @@ import { registerNodeRelationTools } from './tools/node-relations.js';
 import { registerCollectionStatsTool } from './tools/collection-stats.js';
 import { registerCollectionOverviewTool } from './tools/collection-overview.js';
 import { registerContentCountTool } from './tools/content-count.js';
+import { registerContentSearchManyTool } from './tools/content-search-many.js';
 import { registerSkillTools } from './tools/skills.js';
 import { registerSkillRegistryTool } from './tools/skill-registry.js';
 import {
@@ -134,6 +135,8 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerCollectionStatsTool(server);  // get_collection_stats
   registerCollectionOverviewTool(server); // get_collection_overview
   registerContentCountTool(server);     // count_wlo_content_matches
+  // Beside its sibling: both take MANY queries in one call — that one counts, this one returns hits.
+  registerContentSearchManyTool(server); // search_wlo_content_many
   // Registered unconditionally: the skill search no longer NEEDS a configured
   // collection — without one it filters the whole repository by the `ai_skill`
   // content type. `WLO_SKILLS_COLLECTION_ID` narrows it to a subtree when set.

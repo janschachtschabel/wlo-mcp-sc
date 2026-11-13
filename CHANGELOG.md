@@ -6,6 +6,46 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — the second half of the chatbot addendum (Z3, Z4, B1), 2026-11-13
+
+- **Z3 — a collection by NAME.** `get_collection_overview`, `get_collection_contents`, `get_compendium_text` and
+  `browse_collection_tree` take `collection` (the title) with an optional `discipline`;
+  `search_wlo_within_collection` takes `collection` with `collectionDiscipline` (its `discipline` filters the
+  contents). An id still wins and changes nothing. The rule (`services/collection-by-name.ts`): exactly ONE
+  collection with the same title is taken — never a prefix or substring guess — and the answer names it first
+  (`resolvedCollection {nodeId, title, path}`, `matched: 'loose'` when only ß/umlaut folding made it equal).
+  Anything else answers `ambiguous_collection` with up to five candidates (each with its path) and the tool does
+  not run. A search that did not answer completely, or whose window was full, is never taken for "unique": one
+  wider pass decides, and what it cannot decide is refused as unverified. Measured against staging on 24 titles:
+  12 resolve with a subject, 9 without; the wider pass costs about 0.7 s (median) where it runs.
+  The three id parameters are no longer `required` in the published input schema — an id OR a name.
+- **Z4 — `search_wlo_content_many`:** up to 8 content searches in one call (≤ 5 short hits each), with shared and
+  per-query filters, at most three query variants and a small window per search, one pool of repository requests
+  held below the process-wide bound, a deadline per query and per call, and `missing[]` for whatever was not
+  answered. `distinct: true` leaves a material only with the query it fits best. `license: "OER"` is refused
+  there (the bundle is four searches per query). 33 read tools now. No speed-up is claimed: not yet measured
+  against a repository.
+- **B1 — adding is its own parameter.** `discipline`, `educationalContext` and `userRole` keep REPLACING;
+  `addDiscipline`, `addEducationalContext` and `addUserRole` (on `wlo_update_content` and per item of
+  `wlo_update_contents`) ADD to what the record holds. Both for one field in one call is refused. The preview
+  shows `Fach: „Physik, Chemie“ + „Mathematik“`, the change carries `mode: 'add'` in the confirmation
+  fingerprint, and the structured preview carries `added`. The content type stays replace-only.
+
+### Fixed — coded errors were unreadable for a strict MCP client (older than this release)
+
+- **Every tool with an output schema now publishes `anyOf: [success, { error }]`.** A client that follows the SDK
+  validates `structuredContent` against the output schema even when `isError` is set; ours were strict success
+  shapes, so `{ error: { code, … } }` was rejected and the client saw neither code nor message
+  (`-32602`). One place (`apps/output-schema.ts`, called from `registerWloTool`); success answers are validated
+  as strictly as before. A test walks every tool. Not measured: whether every host accepts a top-level `anyOf`.
+
+### Added — the text-extraction service behind the B-API proxy
+
+- **`WLO_TEXT_EXTRACTION_API_KEY`:** with it set, the call to the extraction service carries `X-API-KEY`, so the
+  service can be reached through the B-API proxy (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/<service>`;
+  the server appends `/from-url`). The key goes to the configured service address only, a redirect is not followed
+  with it, and it is never logged. Unset, the service is called directly as before. Not tried against a real proxy.
+
 ### Changed — chatbot team addendum of 2026-11-13: writing by name, previews that name their record
 
 - **Z1 — a write takes a vocabulary value by its name or a listed alias, never by a substring guess.** Subject,

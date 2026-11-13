@@ -7,11 +7,11 @@ AI agents **search and retrieve open educational resources (OER)** from
 [WirLernenOnline (WLO)](https://wirlernenonline.de) via the public
 edu-sharing REST API.
 
-It exposes **32 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
+It exposes **33 read tools** (all unconditional; `get_url_text` is removable via `WLO_DISABLE_UNSAFE_TOOLS`) for full-text search, collection/topic-page browsing,
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 32 sit **19 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
+On top of those 33 sit **19 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
 submitting, collections, compendium texts, metadata proposals, which variant a
 topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
@@ -62,7 +62,7 @@ stateless proxy in front of edu-sharing.
 
 ## Features
 
-- **32 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill` for `get_skill_for_task` — `get_skill` stays in every mode) — content search, collection search, combined search, topic
+- **33 MCP read tools** (all unconditional; `WLO_SKILL_TOOL_MODE=one-tool` swaps `search_skill` for `get_skill_for_task` — `get_skill` stays in every mode) — content search, collection search, combined search, topic
   pages and their swimlane content, subject portals, tree browsing, node
   details (single & bulk), vocabulary lookup, publisher lookup, health check,
   Wikipedia (lead extract or the FULL article via `fullText`), full compendium text, scoped in-collection search, related
@@ -156,7 +156,7 @@ else has sensible defaults.
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. **The default is STAGING; production must be named explicitly** (changed 2026-08-06 — a deployment whose `.env` lacked this line wrote into the live catalogue while everything around it said staging). Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. A value no request can be sent to — unparseable, not http(s), with credentials or a query, or with a mistyped scheme such as `htps://` — **stops the start** with exit code 1 and a log line naming the variable. |
 | `WLO_ROOT_COLLECTION_ID` | per host | all | Root node of the collection hierarchy — **repository-bound**. The known WLO hosts (prod `redaktion.openeduhub.net`, staging `repository.staging.openeduhub.net`) get a per-host default automatically (the same id on both today, live-verified 2026-07-17, but maintained per host). Any **other** edu-sharing instance must set this explicitly — otherwise the server logs a startup warning and falls back to the WLO id, which will not exist there. |
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it, and `search_skill` narrows to that subtree. Unset → callers pass an explicit `?nodeId=`. |
-| `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` with `get_skill_for_task`, which ranks and loads in one call — the count stays 51, and `get_skill` stays in every mode: the registry and every collection result hand out nodeIds only it can load. Fewer round-trips, less control over the choice. Anything else leaves the search in place. |
+| `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` with `get_skill_for_task`, which ranks and loads in one call — the count stays 52, and `get_skill` stays in every mode: the registry and every collection result hand out nodeIds only it can load. Fewer round-trips, less control over the choice. Anything else leaves the search in place. |
 | `WLO_SKILL_CACHE` | _on_ | all | Keeps each collection's approved-skill catalogue warm in the background, so a collection result carries it for **0** extra requests. Set to `off` (or `0`/`false`/`no`) to switch off the background work **and** the per-request live fallback — the collection output then carries the free pointer to `get_skill_registry` again. See [the skill-registry cache](#skill-registry-cache). |
 | `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | all | How often the background tick drains its queue and renews entries past the TTL. Clamped to 60 000 – 3 600 000. |
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | all | How long a remembered answer stands before it is checked again. Never below the refresh interval. A registry created two minutes ago therefore appears with a delay — `get_skill_registry` and `includeSkillRegistry: true` read live and see it at once. |
@@ -186,6 +186,7 @@ else has sensible defaults.
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` | HTTP mode | Deadline for receiving one upload body (at most 28 000). Only with `WLO_BATCH_UPLOAD_ENABLED`. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | *(unset — nothing disabled; shipped as `all`)* | all | Switches off tools that declare themselves **unsafe**. A comma/space-separated list of tool names, or `all` (also `1`/`true`/`yes`/`on`). Unset means unsafe tools ARE registered, and the server logs a warning naming each one at startup — a risk that only appears in a changelog is one nobody inheriting a deployment will read. `.env.example` and `docker-compose.yml` ship `all`, i.e. **off by default in a real deployment**; set the variable to an empty value to switch them on. Currently exactly one tool is affected: `get_url_text`. Note that `get_wlo_content_text` is **not** — see [Tools declared unsafe](#tools-declared-unsafe). |
 | `WLO_TEXT_EXTRACTION_URL` | *(none — unset disables)* | all | Base URL of the text-extraction service `get_wlo_content_text` falls back to for externally linked material (`ccm:wwwurl`) whose text the repository has not stored. Each instance normally runs its own, so there is **no default**: unset (or empty) disables the external path and logs why, and the repository's own `/textContent` remains the only source. A value that cannot serve as a base (no scheme, not http(s), or carrying a query/fragment) disables it and warns too, so a typo cannot redirect material URLs to a host you did not choose. Point it at the extraction service belonging to *your* repository — a default pointing at the staging service used to send production material URLs into another environment. |
+| `WLO_TEXT_EXTRACTION_API_KEY` | _(unset)_ | all | Only when the extraction service is reached **through the B-API proxy**: set `WLO_TEXT_EXTRACTION_URL` to the proxy route (`https://<b-api>/api/v1/proxy/<service>`; the server appends `/from-url`) and this to the B-API key. It is sent as `X-API-KEY`, to that address only, never logged, and no redirect is followed with it. Unset: the service is called directly, without a key. |
 | `WLO_TEXT_TIMEOUT_MS` | `25000` | all | Timeout (ms) for full-text reads — both `/textContent` and the extraction service. Deliberately larger than `WLO_FETCH_TIMEOUT_MS`: `/textContent` was measured at a 4.6 s median and a 9.2 s maximum. Full text is the one call allowed to take longer than everything else. |
 | `WLO_TOPIC_POOL` | `10` | all | Fan-out width for topic-page candidate enrichment (metadata reads issued in parallel). Higher = fewer sequential waves at more simultaneous upstream load. |
 | `WLO_COMPENDIUM_SECTION_MAX` | `2000` | all | Characters one **main section** of a compendium text may contribute when `get_compendium_text` is called without a `query`. Every section still appears — each is cut on its own, so nothing hides behind anything else — and the outline of headings is always complete; with a `query` it caps a single passage instead. What counts as a main section is read off the document (the shallowest heading level used more than once), because all ten texts on staging that carry headings put their title in a single H1: a cap "per H1" would have capped each document as a whole. At the default exactly one of the eleven collections carrying such a text changes (65 250 → 20 802 characters delivered) and the other ten come back untouched — it is there for the outlier. An operator setting and not a tool parameter: it exists so an answer cannot grow without bound, and a caller who can raise it has no cap. `/api/compendium` and `search_wlo_content?includeCompendium` are unaffected and still return the full text. |
@@ -362,6 +363,7 @@ selected on any page (`/launcher.html?q=<selection>`).
 | 30 | `find_content_by_url` | Is there already a record for these addresses (≤20)? `exact` = same address, `normalized` = same after removing trailing slash, fragment and tracking parameters; errors per entry. `includeCollections` adds a collection count | markdown / json |
 | 31 | `get_collection_overview` | One collection at a glance: head, path, compendium outline, stats, approved skills, sub-collections with counts, first contents — parts in parallel, a failed part named in `missing` | markdown + structured |
 | 32 | `count_wlo_content_matches` | Count matches for up to 30 queries at once (+ up to 3 top hits each) — one search per query, no variants, the repository's total; an unresolved filter is never dropped (query listed in `missing`). Across all of WLO, not within a collection | markdown + structured |
+| 33 | `search_wlo_content_many` | Up to 8 content searches in ONE call (≤5 short hits each, under the query's `id`) — e.g. one per step of a learning path. Shared filters, per-query overrides, `distinct` shows a material only under the query it fits best. At most 3 query variants per search, one bounded request pool, a deadline per query; what was not answered is listed in `missing`. No paging, no totals, no OER bundle | markdown/json + structured |
 
 With `WLO_SKILL_TOOL_MODE=one-tool`, 22 is replaced by a single
 `get_skill_for_task`, which ranks and loads the best match itself. 23 and 28
@@ -807,7 +809,7 @@ pasted block and the OAuth connection. No `refresh_token`, no expiry: the access
 ends when it is revoked or the WLO password changes.
 
 **A request with no credential still reads anonymously.** It gets the full list —
-all 51 tools, the 19 curation tools included (55 and 23 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
+all 52 tools, the 19 curation tools included (56 and 23 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
 everyone and refuse at call time with an OAuth challenge, which is what makes a
 host offer the login: a model that never sees a write tool never asks for one.
 The `401` fires only for a token that was presented and cannot be used, and it
@@ -1060,7 +1062,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   signature, OAuth only) — including what the design does **not** protect.
   German.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
-  chatbot developer**: all 51 tools grouped, every externally callable URL (MCP,
+  chatbot developer**: all 52 tools grouped, every externally callable URL (MCP,
   REST, pages, OAuth), and the behaviour an integration has to know — licence
   filtering, the disclosure fields, the two-step write, the limits, and what
   deliberately does not exist. German.
@@ -1131,7 +1133,7 @@ must not cost the other one its fallback.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 51 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 52 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

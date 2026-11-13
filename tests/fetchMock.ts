@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 
 import type { WloNode } from '../src/wlo-api.js';
 import { createMcpServer } from '../src/server.js';
@@ -29,6 +30,33 @@ export async function connectedClient(): Promise<Client> {
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return client;
+}
+
+/**
+ * A client that follows the specification: with the tool list in hand the SDK
+ * client validates EVERY `structuredContent` against the advertised
+ * `outputSchema` — an `isError` answer included. `connectedClient()` alone
+ * validates nothing, which is how unreadable coded errors stayed invisible.
+ */
+export async function strictClient(): Promise<Client> {
+  const client = await connectedClient();
+  await client.listTools();
+  return client;
+}
+
+type AdvertisedTool = { name: string; outputSchema?: unknown };
+
+/** The validator the SDK client builds for a tool's advertised output schema. */
+export function outputValidator(tool: AdvertisedTool): (value: unknown) => { valid: boolean; errorMessage?: string } {
+  assert.ok(tool.outputSchema, `${tool.name} advertises an output schema`);
+  return new AjvJsonSchemaValidator().getValidator(tool.outputSchema as never) as never;
+}
+
+/** The SUCCESS branch of an advertised output schema (the other one is the coded error). */
+export function successSchemaOf(tool: AdvertisedTool): { properties?: Record<string, unknown> } & Record<string, unknown> {
+  const branches = (tool.outputSchema as { anyOf?: Array<Record<string, unknown>> } | undefined)?.anyOf;
+  assert.ok(Array.isArray(branches) && branches.length === 2, `${tool.name}: success and error branch`);
+  return branches[0]!;
 }
 
 export interface MockResult {

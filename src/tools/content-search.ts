@@ -30,7 +30,7 @@ export function registerContentSearchTools(server: McpServer, searchResultsWidge
     title: 'WLO Inhaltssuche',
     widgetUri: searchResultsWidgetUri,
     description: `NUR einzelne WLO-Materialien — Video, Arbeitsblatt, interaktives Medium, Unterrichtsplan — ohne Sammlungen und ohne Themenseiten. Für Anfragen, bei denen genau ein Materialtyp gefragt ist und alles andere stören würde, z.B. "ausschließlich Videos zur Zellteilung". Volltextsuche mit Reranking; Filter (Fach/Stufe/Typ) als deutsche Labels oder URIs.
-IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND Themenseiten in einem Aufruf und ist der Standard-Einstieg. Dieses Werkzeug ist die bewusste Verengung darauf.`,
+IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND Themenseiten in einem Aufruf und ist der Standard-Einstieg. Dieses Werkzeug ist die bewusste Verengung darauf. Mehrere Suchen auf einmal (z.B. je Schritt eines Lernpfads): search_wlo_content_many.`,
     inputSchema: {
       query: z.string().max(200).describe('Search query in German, e.g. "Bruchrechnung Grundschule" or "Klimawandel interaktiv"'),
       educationalContext: z.string().optional().describe(

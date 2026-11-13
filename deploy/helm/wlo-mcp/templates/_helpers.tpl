@@ -36,7 +36,7 @@ The variables that come from `existingSecret` and from nowhere else. The
 ConfigMap refuses every one of them, so a credential cannot be put in values.
 */}}
 {{- define "wlo-mcp.secretKeys" -}}
-WLO_SERVICE_USER WLO_SERVICE_PASSWORD WLO_AUTH_PRIVATE_KEY WLO_AUTH_PRIVATE_KEY_PREVIOUS METRICS_TOKEN TRUSTED_CLIENT_KEYS
+WLO_SERVICE_USER WLO_SERVICE_PASSWORD WLO_AUTH_PRIVATE_KEY WLO_AUTH_PRIVATE_KEY_PREVIOUS METRICS_TOKEN TRUSTED_CLIENT_KEYS WLO_TEXT_EXTRACTION_API_KEY
 {{- end -}}
 
 {{/* Variables the chart sets itself in configmap.yaml; `config` may not override them. */}}

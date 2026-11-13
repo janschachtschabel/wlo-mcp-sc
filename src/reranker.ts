@@ -187,21 +187,59 @@ function mergeAndRank(
 
 // ── Public: Enhanced search ──────────────────────────────────────────────────
 
+/**
+ * What a caller may trade for speed. Every field defaults to the single
+ * search's behaviour — `search_wlo_content` and `searchAll` pass none of them.
+ * The batch search (`services/content-search-many.ts`) passes all three.
+ */
+export interface EnhancedSearchOptions {
+  /** Keep only the best N variants by weight (`full` always survives). */
+  maxVariants?: number;
+  /** Candidates read per variant, instead of `WLO_POOL_SIZE`. */
+  poolSize?: number;
+  /** Runs each repository request — the seam for a pool SHARED across searches. */
+  schedule?: <T>(task: () => Promise<T>) => Promise<T>;
+}
+
+/** A ranked search's answer plus the score each returned node was ranked by. */
+export interface ScoredSearch {
+  response: SearchResponse;
+  /** nodeId → final rerank score (0…1, relative to the best hit of THIS query). */
+  scores: Map<string, number>;
+}
+
 export async function enhancedSearch(
   query: string,
   contentType: NgsearchContentType,
   additionalCriteria: SearchCriterion[],
   maxResults: number,
   skipCount = 0,
+  opts: EnhancedSearchOptions = {},
 ): Promise<SearchResponse> {
-  const variants = expandQuery(query);
+  return (await enhancedSearchScored(query, contentType, additionalCriteria, maxResults, skipCount, opts)).response;
+}
+
+/** `enhancedSearch`, with the scores — for a caller that compares hits ACROSS searches. */
+export async function enhancedSearchScored(
+  query: string,
+  contentType: NgsearchContentType,
+  additionalCriteria: SearchCriterion[],
+  maxResults: number,
+  skipCount = 0,
+  opts: EnhancedSearchOptions = {},
+): Promise<ScoredSearch> {
+  // `expandQuery` returns its variants sorted by weight, so a cut keeps the best.
+  const variants = expandQuery(query).slice(0, opts.maxVariants);
+  const poolSize = opts.poolSize ?? POOL_SIZE;
 
   const settled = await Promise.allSettled(
     variants.map(async variant => {
       const criteria = [...variant.criteria, ...additionalCriteria];
       // skipCount is the backend offset applied per variant before the pool is
       // merged/reranked — enables "more results" paging. Default 0 = first page.
-      const response = await ngsearch(criteria, contentType, POOL_SIZE, skipCount);
+      const request = () => ngsearch(criteria, contentType, poolSize, skipCount);
+      // Without a scheduler the request is sent exactly as before — no extra turn.
+      const response = await (opts.schedule ? opts.schedule(request) : request());
       return { variant, response };
     })
   );
@@ -232,7 +270,8 @@ export async function enhancedSearch(
 
   const ranked   = mergeAndRank(successful, query);
   const filtered = ranked.filter(r => !isDeletedNode(r.node));
-  const topNodes = filtered.slice(0, maxResults).map(r => r.node);
+  const top = filtered.slice(0, maxResults);
+  const topNodes = top.map(r => r.node);
   // Report the TRUE backend hit count of the primary full-query variant
   // (label "full:…") as the total. Previously this was clamped to
   // filtered.length (≤ the merged POOL_SIZE window), badly under-reporting
@@ -243,11 +282,14 @@ export async function enhancedSearch(
     : Math.max(...successful.map(r => r.response.pagination.total), 0);
 
   return {
-    nodes: topNodes,
-    pagination: { total: apiTotal, from: skipCount, count: topNodes.length },
-    // The last window: every variant came back short of a full pool. A variant
-    // that FAILED tells nothing, so with one of those the end is not claimed.
-    exhausted: successful.length === settled.length && successful.every(r => r.response.nodes.length < POOL_SIZE),
+    response: {
+      nodes: topNodes,
+      pagination: { total: apiTotal, from: skipCount, count: topNodes.length },
+      // The last window: every variant came back short of a full pool. A variant
+      // that FAILED tells nothing, so with one of those the end is not claimed.
+      exhausted: successful.length === settled.length && successful.every(r => r.response.nodes.length < poolSize),
+    },
+    scores: new Map(top.map(r => [r.nodeId, r.finalScore])),
   };
 }
 

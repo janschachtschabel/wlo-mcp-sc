@@ -30,9 +30,13 @@ import {
   notReadable,
 } from '../services/collection-traversal.js';
 import { registerWloTool } from '../apps/register.js';
-import { nodeListSchema } from '../apps/outputSchemas.js';
+import { nodeListSchema, resolvedCollectionSchema } from '../apps/outputSchemas.js';
+import { collectionDisciplineParam, collectionNameParam, withCollectionByName } from './collection-arg.js';
 import { nodeMatchesCriteria } from '../node-match.js';
 
+
+/** The node list of a tool that may be called with a collection TITLE instead of its id. */
+const namedCollectionListSchema = nodeListSchema.extend({ resolvedCollection: resolvedCollectionSchema });
 
 /** Said when the recursive walk met a sub-listing that did not answer. */
 const WALK_INCOMPLETE_NOTE = 'Hinweis: Mindestens eine Unterliste dieser Sammlung ließ sich gerade nicht lesen — '
@@ -219,7 +223,8 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
     title: 'WLO Sammlungsinhalte',
     widgetUri: searchResultsWidgetUri,
     description: `Liste die Inhalte einer WLO-Sammlung/Themenseite auf (per nodeId) — die Materialien und Unter-Sammlungen, die darin gebündelt sind. Der Widget-Knopf „Inhalte anzeigen" führt hierher. Nutze dies, wenn du eine Sammlung/Themenseite hast (nodeId aus search_wlo_collections, aus dem Themenbaum oder aus einer früheren Antwort) und zeigen willst, was konkret drinsteckt.
-contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen (Unter-Themenseiten), "both" = alles. includeSubcollections=true durchläuft den gesamten Unterbaum rekursiv.`,
+contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen (Unter-Themenseiten), "both" = alles. includeSubcollections=true durchläuft den gesamten Unterbaum rekursiv.
+Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden, bei mehreren gleichnamigen mit \`discipline\` (Fach); bei Mehrdeutigkeit kommen Kandidaten statt eines Ergebnisses.`,
     inputSchema: {
       skillContext: z.string().max(120).optional().describe(
         'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
@@ -228,7 +233,9 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
         + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
         + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
       ),
-      nodeId: z.string().describe('Collection node ID from search_wlo_collections results'),
+      nodeId: z.string().optional().describe('Collection node ID from search_wlo_collections results. Give nodeId OR `collection` (its title) — one of the two is required.'),
+      collection: collectionNameParam,
+      discipline: collectionDisciplineParam('discipline'),
       query: z.string().optional().describe(
         'Optional search/filter query to rerank results within the collection'
       ),
@@ -250,9 +257,11 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
-    outputSchema: nodeListSchema,
+    outputSchema: namedCollectionListSchema,
     annotations: { readOnlyHint: true },
-    handler: async (params) => {
+    handler: withCollectionByName({
+      idParam: 'nodeId', disciplineParam: 'discipline', missing: 'Bitte nodeId oder collection angeben.',
+    }, async (params) => {
       const filter = (params.contentFilter ?? 'files') as 'files' | 'folders' | 'both';
       const maxResults = params.maxResults ?? 20;
       const skipCount = params.skipCount ?? 0;
@@ -322,7 +331,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
       } catch (err) {
         return toolError('Fehler beim Abruf der Sammlungsinhalte', err);
       }
-    },
+    }),
   });
 
   registerWloTool(server, {
@@ -332,6 +341,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
     description: `Durchsuche/filtere die Inhalte INNERHALB einer bestimmten WLO-Sammlung — z.B. "welche Videos zu Zellteilung gibt es in dieser Sammlung?". Nutze dies, wenn du bereits eine Sammlung (nodeId) hast und sie per Volltext und Filtern (Fach/Stufe/Typ) eingrenzen willst.
 Für eine ungebundene Suche über ganz WLO nutze search_wlo_content; um Inhalte ungefiltert zu listen get_collection_contents.
 NOTE: Das Matching läuft über die direkten Inhalte der Sammlung (eine begrenzte Stichprobe von bis zu 100 Items, lokal geprüft — das Backend bietet keine sammlungsweite Suche). Die Ausgabe weist darauf hin, wenn die Sammlung größer ist.
+Statt der nodeId geht der Titel der Sammlung als \`collection\` (gleichnamige: \`collectionDiscipline\` — \`discipline\` filtert die Inhalte); mehrdeutig → Kandidaten statt Ergebnis.
 Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort. get_skill_registry mit derselben nodeId liefert zusätzlich Beschreibungen, Keywords und die Verwendungshinweise der Redaktion.`,
     inputSchema: {
       skillContext: z.string().max(120).optional().describe(
@@ -341,7 +351,9 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
         + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
         + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
       ),
-      nodeId: z.string().describe('The collection nodeId to search within (from search_wlo_collections).'),
+      nodeId: z.string().optional().describe('The collection nodeId to search within (from search_wlo_collections). Give nodeId OR `collection` (its title) — one of the two is required.'),
+      collection: collectionNameParam,
+      collectionDiscipline: collectionDisciplineParam('collectionDiscipline'),
       query: z.string().optional().default('').describe('Full-text query, e.g. "Zellteilung". Empty = all contents (filtered).'),
       educationalContext: z.string().optional().describe('Bildungsstufe: "Primarstufe", "Sekundarstufe I", … or URI'),
       discipline: z.string().optional().describe('Fach: "Mathematik", "Biologie", … or URI'),
@@ -356,9 +368,11 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
-    outputSchema: nodeListSchema,
+    outputSchema: namedCollectionListSchema,
     annotations: { readOnlyHint: true },
-    handler: async (params) => {
+    handler: withCollectionByName({
+      idParam: 'nodeId', disciplineParam: 'collectionDiscipline', missing: 'Bitte nodeId oder collection angeben.',
+    }, async (params) => {
       try {
         const res = await searchWithinCollection({
           excludeNodeIds: params.excludeNodeIds,
@@ -446,6 +460,6 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
       } catch (err) {
         return toolError('Fehler bei der Suche in der Sammlung', err);
       }
-    },
+    }),
   });
 }

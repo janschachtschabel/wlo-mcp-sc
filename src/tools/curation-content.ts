@@ -55,12 +55,13 @@ import {
   wrongKindReply,
   candidatesField,
 } from './curation-shared.js';
-import { CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.js';
+import { ADD_FIELDS, ADD_SCHEMA, CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.js';
 import { findUrlMatches, normalizeSourceUrl } from '../services/url-matches.js';
 
 const updateSchema = {
   nodeId: z.string().describe('nodeId of the record to change.'),
   ...FIELD_SCHEMA,
+  ...ADD_SCHEMA,
   // The same file surface as the create tool. Optional here and independent of
   // the metadata fields: a call may change only metadata, only the file, or both.
   content: z.string().optional()
@@ -213,7 +214,8 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
       'Vorschau zurückgegeben und NICHTS geschrieben; erst ein zweiter Aufruf mit dem Schlüssel aus der ' +
       'Vorschau schreibt. Danach wird der Datensatz erneut gelesen und je Feld berichtet, was tatsächlich ' +
       'ankam. Eine id aus einer Sammlung ist eine Verknüpfung, nicht der Datensatz — geschrieben wird dann ' +
-      'am Original, und die Vorschau nennt beide ids. Gilt auch für SAMMLUNGEN (Fach, Bildungsstufe, ' +
+      'am Original, und die Vorschau nennt beide ids. Fach/Stufe/Zielgruppe werden ERSETZT; ' +
+      'die add…-Parameter fügen hinzu. Gilt auch für SAMMLUNGEN (Fach, Bildungsstufe, ' +
       'Schlagwörter …; Titel und Beschreibung landen im Sammlungsfeld). Erfordert eine Anmeldung. NICHT für neue Inhalte ' +
       '(dafür wlo_create_content) und nicht zum Löschen.',
     inputSchema: updateSchema,
@@ -224,7 +226,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         requireWrite();
 
         const nodeId = String(params['nodeId'] ?? '');
-        const collected = collectDesired(params, CONTENT_FIELDS);
+        const collected = collectDesired(params, CONTENT_FIELDS, ADD_FIELDS);
         if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
         const carriesFile = typeof params['content'] === 'string' || typeof params['fileBase64'] === 'string';
         // A file alone IS a change. Without this the tool would refuse "just
@@ -285,7 +287,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // beside a change that has no such field (a file alone, a value the
         // record already holds) therefore creates no version, and the preview
         // promised one (audit 2026-11-12, K-14). It is said instead of promised.
-        const versions = commit && buildChangeSet(target.targetId, 'content', before, desired)
+        const versions = commit && buildChangeSet(target.targetId, 'content', before, desired, { added: collected.added })
           .changes.some(c => c.route === 'mds');
         const extras = [
           file
@@ -306,6 +308,8 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // never named.
         const cs = buildChangeSet(target.targetId, 'content', before, desired, {
           subject: { collection: isCollectionNode(baseline.written), title: titleOn(baseline.written, before) },
+          // Merged into `before` — the WRITTEN node's values, never the reference's.
+          added: collected.added,
           ...(extras.length ? { action: extras.join(' ') } : {}),
           ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
         });

@@ -23,6 +23,7 @@ interface ToolStatus {
 export const TOOL_STATUS: Readonly<Record<string, ToolStatus>> = {
   search_wlo_all: { invoking: 'WirLernenOnline wird durchsucht…', invoked: 'Ergebnisse bereit' },
   search_wlo_content: { invoking: 'Inhalte werden gesucht…', invoked: 'Inhalte gefunden' },
+  search_wlo_content_many: { invoking: 'Mehrere Suchen laufen…', invoked: 'Suchen beantwortet' },
   search_wlo_collections: { invoking: 'Sammlungen werden gesucht…', invoked: 'Sammlungen gefunden' },
   search_wlo_within_collection: { invoking: 'Sammlung wird durchsucht…', invoked: 'Ergebnisse bereit' },
   search_wlo_topic_pages: { invoking: 'Themenseiten werden gesucht…', invoked: 'Themenseiten gefunden' },

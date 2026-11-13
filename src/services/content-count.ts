@@ -40,7 +40,8 @@ export interface CountResult {
 
 export interface CountMissing { part: string; code: FailureCode | 'unresolved_filter'; message?: string }
 
-const FIELD_OF: Record<string, keyof CountFilters> = {
+/** Exported for the batch search, which reports guessed filters by the same names. */
+export const FIELD_OF: Record<string, keyof CountFilters> = {
   'ccm:educationalcontext': 'educationalContext',
   'ccm:taxonid': 'discipline',
   'ccm:educationalintendedenduserrole': 'userRole',

@@ -2,7 +2,7 @@
 
 Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 
-## Lesend (32)
+## Lesend (33)
 
 ### Suchen
 
@@ -24,6 +24,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 | `get_collection_stats` | Fasst zusammen, woraus eine Sammlung besteht, nach Typ, Fach und Stufe. |
 | `get_collection_overview` | Zeigt eine Sammlung auf einen Blick: Pfad, Gliederung, Statistik, Skills, Untersammlungen und erste Inhalte. |
 | `count_wlo_content_matches` | Zählt für viele Suchanfragen auf einmal, wie viele passende Inhalte es gibt. |
+| `search_wlo_content_many` | Führt mehrere Inhaltssuchen in einem Aufruf aus und liefert je Anfrage wenige Kurztreffer. |
 
 ### Details & Verwandtes
 

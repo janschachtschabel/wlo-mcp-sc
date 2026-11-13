@@ -34,6 +34,7 @@ repositoryUrl: ""
 #   WLO_AUTH_PRIVATE_KEY_PREVIOUS            only during a key rotation
 #   METRICS_TOKEN                            Bearer token for /metrics (16+ characters)
 #   TRUSTED_CLIENT_KEYS                      name:rpm:key[,…] for trusted backends
+#   WLO_TEXT_EXTRACTION_API_KEY              B-API key, when the extraction service is behind that proxy
 # Empty = none of the six is set (anonymous reading only).
 existingSecret: ""
 

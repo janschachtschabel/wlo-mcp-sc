@@ -3,7 +3,7 @@
 Für das Team und für Entwicklerinnen und Entwickler, die einen Chatbot oder eine
 andere Anwendung anbinden. Ein Dokument, drei Fragen:
 
-1. **[Welche Werkzeuge gibt es?](#1-die-51-mcp-werkzeuge)** — alle 51, gruppiert.
+1. **[Welche Werkzeuge gibt es?](#1-die-52-mcp-werkzeuge)** — alle 52, gruppiert.
 2. **[Welche Adressen kann ich von außen aufrufen?](#2-alle-adressen-von-außen)** — MCP, REST, Seiten, OAuth.
 3. **[Was muss ich über das Verhalten wissen?](#3-verhalten-das-die-integration-betrifft)** — die Regeln, an denen Integrationen sonst scheitern.
 
@@ -22,7 +22,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 51 — 32 lesend, 19 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 55 (vier für die Stapel-Ablage) |
+| **Werkzeuge** | 52 — 33 lesend, 19 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 56 (vier für die Stapel-Ablage) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -32,7 +32,7 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 
 ---
 
-## 1. Die 51 MCP-Werkzeuge
+## 1. Die 52 MCP-Werkzeuge
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -43,7 +43,7 @@ trägt dann die Aufforderung, mit der der Client die Anmeldung startet.
 auf — also fordert nichts jemals eine Anmeldung an, und ein Connector bleibt für
 immer anonym.
 
-### 1.1 Lesen — 32 Werkzeuge (`noauth`)
+### 1.1 Lesen — 33 Werkzeuge (`noauth`)
 
 **Suchen (6)**
 
@@ -55,6 +55,7 @@ immer anonym.
 | `search_wlo_within_collection` | Innerhalb *einer* Sammlung (lokal über bis zu 100 direkte Kinder); `excludeNodeIds` lässt Gesehenes weg |
 | `search_wlo_topic_pages` | Themenseiten samt Varianten und URLs |
 | `count_wlo_content_matches` | Trefferzahlen für bis zu 30 Anfragen zugleich (+ bis zu 3 Treffer je Anfrage), etwa für eine Lehrplan-Abdeckung |
+| `search_wlo_content_many` | Bis zu 8 Inhaltssuchen in einem Aufruf (je ≤5 Kurztreffer unter der eigenen `id`), etwa eine je Schritt eines Lernpfads; `distinct` gegen doppelte Materialien, Unbeantwortetes in `missing` |
 
 **Einzelne Datensätze (7)**
 
@@ -108,11 +109,11 @@ immer anonym.
 > für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
 >
 > `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **nur die Suche** durch
-> `get_skill_for_task` (die Zahl bleibt bei 51). `get_skill` und
+> `get_skill_for_task` (die Zahl bleibt bei 52). `get_skill` und
 > `get_skill_registry` bleiben — die Freigabeliste besteht aus nodeIds, und
 > `get_skill` ist das einzige Werkzeug, das eine annimmt.
 >
-> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 50), wenn
+> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 51), wenn
 > Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.
 >
 > **Der Katalog kommt bei Sammlungs-Ergebnissen mit — ohne Zusatzabruf.** Ein
@@ -316,7 +317,7 @@ Nur mit `WLO_BATCH_UPLOAD_ENABLED`; sonst gibt es die Adresse nicht.
 
 ### 3.1 Ausgabeformat
 
-22 der 51 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+23 der 52 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).

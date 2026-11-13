@@ -34,6 +34,14 @@ export interface FieldChange {
   before: string[] | null;
   after: string[] | null;
   route: FieldRoute;
+  /**
+   * Set when the caller's values were ADDED to what the field held (keywords
+   * always; subject, level and target group through their `add…` parameter).
+   * `after` is the whole list either way — that is what is sent and read back.
+   * The mode decides how the preview words the change, and it is in the
+   * fingerprint: an approval to add is not an approval to replace.
+   */
+  mode?: 'add';
 }
 
 export interface ChangeSet {
@@ -86,7 +94,7 @@ export interface ChangeSet {
   items?: string[];
 }
 
-/** Properties whose new values are added to what is there, not put in its place. */
+/** Properties whose new values are ALWAYS added to what is there, not put in its place. */
 const MERGED_PROPERTIES = new Set(['cclom:general_keyword']);
 
 function sameValues(a: string[], b: string[]): boolean {
@@ -110,6 +118,12 @@ function merge(before: string[], added: string[]): string[] {
   return out;
 }
 
+/** What an added change brings: the values of `after` the field did not hold. */
+export function addedValues(c: Pick<FieldChange, 'before' | 'after'>): string[] {
+  const existing = new Set((c.before ?? []).map(v => v.toLowerCase()));
+  return (c.after ?? []).filter(v => !existing.has(v.toLowerCase()));
+}
+
 /**
  * Build the diff between a node's current properties and the desired values.
  *
@@ -124,6 +138,8 @@ export function buildChangeSet(
   opts: {
     destructive?: boolean; action?: string; redirectedFrom?: string;
     addTo?: { nodeId: string; title: string }; items?: string[];
+    /** Properties of `desired` whose values are added to the stored ones instead of replacing them. */
+    added?: readonly string[];
     /** The node the tool READ: names it in the preview's first line, by the title of its own kind. */
     subject?: { collection: boolean; title: string };
   } = {},
@@ -134,7 +150,8 @@ export function buildChangeSet(
     const spec = WRITABLE_FIELDS[property];
     if (!spec) continue; // unknown properties were already rejected upstream
     const current = before[property] ?? [];
-    const after = MERGED_PROPERTIES.has(property) ? merge(current, values) : values;
+    const adds = MERGED_PROPERTIES.has(property) || opts.added?.includes(property) === true;
+    const after = adds ? merge(current, values) : values;
     if (sameValues(current, after)) continue;
     changes.push({
       property,
@@ -142,6 +159,7 @@ export function buildChangeSet(
       before: current.length > 0 ? current : null,
       after,
       route: spec.route,
+      ...(adds ? { mode: 'add' as const } : {}),
     });
   }
 
@@ -302,10 +320,15 @@ export function renderChangeSet(cs: ChangeSet): string {
   }
 
   for (const c of cs.changes) {
-    if (MERGED_PROPERTIES.has(c.property)) {
-      const existing = new Set((c.before ?? []).map(v => v.toLowerCase()));
-      const added = (c.after ?? []).filter(v => !existing.has(v.toLowerCase()));
-      lines.push(`${c.label}: + ${previewValue(added.map(v => displayValue(c.property, v)).join(', '))}`);
+    if (c.mode === 'add' && MERGED_PROPERTIES.has(c.property)) {
+      // Keywords: free text that is only ever added. Clients read this line as it is.
+      lines.push(`${c.label}: + ${previewValue(addedValues(c).map(v => displayValue(c.property, v)).join(', '))}`);
+      continue;
+    }
+    if (c.mode === 'add') {
+      // The WHOLE list is sent, so what the field holds is part of what is
+      // approved — the addition alone hid everything that is written again.
+      lines.push(`${c.label}: ${renderValues(c.property, c.before)} + ${renderValues(c.property, addedValues(c))}`);
       continue;
     }
     lines.push(`${c.label}: ${renderValues(c.property, c.before)} → ${renderValues(c.property, c.after)}`);

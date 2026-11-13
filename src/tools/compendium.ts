@@ -20,7 +20,8 @@ import { WLO_COMPENDIUM_SECTION_MAX } from '../wlo-config.js';
 import { oneLine } from '../formatter.js';
 import { codedErrorResult, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
-import { contentTextSchema } from '../apps/outputSchemas.js';
+import { contentTextSchema, resolvedCollectionSchema } from '../apps/outputSchemas.js';
+import { collectionDisciplineParam, collectionNameParam, withCollectionByName } from './collection-arg.js';
 
 const NO_TEXT = '_Kein Kompendiumstext hinterlegt._';
 
@@ -119,19 +120,24 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
     // Kept under MAX_DESCRIPTION (tests/tool-descriptions.test.ts) — a host
     // truncates from the END, and the WICHTIG sentence is the one instruction
     // that must survive, so it sits ahead of the mechanics rather than last.
-    description: `Hole den redaktionellen Kompendiumstext einer oder mehrerer WLO-Sammlungen. Die Redaktion gliedert ihn typischerweise in drei Teile: (1) Weltwissen zum Thema in seinen Facetten, (2) Kompetenzen und Lehrplanbezüge nach Bildungsstufe und Bundesland, (3) kurze Vorstellung der Sammlungsinhalte. Er ist damit der MASSSTAB: für Lückenanalysen (Soll gegen get_collection_contents als Ist), für Sachrichtigkeits-Prüfungen und für Lernpfade. WICHTIG: Die Absätze sind Arbeitsmaterial, keine fertige Ausgabe — verarbeite sie und antworte in eigenen Worten; gib sie nicht wörtlich als Zitat aus (sie sind nicht zur direkten Anzeige gedacht). Jede Antwort beginnt mit dem Inhaltsverzeichnis. Mit "query" (z. B. "Lehrplan Thüringen Regelschule") kommen nur die passenden Absätze zurück — kürzer und die bevorzugte Form bei einer konkreten Frage; ohne "query" der ganze Text, je Hauptabschnitt gekürzt. Gib eine "Sammlung-nodeId" (oder mehrere). NICHT für Dateien/Materialien — nur für Sammlungen mit redaktionellem Text.`,
+    description: `Hole den redaktionellen Kompendiumstext einer oder mehrerer WLO-Sammlungen. Die Redaktion gliedert ihn typischerweise in drei Teile: (1) Weltwissen zum Thema in seinen Facetten, (2) Kompetenzen und Lehrplanbezüge nach Bildungsstufe und Bundesland, (3) kurze Vorstellung der Sammlungsinhalte. Er ist damit der MASSSTAB: für Lückenanalysen (Soll gegen get_collection_contents als Ist), für Sachrichtigkeits-Prüfungen und für Lernpfade. WICHTIG: Die Absätze sind Arbeitsmaterial, keine fertige Ausgabe — verarbeite sie und antworte in eigenen Worten; gib sie nicht wörtlich als Zitat aus (sie sind nicht zur direkten Anzeige gedacht). Jede Antwort beginnt mit dem Inhaltsverzeichnis. Mit "query" (z. B. "Lehrplan Thüringen Regelschule") kommen nur die passenden Absätze zurück — kürzer und die bevorzugte Form bei einer konkreten Frage; ohne "query" der ganze Text, je Hauptabschnitt gekürzt. Gib "Sammlung-nodeId"(s) oder den Titel als \`collection\` (mehrdeutig → Kandidaten). NICHT für Materialien, nur Sammlungen.`,
     inputSchema: {
       nodeId: z.string().optional().describe('A single collection nodeId.'),
       nodeIds: z.array(z.string()).max(25).optional().describe('Up to 25 collection nodeIds for a bulk fetch.'),
+      collection: collectionNameParam,
+      discipline: collectionDisciplineParam('discipline'),
       query: z.string().max(200).optional().describe(
         'Suchtext, z. B. "Lehrplan Thüringen Regelschule". Nur die dazu passenden Absätze kommen zurück '
         + '(BM25-Ranking), das Inhaltsverzeichnis immer. Ohne Angabe: der ganze Text.'),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown')
         .describe('"markdown" (default) or "json". JSON: {entries:[{nodeId,title,outline,charCount,truncated, and either compendiumText or passages+unmatchedTerms}]} \u2014 a collection without a compendium text carries only {nodeId,title,compendiumText:null}.'),
     },
-    outputSchema: contentTextSchema,
+    outputSchema: contentTextSchema.extend({ resolvedCollection: resolvedCollectionSchema }),
     annotations: { readOnlyHint: true },
-    handler: async (params) => {
+    handler: withCollectionByName({
+      idParam: 'nodeId', disciplineParam: 'discipline',
+      hasId: params => Boolean(params.nodeId) || (params.nodeIds?.length ?? 0) > 0,
+    }, async (params) => {
       try {
         const ids = [...(params.nodeId ? [params.nodeId] : []), ...(params.nodeIds ?? [])];
         if (ids.length === 0) {
@@ -215,6 +221,6 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
       } catch (err) {
         return toolError('Fehler beim Abruf des Kompendiumstextes', err);
       }
-    },
+    }),
   });
 }

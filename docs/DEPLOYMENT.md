@@ -421,7 +421,7 @@ only check that cannot be automated offline (see the P3.6 note in the plan).
 With `WLO_AUTH_PRIVATE_KEY` set, choose **OAuth** as the authentication method;
 the connector registers itself and sends the user to `/oauth/authorize` to log
 in with their own WLO account. Without a key, choose "no authentication" — the
-32 read tools work anonymously.
+33 read tools work anonymously.
 
 The curation tools are listed either way. Without a usable login they refuse and
 answer with the challenge that asks the client to start the OAuth flow, so a

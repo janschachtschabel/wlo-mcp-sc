@@ -22,7 +22,7 @@ test('WLO_DISABLE_UNSAFE_TOOLS=all removes get_url_text and nothing else', async
     const names = (await client.listTools()).tools.map(t => t.name);
 
     assert.equal(names.includes('get_url_text'), false, 'the unsafe tool is gone');
-    // The 31 that are unconditional must all still be there.
+    // The 32 that are unconditional must all still be there.
     for (const kept of [
       'search_skill', 'get_skill', 'get_skill_registry',
       'search_wlo_collections', 'search_wlo_content', 'get_collection_contents', 'get_node_details',
@@ -31,12 +31,12 @@ test('WLO_DISABLE_UNSAFE_TOOLS=all removes get_url_text and nothing else', async
       'get_wikipedia_summary', 'get_compendium_text', 'get_wlo_content_text',
       'search_wlo_within_collection', 'search', 'fetch', 'lookup_wlo_publishers',
       'get_related_content', 'get_node_breadcrumb', 'get_node_collections',
-      'get_collection_stats', 'wlo_auth_status', 'resolve_wlo_filters', 'find_content_by_url', 'get_collection_overview', 'count_wlo_content_matches',
+      'get_collection_stats', 'wlo_auth_status', 'resolve_wlo_filters', 'find_content_by_url', 'get_collection_overview', 'count_wlo_content_matches', 'search_wlo_content_many',
     ]) {
       assert.equal(names.includes(kept), true, `${kept} must survive the switch`);
     }
-    // 31 read tools + the curation tools, which the switch does not touch.
-    assert.equal(names.length, 31 + CURATION_TOOLS.length, 'exactly one tool was removed');
+    // 32 read tools + the curation tools, which the switch does not touch.
+    assert.equal(names.length, 32 + CURATION_TOOLS.length, 'exactly one tool was removed');
   } finally { await client.close(); }
 });
 

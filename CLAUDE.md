@@ -1033,6 +1033,14 @@ The current rebuild/extension is designed in:
   größeres Vokabular (`new_lrt`), das `lookup_wlo_vocabulary("contentType")`
   listet — zwei Namen darin sind mehrdeutig und nur per URI schreibbar.
 
+  **Ersetzen bleibt Standard, Ergänzen ist ein eigener Parameter
+  (Nutzerentscheidung 2026-11-13, B1).** `addDiscipline`,
+  `addEducationalContext`, `addUserRole` fügen hinzu; die Felder ohne `add`
+  ersetzen weiter — additiv als Standard hielte ein falsches Metadatum fest.
+  Ein Ergänzen ist eine Eigenschaft der ÄNDERUNG (`FieldChange.mode: 'add'`),
+  steht im Fingerabdruck und zeigt in der Vorschau die bisherigen Werte mit
+  (`„Physik, Chemie“ + „Mathematik“`), weil die ganze Liste gesendet wird.
+
   **P1 ist gebaut (2026-08-17), und drei Regeln binden jede Änderung daran.**
   (a) Die Auflösung entscheidet sich am **DTO-Feld `originalId`**
   (`resolveWriteTarget`, `services/write/nodes.ts`), niemals an der Property
@@ -1646,8 +1654,9 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   nobody starts.) Two thin entry points connect a
   transport to it: `stdio.ts` (local/Docker) and `http.ts` (self-hosted
   Streamable HTTP + rate limit + body cap — the production path).
-- `src/tools/*` — the 32 read tools (all unconditional, of which `get_url_text`
+- `src/tools/*` — the 33 read tools (all unconditional, of which `get_url_text`
   is declared `unsafe` and removable via `WLO_DISABLE_UNSAFE_TOOLS`;
+  `search_wlo_content_many` runs up to eight content searches in one call;
   `search` gains the `search_wlo_all` buckets + widget and `fetch` the full
   record + detail widget under `WLO_SEARCH_OUTPUT_MODE=rich`, off by default —
   the switch covers BOTH because `search`→`fetch` is one flow and enriching only
@@ -1735,6 +1744,19 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   `not_found` / `forbidden` — a 404 is `not_found` wherever a failure is coded,
   never the `upstream_error` of an outage). The four notice wordings a client recognises are pinned in
   `tests/refused-is-not-unreachable.test.ts` — change them only with notice.
+- **A collection by NAME (Z3, 2026-11-13)** — `services/collection-by-name.ts`,
+  wrapped around five read tools by `tools/collection-arg.ts`. EXACTLY ONE
+  collection with the same title is taken; never a prefix or substring guess
+  (the write side showed where guessing leads). An incomplete search or a full
+  window is never "unique": one wider pass decides, and what it cannot decide
+  is refused. Both halves are measured (staging, 24 titles): refusing on a full
+  window outright resolved 3 of 24; with the wider pass 12. Do not widen for
+  "no equal title" — measured unhelpful. Write tools keep requiring the id.
+- **Coded errors and output schemas (2026-11-13).** A spec-following client
+  validates `structuredContent` against `outputSchema` even on `isError`. So
+  every tool with an output schema publishes `anyOf: [success, { error }]`
+  (`apps/output-schema.ts`, applied in `registerWloTool` — one place). It rests
+  on a zod hook; `tests/output-schema-errors.test.ts` is the tripwire.
 - `src/services/collection-search.ts` — "which collections match this word?",
   asked of BOTH repository backends and merged. The one place that knows there
   are two; see the plan entry above for the three rules that bind it.

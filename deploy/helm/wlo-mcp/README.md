@@ -86,7 +86,7 @@ client chooses its own bucket by sending the header.
   variable means: `.env.example` and `docs/MCP-REFERENZ.md`.
 - **`existingSecret`** — the six credential-like variables, read key by key with
   `optional: true`: `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`,
-  `WLO_AUTH_PRIVATE_KEY`, `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, `METRICS_TOKEN`,
+  `WLO_AUTH_PRIVATE_KEY`, `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, `METRICS_TOKEN`, `WLO_TEXT_EXTRACTION_API_KEY`,
   `TRUSTED_CLIENT_KEYS`. Putting one of them under `config` fails the render.
 - **Set by the chart itself**, each tied to another object: `WLO_REPOSITORY_URL`
   (`repositoryUrl`), `PORT` (`service.public.port`), `INTERNAL_PORT`

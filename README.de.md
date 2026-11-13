@@ -7,7 +7,7 @@ KI-Agenten das **Suchen und Abrufen offener Bildungsressourcen (OER)** aus
 [WirLernenOnline (WLO)](https://wirlernenonline.de) über die öffentliche
 edu-sharing-REST-API ermöglicht.
 
-Er stellt **32 lesende Werkzeuge** bereit (alle immer; `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
+Er stellt **33 lesende Werkzeuge** bereit (alle immer; `get_url_text` lässt sich per `WLO_DISABLE_UNSAFE_TOOLS` entfernen) für Volltextsuche, Sammlungs-/Themenseiten-
 Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen die
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
@@ -64,7 +64,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
 
 ## Funktionen
 
-- **32 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
+- **33 lesende MCP-Tools** — Inhaltssuche, Sammlungssuche, kombinierte Suche,
   Themenseiten und deren Swimlane-Inhalte, Fachportale, Baum-Navigation,
   Node-Details (einzeln & im Bulk), Vokabular-Abfrage, Anbieter-Abfrage,
   Health-Check, Wikipedia (Anriss oder GANZER Artikel per `fullText`), voller Kompendiumstext, Volltext
@@ -174,7 +174,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. **Die Vorgabe ist STAGING; die Produktion muss ausdrücklich hingeschrieben werden** (geändert am 2026-08-06 — eine `.env` ohne diese Zeile legte einen Datensatz in der Live-Instanz an, während alles drumherum „staging" sagte). Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. Ein Wert, an den sich gar keine Anfrage senden lässt — nicht lesbar, nicht http(s), mit Zugangsdaten oder Query, oder mit vertipptem Schema wie `htps://` — **bricht den Start ab** (Exit-Code 1, Logzeile nennt die Variable). |
 | `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default, und `search_skill` grenzt auf diesen Teilbaum ein. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
-| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` durch `get_skill_for_task`, das in einem Aufruf auswählt und lädt — die Zahl bleibt 51, und `get_skill` bleibt in jedem Modus: Registry und Sammlungstreffer geben nodeIds aus, die nur es laden kann. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt die Suche stehen. |
+| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` durch `get_skill_for_task`, das in einem Aufruf auswählt und lädt — die Zahl bleibt 52, und `get_skill` bleibt in jedem Modus: Registry und Sammlungstreffer geben nodeIds aus, die nur es laden kann. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt die Suche stehen. |
 | `WLO_SKILL_CACHE` | _an_ | alle | Hält den Katalog freigegebener Skills je Sammlung im Hintergrund warm, damit ein Sammlungs-Ergebnis ihn für **0** Zusatzabrufe mitbringt. Auf `off` (oder `0`/`false`/`no`) gesetzt, entfällt die Hintergrundarbeit **und** der Live-Rückfall je Anfrage — die Ausgabe trägt dann wieder den kostenlosen Hinweis auf `get_skill_registry`. Siehe [Der Skill-Registry-Cache](#der-skill-registry-cache). |
 | `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | alle | Wie oft der Hintergrund-Takt die Warteschlange abarbeitet und abgelaufene Einträge erneuert. Begrenzt auf 60 000 – 3 600 000. |
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | alle | Wie lange eine gemerkte Antwort gilt, bevor sie neu geprüft wird. Nie kleiner als das Takt-Intervall. Eine vor zwei Minuten angelegte Registry erscheint also verzögert — `get_skill_registry` und `includeSkillRegistry: true` lesen live und kennen sie sofort. |
@@ -204,6 +204,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` | HTTP-Modus | Frist für den Empfang eines Upload-Körpers (höchstens 28 000). Nur mit `WLO_BATCH_UPLOAD_ENABLED`. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | *(nicht gesetzt — nichts abgeschaltet; ausgeliefert als `all`)* | alle | Schaltet Werkzeuge ab, die sich als **unsicher** deklarieren. Namensliste (Komma oder Leerzeichen) oder `all` (auch `1`/`true`/`yes`/`on`). Nicht gesetzt heißt: unsichere Werkzeuge SIND registriert, und der Server warnt beim Start mit Name und Begründung — ein Risiko, das nur im Changelog steht, liest niemand, der ein Deployment erbt. `.env.example` und `docker-compose.yml` liefern `all` aus, in einem echten Deployment sind sie also **ab Werk aus**; auf einen leeren Wert setzen schaltet sie an. Betroffen ist derzeit genau ein Werkzeug: `get_url_text`. `get_wlo_content_text` ausdrücklich **nicht** — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge). |
 | `WLO_TEXT_EXTRACTION_URL` | *(keiner — nicht gesetzt = aus)* | alle | Basis-URL des Text-Extraktionsdienstes, auf den `get_wlo_content_text` bei extern verlinktem Material (`ccm:wwwurl`) zurückfällt, dessen Text das Repository nicht gespeichert hat. Jede Instanz betreibt üblicherweise einen eigenen, deshalb gibt es **keinen Default**: nicht gesetzt (oder leer) schaltet den externen Weg ab und loggt den Grund, dann bleibt `/textContent` des Repositories die einzige Quelle. Ein Wert, der nicht als Basis taugt (kein Schema, kein http(s), oder mit Query/Fragment), schaltet ihn ebenfalls ab und warnt, damit ein Tippfehler keine Material-URLs an einen nicht gewählten Host schickt. Auf den Extraktionsdienst *deines* Repositories zeigen lassen — ein Default auf den Staging-Dienst hat Produktions-Material-URLs in eine andere Umgebung geschickt. |
+| `WLO_TEXT_EXTRACTION_API_KEY` | _(nicht gesetzt)_ | alle | Nur wenn der Extraktionsdienst **über den B-API-Proxy** erreicht wird: `WLO_TEXT_EXTRACTION_URL` auf die Proxy-Route setzen (`https://<b-api>/api/v1/proxy/<dienst>`; der Server hängt `/from-url` an) und hier den B-API-Schlüssel. Er geht als `X-API-KEY` mit, nur an diese Adresse, steht in keinem Log, und mit ihm wird keiner Weiterleitung gefolgt. Nicht gesetzt: der Dienst wird direkt und ohne Schlüssel gerufen. |
 | `WLO_TEXT_TIMEOUT_MS` | `25000` | alle | Timeout (ms) für Volltext-Abrufe — sowohl `/textContent` als auch den Extraktionsdienst. Bewusst größer als `WLO_FETCH_TIMEOUT_MS`: `/textContent` wurde mit 4,6 s Median und 9,2 s Maximum gemessen. Volltext ist der eine Aufruf, der länger dauern darf als alles andere. |
 | `WLO_TOPIC_POOL` | `10` | alle | Fächerbreite für die Anreicherung von Themenseiten-Kandidaten (parallel abgesetzte Metadaten-Abrufe). Höher = weniger sequenzielle Wellen bei mehr gleichzeitiger Upstream-Last. |
 | `WLO_COMPENDIUM_SECTION_MAX` | `2000` | alle | Zeichen, die **ein Hauptabschnitt** eines Kompendiumstextes beitragen darf, wenn `get_compendium_text` ohne `query` aufgerufen wird. Jeder Abschnitt erscheint weiterhin — jeder wird für sich gekappt, keiner verschwindet hinter einem anderen —, und das Inhaltsverzeichnis ist immer vollständig; mit `query` gilt der Deckel stattdessen je Passage. Was ein Hauptabschnitt ist, wird am Dokument abgelesen (die flachste Überschriftenebene, die mehr als einmal vorkommt), denn alle zehn Texte auf Staging mit Überschriften tragen ihren Titel in einer einzelnen H1: ein Deckel „je H1“ hätte jedes Dokument als Ganzes gekappt. Beim Standardwert ändert sich genau eine der elf Sammlungen mit Kompendiumstext (65 250 → 20 802 ausgelieferte Zeichen), die anderen zehn kommen unverändert — der Deckel ist für den Ausreißer. Eine Betreiber-Einstellung und kein Aufrufparameter: er existiert, damit eine Antwort nicht endlos wird, und wer ihn hochsetzen kann, hat keinen. `/api/compendium` und `search_wlo_content?includeCompendium` sind nicht betroffen und liefern weiterhin den Volltext. |
@@ -386,6 +387,7 @@ vorausgefüllt mit dem markierten Text (`/launcher.html?q=<Auswahl>`).
 | 30 | `find_content_by_url` | Gibt es zu diesen Adressen (≤20) schon einen Datensatz? `exact` = dieselbe Adresse, `normalized` = gleich nach Entfernen von Schrägstrich, Fragment und Tracking-Parametern; Fehler je Eintrag. `includeCollections` zählt die Sammlungen | markdown / json |
 | 31 | `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium-Inhaltsverzeichnis, Statistik, freigegebene Skills, Untersammlungen mit Zahl, erste Inhalte — Teile parallel, ein fehlender Teil steht in `missing` | markdown + strukturiert |
 | 32 | `count_wlo_content_matches` | Für bis zu 30 Suchanfragen zugleich zählen (+ bis zu 3 Treffer je Anfrage) — eine Suche je Anfrage, ohne Varianten, die Zahl des Repositorys; ein nicht auflösbarer Filter wird nie weggelassen (Anfrage in `missing`). Über ganz WLO, nicht innerhalb einer Sammlung | markdown + strukturiert |
+| 33 | `search_wlo_content_many` | Bis zu 8 Inhaltssuchen in EINEM Aufruf (je ≤5 Kurztreffer, unter der `id` der Anfrage) — etwa eine je Schritt eines Lernpfads. Gemeinsame Filter, Überschreibung je Anfrage, `distinct` zeigt ein Material nur bei der am besten passenden Anfrage. Höchstens 3 Suchvarianten je Suche, ein begrenzter Abruf-Pool, eine Frist je Anfrage; was nicht beantwortet wurde, steht in `missing`. Kein Blättern, keine Gesamtzahl, kein OER-Bündel | markdown/json + strukturiert |
 
 Die Anzeige-/Such-Tools liefern zusätzlich `structuredContent` (gegen ein
 Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
@@ -839,8 +841,8 @@ OAuth-Verbindung. Es gibt kein `refresh_token` und keine Ablauffrist: der Zugang
 endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
 
 **Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
-`Authorization` bekommt die **vollständige** Liste — alle 51 Werkzeuge, die
-19 Kurations-Werkzeuge eingeschlossen (55 und 23 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
+`Authorization` bekommt die **vollständige** Liste — alle 52 Werkzeuge, die
+19 Kurations-Werkzeuge eingeschlossen (56 und 23 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
 verweigern erst beim Aufruf, mit einer OAuth-Aufforderung: genau daran bietet
 ein Host die Anmeldung an, denn ein Modell, das nie ein Schreibwerkzeug sieht,
 fragt auch nie danach. Der `401` entsteht nur bei einem vorgelegten, aber
@@ -1110,7 +1112,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Sitzungsspeicher, App-Signatur, nur OAuth), samt dem, was das Konzept
   **nicht** schützt.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **die Übergabe für das Team und
-  für Chatbot-Entwicklung**: alle 51 Werkzeuge gruppiert, jede von außen
+  für Chatbot-Entwicklung**: alle 52 Werkzeuge gruppiert, jede von außen
   aufrufbare Adresse (MCP, REST, Seiten, OAuth) und das Verhalten, das eine
   Integration kennen muss — Lizenzfilter, Offenlegungs-Felder, zweistufiges
   Schreiben, Grenzen, und was es bewusst nicht gibt.
@@ -1188,7 +1190,7 @@ Rückfallebene kosten.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 51 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 52 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

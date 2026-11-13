@@ -24,6 +24,7 @@ import { codedErrorResult, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas.js';
 import { logTerm } from '../log-privacy.js';
+import { collectionDisciplineParam, collectionNameParam, withCollectionByName } from './collection-arg.js';
 
 /**
  * Resolve a subject/Fachportal NAME (e.g. "Mathematik" or the abbreviation
@@ -197,12 +198,14 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
     widgetUri: browseWidgetUri,
     // The browse widget calls this tool from inside the iframe for drill-down.
     widgetAccessible: true,
-    description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig.
+    description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig. Statt der nodeId geht auch der Titel einer Sammlung als \`collection\` (gleichnamige: \`discipline\`); mehrdeutig → Kandidaten statt Ergebnis.
 Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).
 Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
     inputSchema: {
       nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
-      subject: z.string().optional().describe('Subject NAME only, e.g. "Deutsch", "Mathematik" or "Mathe" — not "Fachportal Deutsch"; resolved to its portal nodeId server-side. Alternative to nodeId.'),
+      subject: z.string().optional().describe('Subject NAME only, e.g. "Deutsch", "Mathematik" or "Mathe" — not "Fachportal Deutsch"; resolved to its portal nodeId server-side. Alternative to nodeId. Together with `collection` it only narrows that lookup (like `discipline`).'),
+      collection: collectionNameParam,
+      discipline: collectionDisciplineParam('discipline'),
       depth: z.number().int().min(1).max(3).optional().default(1).describe(
         '1 = direct sub-collections only (fast); 2 = also grand-children; 3 = three levels, at most 300 '
         + 'nodes in total (more API calls — with includeContentCounts one per node).'
@@ -219,7 +222,12 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
     },
     outputSchema: browseTreeSchema,
     annotations: { readOnlyHint: true },
-    handler: async (params) => {
+    // `collection` is a collection ANYWHERE in the tree, `subject` a Fachportal.
+    // Given both, the collection is what is browsed and the subject only tells
+    // namesakes apart — the same job `discipline` has, which wins if set.
+    handler: withCollectionByName({
+      idParam: 'nodeId', disciplineParam: 'discipline', disciplineFallback: params => params.subject,
+    }, async (params) => {
       const depth = params.depth ?? 1;
 
       try {
@@ -329,6 +337,6 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
       } catch (err) {
         return toolError('Fehler beim Sub-Sammlungs-Abruf', err);
       }
-    },
+    }),
   });
 }

@@ -64,7 +64,7 @@ const tpl = (name: string): string => {
 };
 
 /** Names a variable must match to count as a credential, whatever list the chart keeps. */
-const SECRET_LIKE = /PASSWORD|PRIVATE_KEY|TOKEN|SECRET|CLIENT_KEYS|SERVICE_USER/;
+const SECRET_LIKE = /PASSWORD|PRIVATE_KEY|API_KEY|TOKEN|SECRET|CLIENT_KEYS|SERVICE_USER/;
 
 /** Words of a `define` block in _helpers.tpl. */
 function helperList(name: string): string[] {

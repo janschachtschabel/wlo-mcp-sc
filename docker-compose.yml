@@ -156,6 +156,8 @@ services:
       # Text extraction (optional external service). Unset → full text comes from
       # the repository's own /textContent only; the server logs that at startup.
       WLO_TEXT_EXTRACTION_URL: "${WLO_TEXT_EXTRACTION_URL:-}"
+      # Only when the extraction service is reached through the B-API proxy (X-API-KEY).
+      WLO_TEXT_EXTRACTION_API_KEY: "${WLO_TEXT_EXTRACTION_API_KEY:-}"
 
       # ── 5 — network and operation ───────────────────────────────────────────
       # Both already correct for the setup this file describes (behind a

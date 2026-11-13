@@ -170,6 +170,11 @@ Two traps live here, and both have cost this project real defects:
 > field. Nothing fails on our side. Assert the text and the structured content
 > *separately*. (Until 2026-11-07 this note said zod strips the field; that was
 > never measured and is false.)
+>
+> The advertised schema is `{ type: "object", anyOf: [success, coded error] }`
+> — `registerWloTool` adds the error branch (`src/apps/output-schema.ts`),
+> because the SDK client checks `structuredContent` against it on an `isError`
+> result too. The success branch is the closed one this note is about.
 
 > **Some clients pass only the first content block to the model.** Measured on a
 > real client in 2026-08. A second block is therefore not a place for anything

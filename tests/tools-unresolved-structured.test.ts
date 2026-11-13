@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { connectedClient, installFetchMock, makeNode } from './fetchMock.js';
+import { connectedClient, installFetchMock, makeNode, successSchemaOf } from './fetchMock.js';
 
 function mock() {
   return installFetchMock((url) => {
@@ -49,7 +49,7 @@ test('the field is declared in the advertised outputSchema', async () => {
   try {
     const { tools } = await client.listTools();
     for (const n of ['search_wlo_content', 'search_wlo_all', 'search_wlo_collections', 'search_wlo_within_collection']) {
-      const props = (tools.find(t => t.name === n)?.outputSchema as { properties?: Record<string, unknown> })?.properties ?? {};
+      const props = successSchemaOf(tools.find(t => t.name === n)!).properties ?? {};
       assert.ok('unresolvedFilters' in props, `${n} declares unresolvedFilters`);
       assert.ok('facets' in props, `${n} declares facets`);
     }

@@ -21,7 +21,7 @@ import { validateField, applyLicenceDefaults, WRITABLE_FIELDS, type RefusedValue
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
 import { toolError } from './shared.js';
-import { renderChangeSet, hasSomethingToConfirm, displayValue, type ChangeSet } from '../services/write/change-set.js';
+import { renderChangeSet, hasSomethingToConfirm, displayValue, addedValues, type ChangeSet } from '../services/write/change-set.js';
 import { mintToken, consumeToken, currentIdentity, TOKEN_TTL_MS } from '../services/write/confirm.js';
 import { lookupReplayInCall } from '../services/write/confirm-replay.js';
 import { replayAnswer, runWithReplay } from './curation-replay.js';
@@ -175,6 +175,8 @@ export type CollectResult =
   | {
       ok: true;
       desired: Record<string, string[]>;
+      /** Properties of `desired` that came through an ADDING parameter (`buildChangeSet`'s `added`). */
+      added: string[];
       /** Accepted values worth a word of warning — shown with the preview. */
       notes: string[];
     }
@@ -202,16 +204,31 @@ export function candidatesOf(field: string, refused: RefusedValue[] | undefined)
  * Collects ALL rejections rather than stopping at the first: someone who
  * mistyped two fields should learn both in one reply, not discover the second
  * after fixing the first.
+ *
+ * `addMap` names the parameters that ADD to a field instead of replacing it.
+ * They pass the SAME validation as their replacing sibling, and a call that
+ * gives both for one field is refused: which of the two was meant is not ours
+ * to guess, and the two write different lists.
  */
-export function collectDesired(params: Record<string, unknown>, map: ParamMap): CollectResult {
+export function collectDesired(params: Record<string, unknown>, map: ParamMap, addMap: ParamMap = {}): CollectResult {
   const desired: Record<string, string[]> = {};
+  const added: string[] = [];
   const reasons: string[] = [];
   const candidates: FieldCandidates[] = [];
   const notes: string[] = [];
+  const given = (param: string) => params[param] !== undefined && params[param] !== null;
 
-  for (const [param, property] of Object.entries(map)) {
+  for (const [param, property] of [...Object.entries(map), ...Object.entries(addMap)]) {
     const raw = params[param];
-    if (raw === undefined || raw === null) continue;
+    if (!given(param)) continue;
+    if (param in addMap) {
+      const sibling = Object.keys(map).find(p => map[p] === property && given(p));
+      if (sibling) {
+        reasons.push(`„${sibling}“ (ersetzt) und „${param}“ (fügt hinzu) wurden für dasselbe Feld angegeben — bitte nur eines von beiden.`);
+        continue;
+      }
+      added.push(property);
+    }
     const input = Array.isArray(raw) ? raw.map(String) : [String(raw)];
     const result = validateField(property, input);
     if (!result.ok) {
@@ -224,7 +241,7 @@ export function collectDesired(params: Record<string, unknown>, map: ParamMap): 
   }
 
   if (reasons.length > 0) return { ok: false, reasons, candidates };
-  return { ok: true, desired: applyLicenceDefaults(desired), notes };
+  return { ok: true, desired: applyLicenceDefaults(desired), added, notes };
 }
 
 // Lives in the write service so services can tell an abort from a refusal
@@ -382,10 +399,16 @@ function structuredConfirm(cs: ChangeSet, token: string, mintedAt: number) {
       fields: cs.changes.map(c => {
         const oldLabels = labels(c.property, c.before);
         const newLabels = labels(c.property, c.after);
+        // An ADD (keywords; subject, level, target group via `add…`): `new` is
+        // the whole list that is sent, `added` what of it the field did not hold.
+        const added = c.mode === 'add' ? addedValues(c) : null;
+        const addedLabels = labels(c.property, added);
         return {
           name: c.property, label: c.label, old: values(c.before), new: values(c.after),
           ...(oldLabels ? { oldLabels } : {}),
           ...(newLabels ? { newLabels } : {}),
+          ...(added ? { added: values(added) } : {}),
+          ...(addedLabels ? { addedLabels } : {}),
         };
       }),
     },

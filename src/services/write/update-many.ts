@@ -17,7 +17,7 @@ import { flattenText } from '../../text-sanitize.js';
 import { readNodeMetadata } from '../../wlo-node.js';
 import { nodeTitle } from '../../node-match.js';
 import { failureCode, writeFailureCode } from '../failure-code.js';
-import { buildChangeSet, displayValue, type ChangeSet } from './change-set.js';
+import { addedValues, buildChangeSet, displayValue, type ChangeSet } from './change-set.js';
 import { desiredOn, propertyOn, titleOn } from './collection-fields.js';
 import { routeFields } from './field-routing.js';
 import { readWriteBaseline, updateNodeMetadata } from './nodes.js';
@@ -31,7 +31,13 @@ const PREVIEW_POOL = 8;
 /** What a proposal says when the caller gave no reason (the repository requires one). */
 export const DEFAULT_REASON = 'Vorgeschlagen über wlo_update_contents (Metadaten für viele Datensätze).';
 
-export interface UpdateInput { nodeId: string; desired: Record<string, string[]>; reason?: string }
+export interface UpdateInput {
+  nodeId: string;
+  desired: Record<string, string[]>;
+  /** Properties of `desired` whose values are ADDED to the stored ones (`addDiscipline` …). */
+  added?: string[];
+  reason?: string;
+}
 
 export interface UpdateItem extends PlanItem {
   requestedId: string;
@@ -94,8 +100,10 @@ export async function prepareUpdates(inputs: UpdateInput[]): Promise<Prepared> {
     seen.add(target.targetId);
     const routed = routeFields(input.desired);
     // Routed by the field's MEANING, written where this node keeps it (`collection-fields.ts`).
+    // An add is merged into `before` — the ORIGINAL's list. A PROPOSED field
+    // needs no mode: a proposal is one value, added on accept either way.
     const write = buildChangeSet(target.targetId, 'content', before, desiredOn(written, routed.write),
-      target.redirected ? { redirectedFrom: target.requestedId } : {});
+      { added: input.added ?? [], ...(target.redirected ? { redirectedFrom: target.requestedId } : {}) });
     const reason = input.reason?.trim() || DEFAULT_REASON;
     // The same rule as `wlo_suggest_metadata`: per value, against the original.
     const suggest = newProposals(before, Object.entries(routed.suggest)
@@ -115,16 +123,15 @@ const shown = (property: string, values: string[] | null) =>
 
 /**
  * One written field: before → after, so a replaced subject names what is lost.
- * A merged list (keywords) names the WHOLE list that is sent and what of it is
+ * A merged list (keywords, an `add…` parameter) names the WHOLE list that is sent and what of it is
  * new: the existing entries are sent too, so they belong in what is approved
  * (overall review, 7). The old value is in the line, so it is in the
  * fingerprint — a change made between preview and confirmation meets
  * `confirm_mismatch` instead of being overwritten unseen (review P3).
  */
 function changeText(c: ChangeSet['changes'][number]): string {
-  if (c.property === 'cclom:general_keyword') {
-    const added = (c.after ?? []).filter(v => !(c.before ?? []).includes(v));
-    return `${c.label} ${shown(c.property, c.after)} (neu: ${shown(c.property, added)})`;
+  if (c.mode === 'add') {
+    return `${c.label} ${shown(c.property, c.after)} (neu: ${shown(c.property, addedValues(c))})`;
   }
   return `${c.label} ${shown(c.property, c.before)} → ${shown(c.property, c.after)}`;
 }
@@ -134,7 +141,10 @@ export function planView(item: UpdateItem) {
   return {
     nodeId: item.requestedId,
     ...(item.requestedId !== item.targetId ? { targetId: item.targetId } : {}),
-    write: item.write.changes.map(c => ({ property: c.property, before: c.before, after: c.after })),
+    write: item.write.changes.map(c => ({
+      property: c.property, before: c.before, after: c.after,
+      ...(c.mode === 'add' ? { added: addedValues(c) } : {}),
+    })),
     suggest: item.suggest.map(d => ({ propertyId: d.propertyId, value: d.value })),
   };
 }

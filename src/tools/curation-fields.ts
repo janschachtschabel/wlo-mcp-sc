@@ -89,6 +89,30 @@ export const MAX_KEYWORDS = 100;
 const MAX_LABELS = 20;
 const oneOrMany = z.union([z.string(), z.array(z.string()).min(1).max(MAX_LABELS)]).optional();
 const REPLACES = ' ERSETZT die bisherigen Werte des Feldes; für mehrere eine Liste angeben (die bleibenden mitnennen).';
+const replacesOrAdd = (add: string) => `${REPLACES} Zum Hinzufügen stattdessen: ${add}.`;
+const adds = (what: string, sibling: string) => `${what} als Label oder Liste — FÜGT hinzu, die bisherigen Werte bleiben `
+  + `(ersetzen: ${sibling}; nicht beides zusammen).`;
+// The schema is shared, the routing is not: the batch tool never writes this field (`field-routing.ts`).
+const PROPOSED_IN_BATCH = ' In wlo_update_contents wird die Zielgruppe nicht geschrieben, sondern als Vorschlag hinterlegt.';
+
+/**
+ * Adding parameter → the property it adds to (B1, user decision 2026-11-13).
+ * Replacing stays the default; adding is its own parameter, so a call always
+ * says which of the two it asked for. Only on tools that change an EXISTING
+ * record — a new one has nothing to add to, and a proposal already is one value
+ * that is added on accept. The content type stays replace-only.
+ */
+export const ADD_FIELDS: ParamMap = {
+  addDiscipline: 'ccm:taxonid',
+  addEducationalContext: 'ccm:educationalcontext',
+  addUserRole: 'ccm:educationalintendedenduserrole',
+};
+
+export const ADD_SCHEMA = {
+  addDiscipline: oneOrMany.describe(adds('Fach', 'discipline')),
+  addEducationalContext: oneOrMany.describe(adds('Bildungsstufe', 'educationalContext')),
+  addUserRole: oneOrMany.describe(adds('Zielgruppe', 'userRole') + PROPOSED_IN_BATCH),
+};
 
 export const FIELD_SCHEMA = {
   title: z.string().optional().describe('Titel (cclom:title), max. 255 Zeichen.'),
@@ -104,9 +128,9 @@ export const FIELD_SCHEMA = {
   licenseVersion: z.string().optional().describe('Lizenzversion, z. B. "4.0". Bei CC-BY-Lizenzen sonst automatisch 4.0.'),
   contentType: oneOrMany.describe('Inhaltstyp als Label, z. B. "Arbeitsblatt" oder "Audio" — der genaue Name aus '
     + 'lookup_wlo_vocabulary("contentType"); eine Ablehnung nennt Kandidaten.' + REPLACES),
-  educationalContext: oneOrMany.describe('Bildungsstufe als Label, z. B. "Grundschule".' + REPLACES),
-  discipline: oneOrMany.describe('Fach als Label, z. B. "Mathematik".' + REPLACES),
-  userRole: oneOrMany.describe('Zielgruppe als Label, z. B. "Lehrer" oder "Lernende".' + REPLACES),
+  educationalContext: oneOrMany.describe('Bildungsstufe als Label, z. B. "Grundschule".' + replacesOrAdd('addEducationalContext')),
+  discipline: oneOrMany.describe('Fach als Label, z. B. "Mathematik".' + replacesOrAdd('addDiscipline')),
+  userRole: oneOrMany.describe('Zielgruppe als Label, z. B. "Lehrer" oder "Lernende".' + replacesOrAdd('addUserRole') + PROPOSED_IN_BATCH),
 
   qualityCorrectness: z.string().optional().describe(
     'Prüfergebnis Sachrichtigkeit (ccm:oeh_quality_correctness) aus einer MASCHINELLEN Prüfung.'

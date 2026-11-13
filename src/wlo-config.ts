@@ -474,6 +474,44 @@ export function resolveExtractionUrl(raw: string | undefined): string {
 export const WLO_TEXT_EXTRACTION_URL: string = resolveExtractionUrl(process.env['WLO_TEXT_EXTRACTION_URL']);
 
 /**
+ * The key for the extraction service when it is reached THROUGH the B-API proxy
+ * (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/<service>`), sent as
+ * `X-API-KEY`. Unset — the service is called directly, as before. A secret:
+ * never logged, and sent to the configured service address only.
+ *
+ * Two values count as unset, each with ONE warning that names the variable and
+ * never the value (review 2026-11-13):
+ * - anything but printable ASCII without spaces. `fetch` refuses such a header
+ *   with an error whose MESSAGE quotes the value, and that message is logged by
+ *   the caller's `catch` — the key would have reached the log through its own
+ *   rejection.
+ * - a key for an `http:` service address: it would travel in cleartext. The
+ *   service is then called without it.
+ */
+export function resolveExtractionKey(raw: string | undefined, baseUrl: string): string {
+  const key = (raw ?? '').trim();
+  if (key === '') return '';
+  const variable = 'WLO_TEXT_EXTRACTION_API_KEY';
+  if (!/^[\x21-\x7e]+$/.test(key)) {
+    log.warn('extraction key ignored: it must be printable ASCII without spaces', {
+      variable, effect: 'the text-extraction service is called without a key',
+    });
+    return '';
+  }
+  if (/^http:/i.test(baseUrl)) {
+    log.warn('extraction key not sent: the service address is http, the key would travel in cleartext', {
+      variable, effect: 'the text-extraction service is called without a key',
+      fix: 'use an https address in WLO_TEXT_EXTRACTION_URL',
+    });
+    return '';
+  }
+  return key;
+}
+
+export const WLO_TEXT_EXTRACTION_API_KEY: string =
+  resolveExtractionKey(process.env['WLO_TEXT_EXTRACTION_API_KEY'], WLO_TEXT_EXTRACTION_URL);
+
+/**
  * Timeout for full-text reads, both from the repository and from the extraction
  * service. Deliberately larger than ``DEFAULT_FETCH_TIMEOUT_MS``: `/textContent`
  * was measured at a median of 4.6 s and a maximum of 9.2 s (2026-07-28), and the

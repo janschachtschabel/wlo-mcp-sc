@@ -43,3 +43,13 @@ export function dedupeByUrl<T extends UrlBearing>(nodes: T[]): T[] {
     return true;
   });
 }
+
+/**
+ * What makes two hits "the same URL" — for a caller that has to decide WHICH of
+ * them stays by a rule of its own (the batch search keeps the better-fitting
+ * one across queries, not the first). `null` for a hit without a URL: it is
+ * never the same as anything, for the reason given above.
+ */
+export function urlIdentity(node: UrlBearing): string | null {
+  return node.url || null;
+}

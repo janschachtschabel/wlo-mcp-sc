@@ -9,7 +9,7 @@ KI-Skills — und, nach Anmeldung, das Kuratieren von Datensätzen.
 | **Endpunkt** | `https://wlo-mcp.87.106.195.152.nip.io/mcp` |
 | **Quellcode** | <https://github.com/janschachtschabel/wlo-mcp-sc> |
 | **Transport** | Streamable HTTP (`POST /mcp`), SSE optional · stdio lokal |
-| **Werkzeuge** | 32 lesend · 19 kuratierend = **51** (55 mit `WLO_BATCH_UPLOAD_ENABLED`) |
+| **Werkzeuge** | 33 lesend · 19 kuratierend = **52** (56 mit `WLO_BATCH_UPLOAD_ENABLED`) |
 | **Widgets** | 4 |
 | **Env-Schlüssel** | 40 vom Server gelesen, dazu 3 für den Container |
 
@@ -23,7 +23,7 @@ einem echten Aufruf gegen Staging (zuletzt 2026-08-20, nach dem Deploy mit
 ## 1. Anschluss
 
 Ein Client **ohne** `Authorization`-Header bekommt `200` und die **volle**
-Werkzeugliste — alle 51, die Kuratier-Werkzeuge eingeschlossen. Das ist Absicht:
+Werkzeugliste — alle 52, die Kuratier-Werkzeuge eingeschlossen. Das ist Absicht:
 ein Modell, das ein Schreibwerkzeug nie sieht, ruft es nie auf, und dann fordert
 nichts den Host je zur Anmeldung auf. Der *Aufruf* wird zur Laufzeit abgewiesen
 und trägt die `WWW-Authenticate`-Aufforderung, die den Login startet.
@@ -40,9 +40,9 @@ Session-Store.
 
 | Identität | Lesen | Schreiben | Wie |
 |---|---|---|---|
-| **anonym** | alle 32 | **nie** | kein Header. Die öffentliche Fläche bleibt lesend. |
-| **eigenes WLO-Konto** | alle 32 | alle 19 | OAuth 2.1, oder ein `wlo2.…`-Block als `Bearer`, oder `Basic`. Jede Änderung ist einer Person zurechenbar. |
-| **Dienstkonto** | alle 32 | nur mit `WLO_ALLOW_SERVICE_WRITES` | Sonst stünde in der Versionshistorie „wlo-mcp" für eine Änderung, die irgendwer wollte. |
+| **anonym** | alle 33 | **nie** | kein Header. Die öffentliche Fläche bleibt lesend. |
+| **eigenes WLO-Konto** | alle 33 | alle 19 | OAuth 2.1, oder ein `wlo2.…`-Block als `Bearer`, oder `Basic`. Jede Änderung ist einer Person zurechenbar. |
+| **Dienstkonto** | alle 33 | nur mit `WLO_ALLOW_SERVICE_WRITES` | Sonst stünde in der Versionshistorie „wlo-mcp" für eine Änderung, die irgendwer wollte. |
 
 Der Zugangsblock wird unter `/auth` geholt (das Passwort wird **im Browser**
 verschlüsselt) und unter `/auth/revoke` widerrufen. Eingebettete Widgets, die
@@ -103,7 +103,10 @@ Aufrufe des Plans Schritte ausgeführt haben können) und `plan_mismatch` (ander
 Anmeldung oder andere Angaben).
 
 **Fehler als Code.** Jede Antwort mit `isError` trägt `structuredContent.error`
-(`code`, `message` = derselbe deutsche Text; einzelne Codes mit Zusatzfeldern). Die Codes:
+(`code`, `message` = derselbe deutsche Text; einzelne Codes mit Zusatzfeldern). Das
+veröffentlichte `outputSchema` jedes Werkzeugs lautet deshalb `{type: "object", anyOf: [Erfolg, Fehler]}`:
+ein Client, der `structuredContent` gegen das Schema prüft (das SDK tut es auch bei `isError`),
+bekommt den Fehler als lesbares Ergebnis; die Erfolgsform bleibt geschlossen. Die Codes:
 
 | Code | Bedeutung | Was ein Programm tut |
 |---|---|---|
@@ -163,6 +166,7 @@ anderen Schalter sind aus, solange sie nicht gesetzt werden.
 | `WLO_SEARCH_OUTPUT_MODE` | `lean` | `search` **und** `fetch` | `rich`: `search` liefert die vollen Töpfe von `search_wlo_all` samt Widget, `fetch` den vollen Datensatz samt Detailansicht. Der Schalter deckt beide, weil `search` → `fetch` ein Fluss ist — nur den ersten Schritt anzureichern ließe den zweiten nichts rendern. Die Konventionsform (ein einziger Parameter) bleibt in beiden Modi unangetastet. |
 | `WLO_SKILL_CACHE` | **AN** | den Freigabekatalog an Sammlungs-Antworten | Hält die Registry jeder Sammlung im Hintergrund warm, damit ein Sammlungstreffer seinen Katalog kostenlos tragen kann. Nur ein ausdrückliches `0`, `false`, `no` oder `off` schaltet ab. Der Schalter deckt **Zeitgeber und Anfragepfad**: ohne Tick darf auch der Live-Rückfall nicht laufen, sonst zahlt jede Anfrage die volle Kinderliste, während nichts sie je verfallen ließe. |
 | `WLO_TEXT_EXTRACTION_URL` | gesetzt | `get_url_text`, Volltext-Rückfall | Leer: der Extraktionsdienst ist aus, `get_url_text` antwortet mit nichts, und Volltext kommt nur noch aus `/textContent` des Repositoriums. Der Start warnt. |
+| `WLO_TEXT_EXTRACTION_API_KEY` | _(leer)_ | `get_url_text`, Volltext-Rückfall | Für den Extraktionsdienst hinter dem B-API-Proxy (`WLO_TEXT_EXTRACTION_URL=https://<b-api>/api/v1/proxy/<dienst>`): der Schlüssel geht als `X-API-KEY` mit, nur an diese Adresse. Leer: direkter Aufruf ohne Schlüssel. |
 | `WLO_SKILLS_COLLECTION_ID` | leer | `search_skill` | Verengt die Suche auf eine Sammlung — schaltet nichts ab. |
 
 ### Rezept: nur der Registry-Weg
@@ -181,14 +185,14 @@ gegenstandslos, weil es nur die Suche verengt.
 
 Gemessen über `tools/list` (zuerst 2026-08-19, live bestätigt am 2026-08-20;
 neu gezählt am 2026-11-08 — damals 42/41/42, seither kamen Werkzeuge dazu; heute
-50 Werkzeuge im Registry-Modus). Ohne `WLO_BATCH_UPLOAD_ENABLED` gezählt; mit ihm
+51 Werkzeuge im Registry-Modus). Ohne `WLO_BATCH_UPLOAD_ENABLED` gezählt; mit ihm
 je vier mehr:
 
 | Konfiguration | Skill-Werkzeuge | Gesamt |
 |---|---|---:|
-| nichts gesetzt | `get_skill` · `get_skill_registry` · `search_skill` | 51 |
-| **`WLO_DISABLE_SKILL_SEARCH=1`** | **`get_skill` · `get_skill_registry`** | **50** |
-| dasselbe **+ `WLO_SKILL_TOOL_MODE=one-tool`** | `get_skill` · `get_skill_for_task` · `get_skill_registry` | 51 |
+| nichts gesetzt | `get_skill` · `get_skill_registry` · `search_skill` | 52 |
+| **`WLO_DISABLE_SKILL_SEARCH=1`** | **`get_skill` · `get_skill_registry`** | **51** |
+| dasselbe **+ `WLO_SKILL_TOOL_MODE=one-tool`** | `get_skill` · `get_skill_for_task` · `get_skill_registry` | 52 |
 
 Den Cache füllen die Sammlungs-Antworten von `search_wlo_all`,
 `search_wlo_collections`, `get_collection_contents`,
@@ -325,16 +329,32 @@ wurde („Arbeitsblat" → Arbeitsblatt), trägt in `_queryMeta.criteria` das Fe
 
 ### 5.2 Sammlungen & Navigation — ohne Anmeldung
 
+**Sammlung per Titel statt nodeId (`collection`).** `get_collection_overview`,
+`get_collection_contents`, `search_wlo_within_collection`, `browse_collection_tree`
+und `get_compendium_text` nehmen statt der id den Titel der Sammlung. Genommen wird
+nur **genau eine** Sammlung mit gleichem Titel (Groß-/Kleinschreibung, ä/ae, ß/ss,
+Leerzeichen und Bindestriche egal) — nie ein Präfix oder Teilwort. Die Antwort beginnt
+dann mit `Sammlung: Titel (unter Pfad) — nodeId` und trägt
+`resolvedCollection {nodeId, title, path?}`. Sonst läuft das Werkzeug **nicht**: Fehler
+`ambiguous_collection` mit `error.candidates` (bis zu fünf: `nodeId`, `title`, `path?`,
+`contentsCount?`), bei nicht erreichbarem Suchindex zusätzlich `error.incomplete: true`
+(dann ist „kein gleicher Titel“ kein Befund). `discipline` (bei
+`search_wlo_within_collection`: `collectionDiscipline`) unterscheidet Gleichnamige nach
+Fach; ein nicht erkanntes Fach grenzt nichts ein und steht als `unresolvedDiscipline`
+in der Antwort. Eine angegebene nodeId gewinnt immer — der Titel wird dann nicht
+nachgeschlagen.
+
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
 | `search_wlo_collections` | Kuratierte Bündel zu einem Thema finden. Fragt **beide** Repository-Indizes, weil keiner eine Obermenge des anderen ist. | query · parentNodeId · educationalContext · discipline · maxResults`=5` · excludeNodeIds · includeSkillRegistry · outputFormat |
-| `get_collection_contents` | Was in dieser Sammlung liegt — Materialien und Unter-Sammlungen. Mit `includeSubcollections`: ließ sich eine Unterliste nicht lesen, trägt die Antwort `incomplete: true` und einen Hinweis (kein „Sammlung ist leer“). | `nodeId*` · query · contentFilter (files\|folders\|both) · includeSubcollections · maxResults`=20` · skipCount · excludeNodeIds · skillContext · outputFormat |
-| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen und filtern. `excludeNodeIds` lässt schon Gesehenes weg (auch über das Original einer Verknüpfung), vor dem Blättern. | `nodeId*` · query · alle Filter · maxResults`=10` · skipCount · excludeNodeIds · skillContext · outputFormat |
+| `get_collection_contents` | Was in dieser Sammlung liegt — Materialien und Unter-Sammlungen. Mit `includeSubcollections`: ließ sich eine Unterliste nicht lesen, trägt die Antwort `incomplete: true` und einen Hinweis (kein „Sammlung ist leer“). | nodeId **oder** collection (+ discipline) · query · contentFilter (files\|folders\|both) · includeSubcollections · maxResults`=20` · skipCount · excludeNodeIds · skillContext · outputFormat |
+| `search_wlo_within_collection` | Innerhalb einer Sammlung suchen und filtern. `excludeNodeIds` lässt schon Gesehenes weg (auch über das Original einer Verknüpfung), vor dem Blättern. | nodeId **oder** collection (+ collectionDiscipline — `discipline` filtert hier die Inhalte) · query · alle Filter · maxResults`=10` · skipCount · excludeNodeIds · skillContext · outputFormat |
 | `get_subject_portals` | Welche Fächer/Themen es überhaupt gibt — die obersten Fach-Hubs. | educationalContext · includeContentCounts · outputFormat |
-| `browse_collection_tree` | Geführtes Stöbern durch die Unterthemen eines Fachportals. Ein Zweig, dessen Unterthemen sich nicht lesen ließen, trägt `childrenUnread: true` (unbekannt, nicht leer). Tiefe 1–3; bei Tiefe 3 höchstens **300 Knoten** insgesamt (Breite je Ast vor dem Lauf berechnet), `truncatedAt` nennt den ersten gekappten Ast — die Elternsammlung selbst, wenn schon die erste Ebene mehr als `maxResults` Unterthemen hat. | nodeId · subject · depth`=1` (1–3) · includeContentCounts · includeContentPreview · maxResults`=50` · outputFormat |
+| `browse_collection_tree` | Geführtes Stöbern durch die Unterthemen eines Fachportals. Ein Zweig, dessen Unterthemen sich nicht lesen ließen, trägt `childrenUnread: true` (unbekannt, nicht leer). Tiefe 1–3; bei Tiefe 3 höchstens **300 Knoten** insgesamt (Breite je Ast vor dem Lauf berechnet), `truncatedAt` nennt den ersten gekappten Ast — die Elternsammlung selbst, wenn schon die erste Ebene mehr als `maxResults` Unterthemen hat. | nodeId · subject (Fachportal) · collection (+ discipline; `subject` daneben grenzt nur ein) · depth`=1` (1–3) · includeContentCounts · includeContentPreview · maxResults`=50` · outputFormat |
 | `get_collection_stats` | Woraus eine Sammlung besteht: Anzahl Dateien und Unter-Sammlungen plus Aufschlüsselung. | `nodeId*` · outputFormat |
-| `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium (die oberen zwei Gliederungsebenen, Gesamtzahl der Überschriften und Länge — ohne eigenen Abruf; das volle Verzeichnis liefert `get_compendium_text`), Statistik, freigegebene Skills (erste drei mit Beschreibung), Untersammlungen mit Inhaltszahl, erste Inhalte. Teile parallel; ein fehlender Teil steht in `missing` (`timeout`/`forbidden`/`upstream_error`/`not_checked`). Fehler als Code: `not_found`, `forbidden`, `not_a_collection`. | `collectionId*` · include · maxContents`=10` · maxSubcollections`=30` |
+| `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium (die oberen zwei Gliederungsebenen, Gesamtzahl der Überschriften und Länge — ohne eigenen Abruf; das volle Verzeichnis liefert `get_compendium_text`), Statistik, freigegebene Skills (erste drei mit Beschreibung), Untersammlungen mit Inhaltszahl, erste Inhalte. Teile parallel; ein fehlender Teil steht in `missing` (`timeout`/`forbidden`/`upstream_error`/`not_checked`). Fehler als Code: `not_found`, `forbidden`, `not_a_collection`. | collectionId **oder** collection (+ discipline) · include · maxContents`=10` · maxSubcollections`=30` |
 | `count_wlo_content_matches` | Für bis zu 30 Suchanfragen zugleich die Trefferzahl (+ bis zu 3 Treffer je Anfrage). Eine Suche je Anfrage, ohne Varianten und Umsortierung — `total` ist die Zahl des Repositorys und zählt jeden Volltexttreffer, auch schwache (live: „Spiegelbild" 150, bester Treffer zu Arbeitsmärkten); die Top-Treffer zeigen, wie gut sie passt. Ein nicht auflösbarer Filter wird nie weggelassen: die Anfrage steht in `missing` (`unresolved_filter`); ein geratener in `fuzzyFilters`. Über ganz WLO, nicht in einem Teilbaum (Entscheidung E5). | `queries*` = [{id, query, filters}] (≤30) · top`=2` (0–3) |
+| `search_wlo_content_many` | Bis zu 8 Inhaltssuchen in EINEM Aufruf, je bis zu 5 Treffer in Kurzform unter der `id` der Anfrage (nodeId, Titel, URL, Beschreibung ≤200 Zeichen, Typ, Bildungsstufe, Lizenz; `originalId` bei einer Verknüpfung) — etwa ein Material je Schritt eines Lernpfads. Auf Zeit gebaut: höchstens 3 Suchvarianten je Anfrage über ein kleineres Fenster (10 je Variante, 25 mit Lizenz), EIN Abruf-Pool für den ganzen Aufruf (halbe `WLO_UPSTREAM_CONCURRENCY`), Frist 8 s je Anfrage und 15 s je Aufruf, kein Nachladen weiterer Fenster, kein Volltext, kein Skill-Katalog. Was nicht beantwortet wurde, steht in `missing` (`unresolved_filter` · `timeout` · `upstream_busy` mit `retryAfter` …) und ist nie eine leere Liste; ein nicht auflösbarer Filter wird nie weggelassen. `distinct` zeigt ein Material nur bei der Anfrage, zu der es am besten passt (Rerank-Wert, dann Rang, dann frühere Anfrage) — die andere rückt aus ihrem eigenen Fenster nach und nennt `movedToOtherQueries`. Lizenz: nur EINE, exakt geprüft und als `licenseFilter {checked, kept}` offengelegt; `"OER"` wird abgelehnt (`invalid_input`, dafür `search_wlo_content`). Kein Blättern, keine Gesamtzahl — `more: true` sagt nur, dass es weitere gibt. | `queries*` = [{id (≤40, eindeutig), query, filters}] (≤8) · gemeinsame Filter wie `search_wlo_content` (ohne OER) · maxResults`=3` (1–5) · distinct`=false` · outputFormat |
 
 ### 5.3 Detail & Kontext — ohne Anmeldung
 
@@ -351,7 +371,7 @@ wurde („Arbeitsblat" → Arbeitsblatt), trägt in `_queryMeta.criteria` das Fe
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
 | `get_wlo_content_text` | Der eigentliche Text eines Materials. Notfalls von der verlinkten Seite — und wenn keiner da ist, wird gesagt warum. | `nodeId*` · maxChars`=200000` · outputFormat |
-| `get_compendium_text` | Redaktionelle Prosa einer Sammlung, typischerweise dreiteilig: Weltwissen · Lehrplan-Kompetenzen je Stufe/Bundesland · Vorstellung der Inhalte — der Maßstab für Lückenanalyse, Sachrichtigkeit und Lernpfade. **Mit** `query` kommen per BM25 nur die passenden Absätze, **ohne** der ganze Text mit je Hauptabschnitt gekapptem Umfang. Das Inhaltsverzeichnis geht in beiden Fällen mit (gerendert als `## Inhalt`) — sonst weiß ein Modell nicht, was es *nicht* gesehen hat. Nicht getroffene Suchwörter werden benannt. **Die Antwort wird im Chat nicht angezeigt:** die Absätze sind Arbeitsmaterial für das Modell, das Lese-Widget zeigt nur eine Übergabe-Zeile (`forModel`/`passageCount` in `structuredContent`). Das Modell erhält unverändert alles. | nodeId · nodeIds · query · outputFormat |
+| `get_compendium_text` | Redaktionelle Prosa einer Sammlung, typischerweise dreiteilig: Weltwissen · Lehrplan-Kompetenzen je Stufe/Bundesland · Vorstellung der Inhalte — der Maßstab für Lückenanalyse, Sachrichtigkeit und Lernpfade. **Mit** `query` kommen per BM25 nur die passenden Absätze, **ohne** der ganze Text mit je Hauptabschnitt gekapptem Umfang. Das Inhaltsverzeichnis geht in beiden Fällen mit (gerendert als `## Inhalt`) — sonst weiß ein Modell nicht, was es *nicht* gesehen hat. Nicht getroffene Suchwörter werden benannt. **Die Antwort wird im Chat nicht angezeigt:** die Absätze sind Arbeitsmaterial für das Modell, das Lese-Widget zeigt nur eine Übergabe-Zeile (`forModel`/`passageCount` in `structuredContent`). Das Modell erhält unverändert alles. | nodeId · nodeIds · collection (+ discipline) · query · outputFormat |
 | `get_wikipedia_summary` | Anriss oder ganzer Artikeltext. Ein danebenliegender Treffer liefert lieber gar keinen Artikel als den nächstähnlichen String. Antwortet Wikipedia nicht (Ausfall, 429, 5xx), steht das da — im JSON `unreachable: true` neben `found: false` —, nie „kein Artikel“; `search_wlo_all` mit `includeWikipedia` trägt dafür `wikipediaUnreachable: true`, `/api/wikipedia` antwortet 503 statt 404. | `query*` · language`=de` · sections`=1` · fullText · maxChars`=200000` · outputFormat |
 | `get_url_text` ⚠️ **unsafe** | Text einer beliebigen Webseite über den Extraktionsdienst. **Nicht für den Produktivbetrieb:** die Seite wird nicht von uns geholt, sondern im Dienst — eine Umleitung ins private Netz ist auf dieser Ebene nicht sichtbar. Abschaltbar über `WLO_DISABLE_UNSAFE_TOOLS`. | `url*` · method (browser\|simple) · maxChars`=200000` · outputFormat |
 
@@ -423,7 +443,7 @@ Jeder Aufruf ohne `confirmToken` erzeugt nur die Vorschau.
 | Werkzeug | Funktion | Parameter |
 |---|---|---|
 | `wlo_create_content` | Neuen Datensatz anlegen — mit Metadaten, optional Text oder Datei. Mit `addToCollectionId` unter **derselben** Bestätigung gleich in eine Sammlung aufgenommen (die Aufnahme ist Teil der bestätigten Änderung); scheitert nur das Aufnehmen, bleibt der Datensatz (`collection.status` = `failed` mit Code). Gibt es zur `url` schon einen Datensatz, bietet die Vorschau an, **diesen** aufzunehmen. Eine Ziel-id, die keine Sammlung ist, wird vor der Vorschau abgelehnt. Die Antwort trägt `structuredContent {nodeId, title, collection?}`. | `title*` · description · keywords · url · language · author · publisher · licenseKey · licenseVersion · contentType · educationalContext · discipline · userRole · *14 Qualitätsfelder* · content · contentFormat · fileBase64 · addToCollectionId · confirmToken |
-| `wlo_update_content` | Metadaten oder Inhalt ändern. Zeigt die Änderung auf eine Verknüpfung automatisch auf das **Original** um und sagt das in der Vorschau. | `nodeId*` · dieselbe Feldfläche · commit · versionComment · confirmToken |
+| `wlo_update_content` | Metadaten oder Inhalt ändern. Zeigt die Änderung auf eine Verknüpfung automatisch auf das **Original** um und sagt das in der Vorschau. Fach, Bildungsstufe und Zielgruppe (`discipline`, `educationalContext`, `userRole`) **ersetzen** das Feld; `addDiscipline`, `addEducationalContext`, `addUserRole` (seit 2026-11-13, Label oder Liste, dieselbe Vokabularprüfung, `error.candidates` unter dem Parameternamen) **fügen hinzu**: gesendet und zurückgelesen wird die ganze Liste (vorhandene zuerst, dann die neuen), verschmolzen mit den Werten des **geschriebenen** Datensatzes (Original, nicht Verknüpfung). Die Vorschau zeigt ein Hinzufügen wie bei Schlagwörtern (`Fach: + Mathematik`), ein Ersetzen als `„alt“ → „neu“`; strukturiert trägt `confirm.preview.fields[]` dann `added` (und `addedLabels`) neben `old`/`new`. Der Schlüssel bindet an die Art: ein fürs Hinzufügen erteilter bestätigt kein Ersetzen mit derselben Endliste (`confirm_mismatch`). Beide Parameter für dasselbe Feld → `invalid_input`; steht alles schon da → „Keine Änderung“. | `nodeId*` · dieselbe Feldfläche · addDiscipline · addEducationalContext · addUserRole · commit · versionComment · confirmToken |
 | `wlo_submit_content` | Einen Datensatz zur redaktionellen Prüfung einreichen. | `nodeId*` · comment · confirmToken |
 | `wlo_create_collection` | Sammlung anlegen. Ein `parentId` wird gelesen und muss eine Sammlung sein (`not_found` / `not_a_collection`); die Vorschau nennt die Elternsammlung mit Titel. | `title*` · description · parentId · confirmToken |
 | `wlo_rename_collection` | Sammlung umbenennen. Ist die id keine Sammlung: `not_a_collection`. | `nodeId*` · `title*` · description · confirmToken |
@@ -431,7 +451,7 @@ Jeder Aufruf ohne `confirmToken` erzeugt nur die Vorschau.
 | `wlo_remove_from_collection` | Zuordnung lösen. | `collectionId*` · `nodeId*` · confirmToken |
 | `wlo_create_collection_tree` | Sammlungsbaum mit einer Bestätigung anlegen (≤ 250 Knoten, Tiefe 4). | `parentCollectionId*` · `tree*` · onExisting · confirmToken · continuationToken |
 | `wlo_add_to_collections` | Bis zu 200 Materialien mit einer Bestätigung aufnehmen. | `pairs*` · confirmToken · continuationToken |
-| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit einer Bestätigung (Plan wie `wlo_add_to_collections`). Der Server entscheidet je Feld: Titel, Beschreibung, Schlagworte, Fach, Bildungsstufe, Inhaltstyp werden **geschrieben** und zurückgelesen; Lizenz, Urheber, Herausgeber, Quell-URL, Sprache, Zielgruppe und Qualitätsfelder werden als **Vorschlag** (Typ `AI`, Begründung `reason`) hinterlegt. Verknüpfung → Original. Die Vorschau nennt je ersetztem Feld **vorher → nachher** (bei Schlagworten die ganze gesendete Liste und was davon neu ist) — der alte Wert ist Teil der Freigabe, eine Änderung zwischen Vorschau und Bestätigung ergibt `confirm_mismatch`, eine Änderung danach (der Plan schreibt bis zu 30 min) `changed_since_preview` für diesen Datensatz, ohne dass etwas gesendet wird; strukturiert `plan` je Datensatz (`write` mit `before`/`after`, `suggest`), `unchangedItems` und `refused` (`not_found`, `forbidden`, `unreadable`, `duplicate`, `unreadable_original`). Bleibt nichts im Plan, kommt `confirm: null` mit den Gründen; je Eintrag `status` (`stored`/`suggested`/`partly`/`not_stored`/`unverified`/`failed`), `code`, `outcomeOpen`, `written`, `suggested`. Antwortet der Vorschlags-Endpunkt mit einer leeren Liste, ist das kein Beleg: `unverified`. | `items*` (`nodeId*`, `reason`, Felder wie `wlo_update_content`) · confirmToken · continuationToken |
+| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit einer Bestätigung (Plan wie `wlo_add_to_collections`). Der Server entscheidet je Feld: Titel, Beschreibung, Schlagworte, Fach, Bildungsstufe, Inhaltstyp werden **geschrieben** und zurückgelesen; Lizenz, Urheber, Herausgeber, Quell-URL, Sprache, Zielgruppe und Qualitätsfelder werden als **Vorschlag** (Typ `AI`, Begründung `reason`) hinterlegt. Verknüpfung → Original. Die Vorschau nennt je ersetztem Feld **vorher → nachher** (bei Schlagworten und bei `addDiscipline`/`addEducationalContext` die ganze gesendete Liste und was davon neu ist; `addUserRole` wird wie `userRole` vorgeschlagen) — der alte Wert ist Teil der Freigabe, eine Änderung zwischen Vorschau und Bestätigung ergibt `confirm_mismatch`, eine Änderung danach (der Plan schreibt bis zu 30 min) `changed_since_preview` für diesen Datensatz, ohne dass etwas gesendet wird; strukturiert `plan` je Datensatz (`write` mit `before`/`after`, bei einem Hinzufügen zusätzlich `added`; `suggest`), `unchangedItems` und `refused` (`not_found`, `forbidden`, `unreadable`, `duplicate`, `unreadable_original`). Bleibt nichts im Plan, kommt `confirm: null` mit den Gründen; je Eintrag `status` (`stored`/`suggested`/`partly`/`not_stored`/`unverified`/`failed`), `code`, `outcomeOpen`, `written`, `suggested`. Antwortet der Vorschlags-Endpunkt mit einer leeren Liste, ist das kein Beleg: `unverified`. | `items*` (`nodeId*`, `reason`, Felder wie `wlo_update_content` einschließlich `add…`) · confirmToken · continuationToken |
 | `wlo_attach_fulltext` | Volltext (Markdown, ≤ 2 000 000 Bytes) im **`textContent` des Datensatzes selbst** ablegen — gelesen über `get_wlo_content_text`/`includeTextContent`. Gesendet als Rohtext mit `mimetype=text/plain` (aus `text/markdown` extrahiert das Repository nichts), danach zurückgelesen. Steht derselbe Text schon da, ist das kein Fehler: `{confirm: null, unchanged: true, code: "nothing_to_change"}`. In der Vorschau abgelehnt (`outcomeOpen: false`): `exists` (ohne `replace`), `would_replace_file` (Datensatz trägt Inhalt — eine Datei oder einen früher hier geschriebenen Volltext; **Sicherung**, bis ein Live-Lauf zeigt, dass eine Datei erhalten bleibt — bis dahin lässt sich auch ein abgelegter Volltext nicht ersetzen), `link_record` (verlinkter Datensatz: das Repository liest dessen Text von der Seite), `too_large`, `not_found`, `forbidden`, `unreadable`, `unreadable_original`, `text_unreadable`; ein leerer Text ist `invalid_input`. Unmittelbar vor dem Schreiben wird erneut geprüft: hat der Datensatz inzwischen Inhalt bekommen, `would_replace_file`, hat er sich sonst geändert, `changed_since_preview` — beide ohne Senden, `outcomeOpen: false`. Nach der Einlösung: `stored`, `not_stored` (zurückgelesen anders, `outcomeOpen: true`), `unverified`, bei einer Ablehnung des Repositorys ihr Code — bei 4xx `outcomeOpen: false`; bei der eigenen 500 des Repositorys entscheidet das Zurücklesen (Text da → `stored`, nachweislich leer → `false`, nicht lesbar oder ohne Textangabe → `true`); 502/503/504 (womöglich ein Proxy, während das Repository noch schreibt) bleiben `true`. Nach Lösen der Sicherung prüft jedes Schreiben Typ und Inhalts-Hash der Datei (`file_replaced`, `status: failed`, wie in W2). Datensätze mit Datei werden abgelehnt, ohne ihren Text extrahieren zu lassen (ein PDF kostet Sekunden). Verknüpfung → Original. **Auf Staging derzeit nicht schreibbar** (500 seit 2026-11-06). | `nodeId*` · `markdown*` · `source*` (`binary`/`website`/`manual`) · sourceUrl · language · replace · confirmToken |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit einer Bestätigung — zusammen ≤ 3 000 000 Bytes je Aufruf (sonst `invalid_input` vor jedem Abruf; mehrere Aufrufe), je Text ≤ 2 000 000. Je Datensatz die Regeln von `wlo_attach_fulltext`. Vorschau: `counts` {`new`, `replaced`, `unchanged`, `refused`}, `refused` [{`nodeId`, `code`}] (auch `duplicate`), `unchangedItems`. Plan wie `wlo_update_contents`: `continuationToken` oder derselbe `confirmToken` setzen den gespeicherten Plan fort, kein Datensatz wird zweimal geschrieben — auch nicht, wenn zwei Bestätigungen gleichzeitig eintreffen. Hält der Server schon zu viel Text (64 MiB über alle Pläne), kommt `upstream_busy` mit `retryAfter` (60 s) **vor** der Einlösung — der Schlüssel gilt weiter. Ein nicht prüfbarer Datensatz ist `unreadable`; derselbe Datensatz ein zweites Mal (auch über eine Verknüpfung, auch wenn die erste Nennung nichts ändert) ist `duplicate`. Je Eintrag `status` (`stored`/`not_stored`/`unverified`/`failed`), `code`, `outcomeOpen` — ein Datensatz, der während des Plans Inhalt bekommt, wird nicht beschrieben (`would_replace_file`). Vorschau und Bestätigung lesen jeden Datensatz; bei 200 Einträgen kann das allein länger dauern als die ~40 s eines Plan-Abschnitts. | `items*` (`nodeId*`, `markdown*`, `source*`, sourceUrl, language) · replace · confirmToken · continuationToken |
 | `wlo_update_compendium` | Kompendiumstext einer Sammlung setzen oder entfernen. Ist die id keine Sammlung: `not_a_collection`. | `nodeId*` · text · remove · confirmToken |

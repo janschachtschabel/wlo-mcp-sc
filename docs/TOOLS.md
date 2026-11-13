@@ -1,7 +1,7 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **51 MCP-Tools**
-(55 mit `WLO_BATCH_UPLOAD_ENABLED`: 32 lesende, 23 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **52 MCP-Tools**
+(56 mit `WLO_BATCH_UPLOAD_ENABLED`: 33 lesende, 23 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
@@ -17,10 +17,10 @@ Was die Liste tatsächlich verändert, sind diese Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 51 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 51 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
-| **`WLO_DISABLE_SKILL_SEARCH=1`** | 50 Tools — ohne `search_skill` (nur der Registry-Weg) |
-| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 55) |
+| **Standard** | 52 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 52 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
+| **`WLO_DISABLE_SKILL_SEARCH=1`** | 51 Tools — ohne `search_skill` (nur der Registry-Weg) |
+| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 56) |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -35,7 +35,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 
 ---
 
-## 1. Lesende MCP-Tools (32) — mit Chat-Trigger
+## 1. Lesende MCP-Tools (33) — mit Chat-Trigger
 
 ### Suchen & Finden
 | Tool | Funktion | Bester Chat-Trigger |
@@ -179,6 +179,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 | `get_collection_stats` | Zusammensetzung einer Sammlung (Anzahl, Typen, Fächer) | *„Woraus besteht diese Sammlung?“* |
 | `get_collection_overview` | Eine Sammlung auf einen Blick: Pfad, Kompendium-Gliederung, Statistik, Skills, Untersammlungen, erste Inhalte — in einem Aufruf | *„Was gibt es in dieser Sammlung?“* |
 | `count_wlo_content_matches` | Für viele Suchanfragen zugleich zählen, wie viele Inhalte es gibt — Grundlage für eine Lückenanalyse | *„Zu welchen Punkten meiner Gliederung gibt es kaum Material?“* |
+| `search_wlo_content_many` | Mehrere Inhaltssuchen in einem Aufruf (bis zu 8, je bis zu 5 Kurztreffer) — statt mehrerer `search_wlo_content`-Aufrufe nacheinander; `distinct` zeigt jedes Material nur bei der am besten passenden Anfrage | *„Such mir zu jedem der fünf Schritte meines Lernpfads ein passendes Material.“* |
 | `get_node_breadcrumb` | Pfad einer Sammlung im Themenbaum | *„Wo liegt diese Sammlung im WLO-Baum?“* |
 | `get_node_collections` | Umgekehrt: in **welchen Sammlungen** ein bestimmtes Material liegt | *„In welchen Sammlungen steckt dieses Arbeitsblatt?“* |
 
@@ -568,7 +569,7 @@ zurück.
 ### Inhalte pflegen
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
-| `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe, **Prüfergebnis einer maschinellen Qualitätsprüfung** (Sachrichtigkeit, Urheberrecht, Strafrecht, Persönlichkeitsrecht, Jugendschutz — nur die Maschinen-Werte, ein Mensch-Ergebnis wird abgelehnt) | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“*, *„Trage ein, dass die Sachrichtigkeitsprüfung keine Auffälligkeiten ergeben hat“* |
+| `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe (ersetzen das Feld; `addDiscipline`/`addEducationalContext`/`addUserRole` fügen hinzu, die bisherigen Werte bleiben), **Prüfergebnis einer maschinellen Qualitätsprüfung** (Sachrichtigkeit, Urheberrecht, Strafrecht, Persönlichkeitsrecht, Jugendschutz — nur die Maschinen-Werte, ein Mensch-Ergebnis wird abgelehnt) | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“*, *„Trage ein, dass die Sachrichtigkeitsprüfung keine Auffälligkeiten ergeben hat“* |
 | `wlo_create_content` | Neuen Datensatz anlegen — **zwei Wege**: `url` für Material, das woanders liegt (prüft vorher auf ein Duplikat und nennt den vorhandenen), oder `content`/`fileBase64`, wenn der Datensatz den Inhalt **selbst tragen** soll (im Chat erstelltes Markdown, erzeugtes Bild). Bleibt ein **Entwurf** | *„Leg für diese Seite einen WLO-Datensatz an“* · *„Speichere dieses Arbeitsblatt in WLO“* |
 | `wlo_submit_content` | Einen vorhandenen Datensatz zur redaktionellen Prüfung einreichen — ein eigener Schritt, nie automatisch | *„Reiche diesen Datensatz zur Prüfung ein“* |
 | `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen. Über die id einer **Sammlungs-Verknüpfung** verschwindet nur die Verknüpfung — der Datensatz bleibt; die Vorschau sagt, welcher Fall vorliegt. Eine Sammlung oder ein Ordner wird abgelehnt | *„Lösche diesen Datensatz“* |
@@ -582,7 +583,7 @@ zurück.
 | `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen | *„Nimm dieses Material aus der Sammlung heraus“* |
 | `wlo_create_collection_tree` | Ganzen Baum von Untersammlungen mit EINER Bestätigung anlegen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder). Abschnitte von ~40 s, `continuationToken` bis fertig; ein erneut vorgelegter Schlüssel setzt fort, legt nie doppelt an. Antwort `nodes [{path, nodeId, status, code}]` | *„Lege unter Optik diese Gliederung als Sammlungen an“* |
 | `wlo_add_to_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aufnehmen; Verknüpfung → Original (`filedId`), schon Enthaltenes `already`, Einzelfehler halten den Rest nicht auf. Noch nicht live geprüft | *„Nimm diese zwölf Materialien in die passenden Sammlungen auf“* |
-| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung; beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt (der Server entscheidet je Feld) | — (Chatbot-Ablauf, viele Datensätze) |
+| `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung; beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt (der Server entscheidet je Feld); `add…`-Parameter je Eintrag wie bei `wlo_update_content` | — (Chatbot-Ablauf, viele Datensätze) |
 | `wlo_attach_fulltext` | Volltext (Markdown) im `textContent` eines Datensatzes ablegen, zweistufig und zurückgelesen; Datensätze mit Datei vorerst abgelehnt (`would_replace_file`) | — (Chatbot-Ablauf, Volltexte) |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit EINER Bestätigung (≤ 3 MB je Aufruf), je Datensatz die Regeln von `wlo_attach_fulltext` | — (Chatbot-Ablauf, Volltexte) |
 | `wlo_delete_collection` | Sammlung samt Untersammlungen löschen. Das verlinkte Material bleibt bestehen; direkt in der Sammlung angelegte Originale gehen mit. Nur für Sammlungen — ein Ordner wird abgelehnt | *„Lösche diese Sammlung“* |

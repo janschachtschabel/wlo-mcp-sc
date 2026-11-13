@@ -12,6 +12,8 @@ import { registerWloTool } from '../apps/register.js';
 import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine } from '../formatter.js';
 import { getCollectionOverview, OVERVIEW_PARTS, type CollectionOverview } from '../services/collection-overview.js';
 import { toolError } from './shared.js';
+import { resolvedCollectionSchema } from '../apps/outputSchemas.js';
+import { collectionDisciplineParam, collectionNameParam, withCollectionByName } from './collection-arg.js';
 
 const MAX_CONTENTS = 50;
 const MAX_SUBCOLLECTIONS = 100;
@@ -47,6 +49,7 @@ export const collectionOverviewSchema = z.object({
   missing: z.array(z.object({
     part: z.enum(OVERVIEW_PARTS), code: z.enum(['timeout', 'forbidden', 'not_found', 'upstream_busy', 'upstream_error', 'not_checked']),
   })),
+  resolvedCollection: resolvedCollectionSchema,
 });
 
 export function registerCollectionOverviewTool(server: McpServer): void {
@@ -54,9 +57,12 @@ export function registerCollectionOverviewTool(server: McpServer): void {
     name: 'get_collection_overview',
     title: 'WLO Sammlung auf einen Blick',
     description: `Alles Wesentliche zu EINER Sammlung in einem Aufruf: Kopf, Pfad im Themenbaum, Kompendium (nur die oberen zwei Gliederungsebenen und die Länge), Statistik, freigegebene Skills (erste drei mit Beschreibung), Untersammlungen mit Inhaltszahl und die ersten Inhalte. Die Teile laufen parallel; ein Teil, der nicht kam, steht in "missing" ({part, code}) — der Rest kommt trotzdem. Mit "include" nur die gewünschten Teile.
+Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden, bei mehreren gleichnamigen mit \`discipline\` (Fach); bei Mehrdeutigkeit kommen Kandidaten statt eines Ergebnisses.
 Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch alle Inhalte (get_collection_contents) und nicht für einen tieferen Baum (browse_collection_tree).`,
     inputSchema: {
-      collectionId: z.string().max(200).describe('nodeId der Sammlung; eine Verknüpfungs-id wird aufs Original aufgelöst.'),
+      collectionId: z.string().max(200).optional().describe('nodeId der Sammlung; eine Verknüpfungs-id wird aufs Original aufgelöst. collectionId ODER `collection` (Titel) — eines von beiden ist Pflicht.'),
+      collection: collectionNameParam,
+      discipline: collectionDisciplineParam('discipline'),
       include: z.array(z.enum(OVERVIEW_PARTS)).min(1).optional().describe(
         `Welche Teile (Vorgabe: alle): ${OVERVIEW_PARTS.join(', ')}.`),
       maxContents: z.number().int().min(0).max(MAX_CONTENTS).optional().default(10)
@@ -66,7 +72,9 @@ Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch 
     },
     outputSchema: collectionOverviewSchema,
     annotations: { readOnlyHint: true },
-    handler: async (params) => {
+    handler: withCollectionByName({
+      idParam: 'collectionId', disciplineParam: 'discipline', missing: 'Bitte collectionId oder collection angeben.',
+    }, async (params) => {
       try {
         const result = await getCollectionOverview(String(params.collectionId), {
           include: params.include ?? OVERVIEW_PARTS,
@@ -85,7 +93,7 @@ Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch 
       } catch (err) {
         return toolError('Fehler bei der Sammlungsübersicht', err);
       }
-    },
+    }),
   });
 }
 

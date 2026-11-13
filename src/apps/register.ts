@@ -15,6 +15,7 @@ import type { z } from 'zod';
 
 import { log } from '../logger.js';
 import { isUnsafeToolDisabled } from '../unsafe-tools.js';
+import { withErrorBranch } from './output-schema.js';
 import { TOOL_TITLES } from './tool-defaults.js';
 
 /** Result shape a WLO tool handler returns (a CallToolResult subset). */
@@ -152,7 +153,10 @@ export function registerWloTool(
     description: def.description,
     inputSchema: def.inputSchema,
   };
-  if (def.outputSchema) config.outputSchema = def.outputSchema;
+  // Advertised as "success OR coded error": a client that follows the
+  // specification checks an error answer against this schema too. Done HERE so
+  // no tool can forget it.
+  if (def.outputSchema) config.outputSchema = withErrorBranch(def.outputSchema);
   if (def.annotations) config.annotations = def.annotations;
   if (def.widgetUri) config._meta = widgetMeta(def);
   if (def.securitySchemes) {

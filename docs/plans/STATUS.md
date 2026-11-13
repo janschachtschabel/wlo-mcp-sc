@@ -4997,3 +4997,19 @@ statt viermal; ein über einen Alias aufgelöster Wert wird in der Vorschau gesa
 „Sekundarstufe II" geschrieben); rund 60 gängige Schreibweisen als Aliasse ergänzt (nicht: vorschule,
 foerderschule, sonderschule — enthalten „schule"); Satzzeichen und Mehrfach-Leerzeichen um einen Namen stören nicht
 mehr. 3175 Tests, 3174 grün, 1 übersprungen; Image-Starttest unter `wlo-mcp:smoke` bestanden.
+
+**Nachtrag, zweite Hälfte — Z3, Z4, B1 und der Extraktionsdienst hinter dem B-API-Proxy (2026-11-13).**
+Z3: Sammlung per Name an fünf Lesewerkzeugen (`services/collection-by-name.ts`, `tools/collection-arg.ts`); genau EIN
+gleicher Titel wird genommen, sonst `ambiguous_collection` mit Kandidaten. **Gemessen gegen Staging (24 Titel):** die
+erste, nach dem Review strenge Fassung löste nur 3 von 24 auf (9 eindeutige Treffer wegen vollen Suchfensters
+abgelehnt); mit EINEM breiteren Prüflauf (Stichwort-Index 100, Namens-Index 50) 12 mit Fach und 9 ohne, kein
+eindeutiger Treffer mehr abgelehnt, +0,7 s im Median. Für „kein gleicher Titel bei vollem Fenster" bringt der breitere
+Lauf nichts (9 Fälle, 0 Funde) und läuft deshalb nicht. Z4: `search_wlo_content_many` (33 Lesewerkzeuge), Tempo
+NICHT gemessen. B1 (Nutzerentscheidung): Ersetzen bleibt Standard, `addDiscipline`/`addEducationalContext`/
+`addUserRole` ergänzen. `WLO_TEXT_EXTRACTION_API_KEY`: Schlüssel als `X-API-KEY` an den Extraktionsdienst hinter
+dem B-API-Proxy, gegen keinen echten Proxy erprobt.
+**Älterer Fehler, im Review gefunden und behoben:** ein streng prüfender MCP-Client verwarf jede codierte
+Fehlerantwort eines Werkzeugs mit Ausgabeschema; die Schemata tragen jetzt einen Fehlerzweig (`anyOf`).
+Drei unabhängige Reviews (26 Befunde), alle behoben. 3310 Tests, 3309 grün, 1 übersprungen.
+**Offen:** einheitlicher Vertrag (A-3) als neue Hauptversion; Tempo von Z4 messen; ob jeder Host ein `anyOf` auf
+oberster Ebene des Ausgabeschemas annimmt.

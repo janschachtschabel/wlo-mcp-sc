@@ -86,6 +86,21 @@ const facetsSchema = z.record(z.string(), z.array(z.object({
 }))).optional();
 
 /**
+ * Which collection a `collection` TITLE was taken for (`tools/collection-arg.ts`)
+ * — present only when a name was resolved, never when the caller gave the id.
+ * `path`: ancestor titles from the subject portal down, absent when unread.
+ */
+export const resolvedCollectionSchema = z.object({
+  nodeId: z.string(),
+  title: z.string(),
+  path: z.array(z.string()).optional(),
+  /** The title matched only in a different spelling (ä/ae, ß/ss, separators) — worth a check. */
+  matched: z.literal('loose').optional(),
+  /** The narrowing subject did not resolve and narrowed nothing. */
+  unresolvedDiscipline: z.object({ value: z.string(), suggestions: z.array(z.string()).optional() }).optional(),
+}).optional();
+
+/**
  * The two disclosures of a content search (`services/content-search.ts`),
  * declared once for both tools that carry them. `more`: the page came back
  * short although the catalogue holds more — continue at `nextSkipCount`.
@@ -279,6 +294,7 @@ export const browseTreeSchema = z.object({
   truncated: z.boolean().optional(),
   /** The first node, in listing order, whose children were cut. */
   truncatedAt: z.string().optional(),
+  resolvedCollection: resolvedCollectionSchema,
 });
 
 /** `{ total, results }` — get_subject_portals (portals carry an optional count). */

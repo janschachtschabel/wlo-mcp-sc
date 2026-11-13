@@ -90,3 +90,35 @@ test('extractTextFromUrl: a 200 that is not JSON degrades to null', async () => 
     assert.equal(await extractTextFromUrl('https://material.example/', 'browser', SERVICE), null);
   } finally { mock.restore(); }
 });
+
+// ── behind the B-API proxy: the key travels as X-API-KEY, and only there ─────
+
+test('extractTextFromUrl: with a key the call carries X-API-KEY — and a base URL with a proxy path is kept', async () => {
+  const proxy = 'https://b-api.example.test/api/v1/proxy/text-extraction';
+  const mock = installFetchMock(() => ({ json: { text: 'Inhalt' } }));
+  try {
+    assert.equal(await extractTextFromUrl('https://material.example/seite', 'browser', proxy, 'geheimer-schluessel'), 'Inhalt');
+    assert.equal(mock.calls[0].url, `${proxy}/from-url`);
+    const headers = new Headers(mock.calls[0].init?.headers);
+    assert.equal(headers.get('x-api-key'), 'geheimer-schluessel');
+    assert.equal(headers.get('authorization'), null, 'the B-API takes the key in X-API-KEY, never as a Bearer');
+    // The key must not follow a redirect to another host.
+    assert.equal(mock.calls[0].init?.redirect, 'error');
+  } finally { mock.restore(); }
+});
+
+test('extractTextFromUrl: without a key no such header is sent, and redirects work as before', async () => {
+  const mock = installFetchMock(() => ({ json: { text: 'Inhalt' } }));
+  try {
+    await extractTextFromUrl('https://material.example/seite', 'browser', SERVICE);
+    assert.equal(new Headers(mock.calls[0].init?.headers).get('x-api-key'), null);
+    assert.equal(mock.calls[0].init?.redirect, undefined);
+  } finally { mock.restore(); }
+});
+
+test('the configured key belongs to the configured service — another base URL does not get it', async () => {
+  const { extractionKeyFor } = await import('../src/text-extraction-api.js');
+  assert.equal(extractionKeyFor('https://b-api.example.test/api/v1/proxy/x', { url: 'https://b-api.example.test/api/v1/proxy/x', key: 'k' }), 'k');
+  assert.equal(extractionKeyFor('https://anderswo.example.test', { url: 'https://b-api.example.test/api/v1/proxy/x', key: 'k' }), '');
+  assert.equal(extractionKeyFor('https://b-api.example.test/api/v1/proxy/x', { url: 'https://b-api.example.test/api/v1/proxy/x', key: '' }), '');
+});

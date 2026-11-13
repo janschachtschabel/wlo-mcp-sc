@@ -24,7 +24,7 @@ import type { WloToolResult } from '../apps/register.js';
 import {
   candidatesField, collectDesired, previewReply, rejectionReply, registerCurationTool, type FieldCandidates, type WriteAuthChallenge,
 } from './curation-shared.js';
-import { CONTENT_FIELDS, FIELD_SCHEMA } from './curation-fields.js';
+import { ADD_FIELDS, ADD_SCHEMA, CONTENT_FIELDS, FIELD_SCHEMA } from './curation-fields.js';
 import { planReply } from './curation-plan-reply.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
@@ -60,6 +60,7 @@ const itemSchema = z.object({
   reason: z.string().max(500).optional()
     .describe('Begründung für die VORSCHLÄGE dieses Datensatzes (Pflicht im Repository; ohne Angabe ein Standardtext).'),
   ...FIELD_SCHEMA,
+  ...ADD_SCHEMA,
 });
 
 export function registerCurationUpdateManyTool(server: McpServer, challenge: WriteAuthChallenge): void {
@@ -95,7 +96,7 @@ Für einen einzelnen Datensatz oder Dateiinhalt: wlo_update_content.`,
           const candidates: FieldCandidates[] = [];
           const validationNotes: string[] = [];
           raw.forEach((item, index) => {
-            const collected = collectDesired(item, CONTENT_FIELDS);
+            const collected = collectDesired(item, CONTENT_FIELDS, ADD_FIELDS);
             const who = `Eintrag ${index + 1} (${sanitizeText(String(item['nodeId']))})`;
             if (!collected.ok) {
               reasons.push(...collected.reasons.map(r => `${who}: ${r}`));
@@ -107,7 +108,7 @@ Für einen einzelnen Datensatz oder Dateiinhalt: wlo_update_content.`,
             }
             validationNotes.push(...collected.notes.map(n => `${who}: ${n}`));
             if (Object.keys(collected.desired).length === 0) { reasons.push(`${who}: kein zu änderndes Feld.`); return; }
-            inputs.push({ nodeId: String(item['nodeId']).trim(), desired: collected.desired,
+            inputs.push({ nodeId: String(item['nodeId']).trim(), desired: collected.desired, added: collected.added,
               ...(typeof item['reason'] === 'string' ? { reason: item['reason'] } : {}) });
           });
           if (reasons.length) return { reply: rejectionReply(reasons, candidatesField(candidates)) };

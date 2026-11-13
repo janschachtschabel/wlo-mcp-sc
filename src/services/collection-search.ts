@@ -81,17 +81,35 @@ export type CollectionSearchLeg = 'keyword' | 'name';
  * The merged search, saying which leg did NOT answer (audit 2026-11-12, K-3).
  * One leg down still returns what the other found — but the caller can say
  * that the list may be incomplete, and both down is "not reachable", never
- * "no collections".
+ * "no collections". `full` names the legs whose answer filled the window asked
+ * of them — the index may hold more matches than were seen.
  */
+export interface CollectionSearchOptions {
+  /**
+   * The name leg's own window instead of `NAME_LEG_MAX`. Only for a caller that
+   * must SEE every namesake (`collection-by-name.ts`) — for a ranked list the
+   * cap stays the cost lever described above.
+   */
+  nameLegMax?: number;
+  /**
+   * Which name-leg hits are worth the re-read, judged on the endpoint's OWN
+   * node. Its fixed projection carries `title` and `cm:title` (measured
+   * 2026-11-13, 54 of 54 hits), so a caller that only compares titles need not
+   * pay a read per hit of a wide window. Hits it declines are not in `nodes`.
+   */
+  adoptNameHit?: (raw: WloNode) => boolean;
+}
+
 export async function searchCollectionsResult(
   query: string,
   maxItems = 10,
   props: string[] | undefined = DISPLAY_PROPS,
-): Promise<{ nodes: WloNode[]; unreachable: CollectionSearchLeg[] }> {
+  opts: CollectionSearchOptions = {},
+): Promise<{ nodes: WloNode[]; unreachable: CollectionSearchLeg[]; full: CollectionSearchLeg[] }> {
   const q = query.trim();
-  if (!q) return { nodes: [], unreachable: [] };
+  if (!q) return { nodes: [], unreachable: [], full: [] };
 
-  const nameCap = Math.min(maxItems, NAME_LEG_MAX);
+  const nameCap = opts.nameLegMax ?? Math.min(maxItems, NAME_LEG_MAX);
   // A leg that THROWS (timeout, DNS, reset — before a response exists) is the
   // same non-answer as one that answered non-OK; neither takes the other down.
   const down = (leg: CollectionSearchLeg) => (err: unknown) => {
@@ -105,9 +123,17 @@ export async function searchCollectionsResult(
   const keywordHits = keyword.nodes;
   const nameHits = name.nodes;
   const unreachable: CollectionSearchLeg[] = [...(keyword.reachable ? [] : ['keyword' as const]), ...(name.reachable ? [] : ['name' as const])];
+  // A leg that filled the window it was asked for may hold more than it
+  // returned. Irrelevant to a ranked list; decisive for whoever concludes
+  // "exactly one" from it (`collection-by-name.ts`).
+  const full: CollectionSearchLeg[] = [
+    ...(keywordHits.length >= maxItems ? ['keyword' as const] : []),
+    ...(nameHits.length >= nameCap ? ['name' as const] : []),
+  ];
 
   const known = new Set(keywordHits.map(idOf).filter(Boolean));
-  const newIds = nameHits.map(idOf).filter(id => id && !known.has(id)).slice(0, nameCap);
+  const wantedHits = opts.adoptNameHit ? nameHits.filter(opts.adoptNameHit) : nameHits;
+  const newIds = wantedHits.map(idOf).filter(id => id && !known.has(id)).slice(0, nameCap);
   // Nodes the re-read cannot deliver are dropped rather than substituted by the
   // endpoint's own: a half-projected node in the pool is exactly what this
   // re-read exists to prevent.
@@ -131,7 +157,7 @@ export async function searchCollectionsResult(
       merged.push(node);
     }
   }
-  return { nodes: merged, unreachable };
+  return { nodes: merged, unreachable, full };
 }
 
 /**

@@ -52,3 +52,41 @@ export async function mapPool<T, R>(
   await Promise.all(Array.from({ length: n }, worker));
   return results;
 }
+
+/**
+ * A bound SHARED by several fan-outs: at most `limit` tasks run at once, however
+ * many callers hand tasks in. `mapPool` cannot do this — it bounds ONE list, and
+ * the batch search (`services/content-search-many.ts`) runs several searches
+ * whose requests must share one ceiling.
+ *
+ * FIFO. A task whose `signal` aborts while it WAITS leaves the queue at once,
+ * rejecting with the signal's reason — it does not hold its caller until a slot
+ * frees. One whose signal has aborted by the time its turn comes is not started
+ * and passes its slot on.
+ */
+export function createLimiter(limit: number): <T>(task: () => Promise<T>, signal?: AbortSignal) => Promise<T> {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async (task, signal) => {
+    // A waiter is handed the slot of the task that finished: `active` stays as
+    // it is, so a newcomer cannot slip in between.
+    if (active >= limit) {
+      // Rejecting here is outside the `try`: a waiter that left never held a slot.
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) { reject(signal.reason); return; }
+        const turn = () => { signal?.removeEventListener('abort', leave); resolve(); };
+        const leave = () => { waiting.splice(waiting.indexOf(turn), 1); reject(signal!.reason); };
+        waiting.push(turn);
+        signal?.addEventListener('abort', leave, { once: true });
+      });
+    } else active++;
+    try {
+      if (signal?.aborted) throw signal.reason;
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
