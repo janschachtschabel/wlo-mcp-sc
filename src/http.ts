@@ -14,7 +14,7 @@ import http from 'node:http';
 import { WLO_REPOSITORY_URL, resolvePositiveInt, resolveNonNegativeInt } from './wlo-api.js';
 import { log } from './logger.js';
 import { addressForLog } from './wlo-config.js';
-import { exitOnUnusableRepositoryUrl, warnOnUnknownLogLevel } from './startup-check.js';
+import { exitOnUnusableRepositoryUrl, warnOnDefaultRepository, warnOnUnknownLogLevel } from './startup-check.js';
 import { createDistinctValueLimiter, createRateLimiter } from './rate-limit.js';
 import { streamableHttpOptions } from './mcp-transport.js';
 import { createHttpRequestHandler } from './http-app.js';
@@ -152,6 +152,7 @@ if (trustedClients.rejected.length) {
 
 warnOnUnknownLogLevel();
 exitOnUnusableRepositoryUrl();
+warnOnDefaultRepository();
 
 const metricsToken = metricsTokenFrom(process.env['METRICS_TOKEN']);
 if (metricsTokenRejected(process.env['METRICS_TOKEN'])) {

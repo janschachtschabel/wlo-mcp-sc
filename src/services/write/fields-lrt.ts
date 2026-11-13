@@ -10,16 +10,17 @@
  * below, so a value import back would close a runtime cycle.
  */
 
-import { resolveLrt, LRT_CONCEPTS } from '../../vocabs-lrt.js';
+import { resolveLrt, LRT_CONCEPTS, type LrtConcept } from '../../vocabs-lrt.js';
 import { sanitizeText } from '../../text-sanitize.js';
-import { suggestFromEntries } from '../../vocab-suggest.js';
-import type { FieldValidation } from './fields.js';
+import { suggestEntries } from '../../vocab-suggest.js';
+import type { FieldValidation, RefusedValue } from './fields.js';
 
 /** How many near misses to offer for an unknown content type. */
 const LRT_SUGGESTIONS = 5;
 
-function reject(reason: string): FieldValidation {
-  return { ok: false, reason };
+/** Whether a concept's name alone names it — two of the 220 labels stand for two concepts. */
+function nameIsEnough(c: LrtConcept): boolean {
+  return resolveLrt(c.label).status === 'ok';
 }
 
 /**
@@ -39,28 +40,39 @@ function reject(reason: string): FieldValidation {
 export function validateContentTypes(values: string[]): FieldValidation {
   const uris: string[] = [];
   const unmappedChosen: string[] = [];
+  // Every refused value, not the first — and each with what the write WOULD
+  // take, so a program can choose again without a vocabulary lookup.
+  const reasons: string[] = [];
+  const refused: RefusedValue[] = [];
 
   for (const v of values) {
     const r = resolveLrt(v);
     if (r.status === 'ambiguous') {
-      const options = r.candidates.map(c => `„${c.label}“ (unter „${c.path}“)`).join(' oder ');
-      return reject(
+      const options = r.candidates.map(c => `„${c.label}“ unter „${c.path}“ (${c.uri})`).join(' oder ');
+      reasons.push(
         `„${sanitizeText(v)}“ kommt im Inhaltstyp-Vokabular zweimal mit unterschiedlicher Bedeutung vor: ${options}. ` +
           'Bitte die gemeinte Variante als URI angeben.',
       );
+      refused.push({ value: v, suggestions: r.candidates.map(c => c.uri) });
+      continue;
     }
     if (r.status === 'unknown') {
-      const near = suggestFromEntries(v, LRT_CONCEPTS, LRT_SUGGESTIONS);
-      return reject(
+      const near = suggestEntries(v, LRT_CONCEPTS).slice(0, LRT_SUGGESTIONS);
+      reasons.push(
         `„${sanitizeText(v)}“ ist kein bekannter Inhaltstyp.` +
-          (near.length ? ` Meintest du: ${near.join(', ')}?` : ''),
+          (near.length ? ` Meintest du: ${near.map(c => (nameIsEnough(c)
+            ? c.label : `${c.label} unter „${c.path}“ (${c.uri})`)).join(', ')}?` : ''),
       );
+      // The URI where the name would be refused in turn: a candidate is something the write takes.
+      refused.push({ value: v, suggestions: near.map(c => (nameIsEnough(c) ? c.label : c.uri)) });
+      continue;
     }
-    uris.push(r.uri);
+    if (!uris.includes(r.uri)) uris.push(r.uri);
     const concept = LRT_CONCEPTS.find(c => c.uri === r.uri);
-    if (concept && concept.aggregatedUri === null) unmappedChosen.push(concept.label);
+    if (concept && concept.aggregatedUri === null && !unmappedChosen.includes(concept.label)) unmappedChosen.push(concept.label);
   }
 
+  if (refused.length) return { ok: false, reason: reasons.join(' '), refused };
   if (unmappedChosen.length === 0) return { ok: true, values: uris };
   return {
     ok: true,

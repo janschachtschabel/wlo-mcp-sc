@@ -124,3 +124,16 @@ test('only the HTTP entry point sends the log to stdout — under stdio that is 
   assert.equal(firstImport, "import './logger-stdout.js';");
   assert.doesNotMatch(src('stdio.ts'), /logger-stdout|logToStdout/);
 });
+
+test('a start without WLO_REPOSITORY_URL says which repository it uses — the default is never silent', async () => {
+  const { warnOnDefaultRepository } = await import('../src/startup-check.js');
+  const quiet = captured(() => assert.equal(warnOnDefaultRepository({ WLO_REPOSITORY_URL: 'https://repo.example.org/edu-sharing' }), false));
+  assert.equal(quiet.err.length, 0);
+  for (const env of [{}, { WLO_REPOSITORY_URL: '' }, { WLO_REPOSITORY_URL: '   ' }]) {
+    const loud = captured(() => assert.equal(warnOnDefaultRepository(env), true));
+    assert.equal(loud.err.length, 1);
+    const line = JSON.parse(loud.err[0]!) as Record<string, unknown>;
+    assert.equal(line['level'], 'warn');
+    assert.match(String(line['repository']), /^https:\/\//);
+  }
+});

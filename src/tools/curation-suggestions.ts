@@ -54,6 +54,9 @@ import {
   fieldLabel,
   timeoutOrError,
   isPreviewCall,
+  candidatesField,
+  candidatesOf,
+  type FieldCandidates,
 } from './curation-shared.js';
 import { CONTENT_FIELDS, CONFIRM_TOKEN } from './curation-fields.js';
 
@@ -190,6 +193,8 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   // written is not a proposal, it is a task that fails later, for someone else.
   const drafts: SuggestionDraft[] = [];
   const reasons: string[] = [];
+  const candidates: FieldCandidates[] = [];
+  const notes: string[] = [];
 
   for (const entry of raw) {
     const property = CONTENT_FIELDS[entry.field];
@@ -200,8 +205,11 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
     const checked = validateField(property, entry.value);
     if (!checked.ok) {
       reasons.push(checked.reason);
+      candidates.push(...candidatesOf(entry.field, checked.refused));
       continue;
     }
+    // Shown with the preview like every other tool's: an alias is proposed as what it resolves to.
+    if (checked.note && !notes.includes(checked.note)) notes.push(checked.note);
     // The normalised value is stored, not the raw label: it is what would be
     // written, and re-validating it on accept yields the same thing.
     const value = checked.values[0];
@@ -213,7 +221,7 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
       ...(entry.confidence !== undefined ? { confidence: entry.confidence } : {}),
     });
   }
-  if (reasons.length > 0) return rejectionReply(reasons);
+  if (reasons.length > 0) return rejectionReply(reasons, candidatesField(candidates));
 
   const node = await getNodeMetadata(nodeId);
   if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
@@ -265,7 +273,7 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   };
 
   const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
-  if (!token) return previewReply(cs, 'Zum Hinterlegen der Vorschläge bitte bestätigen.');
+  if (!token) return previewReply(cs, 'Zum Hinterlegen der Vorschläge bitte bestätigen.', notes);
   const refusal = confirmOrExplain(token, cs);
   if (refusal) return refusal;
 

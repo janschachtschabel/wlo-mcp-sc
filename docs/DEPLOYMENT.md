@@ -378,11 +378,11 @@ meant to be lost on restart).
 
 ```bash
 # Tag every deploy so there is something to go back TO.
-docker build -t wlomcp:$(git rev-parse --short HEAD) .
-docker tag wlomcp:$(git rev-parse --short HEAD) wlomcp:current
+docker build -t wlo-mcp:$(git rev-parse --short HEAD) .
+docker tag wlo-mcp:$(git rev-parse --short HEAD) wlo-mcp:current
 
 # Roll back: point the tag at the previous build and restart.
-docker tag wlomcp:<previous-sha> wlomcp:current
+docker tag wlo-mcp:<previous-sha> wlo-mcp:current
 docker compose up -d
 curl -s https://mcp.example.org/health   # fingerprint should show the old hashes
 ```
@@ -436,7 +436,7 @@ command:
 
 ```bash
 docker run --rm -i --init -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing \
-  wlomcp:latest node dist/stdio.js
+  wlo-mcp:latest node dist/stdio.js
 ```
 
 `--init` matters here: the stdio entry point installs no signal handler (it ends

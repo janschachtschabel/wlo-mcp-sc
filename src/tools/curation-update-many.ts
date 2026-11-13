@@ -22,7 +22,7 @@ import { WRITABLE_FIELDS } from '../services/write/fields.js';
 import { sanitizeText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
 import {
-  collectDesired, previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge,
+  candidatesField, collectDesired, previewReply, rejectionReply, registerCurationTool, type FieldCandidates, type WriteAuthChallenge,
 } from './curation-shared.js';
 import { CONTENT_FIELDS, FIELD_SCHEMA } from './curation-fields.js';
 import { planReply } from './curation-plan-reply.js';
@@ -92,17 +92,25 @@ Für einen einzelnen Datensatz oder Dateiinhalt: wlo_update_content.`,
           // Validated like wlo_update_content, every record, before anything is read.
           const inputs: UpdateInput[] = [];
           const reasons: string[] = [];
+          const candidates: FieldCandidates[] = [];
           const validationNotes: string[] = [];
           raw.forEach((item, index) => {
             const collected = collectDesired(item, CONTENT_FIELDS);
             const who = `Eintrag ${index + 1} (${sanitizeText(String(item['nodeId']))})`;
-            if (!collected.ok) { reasons.push(...collected.reasons.map(r => `${who}: ${r}`)); return; }
+            if (!collected.ok) {
+              reasons.push(...collected.reasons.map(r => `${who}: ${r}`));
+              // The same value refused for fifty records is one thing to choose, not fifty.
+              for (const c of collected.candidates) {
+                if (!candidates.some(k => k.field === c.field && k.value === c.value)) candidates.push(c);
+              }
+              return;
+            }
             validationNotes.push(...collected.notes.map(n => `${who}: ${n}`));
             if (Object.keys(collected.desired).length === 0) { reasons.push(`${who}: kein zu änderndes Feld.`); return; }
             inputs.push({ nodeId: String(item['nodeId']).trim(), desired: collected.desired,
               ...(typeof item['reason'] === 'string' ? { reason: item['reason'] } : {}) });
           });
-          if (reasons.length) return { reply: rejectionReply(reasons) };
+          if (reasons.length) return { reply: rejectionReply(reasons, candidatesField(candidates)) };
 
           const prepared = await prepareUpdates(inputs);
           const writes = prepared.items.reduce((n, i) => n + i.write.changes.length, 0);

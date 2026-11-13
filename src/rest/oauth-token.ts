@@ -27,8 +27,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { redirectUriMatches } from '../auth/oauth-clients.js';
 import { log } from '../logger.js';
 import { readBodyWithLimit } from '../read-body.js';
-import { sanitizeText } from '../text-sanitize.js';
 import { send, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
+import { logAccount } from '../log-privacy.js';
 
 /** RFC 6749 §5.2 shape. `no-store` because the body carries the credential. */
 function tokenError(res: OAuthRes, error: string, description: string): true {
@@ -104,7 +104,7 @@ export async function exchangeCode(
     return refuse('PKCE verifier does not match the challenge');
   }
 
-  log.info('access token issued', { label: sanitizeText(record.label) });
+  log.info('access token issued', { label: logAccount(record.label) });
   return send(res, 200, {
     // The block, unchanged. `Pragma` alongside `Cache-Control` because RFC 6749
     // §5.1 asks for it and an HTTP/1.0 proxy still reads it.

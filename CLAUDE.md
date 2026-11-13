@@ -1020,6 +1020,19 @@ The current rebuild/extension is designed in:
   Feld, außer Reichweite jeder späteren Umbenennung. Nur das Einreichen
   (`wlo_submit_content`) lehnt Sammlungen und Ordner ab.
 
+  **Schreiben nimmt einen Vokabularwert nur per Name, Alias oder URI — nie per
+  Teilwort (Chatbot-Nachtrag 2026-11-13, Z1).** `vocabularyUris`
+  (`services/write/fields.ts`) fragt `resolveVocabMatch` und lehnt `fuzzy` ab:
+  die Suche lebt gut mit dem Raten (ein Filter ohne Treffer schadet nicht),
+  beim Schreiben wurde aus „Wirtschaft" still Agrarwirtschaft — und Fach, Stufe
+  und Zielgruppe ERSETZEN, was der Datensatz trägt. Der geratene Wert geht nicht
+  verloren, er führt die Kandidaten an (`error.candidates`), und gewählt wird
+  vom Client. `tests/write-vocab-exact.test.ts` hält für JEDEN Eintrag der drei
+  Vokabulare fest, dass Name, Alias und URI weiter angenommen werden. Die vier
+  Felder nehmen seither auch eine Liste (B1); der Inhaltstyp hat sein eigenes,
+  größeres Vokabular (`new_lrt`), das `lookup_wlo_vocabulary("contentType")`
+  listet — zwei Namen darin sind mehrdeutig und nur per URI schreibbar.
+
   **P1 ist gebaut (2026-08-17), und drei Regeln binden jede Änderung daran.**
   (a) Die Auflösung entscheidet sich am **DTO-Feld `originalId`**
   (`resolveWriteTarget`, `services/write/nodes.ts`), niemals an der Property
@@ -1931,6 +1944,15 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   rules: a label value comes from OUR code (route class, tool name, status
   class), never from the caller — a path or a query as a label is unbounded
   memory and a record of who did what; and a metric is declared in `METRICS`.
+  `src/log-privacy.ts` — what a log line says about a PERSON (user decision
+  2026-11-13): a client address, an account name and a search term are written
+  as pseudonyms (`~` + 12 hex, a keyed digest valid for one process run) unless
+  `LOG_PERSONAL_DATA=plain`. Every log field that can carry one goes through
+  `logAddress` / `logAccount` / `logTerm`; the guard in
+  `tests/shared-rule-discipline.test.ts` knows the field NAMES a person hides
+  behind and grows with each finding — `subject`, `title` and a path ending in
+  the term were found by review, after the first version passed. Nothing reads
+  the log back; limiters and the allow-list use the real values in memory.
   `src/logger.ts` — one JSON object per line, in the service guide's field
   names (`timestamp`, `level`, `service`, `message`; D8, 2026-11-13). The
   default stream is stderr and that is the safe one: under stdio, stdout is the

@@ -17,7 +17,7 @@
 
 import { verifyBlockLogin, type LoginFailure, type VerifyDeps } from './access-verify.js';
 import { log } from '../logger.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { logAccount } from '../log-privacy.js';
 
 /**
  * How many accesses went. Deliberately no `label`: the only caller is a page on
@@ -55,7 +55,7 @@ export async function revokeAllForBlock(
   // was recorded.
   const revoked = await deps.support.registry.removeByLabel(account, payload.u);
   log.info('all access blocks revoked for an account', {
-    label: sanitizeText(payload.u),
+    label: logAccount(payload.u),
     revoked,
   });
   return { ok: true, revoked };

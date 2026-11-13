@@ -24,8 +24,8 @@ set -euo pipefail
 # "mount path must be absolute". Harmless everywhere else.
 export MSYS_NO_PATHCONV=1
 
-IMAGE="${SMOKE_IMAGE:-wlomcp:smoke}"
-NAME="wlomcp-smoke-$$"
+IMAGE="${SMOKE_IMAGE:-wlo-mcp:smoke}"
+NAME="wlo-mcp-smoke-$$"
 
 fail() { echo "SMOKE FAILED: $*" >&2; docker logs "$NAME" 2>&1 | tail -n 40 >&2 || true; exit 1; }
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }

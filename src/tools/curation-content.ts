@@ -21,11 +21,12 @@ import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
-import { desiredOn } from '../services/write/collection-fields.js';
+import { desiredOn, titleOn } from '../services/write/collection-fields.js';
+import { isCollectionNode } from '../node-kind.js';
 import { createContentNode, resolveCreateParent, submitForReview, REVIEW_STATUS } from '../services/write/nodes-lifecycle.js';
 import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
 import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
-import { findByTitle, findByUrl } from '../services/write/duplicates.js';
+import { findByTitle, findByUrl, type ExistingRecord } from '../services/write/duplicates.js';
 import { fileRecord, readFilingTarget, type FilingTarget } from '../services/write/create-filing.js';
 import { fileExistingRecord, filingSentence, withFiling } from './curation-create-filing.js';
 import { WLO_INBOX_ID } from '../wlo-config.js';
@@ -52,8 +53,10 @@ import {
   isPreviewCall,
   wrongKind,
   wrongKindReply,
+  candidatesField,
 } from './curation-shared.js';
 import { CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.js';
+import { findUrlMatches, normalizeSourceUrl } from '../services/url-matches.js';
 
 const updateSchema = {
   nodeId: z.string().describe('nodeId of the record to change.'),
@@ -153,6 +156,51 @@ function existsReply(existing: { nodeId: string; title: string }): WloToolResult
     { existing: { nodeId: existing.nodeId, title: existing.title }, outcomeOpen: false });
 }
 
+/**
+ * Records filed under a CLEANED spelling of this address (no tracking
+ * parameters, no trailing slash, no fragment) — a note in the preview, not a
+ * refusal: the same page under another spelling is strong evidence of a
+ * duplicate and still the person's call, like a same-title record (chatbot
+ * feedback 2026-11-13, Z5). The exact spelling is refused before this runs.
+ * A search that failed is SAID: no note would read as "none found".
+ */
+async function similarAddressNotes(url: string): Promise<string[]> {
+  return (await addressCheck(url)).notes;
+}
+
+const ADDRESS_UNCHECKED = 'Ob es zu einer bereinigten Schreibweise dieser Adresse schon einen Datensatz gibt, '
+  + 'ließ sich gerade nicht prüfen (find_content_by_url prüft das einzeln).';
+
+/**
+ * Both questions the create preview has about an address, from ONE look
+ * (`findUrlMatches`, three spellings): is there a record under exactly this
+ * spelling — the refusal — and are there records under a cleaned one — the
+ * notes. Asked separately they cost four searches, one of them twice.
+ *
+ * `exact` there is the comparison `findByUrl` makes (case ignored, nothing
+ * else), over the same search plus two more — so nothing `findByUrl` refuses
+ * becomes a mere note. When the look fails, the refusal still rests on
+ * `findByUrl` alone, which needs only the spelling as given; only the notes
+ * are lost, and that is said.
+ */
+async function addressCheck(url: string): Promise<{ existing: ExistingRecord | null; notes: string[] }> {
+  const normalized = normalizeSourceUrl(url);
+  if (!normalized) return { existing: await findByUrl(url), notes: [] };
+  let matches;
+  try {
+    matches = await findUrlMatches(url, normalized);
+  } catch {
+    return { existing: await findByUrl(url), notes: [ADDRESS_UNCHECKED] };
+  }
+  const exact = matches.find(m => m.match === 'exact');
+  return {
+    existing: exact ? { nodeId: exact.nodeId, title: exact.title, url: exact.url } : null,
+    notes: matches.filter(m => m.match === 'normalized').slice(0, 3).map(m =>
+      `Unter einer anderen Schreibweise derselben Adresse gibt es bereits „${sanitizeText(m.title)}“ (${m.nodeId}, ${sanitizeText(m.url)}). `
+        + 'Möglicherweise eine Dublette — beim Bestätigen wird trotzdem ein zweiter Datensatz angelegt.'),
+  };
+}
+
 export function registerCurationContentTools(server: McpServer, challenge: WriteAuthChallenge): void {
   registerCurationTool(server, challenge, {
     name: 'wlo_update_content',
@@ -177,7 +225,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
 
         const nodeId = String(params['nodeId'] ?? '');
         const collected = collectDesired(params, CONTENT_FIELDS);
-        if (!collected.ok) return rejectionReply(collected.reasons);
+        if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
         const carriesFile = typeof params['content'] === 'string' || typeof params['fileBase64'] === 'string';
         // A file alone IS a change. Without this the tool would refuse "just
         // replace the content", which is the main reason the file path exists
@@ -257,6 +305,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // built: deciding later would move the write to a record the preview
         // never named.
         const cs = buildChangeSet(target.targetId, 'content', before, desired, {
+          subject: { collection: isCollectionNode(baseline.written), title: titleOn(baseline.written, before) },
           ...(extras.length ? { action: extras.join(' ') } : {}),
           ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
         });
@@ -330,7 +379,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         requireWrite();
 
         const collected = collectDesired(params, CONTENT_FIELDS);
-        if (!collected.ok) return rejectionReply(collected.reasons);
+        if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
         const title = collected.desired['cclom:title']?.[0];
         if (!title) return errorText('Zum Anlegen wird mindestens ein Titel benötigt.');
 
@@ -351,6 +400,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // the key binds to.
         const collectionId = typeof params['addToCollectionId'] === 'string' ? params['addToCollectionId'].trim() : '';
         let target: FilingTarget | undefined;
+        let addressNotes: string[] | undefined;
         if (collectionId) {
           const found = await readFilingTarget(collectionId);
           if (!found.ok) {
@@ -368,8 +418,9 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
           // record that can never be created — the key would be spent on a
           // refusal (chatbot feedback 2026-11-07). The create re-checks below,
           // because a record can appear between preview and confirmation.
-          const existing = await findByUrl(source.url);
-          if (existing) return existsReply(existing);
+          const checked = await addressCheck(source.url);
+          if (checked.existing) return existsReply(checked.existing);
+          addressNotes = checked.notes;
         }
 
         // A record that does not exist yet has no id, so the change set is
@@ -393,6 +444,9 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
           // person's call — so it belongs in the preview, as a note beside the
           // change set rather than inside the fingerprint.
           const notes = [...collected.notes];
+          // Already looked up above where no collection is named; with one, the
+          // refusal took its own path (`findByUrl`) and the notes are asked here.
+          if (source.kind === 'url') notes.push(...(addressNotes ?? await similarAddressNotes(source.url)));
           if (file) {
             const twin = await findByTitle(title, resolveCreateParent(writeMode(), WLO_INBOX_ID));
             if (twin) {

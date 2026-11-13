@@ -4968,3 +4968,32 @@ ungelesene Körper blieben im Speicher und wurden mitgezählt) — behoben, jetz
 erzwingen); Staging-Vorgabe im Code streichen; Dienst-ID; Image-Registry; was das Log an IP/Benutzername/
 Suchbegriff tragen darf; `mem_limit` 768 MB bei Stapel-Upload. **Nebenbefunde, nicht geändert:** `/api/wikipedia`
 503 und `/ready` 503 ohne `Retry-After`; die No-CORS-Regel auf `/auth*` trifft auch die statischen Skripte.
+
+**Log-Datenschutz, Dienst-ID, Vorgabe (2026-11-13, Nutzerentscheidungen).** Adresse, Kontoname und Suchbegriff
+stehen im Log standardmäßig nur als Pseudonym (`src/log-privacy.ts`, Schlüssel-Hash je Prozesslauf);
+`LOG_PERSONAL_DATA=plain` schreibt Klartext. Geprüft: nichts liest das Log zurück — Limiter, Zugangsliste und Caches
+arbeiten mit den echten Werten im Speicher. Review (unabhängig, 10 Befunde, behoben): drei übersehene Stellen mit
+Suchbegriff im Klartext (`browse.ts` Fach, Wikipedia-Titel, `/api/search/<Begriff>` im Fehlerpfad), Wächter
+erweitert (ausbalancierter Aufruf-Scanner, mehr Feldnamen, Wert in der Meldung), Grenzen eines Pseudonyms in
+PRIVACY.md benannt. Dienst-ID `wlo-mcp` für Paket und Image. Die Staging-Vorgabe im Code BLEIBT (ohne B-API gibt es
+keine andere Quelle für die Adresse; Installationen ohne Variable würden nicht mehr starten) — dafür warnt der Start,
+wenn die Variable fehlt. `WLO_PUBLIC_BASE_URL` bleibt bei der Startwarnung (Empfehlung: erst setzen, eine Version
+warnen, dann erzwingen). A-3 und Ausgabeschemata: als neue Hauptversion mit Liste „alt → neu", noch nicht geplant.
+
+**Nachtrag des Chatbot-Teams (Tempo) — Z1, Z2, Z5, B1, B2 umgesetzt (2026-11-13).** Z1: Schreiben nimmt einen
+Vokabularwert nur per Name/Alias/URI; ein Teilwort-Treffer wird mit Kandidaten abgelehnt (`error.candidates`).
+Z2: Vorschau nennt Art, Titel und Kennung; Inhaltstyp als Name. Z5: Vorschau des Anlegens nennt Datensätze unter
+bereinigter Schreibweise der Adresse. B1: Fach/Stufe/Typ/Zielgruppe als Text oder Liste. B2:
+`lookup_wlo_vocabulary("contentType")`. Befund beim Bauen: zwei Inhaltstyp-Namen („Suchmaschine",
+„Stationenlernen") stehen für je zwei Konzepte und werden vom Schreiben abgelehnt — die Liste nennt dafür die URI.
+3154 Tests, 3153 grün, 1 übersprungen; 15 Gegenproben rot. **Offen:** Z3 (Sammlung per Name an fünf Lesewerkzeugen),
+Z4 (`search_wlo_content_many`), B1-Ergänzen (Frage an die Redaktion).
+
+**Review Z1/Z2/Z5/B1/B2 (unabhängig, 9 Befunde + Alias-Liste, alle behoben, 2026-11-13):** Kandidaten sind jetzt
+EINTRÄGE (jeder einmal, der geratene zuerst, dann Namen mit dem Wort als Ganzem); der Inhaltstyp liefert
+`error.candidates` (bei mehrdeutigem Namen die URIs); kein menschliches Prüfurteil als Vorschlag; Werte dedupliziert;
+ALLE abgelehnten Werte einer Liste werden gemeldet (`refused[]`); die Vorschau des Anlegens fragt die Adresse einmal
+statt viermal; ein über einen Alias aufgelöster Wert wird in der Vorschau gesagt („Gymnasium" wird als
+„Sekundarstufe II" geschrieben); rund 60 gängige Schreibweisen als Aliasse ergänzt (nicht: vorschule,
+foerderschule, sonderschule — enthalten „schule"); Satzzeichen und Mehrfach-Leerzeichen um einen Namen stören nicht
+mehr. 3175 Tests, 3174 grün, 1 übersprungen; Image-Starttest unter `wlo-mcp:smoke` bestanden.

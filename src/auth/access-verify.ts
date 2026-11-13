@@ -31,7 +31,7 @@ import {
 import { checkIdentity, type WloIdentity } from './identity.js';
 import { log } from '../logger.js';
 import type { DistinctValueLimiter } from '../rate-limit.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { logAccount, logAddress } from '../log-privacy.js';
 
 /**
  * How every login-checking path fails: 400 refused, 429 the guessing guard,
@@ -112,7 +112,7 @@ export async function proveLogin(
   // credential here: a caller passing one that carries a `jti` would silently
   // count per id, which for freshly minted blocks is a new budget per guess.
   if (deps.authAbuseLimiter.check(deps.bucket ?? addressBucket(deps.ip), credential.header, now)) {
-    log.warn('too many distinct logins offered', { ip: deps.ip, purpose });
+    log.warn('too many distinct logins offered', { ip: logAddress(deps.ip), purpose });
     return { ok: false, reason: 'limited' };
   }
   const identity = await runWithCredential(credential, () => checkIdentity());
@@ -162,7 +162,7 @@ export async function verifyBlockLogin(
       return unreachableFailure();
     }
     log.info('access request refused — credentials not accepted', {
-      label: sanitizeText(payload.u),
+      label: logAccount(payload.u),
       purpose,
     });
     return {

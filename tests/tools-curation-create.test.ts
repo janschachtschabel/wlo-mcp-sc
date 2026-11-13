@@ -149,11 +149,11 @@ test('an existing record for the same URL is refused in the PREVIEW — no key i
 
 test('a duplicate that appears between preview and confirmation answers exists, not refused', async () => {
   setServiceCredentialForTest(USER);
-  let searches = 0;
+  // Said as what it means — "after the preview" — not as a count of searches:
+  // how many the preview makes is not this test's business.
+  let dup = false;
   const mock = installFetchMock((url, init) => {
     if (url.includes('/search/v1/')) {
-      searches++;
-      const dup = searches > 1;
       return { json: {
         nodes: dup ? [{ ref: { id: 'alt-9', repo: '-home-' }, properties: { 'ccm:wwwurl': [URL_NEW], 'cclom:title': ['Neu da'] } }] : [],
         pagination: { total: dup ? 1 : 0, from: 0, count: dup ? 1 : 0 } } };
@@ -164,6 +164,7 @@ test('a duplicate that appears between preview and confirmation answers exists, 
   const client = await curationClient();
   try {
     const preview = toolText(await client.callTool({ name: 'wlo_create_content', arguments: CREATE_ARGS }));
+    dup = true;
     const res = await client.callTool({ name: 'wlo_create_content', arguments: { ...CREATE_ARGS, confirmToken: tokenFrom(preview) } });
     const s = res.structuredContent as { error?: { code?: string; existing?: { nodeId?: string }; outcomeOpen?: boolean } };
     assert.equal(s.error?.code, 'exists');

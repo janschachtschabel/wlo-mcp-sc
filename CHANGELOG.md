@@ -6,6 +6,45 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — chatbot team addendum of 2026-11-13: writing by name, previews that name their record
+
+- **Z1 — a write takes a vocabulary value by its name or a listed alias, never by a substring guess.** Subject,
+  educational level and target group went through the search's resolution, which accepts a substring of four
+  characters or more: "Wirtschaft" was stored as Agrarwirtschaft, "Sekundarstufe" as Sekundarstufe I — and these
+  fields replace what the record carries. Such a value is now refused like an unknown word, with candidates: in
+  the text ("Meintest du: …") and as `error.candidates: [{field, value, suggestions}]`, in `wlo_update_content`,
+  `wlo_create_content`, `wlo_update_contents` and `wlo_suggest_metadata`. Every name, alias and URI the
+  vocabularies list is still accepted (pinned for all entries). The SEARCH is unchanged.
+- **Z2 — the preview of a metadata change opens with what is changed:** `Datensatz: „Titel“ (id)` or
+  `Sammlung: …`, and a content type is shown by name, old and new, instead of as two addresses.
+  `confirm.preview.target.kind` is `collection` when the node is one.
+- **Z5 — the preview of `wlo_create_content` names records filed under another spelling of the address** (no
+  tracking parameters, no trailing slash) as a note beside the key; the exact spelling is refused as before.
+- **B1 — `discipline`, `educationalContext`, `contentType` and `userRole` take one label or a list**, and their
+  descriptions say that they REPLACE the field. A record can now keep Physik and gain Mathematik.
+- **B2 — `lookup_wlo_vocabulary` has `contentType`:** the names the write accepts (the aggregated `lrt` list is for
+  filtering, and its URIs the write refuses). Narrowed with `query`; the two names that stand for two concepts are
+  listed with their URI. The field's example no longer names "Video", which the write refuses.
+
+### Changed — one name, and a default that speaks (2026-11-13)
+
+- **Service id `wlo-mcp`:** the npm package and the image are named like the compose service, the `service` log
+  field and the chart (were `wlomcp`). `docker compose up -d --build` builds the image under the new name; the
+  old `wlomcp:latest` is left behind and can be removed.
+- **A start without `WLO_REPOSITORY_URL` warns which repository it uses.** The built-in default stays: the server
+  has no other source for the address, and a deployment that sets no variable would stop starting.
+
+### Changed — the log no longer names a person in the clear (user decision 2026-11-13)
+
+- **A client address, a WLO account name and a search term are written as pseudonyms by default** (`~` and twelve
+  hex characters: a keyed digest that exists only in the running process). "The same address again" and "the same
+  search failed three times" stay visible within one run; the value cannot be read back or matched against another
+  run. `LOG_PERSONAL_DATA=plain` writes the values as before. One module (`src/log-privacy.ts`), and a test fails a
+  log line that puts `ip`, `label` or `query` there any other way.
+- Nothing reads the log back, so nothing functional changes: limiter buckets, the allow-list and the caches use the
+  real values in memory. The Wikipedia "no candidate was on topic" line now carries the NUMBER of candidates, not
+  their titles — they echo the search.
+
 ### Changed — the log follows the service guide (chatbot feedback 2026-11-13, D8)
 
 - **Field names:** `timestamp`, `level`, `service`, `message` (were `ts`, `level`, `name`, `msg`). `req`,

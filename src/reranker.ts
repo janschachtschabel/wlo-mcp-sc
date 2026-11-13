@@ -11,6 +11,7 @@ import { expandQuery } from './query-expand.js';
 import { nodeTitle, queryTerms as signalTerms, termMatches } from './node-match.js';
 import { log } from './logger.js';
 import { isClientGone } from './request-scope.js';
+import { logTerm } from './log-privacy.js';
 
 // Candidate pool PER search variant for ranking — NOT the number of results
 // delivered (that is maxResults). Smaller pool = faster/smaller fetches at
@@ -225,7 +226,7 @@ export async function enhancedSearch(
   if (successful.length === 0) {
     const reason = settled.find(r => r.status === 'rejected')?.reason;
     const detail = reason instanceof Error ? reason.message : String(reason ?? 'unknown');
-    log.warn('every query variant failed — reporting an error, not an empty result', { query, detail });
+    log.warn('every query variant failed — reporting an error, not an empty result', { query: logTerm(query), detail });
     throw new Error(`search failed: no query variant could be executed (${detail})`);
   }
 

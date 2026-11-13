@@ -183,6 +183,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_UPSTREAM_CONCURRENCY` | `24` | alle | Wie viele Aufrufe der ganze **Prozess** gleichzeitig am Repository offen haben darf. Jede andere Grenze gilt je Aufruf oder je Client; allein eine Suche mit OER-Filter startet rund 25. Ein Aufruf, der binnen 5 s keinen Platz bekommt — oder auf eine Warteschlange vom Vierfachen der Grenze trifft —, wird nicht gesendet; Werkzeuge, die Fehler mit Code melden, antworten `upstream_busy` samt Wartezeit. `0` schaltet die Grenze ab. |
 | `METRICS_TOKEN` | _(nicht gesetzt)_ | http | Schaltet `GET /metrics` ein (Prometheus-Textformat) und ist das Bearer-Token, auf das die Route antwortet; mindestens 16 Zeichen. Ohne die Variable gibt es den Pfad nicht. Gezählt werden Anfragen je Routenklasse, Werkzeugaufrufe je Werkzeug und Ausgang, Repository-Aufrufe je Ausgang — nie ein Aufrufer, ein Pfad oder eine Suchanfrage. |
 | `LOG_LEVEL` | `info` | alle | Niedrigste Stufe, die geloggt wird: `debug`, `info`, `warn` oder `error` (auf `debug` wird heute keine Zeile geschrieben). Ein unbekannter Wert wird mit einer Warnung ignoriert. Das Log ist ein JSON-Objekt je Zeile — `timestamp`, `level`, `service`, `message`, dazu `trace_id`/`span_id`, wenn der Aufrufer B3-Kopfzeilen sendet, und `req`, die Anfrage-Kennung. Über HTTP geht es nach **stdout**, unter stdio nach **stderr** (dort ist stdout der Protokollkanal). |
+| `LOG_PERSONAL_DATA` | _(nicht gesetzt)_ | alle | Was das Log über eine Person sagt. Nicht gesetzt: Client-Adresse, WLO-Kontoname und Suchbegriff stehen als kurze **Pseudonyme** im Log (ein Schlüssel-Hash, der nur in diesem Prozess gilt — „dieselbe Adresse wieder“ bleibt sichtbar, der Wert nicht). `plain` schreibt sie im Klartext. Betrifft nur das Log; Limits und Zugangsliste arbeiten im Speicher in beiden Fällen mit den echten Werten. |
 | `INTERNAL_PORT` | _(nicht gesetzt)_ | http | Ein zweiter Port, der **nur** `GET /health`, `GET /ready` und `GET /metrics` bedient — für Proben und den Scraper, abseits des öffentlichen Proxys. Ein Zusatz: die drei Pfade bleiben auch auf `PORT`. `/metrics` braucht hier kein Token, solange `METRICS_TOKEN` nicht gesetzt ist; der Port darf deshalb nicht veröffentlicht werden. Anfragen hier zählen nicht in `wlo_http_requests_total`. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(nicht gesetzt)_ | alle | Optionales Dienstkonto. Nicht gesetzt (Standard) → der Server liest **anonym**, nur öffentliche Inhalte, exakt wie bisher. Beide gesetzt → jeder Aufruf meldet sich per HTTP Basic mit diesem einen Konto an, **alle** Nutzenden dieses MCP sehen also dieselben erweiterten Inhalte. Dafür ein eigens angelegtes, schreibgeschütztes Konto verwenden: was es sieht, sieht jede:r, und im edu-sharing-Protokoll steht das Dienstkonto statt der Person. Eine halbe Angabe gilt als keine. **Falsche Zugangsdaten schalten nicht auf „nur öffentlich“ zurück** — das Repository antwortet mit `401` (gemessen gegen die Produktion am 2026-07-31, auf dem Identitäts- wie auf dem Such-Endpunkt), damit schlägt jede Abfrage fehl und der Server liefert gar nichts. Wer anonym lesen will, lässt beide Variablen weg. Mit dem Werkzeug `wlo_auth_status` prüfen: `mode: "service"` zusammen mit `authenticated: false` und `upstream: "ok"` heißt, die Zugangsdaten werden abgelehnt (`upstream: "unreachable"` heißt, das Repository hat nicht geantwortet — kein Urteil über die Zugangsdaten). HTTP Basic, weil es neben dem Session-Cookie das einzige Schema ist, das die edu-sharing-OpenAPI deklariert. **Geltungsbereich:** Das Dienstkonto gilt nur für den MCP-Endpunkt. Die öffentliche REST-Schnittstelle (`GET /api/*`) und die Launcher-Seite bleiben bewusst anonym — sie sind ohne Anmeldung aus dem Internet erreichbar; würden sie das Konto erben, wäre alles, was es sieht, für jede:n lesbar. Bei einer Repository-URL ohne `https` gehen die Zugangsdaten im Klartext über die Leitung (Basic ist base64, keine Verschlüsselung); der Server warnt darüber beim Start. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(nicht gesetzt)_ | alle | Erlaubt dem **Dienstkonto** die kuratierenden (schreibenden) Werkzeuge. Standardmäßig aus: eine Änderung unter einem gemeinsamen Konto ist niemandem zuzuordnen — in der Historie des Repositorys steht der Kontoname, nicht die Person, die sie angefordert hat. Wer sich mit dem eigenen WLO-Login meldet, darf immer schreiben und braucht hier nichts; anonyme Aufrufende dürfen nie — sie sehen die Werkzeuge (nur so lernt ihr Client, eine Anmeldung anzubieten), und jeder Aufruf wird abgelehnt. Gilt ebenso für den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als Dienstkonto gelten. Gültige Werte: `1`, `true`, `yes`, `on`; alles andere (auch `false`) lässt es aus. Siehe [Kuratieren](#kuratieren-schreiben-in-wlo). |
@@ -786,8 +787,9 @@ nächstliegende Zeichenkette.** Vor dieser Absicherung gemessen: `Stadt Berlin`
 lieferte `Bern`, `Dreiecke` lieferte `Dreiecker`, einen Berg im Allgäu. Wer den
 Extrakt zu Unterrichtsmaterial verarbeitet, hängt eine Quellenangabe auf den
 Artikel an — ein plausibler falscher Artikel sieht dann nicht nur schief aus,
-sondern veröffentlicht eine falsche Quellenangabe. Die verworfenen Kandidaten
-stehen im Log, damit ein Fehlschlag nachvollziehbar bleibt.
+sondern veröffentlicht eine falsche Quellenangabe. Wie viele Kandidaten verworfen wurden,
+steht im Log; der Suchbegriff selbst steht dort nur als Pseudonym, solange
+`LOG_PERSONAL_DATA=plain` nicht gesetzt ist.
 
 Die Prüfung läuft nur auf den Suchkandidaten. Zwei Folgen sind wissenswert: eine
 Weiterleitung wird nie angezweifelt (ohne Stemmer lässt sich „Bruchrechnen" und
@@ -1054,8 +1056,8 @@ unten). Ein Serverless-Deployment-Ziel gibt es nicht.
 ```bash
 docker compose up -d --build          # Build + Start im Hintergrund (empfohlen)
 # oder ohne Compose:
-docker build -t wlomcp .
-docker run -p 3000:3000 wlomcp        # prod default
+docker build -t wlo-mcp .
+docker run -p 3000:3000 wlo-mcp        # prod default
 # → http://localhost:3000/mcp  ·  /health  ·  /api/*  ·  /launcher.html
 ```
 

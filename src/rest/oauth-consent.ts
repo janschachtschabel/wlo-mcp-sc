@@ -26,10 +26,10 @@ import { ANONYMOUS_ACCESS_TOKEN, type AccessSupport } from '../auth/credential.j
 import { authorizationRedirect, checkAuthorizeParams } from '../auth/oauth-authorize.js';
 import { log } from '../logger.js';
 import { isJsonContentType } from '../read-body.js';
-import { sanitizeText } from '../text-sanitize.js';
 import { sendLoginFailure } from './login-failure.js';
 import { send, readJsonBody, type OAuthEndpointDeps, type OAuthReq, type OAuthRes } from './oauth-http.js';
 import { AUTHORIZE_ASSET, AUTH_CSP, sendAsset } from './static.js';
+import { logAccount } from '../log-privacy.js';
 
 /** What the log records for a connection made without an account. */
 const ANONYMOUS_LABEL = '(ohne Konto)';
@@ -210,7 +210,7 @@ export async function grantConsent(
   // and about the rule reading the same way everywhere it applies.
   log.info('authorization code issued', {
     client: checked.request.client.name,
-    label: sanitizeText(outcome.label),
+    label: logAccount(outcome.label),
   });
   return send(res, 200, { redirect: authorizationRedirect(checked.request, code) },
     { 'Cache-Control': 'no-store' });

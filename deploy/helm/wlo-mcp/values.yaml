@@ -98,6 +98,9 @@ config:
   WLO_TOPIC_POOL: ""
   WLO_COMPENDIUM_SECTION_MAX: ""
   LOG_LEVEL: ""
+  # "plain" writes client addresses, account names and search terms into the log
+  # as they are; empty keeps the default, pseudonyms.
+  LOG_PERSONAL_DATA: ""
   # ── 7 — widgets / ChatGPT submission ───────────────────────────────────────
   WLO_WIDGET_DOMAIN: ""
   WLO_WIDGET_MIME: ""

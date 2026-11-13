@@ -23,6 +23,7 @@ import { cutAtWordBoundary } from '../../text-cap.js';
 import { WRITABLE_FIELDS, type FieldRoute } from './fields.js';
 import { labelFromUri, type VocabKey } from '../../vocabs.js';
 import { scaleLabel } from '../../vocabs-quality-scale.js';
+import { LRT_CONCEPTS } from '../../vocabs-lrt.js';
 
 export type ChangeKind = 'content' | 'collection' | 'compendium' | 'topic-page';
 
@@ -44,6 +45,14 @@ export interface ChangeSet {
   destructive: boolean;
   /** Title of the affected node at planning time, for the deletion preview. */
   title: string;
+  /**
+   * What the node IS, when the tool knows — then the preview opens with
+   * "<what>: „title“ (id)". A metadata preview used to consist of its field
+   * lines alone, and nobody reading it saw WHICH record they were about to
+   * change (chatbot feedback 2026-11-13, Z2). Title and id are in the
+   * fingerprint either way.
+   */
+  named?: 'Datensatz' | 'Sammlung';
   /**
    * The id the caller named, when it is NOT the one being written: they named a
    * collection reference and the write was redirected to the original
@@ -115,6 +124,8 @@ export function buildChangeSet(
   opts: {
     destructive?: boolean; action?: string; redirectedFrom?: string;
     addTo?: { nodeId: string; title: string }; items?: string[];
+    /** The node the tool READ: names it in the preview's first line, by the title of its own kind. */
+    subject?: { collection: boolean; title: string };
   } = {},
 ): ChangeSet {
   const changes: FieldChange[] = [];
@@ -140,7 +151,9 @@ export function buildChangeSet(
     changes,
     destructive: opts.destructive === true,
     // By KIND: a collection is named by the title its own endpoint writes.
-    title: kind === 'content' ? titleFromProperties(before) : collectionTitleFromProperties(before),
+    title: opts.subject ? opts.subject.title
+      : kind === 'content' ? titleFromProperties(before) : collectionTitleFromProperties(before),
+    ...(opts.subject ? { named: opts.subject.collection ? 'Sammlung' as const : 'Datensatz' as const } : {}),
     ...(opts.action ? { action: opts.action } : {}),
     ...(opts.addTo ? { addTo: opts.addTo } : {}),
     ...(opts.items?.length ? { items: opts.items } : {}),
@@ -219,9 +232,19 @@ const PREVIEW_VOCAB: Record<string, VocabKey> = {
 export function displayValue(property: string, value: string): string {
   const scale = scaleLabel(property, value);
   if (scale) return scale;
+  // The content type draws from `new_lrt`, which is not one of the `VocabKey`
+  // tables: its own lookup, or old and new stood there as two addresses (Z2).
+  if (property === 'ccm:oeh_lrt') return LRT_LABEL.get(value) ?? value;
   const vocab = PREVIEW_VOCAB[property];
   return vocab ? labelFromUri(value, vocab) : value;
 }
+
+// A name two concepts share is shown with its parent: a switch between the two
+// otherwise reads „Suchmaschine“ → „Suchmaschine“.
+const LRT_LABEL = new Map(LRT_CONCEPTS.map(c => [
+  c.uri,
+  LRT_CONCEPTS.some(o => o !== c && o.label === c.label) ? `${c.label} (unter: ${c.path})` : c.label,
+]));
 
 /**
  * Quoted so the reader can see where a value begins and ends — trailing spaces
@@ -262,6 +285,10 @@ export function renderChangeSet(cs: ChangeSet): string {
   // fixed German prose. Measured: a submit preview then ended at "… zur…" and a
   // decline preview — which has no field changes and is therefore ONLY this line
   // — lost both the nodeId and the clause saying the record stays untouched.
+  // Only over something to confirm: "Keine Änderung" stays the whole answer when there is none.
+  if (cs.named && !cs.destructive && hasSomethingToConfirm(cs)) {
+    lines.push(`${cs.named}: ${cs.title ? `„${previewValue(cs.title)}“` : '(ohne Titel)'} (${flattenText(cs.nodeId)})`);
+  }
   if (cs.action) lines.push(flattenText(cs.action));
   // Each step on its own line, each flattened on its own — never the joined block.
   for (const item of cs.items ?? []) lines.push(`- ${flattenText(item)}`);

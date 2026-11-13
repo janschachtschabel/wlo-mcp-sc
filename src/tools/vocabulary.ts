@@ -23,6 +23,8 @@ import { CONTENT_FIELDS } from './curation-fields.js';
 import { lookupPublishers } from '../services/publishers.js';
 import { oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
+import { LRT_CONCEPTS } from '../vocabs-lrt.js';
+import { suggestEntries } from '../vocab-suggest.js';
 
 /**
  * Format the `universitySubject` disambiguation response: a model-free fuzzy
@@ -120,18 +122,21 @@ Filters: valid labels and URIs for Bildungsstufe (educational context),
 Schulfach/Disziplin, Zielgruppe (user role), Lernressourcentyp, Lizenz.
 For "universitySubject" (Hochschulfächer) the vocabulary is large, so pass a free-text
 \`query\` (e.g. "Maschinenbau") to get a short candidate list to filter by.
-Writing: "qualityScale" lists the 0-5 (and 0-1) quality ratings with their captions and the
-curation parameter each belongs to; "qualityFinding" the verdicts of a quality check.
-Neither is filterable — those fields can be read off a record and written, never searched.
+Writing: "contentType" lists the content types the curation tools accept in their
+\`contentType\` field (large — narrow it with \`query\`; not the same list as the "lrt" filter);
+"qualityScale" the 0-5 (and 0-1) quality ratings with their captions and the curation
+parameter each belongs to; "qualityFinding" the verdicts of a quality check.
+The last two are not filterable — those fields can be read off a record and written, never searched.
 Useful before calling a search tool, wlo_create_content, wlo_update_content or
 wlo_suggest_metadata.`,
     {
-      vocabulary: z.enum(['educationalContext', 'discipline', 'userRole', 'lrt', 'license', 'targetGroup', 'universitySubject', 'qualityFinding', 'qualityScale']).describe(
+      vocabulary: z.enum(['educationalContext', 'discipline', 'userRole', 'lrt', 'contentType', 'license', 'targetGroup', 'universitySubject', 'qualityFinding', 'qualityScale']).describe(
         'Which vocabulary to list: ' +
         '"educationalContext" (Bildungsstufen), ' +
         '"discipline" (Schulfächer), ' +
         '"userRole" (Zielgruppen), ' +
-        '"lrt" (Lernressourcentypen aggregiert), ' +
+        '"lrt" (Lernressourcentypen aggregiert — zum FILTERN der Suche), ' +
+        '"contentType" (Inhaltstypen, wie sie wlo_create_content / wlo_update_content im Feld contentType annehmen — zum SCHREIBEN; groß, mit `query` eingrenzen), ' +
         '"license" (CC-Lizenzen), ' +
         '"targetGroup" (Themenseiten-Zielgruppen: teacher/learner/general), ' +
         '"universitySubject" (Hochschulfächersystematik — groß; mit `query` eingrenzen), ' +
@@ -139,9 +144,12 @@ wlo_suggest_metadata.`,
         '"qualityFinding" (Prüfergebnisse einer Qualitätsprüfung — zum Schreiben)'
       ),
       query: z.string().max(100).optional().describe(
-        'Only for "universitySubject": a free-text term (e.g. "Maschinenbau") fuzzy-matched ' +
-        'to candidate Hochschulfächer. Returns a pick-list of {label, URI}; the chosen URI is ' +
-        'usable directly as a `discipline` filter. Ignored for the other vocabularies.'
+        'A free-text term that narrows a large vocabulary. For "universitySubject" (e.g. "Maschinenbau"): ' +
+        'fuzzy-matched to candidate Hochschulfächer, returned as a pick-list of {label, URI}; the chosen ' +
+        'URI is usable directly as a `discipline` filter. For "contentType" (e.g. "Video"): the content ' +
+        'types whose name or alias is near the term; the NAME is the value for the `contentType` field of ' +
+        'wlo_create_content / wlo_update_content (the URI where the listing says the name is ambiguous). ' +
+        'Ignored for the other vocabularies.'
       ),
     },
     { readOnlyHint: true },
@@ -150,6 +158,14 @@ wlo_suggest_metadata.`,
       // kept out of the label→URI input side to avoid school-subject label clashes.
       if (params.vocabulary === 'universitySubject') {
         return { content: [{ type: 'text' as const, text: universitySubjectLookup(params.query) }] };
+      }
+
+      // What the WRITE checks `contentType` against (`new_lrt`, 220 concepts) —
+      // not the aggregated list "lrt" serves, whose URIs the write refuses. Someone
+      // who looked up "lrt" after a refusal got values that were refused again
+      // (chatbot feedback 2026-11-13, B2).
+      if (params.vocabulary === 'contentType') {
+        return { content: [{ type: 'text' as const, text: contentTypeLookup(params.query) }] };
       }
 
       // Before the `VocabKey` cast below, like the branch above: the scales are
@@ -181,6 +197,31 @@ wlo_suggest_metadata.`,
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     },
   );
+}
+
+/** The content types a write accepts, by name — all of them, or those near `query`. */
+function contentTypeLookup(query: string | undefined): string {
+  const q = query?.trim();
+  // By CONCEPT, not by the term that matched: a hit through an alias is a hit.
+  const near = q ? new Set(suggestEntries(q, LRT_CONCEPTS).slice(0, 12)) : null;
+  const wanted = q ? q.toLowerCase() : '';
+  const shown = near
+    ? LRT_CONCEPTS.filter(c => near.has(c) || c.label.toLowerCase().includes(wanted) || c.aliases.some(a => a.toLowerCase().includes(wanted)))
+    : LRT_CONCEPTS;
+  const lines = [
+    '# Vokabular: Inhaltstyp zum Schreiben (contentType)',
+    'Der NAME ist der Wert für `contentType` in wlo_create_content, wlo_update_content, wlo_update_contents und wlo_suggest_metadata.',
+    q ? `Eingegrenzt auf „${oneLine(q)}“: ${shown.length} von ${LRT_CONCEPTS.length}.` : `${LRT_CONCEPTS.length} Einträge — mit \`query\` eingrenzen.`,
+    '',
+  ];
+  if (!shown.length) lines.push('Kein Eintrag passt. Ohne `query` kommt die ganze Liste.');
+  // A name that stands for two concepts is refused by the write — there the URI is the value.
+  const twice = new Set(LRT_CONCEPTS.map(c => c.label).filter((l, i, all) => all.indexOf(l) !== i));
+  for (const c of shown) {
+    lines.push(`- **${c.label}**${c.path ? ` (unter: ${c.path})` : ''}${c.aliases.length ? ` | Aliases: ${c.aliases.join(', ')}` : ''}`);
+    if (twice.has(c.label)) lines.push(`  Der Name ist mehrdeutig — als Wert die URI angeben: ${c.uri}`);
+  }
+  return lines.join('\n');
 }
 
 export function registerPublisherTool(server: McpServer): void {

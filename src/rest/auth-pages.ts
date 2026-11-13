@@ -35,6 +35,7 @@ import { parseRequestUrl } from '../request-url.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { sendLoginFailure } from './login-failure.js';
 import { germanRetryMessage, refuseRateLimited } from './rate-limited.js';
+import { logAccount } from '../log-privacy.js';
 
 export interface AuthEndpointDeps {
   /** Client key for both limiters (already resolved through TRUST_PROXY). */
@@ -212,7 +213,7 @@ async function route(
   if (parsed.pathname === '/auth/revoke' && bearer) {
     const payload = decodeAccessToken(bearer, support.keys);
     const revoked = payload ? await support.registry.remove(payload.jti) : false;
-    if (payload) log.info('access block revoked', { label: sanitizeText(payload.u), revoked, via: 'bearer' });
+    if (payload) log.info('access block revoked', { label: logAccount(payload.u), revoked, via: 'bearer' });
     // One answer for unreadable, foreign, unlisted and already revoked: logging
     // out is idempotent, and telling the cases apart helps only someone who
     // does not hold the block.
@@ -264,7 +265,7 @@ async function route(
     // block against our public key, so the name is caller-chosen text on its way
     // into the operator's log — the same boundary rule `identity.ts` applies to
     // the authority name we asked for ourselves.
-    log.info('access block revoked', { label: sanitizeText(payload.u), revoked });
+    log.info('access block revoked', { label: logAccount(payload.u), revoked });
     // 200 either way: a different answer for an id we do not carry would be an
     // oracle for probing which ids exist.
     return send(res, 200, { revoked });

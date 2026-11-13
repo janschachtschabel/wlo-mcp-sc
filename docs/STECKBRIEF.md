@@ -208,7 +208,7 @@ Eine unbrauchbare `WLO_REPOSITORY_URL` beendet den Start mit Exit-Code 1.
   Token, eine abgelehnte Autorisierung) sowie Warnungen und Fehler. Wer Zugriffe auf diese Pfade
   zählen will, nimmt `wlo_http_requests_total` oder das Log des Proxys. Compose begrenzt das Containerlog auf 5 × 10 MB; auf einer
   Plattform ist die Rotation Sache der Knoten bzw. der Log-Pipeline.
-- Was das Log an Adresse, Benutzername oder Suchbegriff tragen darf, ist offen (siehe unten).
+- Adresse, Benutzername und Suchbegriff stehen im Log standardmäßig nur als Pseudonym (Schlüssel-Hash, der nur im laufenden Prozess gilt); `LOG_PERSONAL_DATA=plain` schreibt sie im Klartext (Entscheidung des Betreibers).
 
 ## 9. Metriken und vorgeschlagene Alarme
 
@@ -286,7 +286,7 @@ Zusätzlich nötig und nicht aus dem Dienst selbst zu gewinnen: eine **Prüfung 
   `tools/list`, sauberes Stoppen, Startabbruch bei unbrauchbarer Repository-Adresse). In der
   GitLab-Pipeline läuft dieser Smoke-Test nicht (er braucht einen Docker-Daemon).
 - **NOCH NICHT vorhanden: ein veröffentlichtes, mit Version markiertes Image.** Heute baut der Host
-  das Image selbst (`docker compose up -d --build`, Name `wlomcp:latest`). Der Chart hat deshalb
+  das Image selbst (`docker compose up -d --build`, Name `wlo-mcp:latest`). Der Chart hat deshalb
   keinen Vorgabewert für `image.repository`.
 
 ## 13. Kompatibilität
@@ -311,12 +311,14 @@ Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit
 - [ ] **Image-Registry und Sichtbarkeit:** wohin das Image veröffentlicht wird, öffentlich oder
       intern, und wer es mit welcher Marke (Version = `package.json`) baut.
 - [ ] **Ansprechperson und Vertretung** für den Dienst.
-- [ ] **Service-ID:** Bestätigung von `wlo-mcp` (Image und Paket heißen heute `wlomcp`).
-- [ ] **Vorgabe für `WLO_REPOSITORY_URL` im Code:** heute fällt der Code auf Staging zurück, wenn
-      die Variable fehlt. Soll die Vorgabe entfallen, sodass der Start ohne Adresse abbricht (wie es
-      der Chart schon erzwingt)?
-- [ ] **Was das Log tragen darf:** IP-Adresse, Benutzername, Suchbegriff — und wie lange es
-      aufbewahrt wird.
+- [x] **Service-ID:** `wlo-mcp`, entschieden 2026-11-13 — Paket, Image, Compose-Dienst, Log-Feld `service` und Chart tragen denselben Namen.
+- [x] **Vorgabe für `WLO_REPOSITORY_URL` im Code:** bleibt (entschieden 2026-11-13). Ohne B-API hat der
+      Dienst keine andere Quelle für die Adresse, und Installationen ohne jede Variable würden nicht mehr
+      starten. Dafür meldet der Start jetzt mit einer Warnung, welches Repository benutzt wird, wenn die
+      Variable fehlt. Der Chart verlangt die Adresse weiterhin.
+- [x] **Was das Log tragen darf:** entschieden 2026-11-13 — IP-Adresse, Benutzername und Suchbegriff
+      nur pseudonymisiert, Klartext per `LOG_PERSONAL_DATA=plain`. Offen bleibt die Aufbewahrungsdauer
+      im Log-System des Betreibers.
 - [ ] **Abstimmung der beiden Abweichungen** (Abschnitt 2) mit Team 6.
 - [ ] **Plattform-Angaben für den Chart:** Namespaces von Ingress-Controller und Monitoring (ohne
       sie bleibt die NetworkPolicy aus — der Chart rät keine Namen), ob der Ingress-Controller die

@@ -20,7 +20,8 @@
  * and a lone string reaching the API is one of the ways a write vanishes.
  */
 
-import { resolveVocab, listVocab, type VocabKey } from '../../vocabs.js';
+import { suggestEntries } from '../../vocab-suggest.js';
+import { listVocab, resolveVocabMatch, type VocabKey } from '../../vocabs.js';
 import { scaleEntry, scaleKeys } from '../../vocabs-quality-scale.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { validateContentTypes } from './fields-lrt.js';
@@ -39,13 +40,25 @@ export type FieldValidation =
       ok: true;
       values: string[];
       /**
-       * Something the curator should know although the value was accepted —
-       * currently only the content types the repository cannot aggregate.
+       * Something the curator should know although the value was accepted — a
+       * content type the repository cannot aggregate, or a value that was taken
+       * through an alias and is written as something else.
        * A tool surfaces this; it is not a soft rejection.
        */
       note?: string;
     }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      /**
+       * Every value a vocabulary refused, each with the entries near it — as
+       * names this same check accepts. All of them, not the first: a list of
+       * three with two wrong is corrected in one round.
+       */
+      refused?: RefusedValue[];
+    };
+
+export interface RefusedValue { value: string; suggestions: string[] }
 
 /**
  * Licence keys edu-sharing accepts. Both the underscore and the space spelling
@@ -428,16 +441,63 @@ function scalePositions(values: string[], property: string, label: string): Fiel
  * that matches nothing is harmless) and wrong for a write.
  */
 function vocabularyUris(values: string[], vocab: VocabKey, label: string): FieldValidation {
-  const known = new Set(listVocab(vocab).map(e => e.uri));
+  const entries = listVocab(vocab);
+  const known = new Map(entries.map(e => [e.uri, e.label]));
+  // What may be OFFERED: for a quality finding never a human verdict — the
+  // write refuses those, and a candidate is a promise that it will be taken.
+  const offerable = vocab === 'qualityFinding' ? entries.filter(e => !HUMAN_VERDICTS.has(e.uri)) : entries;
   const out: string[] = [];
+  const refused: RefusedValue[] = [];
+  const aliased: string[] = [];
   for (const v of values) {
-    const uri = resolveVocab(v, vocab);
-    if (!uri || !known.has(uri)) {
-      return reject(`„${quote(v)}“ kommt im Vokabular für „${label}“ nicht vor.`);
+    const hit = resolveVocabMatch(v, vocab);
+    // By NAME or a listed alias only (chatbot feedback 2026-11-13, Z1). The
+    // substring guess the search lives well with — a filter that matches nothing
+    // is harmless — stored "Wirtschaft" as Agrarwirtschaft here, and these fields
+    // REPLACE what the record carries. The guess is not thrown away: it leads
+    // the candidates, and whoever asked chooses.
+    if (hit && hit.match !== 'fuzzy' && known.has(hit.value)) {
+      out.push(hit.value);
+      // An alias is not always what its writer meant ("Gymnasium" is taken as
+      // Sekundarstufe II), so the preview says what will be stored.
+      if (hit.match === 'alias') aliased.push(`„${quote(v)}“ wird als „${known.get(hit.value)}“ geschrieben.`);
+      continue;
     }
-    out.push(uri);
+    // Not for a quality finding: there the guess for "keine Auffälligkeiten
+    // gefunden" is "Auffälligkeiten gefunden" — its opposite.
+    const guessed = hit?.match === 'fuzzy' && vocab !== 'qualityFinding' ? hit.value : undefined;
+    refused.push({ value: v, suggestions: candidatesFor(v, offerable, guessed) });
   }
-  return { ok: true, values: out };
+  if (refused.length) {
+    return {
+      ok: false,
+      reason: refused.map(r => `„${quote(r.value)}“ kommt im Vokabular für „${label}“ nicht vor.`
+        + (r.suggestions.length ? ` Meintest du: ${r.suggestions.join(', ')}?` : '')).join(' '),
+      refused,
+    };
+  }
+  // Two spellings of one entry ("Mathe", "Mathematik") are one value.
+  return { ok: true, values: [...new Set(out)], ...(aliased.length ? { note: aliased.join(' ') } : {}) };
+}
+
+/** How many near entries a refusal names — enough to choose from, few enough to read. */
+const MAX_CANDIDATES = 5;
+
+/**
+ * The entries to offer for a refused value, as LABELS — each entry once,
+ * whichever of its spellings was near. The search's guess leads, then what
+ * `suggestEntries` finds.
+ */
+function candidatesFor(
+  input: string,
+  entries: ReadonlyArray<{ uri: string; label: string; aliases: string[] }>,
+  guessedUri: string | undefined,
+): string[] {
+  const ranked = [
+    ...entries.filter(e => e.uri === guessedUri),
+    ...suggestEntries(input, entries),
+  ];
+  return [...new Set(ranked.map(e => e.label))].slice(0, MAX_CANDIDATES);
 }
 
 /**

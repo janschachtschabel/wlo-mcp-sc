@@ -85,23 +85,35 @@ const EC_BASE = 'http://w3id.org/openeduhub/vocabs/educationalContext/';
  */
 function gradeAliases(from: number, to: number): string[] {
   const out: string[] = [];
-  for (let g = from; g <= to; g++) out.push(`klasse ${g}`, `${g}. klasse`);
+  for (let g = from; g <= to; g++) {
+    out.push(`klasse ${g}`, `${g}. klasse`, `klassenstufe ${g}`, `jahrgangsstufe ${g}`, `jahrgang ${g}`);
+  }
   return out;
 }
 
+// Adding an alias (review 2026-11-13): only a spelling that names ONE entry — a
+// write takes an alias as that entry. And none that contains, or is contained
+// in, a term of ANOTHER entry (four characters or more on both sides): the
+// search's substring step would guess with it. That is why "foerderschule",
+// "sonderschule" and "vorschule" are absent — each contains "schule". The
+// I/II pairs ("sek. i" / "sek. ii") and the grade numbers ("jahrgang 1" /
+// "jahrgang 10") contain each other by nature; both sides are listed, so the
+// exact match decides before any guess.
 const EDUCATIONAL_CONTEXT: VocabEntry[] = [
   // "elementary school" belongs to Grundschule below, not here: in English it is
   // primary school, and as an alias on both entries the first-wins exact match
   // silently sent an English filter to the pre-school concept.
-  { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'kita', 'kindergarten'] },
+  { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'kita', 'kindergarten', 'frühkindliche bildung'] },
   { id: EC_BASE + 'schule',            labels: ['schule', 'school'] },
-  { id: EC_BASE + 'grundschule',       labels: ['primarstufe', 'grundschule', 'primary school', 'elementary school', 'primär', ...gradeAliases(1, 4)] },
-  { id: EC_BASE + 'sekundarstufe_1',   labels: ['Sekundarstufe I', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1', ...gradeAliases(5, 10)] },
-  { id: EC_BASE + 'sekundarstufe_2',   labels: ['Sekundarstufe II', 'sekundarstufe 2', 'secondary ii', 'upper secondary school', 'sek ii', 'sek2', 'gymnasium', 'oberstufe', ...gradeAliases(11, 13)] },
-  { id: EC_BASE + 'hochschule',        labels: ['hochschule', 'higher education', 'universität', 'uni', 'studium', 'hochschulbildung'] },
-  { id: EC_BASE + 'berufliche_bildung',labels: ['Berufliche Bildung', 'vocational education', 'berufsausbildung', 'berufsschule', 'ausbildung'] },
-  { id: EC_BASE + 'fortbildung',       labels: ['fortbildung', 'further education', 'weiterbildung', 'fortbildungen'] },
-  { id: EC_BASE + 'erwachsenenbildung',labels: ['erwachsenenbildung', 'continuing education', 'erwachsene'] },
+  { id: EC_BASE + 'grundschule',       labels: ['primarstufe', 'grundschule', 'primary school', 'elementary school', 'primär', 'primarbereich', ...gradeAliases(1, 4)] },
+  { id: EC_BASE + 'sekundarstufe_1',   labels: ['Sekundarstufe I', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1',
+    'sek 1', 'sek. i', 'sek-i', 'seki', 'sekundarstufe-i', 'sekundarbereich i', 'lower secondary', ...gradeAliases(5, 10)] },
+  { id: EC_BASE + 'sekundarstufe_2',   labels: ['Sekundarstufe II', 'sekundarstufe 2', 'secondary ii', 'upper secondary school', 'sek ii', 'sek2', 'gymnasium', 'oberstufe',
+    'sek 2', 'sek. ii', 'sek-ii', 'sekii', 'sekundarstufe-ii', 'sekundarbereich ii', 'upper secondary', 'gymnasiale oberstufe', ...gradeAliases(11, 13)] },
+  { id: EC_BASE + 'hochschule',        labels: ['hochschule', 'higher education', 'universität', 'uni', 'studium', 'hochschulbildung', 'university'] },
+  { id: EC_BASE + 'berufliche_bildung',labels: ['Berufliche Bildung', 'vocational education', 'berufsausbildung', 'berufsschule', 'ausbildung', 'berufsbildung'] },
+  { id: EC_BASE + 'fortbildung',       labels: ['fortbildung', 'further education', 'weiterbildung', 'fortbildungen', 'lehrerfortbildung'] },
+  { id: EC_BASE + 'erwachsenenbildung',labels: ['erwachsenenbildung', 'continuing education', 'erwachsene', 'adult education'] },
   { id: EC_BASE + 'foerderschule',     labels: ['förderschule', 'special education', 'sonderpädagogische förderung', 'förderung'] },
   { id: EC_BASE + 'fernunterricht',    labels: ['fernunterricht', 'distance learning', 'fernstudium', 'e-learning'] },
   { id: EC_BASE + 'informelles_lernen',labels: ['Informelles Lernen', 'informal learning'] },
@@ -138,12 +150,14 @@ const QUALITY_FINDING: VocabEntry[] = [
 ];
 
 const USER_ROLE: VocabEntry[] = [
-  { id: UR_BASE + 'author',      labels: ['autor/in', 'autor', 'autorin', 'author'] },
+  { id: UR_BASE + 'author',      labels: ['autor/in', 'autor', 'autorin', 'author', 'autoren'] },
   { id: UR_BASE + 'counsellor',  labels: ['berater/in', 'berater', 'beraterin', 'counsellor', 'ratgeber/in'] },
-  { id: UR_BASE + 'learner',     labels: ['lerner/in', 'lernende', 'lernender', 'schüler', 'schülerin', 'learner', 'students'] },
+  { id: UR_BASE + 'learner',     labels: ['lerner/in', 'lernende', 'lernender', 'schüler', 'schülerin', 'learner', 'students',
+    'schueler', 'schüler/innen', 'schüler*innen', 'schülerinnen und schüler', 'sus', 'lerner', 'learners', 'student'] },
   { id: UR_BASE + 'manager',     labels: ['verwaltung', 'manager', 'schulleitung', 'leitung'] },
-  { id: UR_BASE + 'parent',      labels: ['eltern', 'parent', 'elter', 'elternteil', 'erziehungsberechtigter', 'sorgeberechtigter'] },
-  { id: UR_BASE + 'teacher',     labels: ['lehrer/in', 'lehrer', 'lehrerin', 'lehrende', 'lehrender', 'teacher', 'lehrkraft', 'pädagoge', 'pädagogin'] },
+  { id: UR_BASE + 'parent',      labels: ['eltern', 'parent', 'parents', 'elter', 'elternteil', 'erziehungsberechtigter', 'sorgeberechtigter'] },
+  { id: UR_BASE + 'teacher',     labels: ['lehrer/in', 'lehrer', 'lehrerin', 'lehrende', 'lehrender', 'teacher', 'lehrkraft', 'pädagoge', 'pädagogin',
+    'lehrkräfte', 'lehrkraefte', 'lehrer/innen', 'lehrer*innen', 'lehrerinnen und lehrer', 'lehrpersonen', 'teachers'] },
   { id: UR_BASE + 'other',       labels: ['andere', 'other', 'sonstige'] },
 ];
 
@@ -152,7 +166,7 @@ const DISC_BASE = 'http://w3id.org/openeduhub/vocabs/discipline/';
 
 const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '720',    labels: ['allgemein', 'interdisciplinary media', 'fächerübergreifend'] },
-  { id: DISC_BASE + '20003',  labels: ['Alt-Griechisch', 'ancient greek', 'griechisch'] },
+  { id: DISC_BASE + '20003',  labels: ['Alt-Griechisch', 'ancient greek', 'griechisch', 'altgriechisch'] },
   { id: DISC_BASE + '04001',  labels: ['agrarwirtschaft', 'agricultural economics', 'landwirtschaft'] },
   { id: DISC_BASE + 'oeh01',  labels: ['Arbeit, Ernährung, Soziales'] },
   { id: DISC_BASE + '020',    labels: ['arbeitslehre', 'career education', 'arbeit wirtschaft technik', 'awt', 'polytechnik'] },
@@ -169,7 +183,7 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '04005',  labels: ['elektrotechnik', 'electrical engineering'] },
   { id: DISC_BASE + '04006',  labels: ['Ernährung und Hauswirtschaft', 'nutrition and home economics'] },
   { id: DISC_BASE + '20001',  labels: ['englisch', 'english'] },
-  { id: DISC_BASE + '440',    labels: ['pädagogik', 'pedagogy', 'erziehungswissenschaften', 'erziehungswissenschaft'] },
+  { id: DISC_BASE + '440',    labels: ['pädagogik', 'pedagogy', 'erziehungswissenschaften', 'erziehungswissenschaft', 'paedagogik'] },
   { id: DISC_BASE + '20090',  labels: ['esperanto'] },
   { id: DISC_BASE + '160',    labels: ['ethik', 'ethics', 'werte und normen'] },
   { id: DISC_BASE + '04007',  labels: ['Farbtechnik und Raumgestaltung', 'color technology and interior design', 'raumgestaltung'] },
@@ -183,10 +197,10 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '320',    labels: ['informatik', 'ict', 'computer science', 'informationstechnologie', 'it', 'info'] },
   { id: DISC_BASE + '340',    labels: ['Interkulturelle Bildung', 'intercultural education'] },
   { id: DISC_BASE + '20004',  labels: ['italienisch', 'italian'] },
-  { id: DISC_BASE + '060',    labels: ['kunst', 'art education', 'kunsterziehung', 'art'] },
+  { id: DISC_BASE + '060',    labels: ['kunst', 'art education', 'kunsterziehung', 'art', 'bildende kunst'] },
   { id: DISC_BASE + '04010',  labels: ['körperpflege', 'body care'] },
   { id: DISC_BASE + '20005',  labels: ['latein', 'latin'] },
-  { id: DISC_BASE + '380',    labels: ['mathematik', 'mathematics', 'mathe', 'math'] },
+  { id: DISC_BASE + '380',    labels: ['mathematik', 'mathematics', 'mathe', 'math', 'maths'] },
   { id: DISC_BASE + 'oeh04010', labels: ['mechatronik'] },
   { id: DISC_BASE + '900',    labels: ['medienbildung', 'media education'] },
   { id: DISC_BASE + '400',    labels: ['mediendidaktik', 'medienerziehung'] },
@@ -198,21 +212,21 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '44099',  labels: ['Open Educational Resources', 'oer'] },
   { id: DISC_BASE + '450',    labels: ['philosophie', 'philosophy'] },
   { id: DISC_BASE + '460',    labels: ['physik', 'physics'] },
-  { id: DISC_BASE + '480',    labels: ['politik', 'politics', 'politische bildung', 'sozialkunde'] },
+  { id: DISC_BASE + '480',    labels: ['politik', 'politics', 'politische bildung', 'sozialkunde', 'gemeinschaftskunde'] },
   { id: DISC_BASE + '510',    labels: ['psychologie', 'psychology'] },
-  { id: DISC_BASE + '520',    labels: ['religion', 'religious education', 'religionsunterricht', 'reli'] },
+  { id: DISC_BASE + '520',    labels: ['religion', 'religious education', 'religionsunterricht', 'reli', 'religionslehre', 'evangelische religion', 'katholische religion'] },
   { id: DISC_BASE + '20006',  labels: ['russisch', 'russian'] },
-  { id: DISC_BASE + '28010',  labels: ['sachunterricht', 'homeland lessons', 'heimatunterricht', 'sachkunde'] },
-  { id: DISC_BASE + '560',    labels: ['sexualerziehung', 'sex education'] },
+  { id: DISC_BASE + '28010',  labels: ['sachunterricht', 'homeland lessons', 'heimatunterricht', 'sachkunde', 'heimat- und sachunterricht', 'hsu'] },
+  { id: DISC_BASE + '560',    labels: ['sexualerziehung', 'sex education', 'sexualkunde'] },
   { id: DISC_BASE + '44006',  labels: ['sonderpädagogik', 'special needs education'] },
   { id: DISC_BASE + '20009',  labels: ['sorbisch', 'sorbian'] },
   { id: DISC_BASE + '44007',  labels: ['sozialpädagogik', 'social education'] },
   { id: DISC_BASE + '20007',  labels: ['spanisch', 'spanish'] },
   { id: DISC_BASE + '600',    labels: ['sport', 'physical education', 'sportunterricht'] },
   { id: DISC_BASE + '04012',  labels: ['Textiltechnik und Bekleidung', 'textile technology and clothing'] },
-  { id: DISC_BASE + '20008',  labels: ['türkisch', 'turkish'] },
+  { id: DISC_BASE + '20008',  labels: ['türkisch', 'turkish', 'tuerkisch'] },
   { id: DISC_BASE + '04013',  labels: ['Wirtschaft und Verwaltung', 'business and administration'] },
-  { id: DISC_BASE + '700',    labels: ['wirtschaftskunde', 'economics', 'wirtschaftswissenschaften', 'economy', 'vwl', 'bwl'] },
+  { id: DISC_BASE + '700',    labels: ['wirtschaftskunde', 'economics', 'wirtschaftswissenschaften', 'economy', 'vwl', 'bwl', 'wirtschaftslehre'] },
   { id: DISC_BASE + '640',    labels: ['Umweltgefährdung, Umweltschutz', 'umweltgefährdung umweltschutz', 'environmental education', 'umwelterziehung', 'umwelt'] },
   { id: DISC_BASE + '660',    labels: ['verkehrserziehung', 'road safety education'] },
   { id: DISC_BASE + '680',    labels: ['weiterbildung', 'further education'] },
@@ -409,10 +423,15 @@ export function resolveVocabMatch(
   for (const entry of entries) {
     if (entry.id.toLowerCase() === lower) return { value: entry.id, match: 'exact' };
   }
-  // 1) Exact label/alias match wins — precise and order-independent.
-  for (const entry of entries) {
-    const i = entry.labels.findIndex(l => l.toLowerCase() === lower);
-    if (i >= 0) return { value: entry.id, match: i === 0 ? 'exact' : 'alias' };
+  // 1) Exact label/alias match wins — precise and order-independent. As
+  //    written first, then without what merely surrounds a name ("Mathematik.",
+  //    „Mathematik“, a double space): that is the name, not a guess at one.
+  //    Labels only — a URI or a repository key above is compared as given.
+  for (const spelling of new Set([lower, bareName(lower)])) {
+    for (const entry of entries) {
+      const i = entry.labels.findIndex(l => l.toLowerCase() === spelling);
+      if (i >= 0) return { value: entry.id, match: i === 0 ? 'exact' : 'alias' };
+    }
   }
   if (vocab === 'license') return null;
   // 2) Fuzzy fallback, but ONLY between tokens of length >= 4 on both sides.
@@ -430,6 +449,13 @@ export function resolveVocabMatch(
     }
   }
   return null;
+}
+
+/** A name without surrounding quotation marks or sentence punctuation, runs of whitespace as one space. */
+function bareName(s: string): string {
+  return s.replace(/\s+/g, ' ')
+    .replace(/^[\s"'„“”‚‘’«»‹›]+/, '')
+    .replace(/[\s"'„“”‚‘’«»‹›.,;:!?]+$/, '');
 }
 
 /** Extract the trailing slug from a URI: ".../teacher" → "teacher" */

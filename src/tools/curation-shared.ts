@@ -17,7 +17,7 @@ import { titleOn } from '../services/write/collection-fields.js';
 import type { WloNode } from '../wlo-types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import { validateField, applyLicenceDefaults, WRITABLE_FIELDS } from '../services/write/fields.js';
+import { validateField, applyLicenceDefaults, WRITABLE_FIELDS, type RefusedValue } from '../services/write/fields.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import { log } from '../logger.js';
 import { toolError } from './shared.js';
@@ -178,7 +178,23 @@ export type CollectResult =
       /** Accepted values worth a word of warning — shown with the preview. */
       notes: string[];
     }
-  | { ok: false; reasons: string[] };
+  | {
+      ok: false;
+      reasons: string[];
+      /** Per refused vocabulary value: the parameter, the value and the near entries (Z1). */
+      candidates: FieldCandidates[];
+    };
+
+/** What a program reads to choose again without a vocabulary lookup. */
+export interface FieldCandidates { field: string; value: string; suggestions: string[] }
+
+/**
+ * One entry per refused value that has something near it, under the tool's
+ * PARAMETER name — the one place a validation refusal becomes candidates.
+ */
+export function candidatesOf(field: string, refused: RefusedValue[] | undefined): FieldCandidates[] {
+  return (refused ?? []).filter(r => r.suggestions.length > 0).map(r => ({ field, ...r }));
+}
 
 /**
  * Turn the tool's parameters into validated repository properties.
@@ -190,6 +206,7 @@ export type CollectResult =
 export function collectDesired(params: Record<string, unknown>, map: ParamMap): CollectResult {
   const desired: Record<string, string[]> = {};
   const reasons: string[] = [];
+  const candidates: FieldCandidates[] = [];
   const notes: string[] = [];
 
   for (const [param, property] of Object.entries(map)) {
@@ -199,13 +216,14 @@ export function collectDesired(params: Record<string, unknown>, map: ParamMap): 
     const result = validateField(property, input);
     if (!result.ok) {
       reasons.push(result.reason);
+      candidates.push(...candidatesOf(param, result.refused));
       continue;
     }
     desired[property] = result.values;
     if (result.note) notes.push(result.note);
   }
 
-  if (reasons.length > 0) return { ok: false, reasons };
+  if (reasons.length > 0) return { ok: false, reasons, candidates };
   return { ok: true, desired: applyLicenceDefaults(desired), notes };
 }
 
@@ -289,6 +307,11 @@ export function fieldLabel(property: string): string {
   return WRITABLE_FIELDS[property]?.label ?? sanitizeText(property);
 }
 
+/** `candidates` only when there are some: the key says "there is something to choose from". */
+export function candidatesField(candidates: FieldCandidates[]): { candidates?: FieldCandidates[] } {
+  return candidates.length ? { candidates } : {};
+}
+
 export function rejectionReply(reasons: string[], extra: Record<string, unknown> = {}): WloToolResult {
   return codedError('invalid_input',
     ['Die Angaben wurden nicht übernommen:', ...reasons.map(r => `- ${r}`)].join('\n'), { reasons, ...extra });
@@ -348,7 +371,8 @@ function structuredConfirm(cs: ChangeSet, token: string, mintedAt: number) {
       action: cs.destructive ? 'delete' : 'change',
       target: {
         nodeId: cs.nodeId,
-        kind: cs.kind,
+        // What the node IS where the tool said so: the metadata tools take collections too.
+        kind: cs.named === 'Sammlung' ? 'collection' : cs.kind,
         title: flattenText(cs.title),
         ...(cs.redirectedFrom ? { redirectedFrom: cs.redirectedFrom } : {}),
       },

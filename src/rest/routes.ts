@@ -83,7 +83,8 @@ export async function routeRestRequest(
     try {
       return await handleSearch(parsed.searchParams);
     } catch (err) {
-      log.error('rest handler error', { path, error: err instanceof Error ? err.message : String(err) });
+      // The ROUTE, not the path: here the path ends in the search term.
+      log.error('rest handler error', { path: SEARCH_PREFIX, error: err instanceof Error ? err.message : String(err) });
       return { status: 500, json: { error: 'Internal server error' } };
     }
   }

@@ -16,7 +16,7 @@ ENV NODE_ENV=production
 # ENV line would override that for every `docker run` without -e — the forgotten
 # variable would write to production again (incident 2026-08-06). Name
 # production explicitly at run time:
-#   docker run -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing wlomcp
+#   docker run -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing wlo-mcp
 ENV PORT=3000
 # Serve real SSE by default — ChatGPT developer mode on the vServer needs it.
 # The reverse proxy in front MUST disable response buffering (see docker-compose.yml).

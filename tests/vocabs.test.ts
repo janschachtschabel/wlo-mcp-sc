@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveVocab, labelFromUri, listVocab } from '../src/vocabs.js';
+import { resolveVocab, resolveVocabMatch, labelFromUri, listVocab } from '../src/vocabs.js';
 import { LRT_CONCEPTS } from '../src/vocabs-lrt.js';
 
 test('resolveVocab: duplicate aliases resolve to the intended concept (regression L11)', () => {
@@ -275,7 +275,7 @@ test('every display label continues in the case it is actually written in', () =
 test('listVocab: no label or alias resolves to two different concepts of one vocabulary', () => {
   // resolveVocab takes the first exact hit, so a shared alias silently decides
   // for the entry that happens to sit earlier in the table.
-  for (const vocab of ['educationalContext', 'discipline', 'userRole', 'lrt', 'license', 'targetGroup'] as const) {
+  for (const vocab of ['educationalContext', 'discipline', 'userRole', 'lrt', 'license', 'targetGroup', 'qualityFinding'] as const) {
     const owners = new Map<string, string[]>();
     for (const e of listVocab(vocab)) {
       for (const term of [e.label, ...e.aliases]) {
@@ -286,6 +286,29 @@ test('listVocab: no label or alias resolves to two different concepts of one voc
     const shared = [...owners].filter(([, uris]) => new Set(uris).size > 1);
     assert.deepEqual(shared, [], `${vocab}: alias shared by several concepts`);
   }
+});
+
+test('resolveVocab: what merely surrounds an exact name is not part of it', () => {
+  const MATHE = 'http://w3id.org/openeduhub/vocabs/discipline/380';
+  for (const spelling of ['Mathematik.', '„Mathematik“', '"Mathematik"', '  Mathematik ! ', 'Mathematik,', "'mathe'"]) {
+    const hit = resolveVocabMatch(spelling, 'discipline');
+    assert.equal(hit?.value, MATHE, spelling);
+    assert.notEqual(hit?.match, 'fuzzy', `${spelling} is the name, not a guess`);
+  }
+  assert.equal(resolveVocabMatch('Mathematik.', 'discipline')?.match, 'exact');
+  assert.equal(resolveVocabMatch('„Mathe“', 'discipline')?.match, 'alias');
+  // Runs of whitespace are one space.
+  assert.deepEqual(resolveVocabMatch('Sekundarstufe   I', 'educationalContext'),
+    { value: 'http://w3id.org/openeduhub/vocabs/educationalContext/sekundarstufe_1', match: 'exact' });
+  assert.equal(resolveVocabMatch('Deutsch  als\tZweitsprache.', 'discipline')?.match, 'exact');
+  // Punctuation INSIDE a name stays: it is part of the label.
+  assert.equal(resolveVocabMatch('Lehrer/in', 'userRole')?.match, 'exact');
+  assert.equal(resolveVocabMatch('Umweltgefährdung, Umweltschutz', 'discipline')?.match, 'exact');
+  // Never for a URI or a repository key: those are compared as given.
+  assert.equal(resolveVocab('http://w3id.org/openeduhub/vocabs/discipline/380.', 'discipline'),
+    'http://w3id.org/openeduhub/vocabs/discipline/380.', 'a URI passes through untouched');
+  assert.equal(resolveVocab('CC_BY.', 'license'), null);
+  assert.equal(resolveVocab('„CC BY-SA“', 'license'), 'CC_BY_SA');
 });
 
 /**

@@ -32,7 +32,7 @@ import { encodeAccessToken } from './access-token.js';
 import { proveLogin, unreachableFailure, type LoginFailure, type VerifyDeps } from './access-verify.js';
 import type { WloCredential } from './credential.js';
 import { log } from '../logger.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { logAccount } from '../log-privacy.js';
 
 export type TicketExchangeOutcome =
   | { ok: true; block: string; authority: string; displayName?: string }
@@ -151,7 +151,7 @@ export async function exchangeTicket(
       ...(identity.account ? { acct: identity.account } : {}),
     });
   }
-  log.info('ticket exchanged for an access block', { label: sanitizeText(identity.authority) });
+  log.info('ticket exchanged for an access block', { label: logAccount(identity.authority) });
 
   return {
     ok: true,

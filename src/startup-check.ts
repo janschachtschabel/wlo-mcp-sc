@@ -6,7 +6,7 @@
  */
 
 import { log, logLevelFrom } from './logger.js';
-import { repositoryUrlProblem } from './wlo-config.js';
+import { WLO_REPOSITORY_URL, addressForLog, repositoryUrlProblem } from './wlo-config.js';
 
 /**
  * End the process when the repository address is one no request can be sent to
@@ -31,4 +31,21 @@ export function warnOnUnknownLogLevel(): void {
   const raw = process.env['LOG_LEVEL'];
   if (!raw?.trim() || logLevelFrom(raw)) return;
   log.warn('LOG_LEVEL is not a known level — using info', { accepted: ['debug', 'info', 'warn', 'error'] });
+}
+
+/**
+ * No `WLO_REPOSITORY_URL`: the built-in default applies, and the start SAYS so.
+ *
+ * Removing the default was considered (chatbot team, 2026-11-13: a forgotten
+ * variable must not point somewhere silently) and not done: this server has no
+ * other source for the address — it runs without the B-API — and deployments
+ * that set no variable at all (a compose file started from a URL, a local
+ * stdio client) would stop starting. What the concern is about is the SILENCE,
+ * so that is what goes: one warning per start, naming the repository in use.
+ */
+export function warnOnDefaultRepository(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env['WLO_REPOSITORY_URL']?.trim()) return false;
+  log.warn('WLO_REPOSITORY_URL is not set — using the built-in default. Set it to name the repository this server is for.',
+    { repository: addressForLog(WLO_REPOSITORY_URL) });
+  return true;
 }

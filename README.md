@@ -165,6 +165,7 @@ else has sensible defaults.
 | `WLO_UPSTREAM_CONCURRENCY` | `24` | all | How many calls the whole **process** may have open at the repository at once. Every other bound is per call or per client; one search with the OER filter alone starts about 25. A call that gets no slot within 5 s — or meets a queue of four times the limit — is not sent; tools that report failures by code answer `upstream_busy` with the wait. `0` switches the bound off. |
 | `METRICS_TOKEN` | _(unset)_ | http | Switches `GET /metrics` on (Prometheus text format) and is the Bearer token it answers to; at least 16 characters. Unset: the path does not exist. Counts requests by route class, tool calls by tool and outcome, repository calls by outcome — never a caller, a path or a query. |
 | `LOG_LEVEL` | `info` | all | Lowest level that is logged: `debug`, `info`, `warn` or `error` (no line is written at `debug` today). An unknown value is ignored with a warning. The log is one JSON object per line — `timestamp`, `level`, `service`, `message`, plus `trace_id`/`span_id` when the caller sent B3 headers and `req`, the request id. Over HTTP it goes to **stdout**, under stdio to **stderr** (stdout is the protocol channel there). |
+| `LOG_PERSONAL_DATA` | _(unset)_ | all | What the log says about a person. Unset: a client address, a WLO account name and a search term are written as short **pseudonyms** (a keyed digest valid only in this process — "the same address again" stays visible, the value does not). `plain` writes them as they are. Affects the log only; limits and the allow-list use the real values in memory either way. |
 | `INTERNAL_PORT` | _(unset)_ | http | A second port that serves **only** `GET /health`, `GET /ready` and `GET /metrics` — for probes and the scraper, away from the public proxy. An addition: the three paths stay on `PORT`. On this port `/metrics` needs no token unless `METRICS_TOKEN` is set, so it must not be published. Requests here are not counted in `wlo_http_requests_total`. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | all | Optional service account. Unset (default) → the server reads **anonymously**, public content only, exactly as before. Both set → every call authenticates as that one account via HTTP Basic, so **all** users of this MCP see the same elevated content. Use a purpose-made, read-only account: whatever it can see, every user can see, and edu-sharing's audit trail shows the service account rather than the person. Half a credential is treated as none. **Wrong credentials do not downgrade to public content** — the repository answers `401` (measured against production 2026-07-31, on the identity and the search endpoints alike), so every query fails and the server returns nothing at all. Unset both variables to run anonymously instead. Check with the `wlo_auth_status` tool: `mode: "service"` together with `authenticated: false` and `upstream: "ok"` means the credentials are being rejected (`upstream: "unreachable"` means the repository did not answer — no verdict on the credentials). HTTP Basic is used because it is the only scheme besides the session cookie that edu-sharing's own OpenAPI declares. **Scope:** the service account applies to the MCP endpoint only. The public REST layer (`GET /api/*`) and the launcher stay anonymous by design — they are reachable from the internet without any login, so letting them inherit the account would make everything it can see world-readable. A credential over a non-`https` repository URL is sent in the clear (Basic is base64, not encryption); the server warns about this at startup. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
@@ -758,8 +759,8 @@ string.** Measured before this guard existed: `Stadt Berlin` answered with
 `Bern`, `Dreiecke` with `Dreiecker`, a mountain in the Allgäu. A caller that
 turns the extract into teaching material appends *"Quelle: Wikipedia-Artikel
 „…"*, so a plausible wrong article does not merely look odd — it publishes a
-false attribution. The rejected candidates are logged, so a miss can be
-diagnosed without guessing.
+false attribution. How many candidates were rejected is logged; the
+search term itself is a pseudonym there unless `LOG_PERSONAL_DATA=plain`.
 
 The check runs on the search candidates only. Two consequences worth knowing:
 a redirect is never second-guessed (a rule cannot relate "Bruchrechnen" and
@@ -1008,8 +1009,8 @@ serverless deployment target.
 ```bash
 docker compose up -d --build          # build + run detached (recommended)
 # or, without compose:
-docker build -t wlomcp .
-docker run -p 3000:3000 wlomcp        # prod default
+docker build -t wlo-mcp .
+docker run -p 3000:3000 wlo-mcp        # prod default
 # → http://localhost:3000/mcp  ·  /health  ·  /api/*  ·  /launcher.html
 ```
 

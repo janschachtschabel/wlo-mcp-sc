@@ -22,6 +22,7 @@ import { formatNode, formatNodes } from '../formatter.js';
 import { nodeMatchesText } from '../node-match.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
+import { logTerm } from '../log-privacy.js';
 
 /**
  * Fallback collection search by tree traversal, used when the direct
@@ -52,7 +53,7 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
   const LEVEL2_PARENT_CAP = 25;
   const level2Parents = level1.slice(0, LEVEL2_PARENT_CAP);
   if (level1.length > LEVEL2_PARENT_CAP) {
-    log.warn('collection search: level2 expansion capped', { from: level1.length, to: LEVEL2_PARENT_CAP, query });
+    log.warn('collection search: level2 expansion capped', { from: level1.length, to: LEVEL2_PARENT_CAP, query: logTerm(query) });
   }
   // Listings that did not answer are COUNTED: "no collections found" over
   // twenty-five unread sub-lists is not a statement about the catalogue.

@@ -50,6 +50,7 @@ import {
   timeoutOrError,
   isPreviewCall,
   recordTitle,
+  candidatesField,
 } from './curation-shared.js';
 
 const CONFIRM_TOKEN = z.string().optional()
@@ -100,7 +101,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         const title = String(params['title'] ?? '').trim();
         if (!title) return errorText('Eine Sammlung braucht einen Titel.');
         const collected = collectDesired(params, COLLECTION_FIELDS);
-        if (!collected.ok) return rejectionReply(collected.reasons);
+        if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
         const parentId = typeof params['parentId'] === 'string' && params['parentId'] ? params['parentId'] : null;
         // The parent is read and must be a collection — the check the tree tool
         // and `addToCollectionId` already apply (`readFilingTarget`). The create
@@ -163,7 +164,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         const title = String(params['title'] ?? '').trim();
         if (!title) return errorText('Eine Sammlung braucht einen Titel.');
         const collected = collectDesired(params, COLLECTION_FIELDS);
-        if (!collected.ok) return rejectionReply(collected.reasons);
+        if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
 
         const node = await getNodeMetadata(nodeId);
         if (!node) return codedError('not_found', `Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);

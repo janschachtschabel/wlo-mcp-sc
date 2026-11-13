@@ -583,6 +583,67 @@ test('a metadata write or proposal goes through the collection field mapping', (
   assert.deepEqual(wrong, [], `Schreibt Metadaten ohne die Sammlungs-Zuordnung (collection-fields.ts): ${wrong.join(', ')}`);
 });
 
+test('a log line that names a person goes through log-privacy', () => {
+  // User decision 2026-11-13: the log carries no address, account name or
+  // search term in the clear by default. The rule is only as good as its last
+  // call site, so the field names a person hides behind are pinned: inside a
+  // log call they take their value from `logAddress` / `logAccount` / `logTerm`.
+  // The list GROWS with each finding — `subject`, `title` and a path ending in
+  // the term were found by review, not by the first version of this test.
+  const WHO: Record<string, string> = {
+    ip: 'logAddress', address: 'logAddress', remote: 'logAddress',
+    label: 'logAccount', user: 'logAccount', username: 'logAccount', account: 'logAccount',
+    query: 'logTerm', q: 'logTerm', term: 'logTerm', searchTerm: 'logTerm', subject: 'logTerm', title: 'logTerm',
+  };
+  /** Every `log.x(…)` call in a source text, cut at its BALANCED closing parenthesis — strings and all. */
+  const calls = (text: string): string[] => {
+    const out: string[] = [];
+    for (const m of text.matchAll(/\blog\.(?:info|warn|error)\(/g)) {
+      let depth = 1;
+      let quote = '';
+      let i = m.index + m[0].length;
+      for (; i < text.length && depth > 0; i++) {
+        const ch = text[i]!;
+        if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = ''; continue; }
+        if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+        else if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+      }
+      out.push(text.slice(m.index, i));
+    }
+    return out;
+  };
+  const check = (name: string, text: string): string[] => {
+    const wrong: string[] = [];
+    for (const body of calls(text)) {
+      // The message is a literal: a template that embeds a value has no field name to pin.
+      if (/^log\.\w+\(\s*`[^`]*\$\{/.test(body)) wrong.push(`${name}: Wert in der Meldung — ${body.slice(0, 70)}`);
+      for (const [field, fn] of Object.entries(WHO)) {
+        // Shorthand `{ ip }` / `{ query, … }`, or `ip: <anything but the function>`.
+        if (new RegExp(`[{,]\\s*${field}\\s*[,}]`).test(body)) wrong.push(`${name}: ${field} (Kurzform)`);
+        for (const v of body.matchAll(new RegExp(`[{,\\s]${field}:\\s*([^,}\\n]+)`, 'g'))) {
+          if (!v[1]!.trim().startsWith(`${fn}(`)) wrong.push(`${name}: ${field} ← ${v[1]!.trim().slice(0, 40)}`);
+        }
+      }
+    }
+    return wrong;
+  };
+  // The scanner itself: each of these is a line that slipped past an earlier version.
+  assert.ok(check('x', "log.warn('a; b', { ip: deps.ip });").length >= 1, 'a semicolon in the message');
+  assert.ok(check('x', "log.warn('a', { subject: params.subject });").length >= 1);
+  assert.ok(check('x', "log.warn('a', { title, lang });").length >= 1);
+  assert.ok(check('x', 'log.warn(`blocked ${ip}`);').length >= 1);
+  assert.equal(check('x', "log.warn('a', { ip: logAddress(ip), query: logTerm(q), n: 1 });").length, 0);
+
+  const wrong: string[] = [];
+  for (const file of sourceFiles(srcDir)) {
+    const name = rel(file);
+    if (name === 'log-privacy.ts') continue;
+    wrong.push(...check(name, readFileSync(file, 'utf8')));
+  }
+  assert.deepEqual(wrong, [], `Im Log steht eine Person im Klartext:\n${wrong.join('\n')}`);
+});
+
 test('every write that can carry ccm:wwwurl keeps the larger timeout', () => {
   // Measured 2026-08-17: setting `ccm:wwwurl` makes the repository render a
   // preview of the page while the write is in flight — 8.8 s warm, 46.5 s cold

@@ -23,6 +23,7 @@ import { mapPool } from '../concurrency.js';
 import { codedErrorResult, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas.js';
+import { logTerm } from '../log-privacy.js';
 
 /**
  * Resolve a subject/Fachportal NAME (e.g. "Mathematik" or the abbreviation
@@ -238,7 +239,7 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
               .map(p => oneLine(formatNode(p).title))
               .filter(Boolean)
               .join(', ');
-            log.warn('no subject portal matched', { subject: params.subject });
+            log.warn('no subject portal matched', { subject: logTerm(params.subject) });
             return codedErrorResult('not_found',
               `Kein Fachportal für "${oneLine(params.subject)}" gefunden. Verfügbar: ${available}.`);
           }

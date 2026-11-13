@@ -80,6 +80,16 @@ const VERDICT = ' Erlaubt: "keine Auffälligkeiten gefunden (Maschine)" · '
 export const MAX_KEYWORDS = 100;
 
 /** The 27 metadata parameters, shared by the update and the create tool. */
+/**
+ * One label or several (chatbot feedback 2026-11-13, B1). These four fields
+ * REPLACE what the record carries — only keywords are merged — so a record
+ * tagged Physik and Chemie could not gain Mathematik: the schema took one
+ * string, and one string replaced both. The validation always took a list.
+ */
+const MAX_LABELS = 20;
+const oneOrMany = z.union([z.string(), z.array(z.string()).min(1).max(MAX_LABELS)]).optional();
+const REPLACES = ' ERSETZT die bisherigen Werte des Feldes; für mehrere eine Liste angeben (die bleibenden mitnennen).';
+
 export const FIELD_SCHEMA = {
   title: z.string().optional().describe('Titel (cclom:title), max. 255 Zeichen.'),
   description: z.string().optional().describe('Beschreibung (cclom:general_description).'),
@@ -92,10 +102,11 @@ export const FIELD_SCHEMA = {
   licenseKey: z.string().optional()
     .describe('Lizenzschlüssel, z. B. CC_BY, CC_BY_SA, CC_0, PDM. Erfundene Werte werden abgelehnt.'),
   licenseVersion: z.string().optional().describe('Lizenzversion, z. B. "4.0". Bei CC-BY-Lizenzen sonst automatisch 4.0.'),
-  contentType: z.string().optional().describe('Inhaltstyp als Label, z. B. "Arbeitsblatt" oder "Video".'),
-  educationalContext: z.string().optional().describe('Bildungsstufe als Label, z. B. "Grundschule".'),
-  discipline: z.string().optional().describe('Fach als Label, z. B. "Mathematik".'),
-  userRole: z.string().optional().describe('Zielgruppe als Label, z. B. "Lehrer" oder "Lernende".'),
+  contentType: oneOrMany.describe('Inhaltstyp als Label, z. B. "Arbeitsblatt" oder "Audio" — der genaue Name aus '
+    + 'lookup_wlo_vocabulary("contentType"); eine Ablehnung nennt Kandidaten.' + REPLACES),
+  educationalContext: oneOrMany.describe('Bildungsstufe als Label, z. B. "Grundschule".' + REPLACES),
+  discipline: oneOrMany.describe('Fach als Label, z. B. "Mathematik".' + REPLACES),
+  userRole: oneOrMany.describe('Zielgruppe als Label, z. B. "Lehrer" oder "Lernende".' + REPLACES),
 
   qualityCorrectness: z.string().optional().describe(
     'Prüfergebnis Sachrichtigkeit (ccm:oeh_quality_correctness) aus einer MASCHINELLEN Prüfung.'

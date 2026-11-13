@@ -25,6 +25,7 @@ import { pickRelevantTitle } from './wikipedia-relevance.js';
 // Imported from the config leaf rather than the `wlo-api` barrel so a public
 // encyclopedia lookup does not drag in the whole edu-sharing client.
 import { WLO_FETCH_TIMEOUT_MS } from './wlo-config.js';
+import { logTerm } from './log-privacy.js';
 
 /**
  * Descriptive User-Agent — Wikimedia's REST API policy requires one that
@@ -99,7 +100,7 @@ async function fetchSummaryByTitle(
   try {
     res = await wikiFetch(url);
   } catch (err) {
-    log.warn('wikipedia summary fetch failed', { title, lang, error: String(err) });
+    log.warn('wikipedia summary fetch failed', { title: logTerm(title), lang, error: String(err) });
     seen.unreachable = true;
     return null;
   }
@@ -138,7 +139,7 @@ async function resolveTitleCandidates(query: string, lang: string, seen: Reach):
   try {
     res = await wikiFetch(url);
   } catch (err) {
-    log.warn('wikipedia opensearch failed', { query, lang, error: String(err) });
+    log.warn('wikipedia opensearch failed', { query: logTerm(query), lang, error: String(err) });
     seen.unreachable = true;
     return [];
   }
@@ -217,7 +218,7 @@ async function summaryOf(
   const picked = pickRelevantTitle(query, candidates);
   if (!picked) {
     if (candidates.length) {
-      log.info('wikipedia: no candidate was on topic', { query, lang: safeLang, candidates });
+      log.info('wikipedia: no candidate was on topic', { query: logTerm(query), lang: safeLang, candidates: candidates.length });
     }
     return null;
   }
@@ -261,7 +262,7 @@ export async function fetchWikipediaArticle(title: string, lang = 'de'): Promise
   try {
     res = await wikiFetch(`https://${safeLang}.wikipedia.org/w/api.php?${params}`);
   } catch (err) {
-    log.warn('wikipedia article fetch failed', { title, lang: safeLang, error: String(err) });
+    log.warn('wikipedia article fetch failed', { title: logTerm(title), lang: safeLang, error: String(err) });
     return null;
   }
   if (!res.ok) return null;

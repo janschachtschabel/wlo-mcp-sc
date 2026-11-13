@@ -29,7 +29,7 @@
 services:
   wlo-mcp:
     build: .
-    image: wlomcp:latest
+    image: wlo-mcp:latest
     restart: unless-stopped
     ports:
       # Loopback by default — the plaintext server sits BEHIND the TLS-terminating
@@ -209,6 +209,7 @@ services:
       WLO_UPSTREAM_CONCURRENCY: "${WLO_UPSTREAM_CONCURRENCY:-}"
       METRICS_TOKEN: "${METRICS_TOKEN:-}"
       LOG_LEVEL: "${LOG_LEVEL:-}"
+      LOG_PERSONAL_DATA: "${LOG_PERSONAL_DATA:-}"
       # /health, /ready, /metrics on a port of their own. NOT in `ports:` — it is
       # for the container network (a scraper, a probe), never for the host.
       INTERNAL_PORT: "${INTERNAL_PORT:-}"

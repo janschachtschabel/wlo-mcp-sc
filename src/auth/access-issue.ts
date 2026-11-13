@@ -13,7 +13,7 @@
 import { decodeAccessToken } from './access-token.js';
 import { verifyBlockLogin, type LoginFailure, type VerifyDeps } from './access-verify.js';
 import { log } from '../logger.js';
-import { sanitizeText } from '../text-sanitize.js';
+import { logAccount } from '../log-privacy.js';
 
 export type IssueOutcome =
   | { ok: true; label: string; jti: string }
@@ -79,7 +79,7 @@ export async function issueAccessBlock(
   // are 128 random bits, and before this check the same call answered "issued".
   const listedFor = deps.support.registry.labelOf(payload.jti);
   if (listedFor !== undefined && listedFor !== payload.u) {
-    log.warn('access block refused — its id is listed for another name', { label: sanitizeText(payload.u) });
+    log.warn('access block refused — its id is listed for another name', { label: logAccount(payload.u) });
     return { ok: false, status: 400, error: 'Dieser Zugangsblock kann nicht verwendet werden. Bitte einen neuen erzeugen.' };
   }
 
@@ -92,7 +92,7 @@ export async function issueAccessBlock(
     // otherwise "revoke all" typed in another spelling keeps missing it. Only
     // the account is added; the entry is not rewritten.
     await deps.support.registry.noteAccount(payload.jti, account);
-    log.info('access block issued again — already listed, entry kept', { label: sanitizeText(payload.u) });
+    log.info('access block issued again — already listed, entry kept', { label: logAccount(payload.u) });
     return { ok: true, label: payload.u, jti: payload.jti };
   }
 
@@ -112,6 +112,6 @@ export async function issueAccessBlock(
     acct: account,
     ...(ttlSeconds !== undefined ? { exp: iat + ttlSeconds } : {}),
   });
-  log.info('access block issued', { label: sanitizeText(payload.u) });
+  log.info('access block issued', { label: logAccount(payload.u) });
   return { ok: true, label: payload.u, jti: payload.jti };
 }

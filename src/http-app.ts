@@ -45,6 +45,7 @@ import { refuseRateLimited, refuseTooManyLogins } from './rest/rate-limited.js';
 import {
   budgetBucket, CLIENT_KEY_HEADER, countToolCalls, type ClientBudgets, type TrustedClient,
 } from './client-budget.js';
+import { logAddress } from './log-privacy.js';
 
 export interface HttpAppOptions {
   /**
@@ -386,7 +387,7 @@ export function createHttpRequestHandler(
       // which deliberately weighs only credentials we would forward upstream —
       // a Bearer never leaves this server.
       if (!userCred && isUnusableBearer(req.headers['authorization'])) {
-        log.info('unusable bearer token — answering 401 with the discovery pointer', { ip });
+        log.info('unusable bearer token — answering 401 with the discovery pointer', { ip: logAddress(ip) });
         res.writeHead(401, {
           'Content-Type': 'application/json',
           'WWW-Authenticate': bearerChallenge(resolveIssuer({
@@ -504,7 +505,7 @@ export function createHttpRequestHandler(
         // honest — the handler-wide runAnonymous scope already holds it.
         const unusable = !userCred && isUnusableAuthorization(req.headers['authorization']);
         if (unusable) {
-          log.warn('Authorization header could not be used — serving this request anonymously', { ip });
+          log.warn('Authorization header could not be used — serving this request anonymously', { ip: logAddress(ip) });
         }
         const effective = userCred ?? (unusable ? null : configuredServiceCredential());
         // Not a gate any more — every request gets the same tool list, and a

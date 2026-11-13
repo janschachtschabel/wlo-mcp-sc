@@ -16,6 +16,7 @@
 import { rateLimitedBody, restRateLimitedBody } from '../client-budget.js';
 import { log } from '../logger.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
+import { logAddress } from '../log-privacy.js';
 
 export type RefusalShape = 'jsonrpc' | 'rest';
 
@@ -61,7 +62,7 @@ export function refuseTooManyLogins(
   res: RefusalResponse, limiter: DistinctValueLimiter,
   opts: { bucket: string; perBlock: boolean; ip: string; shape?: RefusalShape },
 ): void {
-  log.warn('too many distinct credentials', { ip: opts.ip, scope: opts.perBlock ? 'access-block' : 'address' });
+  log.warn('too many distinct credentials', { ip: logAddress(opts.ip), scope: opts.perBlock ? 'access-block' : 'address' });
   const wait = limiter.retryAfterSeconds?.(opts.bucket, Date.now()) ?? 600;
   sendRateLimited(res, wait, opts.perBlock
     ? 'Too many different logins for this access block.'

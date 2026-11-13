@@ -259,3 +259,33 @@ test('wlo_submit_content takes a REFERENCE to a record — a collection listing 
     assert.ok(token(await c.callTool({ name: 'wlo_submit_content', arguments: { nodeId: 'ref' } })));
   } finally { setServiceCredentialForTest(null); repo.mock.restore(); }
 });
+
+// ── Z2 (chatbot feedback 2026-11-13): the preview names what it changes ──────
+
+test('the preview of a metadata change opens with WHAT is changed — kind, title, id', async () => {
+  const repo = repository();
+  setServiceCredentialForTest(MARIA);
+  try {
+    const c = await client();
+    const record = await c.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'rec', keywords: ['Licht'] } });
+    // The first line of the PREVIEW — after the tool's own lead-in sentence.
+    assert.ok(toolText(record).split('\n').filter(l => l.trim()).slice(0, 2).includes('Datensatz: „Linsen“ (rec)'), toolText(record));
+    const collection = await c.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'stray', keywords: ['Kraft'] } });
+    assert.ok(toolText(collection).split('\n').filter(l => l.trim()).slice(0, 2).includes('Sammlung: „Mechanik“ (stray)'), toolText(collection));
+    const target = (sc(collection)['confirm'] as { preview: { target: Record<string, unknown> } }).preview.target;
+    assert.deepEqual({ kind: target['kind'], title: target['title'] }, { kind: 'collection', title: 'Mechanik' });
+  } finally { setServiceCredentialForTest(null); repo.mock.restore(); }
+});
+
+test('the preview shows a content type by its NAME, old and new — not as an address', async () => {
+  const repo = repository();
+  repo.nodes['rec']!.properties['ccm:oeh_lrt'] = ['http://w3id.org/openeduhub/vocabs/new_lrt/cd1686cd-43f0-45b2-b22e-b4d125b8be31'];
+  setServiceCredentialForTest(MARIA);
+  try {
+    const c = await client();
+    const r = await c.callTool({ name: 'wlo_update_content', arguments: { nodeId: 'rec', contentType: 'Arbeitsblatt' } });
+    const text = toolText(r);
+    assert.match(text, /Inhaltstyp: „Positionspapier“ → „Arbeitsblatt“/, text);
+    assert.doesNotMatch(text.split('\n').find(l => l.startsWith('Inhaltstyp'))!, /w3id\.org/, text);
+  } finally { setServiceCredentialForTest(null); repo.mock.restore(); }
+});
