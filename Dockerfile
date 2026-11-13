@@ -1,7 +1,7 @@
 # Pinned by digest for reproducible builds (tag kept for readability).
 # node:22-alpine @ v22.23.4 (LTS) — refresh the digest when bumping the base image.
 # Node 20 left support on 2026-04-30; an image pinned to it gets no security fixes.
-FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -9,7 +9,7 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
 
-FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 # No WLO_REPOSITORY_URL here on purpose: the code falls back to STAGING, and an
