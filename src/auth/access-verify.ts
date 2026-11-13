@@ -23,6 +23,7 @@
 
 import { decodeAccessToken, type AccessPayload } from './access-token.js';
 import {
+  addressBucket,
   runWithCredential,
   type AccessSupport,
   type WloCredential,
@@ -52,7 +53,12 @@ export function unreachableFailure(): LoginFailure {
 
 /** Everything both callers need from a verified block. */
 export type VerifyOutcome =
-  | { ok: true; payload: AccessPayload }
+  | {
+    ok: true;
+    payload: AccessPayload;
+    /** The account the repository confirmed for this login — may differ from `payload.u` in spelling. */
+    account: string;
+  }
   | LoginFailure;
 
 export interface VerifyDeps {
@@ -99,7 +105,13 @@ export async function proveLogin(
   now: number,
   purpose: 'issuance' | 'revocation' | 'ticket-exchange' | 'upload',
 ): Promise<LoginProof> {
-  if (deps.authAbuseLimiter.check(deps.bucket ?? deps.ip, credential.header, now)) {
+  // One bucket per address across `/mcp`, `/auth/status` and this path: the
+  // bare address here and `ip:<address>` there were two buckets in one limiter,
+  // i.e. twice the documented budget (audit 2026-11-12, S-6).
+  // The ADDRESS unless the caller names a bucket — never derived from the
+  // credential here: a caller passing one that carries a `jti` would silently
+  // count per id, which for freshly minted blocks is a new budget per guess.
+  if (deps.authAbuseLimiter.check(deps.bucket ?? addressBucket(deps.ip), credential.header, now)) {
     log.warn('too many distinct logins offered', { ip: deps.ip, purpose });
     return { ok: false, reason: 'limited' };
   }
@@ -160,5 +172,8 @@ export async function verifyBlockLogin(
     };
   }
 
-  return { ok: true, payload };
+  // The CONFIRMED account travels with the payload: listing and revocation go
+  // by it, not by the spelling that was typed (audit 2026-11-12, S-2).
+  // `?? payload.u` is for the type only: an authenticated identity has an account.
+  return { ok: true, payload, account: proof.identity.account ?? payload.u };
 }

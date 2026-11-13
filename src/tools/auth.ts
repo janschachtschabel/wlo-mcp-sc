@@ -23,9 +23,9 @@ export const authStatusSchema = z.object({
   mode: z.enum(['anonymous', 'service', 'user']),
   /** Whether the repository actually recognises us as that identity. */
   authenticated: z.boolean(),
-  /** Configured identity (never the secret); absent in anonymous mode. */
+  /** Configured identity (never the secret); absent in anonymous mode and for the shared service account. */
   configuredAs: z.string().optional(),
-  /** What edu-sharing reports back — `esguest` when we are nobody. */
+  /** What edu-sharing reports back — `esguest` when we are nobody; null for the shared service account. */
   authority: z.string().nullable(),
   displayName: z.string().optional(),
   /** How the identity reached this server (plan 2026-11-07, S4). */
@@ -53,17 +53,20 @@ WICHTIG: "authenticated" ist eine EIGENE Aussage. Ist mode="service" oder "user"
         // endpoint cannot disagree about a login.
         const payload = await readAuthStatus(cred);
         const { mode } = payload;
-        const label = payload.configuredAs ?? '';
+        // The shared account is not named (`authStatusPayload`, S-7) — it is
+        // described. A personal login is named to the person it belongs to.
+        const shared = mode === 'service';
+        const whose = shared ? 'das gemeinsame Dienstkonto' : `„${payload.configuredAs ?? ''}“`;
 
         const text = !cred
           ? 'Zugriff ohne Anmeldung: es werden ausschließlich öffentlich sichtbare WLO-Inhalte gelesen.'
           : payload.authenticated
-            ? `Angemeldet als „${payload.displayName || payload.authority}“ (${mode === 'service' ? 'gemeinsames Dienstkonto' : 'persönliches Konto'}). Die Ergebnisse folgen den Rechten dieses Kontos.`
+            ? `${shared ? 'Angemeldet mit dem gemeinsamen Dienstkonto' : `Angemeldet als „${payload.displayName || payload.authority}“ (persönliches Konto)`}. Die Ergebnisse folgen den Rechten dieses Kontos.`
             : payload.upstream === 'unreachable'
               // No verdict: telling a person their password is wrong during an
               // outage sends them to fix something that is not broken.
-              ? `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO ist gerade nicht erreichbar — ob sie gelten, lässt sich im Moment nicht prüfen. Bitte später erneut versuchen.`
-              : `Es sind Zugangsdaten für „${label}“ hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
+              ? `Es sind Zugangsdaten für ${whose} hinterlegt, aber WLO ist gerade nicht erreichbar — ob sie gelten, lässt sich im Moment nicht prüfen. Bitte später erneut versuchen.`
+              : `Es sind Zugangsdaten für ${whose} hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
 
         return { content: [{ type: 'text' as const, text }], structuredContent: payload };
       } catch (err) {

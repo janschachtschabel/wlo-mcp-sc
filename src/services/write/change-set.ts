@@ -17,6 +17,7 @@
  * so its shape decides what "the same change" means.
  */
 
+import { collectionTitleFromProperties, titleFromProperties } from '../../node-match.js';
 import { flattenText } from '../../text-sanitize.js';
 import { cutAtWordBoundary } from '../../text-cap.js';
 import { WRITABLE_FIELDS, type FieldRoute } from './fields.js';
@@ -138,7 +139,8 @@ export function buildChangeSet(
     kind,
     changes,
     destructive: opts.destructive === true,
-    title: before['cclom:title']?.[0] ?? before['cm:name']?.[0] ?? '',
+    // By KIND: a collection is named by the title its own endpoint writes.
+    title: kind === 'content' ? titleFromProperties(before) : collectionTitleFromProperties(before),
     ...(opts.action ? { action: opts.action } : {}),
     ...(opts.addTo ? { addTo: opts.addTo } : {}),
     ...(opts.items?.length ? { items: opts.items } : {}),

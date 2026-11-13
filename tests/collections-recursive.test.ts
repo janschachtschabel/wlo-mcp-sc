@@ -107,3 +107,63 @@ test('get_collection_contents: recursive mode honors skipCount instead of silent
     mock.restore();
   }
 });
+
+/**
+ * Audit 2026-11-12, P-3. The walk read one collection after the other — two
+ * requests each, up to a hundred in series, which against a repository
+ * answering in 300 ms is half a minute for one tool call. The collections of
+ * one level are independent of each other, so they are read together; the
+ * ORDER of the result is that of the tree, whichever answer came first.
+ */
+test('P-3: the collections of one level are read together — and the result keeps the order of the tree', async () => {
+  const { collectRecursiveContents } = await import('../src/services/collection-traversal.js');
+  const subs = Array.from({ length: 12 }, (_, i) => `sub-${String(i).padStart(2, '0')}`);
+  const real = globalThis.fetch;
+  let inFlight = 0;
+  let most = 0;
+  globalThis.fetch = (async (input: unknown) => {
+    const url = new URL(String(input));
+    const id = decodeURIComponent(url.pathname.match(/-home-\/([^/]+)\/children/)?.[1] ?? '');
+    inFlight++;
+    most = Math.max(most, inFlight);
+    // Later collections answer FIRST, so an order taken from arrival would be reversed.
+    await new Promise(r => setTimeout(r, id === 'root' ? 5 : 40 - Number(id.slice(4)) * 3));
+    inFlight--;
+    const folders = url.searchParams.get('filter') === 'folders';
+    const nodes = folders
+      ? (id === 'root' ? subs.map(s => ({ ref: { id: s }, properties: { 'cm:name': [s] } })) : [])
+      : (id === 'root' ? [] : [{ ref: { id: `file-of-${id}` }, properties: { 'cclom:title': [`Datei ${id}`] } }]);
+    return new Response(JSON.stringify({ nodes, pagination: { total: nodes.length, from: 0, count: nodes.length } }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    const out = await collectRecursiveContents('root', 1000, new Set(), undefined);
+    assert.ok(most > 2, `the level was read one request at a time (most in flight: ${most})`);
+    assert.deepEqual(out.nodes.map(n => n.nodeId), subs.map(s => `file-of-${s}`), 'tree order, not arrival order');
+    assert.equal(out.totalHits, 12);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test('P-3: a walk that has enough stops asking — a wide level is not read to its end for one row', async () => {
+  const { collectRecursiveContents } = await import('../src/services/collection-traversal.js');
+  const mock = installFetchMock((url) => {
+    const u = new URL(url);
+    const id = decodeURIComponent(u.pathname.match(/-home-\/([^/]+)\/children/)?.[1] ?? '');
+    const folders = u.searchParams.get('filter') === 'folders';
+    const nodes = folders
+      ? (id === 'root' ? Array.from({ length: 40 }, (_, i) => ({ ref: { id: `s${i}` }, properties: {} })) : [])
+      : (id === 'root' ? [] : [{ ref: { id: `f-${id}` }, properties: { 'cclom:title': ['x'] } }]);
+    return { json: { nodes, pagination: { total: nodes.length, from: 0, count: nodes.length } } };
+  });
+  try {
+    const out = await collectRecursiveContents('root', 3, new Set(), undefined);
+    assert.equal(out.nodes.length, 3);
+    const read = new Set(mock.calls.map(c => new URL(c.url).pathname.match(/-home-\/([^/]+)\/children/)?.[1]));
+    assert.ok(read.size <= 1 + 8, `read ${read.size} collections for three rows`);
+    assert.equal(out.totalHits, 3, 'and what the rest of a group answered is not counted — as the serial walk never asked');
+  } finally {
+    mock.restore();
+  }
+});

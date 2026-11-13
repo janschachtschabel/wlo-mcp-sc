@@ -7,24 +7,17 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import type { SearchCriterion } from '../wlo-api.js';
-import { WLO_REPOSITORY_URL, getNodeTextContent, ngsearch } from '../wlo-api.js';
-import { enhancedSearch } from '../reranker.js';
-import { formatNodes, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
+import { WLO_REPOSITORY_URL } from '../wlo-api.js';
+import { oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
-import { buildFilterCriteria, withDerivedResourceType, derivedResourceTypeNotice, filterByExactLicense, licenseFilterNotice, licensePagingNotice, pageSizeForLicense, formatUnresolvedHint } from '../filter-criteria.js';
+import { buildFilterCriteria, withDerivedResourceType, derivedResourceTypeNotice, licenseFilterNotice, licensePagingNotice, formatUnresolvedHint } from '../filter-criteria.js';
 import { queryMetaContent, toolError, wikiResolutionNotice } from './shared.js';
-import { mapPool } from '../concurrency.js';
-import { dedupeByUrl } from '../result-dedupe.js';
-import { searchWithLicense } from '../services/license-search.js';
+import { incompleteNotice } from '../services/collection-search.js';
+import { contentBucketNotices, contentSearchNotices, enrichStoredText, searchContent } from '../services/content-search.js';
 import { searchAll, searchFacets } from '../services/search.js';
 import { inlineRestrictedPreviews } from '../services/preview-inline.js';
 import { registerWloTool } from '../apps/register.js';
-import { capText } from '../text-cap.js';
 import { nodeListSchema, searchAllEnvelopeSchema } from '../apps/outputSchemas.js';
-
-/** Same bound as `get_node_details`, so an inline text reads the same either way. */
-const TEXT_CONTENT_CAP = 4000;
 
 /**
  * @param searchResultsWidgetUri – when the W1 widget is built, its `ui://`
@@ -68,16 +61,20 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
       ),
       skipCount: z.number().int().min(0).optional().default(0).describe(
         'Backend offset for "more results" paging — skip the first N hits (default 0). ' +
-        'E.g. maxResults=8 then skipCount=8 for the next page. Note: text-query pages are ' +
-        're-ranked per page, so items can repeat or drop across pages — excludeNodeIds is the ' +
-        'robust alternative.'
+        'Text-query pages are re-ranked per page, so items can repeat or drop across pages — ' +
+        'excludeNodeIds is the robust way to page. Use skipCount with the value the answer names ' +
+        '(`more.nextSkipCount`) when a page comes back short although the catalogue holds more.'
       ),
       excludeNodeIds: z.array(z.string()).max(200).optional().describe(
-        'Skip these node IDs in the result (already-seen items). Max 200.'
+        'Skip these node IDs in the result (already-seen items). Max 200. The robust way to page: ' +
+        'the same call again with the ids seen so far — a short page is refilled from further ' +
+        'windows, and `more.nextSkipCount` says where to continue when that bound is reached.'
       ),
       includeTextContent: z.boolean().optional().default(false).describe(
         'Also fetch each result\'s stored full text (crawled webpage/PDF), capped per node. ' +
-        'Adds one round-trip per returned result — use a modest maxResults when enabling this.'
+        'One round-trip per result, for the first 20 results only: the rest are named in ' +
+        '`textContentSkipped`, a read that failed in `textContentUnreadable` (not the same as ' +
+        'an empty text).'
       ),
       includeFacets: z.boolean().optional().default(false).describe(
         'Also return facet counts for the query (learningResourceType/discipline/educationalContext) ' +
@@ -102,7 +99,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
       const { criteria: filters, labeled: labeledFilters, unresolved } = buildFilterCriteria(params);
       const maxResults = params.maxResults ?? 8;
       const skipCount = params.skipCount ?? 0;
-      const excluded = new Set(params.excludeNodeIds ?? []);
+      const excluded = new Set<string>(params.excludeNodeIds ?? []);
 
       try {
         // Facet aggregation (opt-in) fires IN PARALLEL with the main search →
@@ -113,72 +110,28 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         const facetPromise = params.includeFacets
           ? searchFacets(params).catch(() => ({}))
           : Promise.resolve({});
-        let response;
-        let queryType: string;
-        let effectiveCriteria: LabeledCriterion[];
-        // Over-fetch by the exclusion count so that after dropping already-seen
-        // ids we can still reach maxResults; never below maxResults. The `+200`
-        // clamp is redundant TODAY — the excludeNodeIds schema already caps the
-        // array at 200 — and kept as a second, local bound so raising that cap
-        // cannot silently widen the upstream page. (Mirrors the recursive
-        // collection branch in collections.ts.)
-        const excludePool = excluded.size > 0 ? Math.min(maxResults + excluded.size, maxResults + 200) : maxResults;
-        const pool = pageSizeForLicense(excludePool, params.license);
-        if (params.query.trim()) {
-          // Through the licence seam, which fans out over the OER bundle's keys.
-          // Everything else — a single licence, no licence — passes straight to
-          // the same call as before (see services/license-search.ts).
-          response = await searchWithLicense({
-            license: params.license,
-            criteria: [{ property: 'ngsearchword', values: [params.query] }, ...filters],
-            size: pool,
-            skipCount,
-            run: (extra, size, skip) => enhancedSearch(params.query, 'FILES', [...filters, ...extra], size, skip),
-          });
-          queryType = 'ngsearch_enhanced';
-          effectiveCriteria = [{ property: 'ngsearchword', values: [params.query] }, ...labeledFilters];
-        } else {
-          const browseCriteria: SearchCriterion[] = filters.length
-            ? filters
-            : [{ property: 'ngsearchword', values: ['*'] }];
-          response = await searchWithLicense({
-            license: params.license,
-            criteria: browseCriteria,
-            size: pool,
-            skipCount,
-            run: (extra, size, skip) => ngsearch([...browseCriteria, ...extra], 'FILES', size, skip),
-          });
-          queryType = 'ngsearch';
-          effectiveCriteria = labeledFilters.length
-            ? labeledFilters
-            : [{ property: 'ngsearchword', values: ['*'] }];
-        }
-
-        const kept = excluded.size
-          ? response.nodes.filter(n => !excluded.has(n.ref?.id ?? ''))
-          : response.nodes;
-        // Dedupe BEFORE the cap, so maxResults distinct materials come back
-        // rather than one material plus its re-imports (see result-dedupe.ts).
-        // The licence pass is here for the same reason and must run before the
-        // cap too — the upstream key matches a licence FAMILY, see
-        // filterByExactLicense.
-        const candidates = dedupeByUrl(formatNodes(kept));
-        const licensed = filterByExactLicense(candidates, params.license);
+        // The search itself — licence seam, exclusion, dedupe, exact-licence
+        // pass, refill of a short page — is `services/content-search.ts`, shared
+        // with the content leg of search_wlo_all.
+        const found = await searchContent({
+          query: params.query, filters, license: params.license,
+          max: maxResults, skipCount, excluded, emptyQuery: 'browse',
+        });
+        const formatted = found.results;
+        const total = found.total;
+        const queryType = found.queryType;
+        const effectiveCriteria: LabeledCriterion[] = params.query.trim()
+          ? [{ property: 'ngsearchword', values: [params.query] }, ...labeledFilters]
+          : (labeledFilters.length ? labeledFilters : [{ property: 'ngsearchword', values: ['*'] }]);
         const licenceNotice = [
-          licenseFilterNotice(candidates.length, licensed.length, params.license),
+          licenseFilterNotice(found.checked, found.kept, params.license),
           licensePagingNotice(params.license, skipCount),
         ].filter(Boolean).join('\n');
-        const formatted = licensed.slice(0, maxResults);
 
         // Optional inline full text — opt-in, so a plain search pays zero extra
-        // round-trips. Bounded concurrency; same cap and cutting rule as get_node_details.
-        if (params.includeTextContent) {
-          await mapPool(formatted, 10, async (n) => {
-            const full = await getNodeTextContent(n.nodeId);
-            n.textContent = full ? capText(full, TEXT_CONTENT_CAP).text : '';
-            return null;
-          });
-        }
+        // round-trips. Bounded, and what was not read is named (P-5).
+        const textReport = params.includeTextContent ? await enrichStoredText(formatted) : undefined;
+        const searchNotices = contentSearchNotices(found.more, formatted.length, total, textReport);
 
         const isJson = (params.outputFormat ?? 'markdown') === 'json';
         // In markdown the notice goes INTO block 0: a measured real client
@@ -187,10 +140,14 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         // JSON block 0 cannot take prose, so there it rides as its own block
         // below — the same split the licence notice could not have.
         const derivedNotice = derivedResourceTypeNotice(derivedType, formatted.length);
+        // "Keine Inhalte gefunden." is a statement about the CATALOGUE. Over a page
+        // that is merely exhausted (`more`) it told the chatbot the catalogue was.
         let text = isJson
-          ? renderToJson(formatted, response.pagination.total)
-          : (renderToText(formatted, response.pagination.total) || 'Keine Inhalte gefunden.');
+          ? renderToJson(formatted, total)
+          : (renderToText(formatted, total) || (found.more ? '' : 'Keine Inhalte gefunden.'));
         if (!isJson && derivedNotice) text += `\n\n${derivedNotice}`;
+        // Markdown: into block 0, for the same reason as the derived-type notice.
+        if (!isJson && searchNotices.length) text = [text, ...searchNotices].filter(Boolean).join('\n\n');
 
         const facets = await facetPromise;
         const facetsArg = Object.keys(facets).length ? facets : undefined;
@@ -203,7 +160,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
           queryType,
           searchTerm: params.query,
           criteria: effectiveCriteria,
-          pagination: { maxItems: maxResults, skipCount, totalResults: response.pagination.total },
+          pagination: { maxItems: maxResults, skipCount, totalResults: total },
           repositoryUrl: WLO_REPOSITORY_URL,
           unresolvedFilters: unresolved.length ? unresolved : undefined,
           facets: facetsArg,
@@ -218,13 +175,17 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         // a json `text` would corrupt the payload.
         if (licenceNotice) content.push({ type: 'text' as const, text: licenceNotice });
         if (isJson && derivedNotice) content.push({ type: 'text' as const, text: derivedNotice });
+        if (isJson && searchNotices.length) content.push({ type: 'text' as const, text: searchNotices.join('\n') });
         content.push(meta);
         return {
           content,
           structuredContent: {
-            total: response.pagination.total,
+            total,
             count: formatted.length,
             results: formatted,
+            ...(found.more ? { more: found.more } : {}),
+            ...(textReport?.skipped.length ? { textContentSkipped: textReport.skipped } : {}),
+            ...(textReport?.unreadable.length ? { textContentUnreadable: textReport.unreadable } : {}),
             ...(derivedType ? { derivedResourceType: derivedType } : {}),
             ...(unresolved.length ? { unresolvedFilters: unresolved } : {}),
             ...(facetsArg ? { facets: facetsArg } : {}),
@@ -318,7 +279,7 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
       const params = withDerivedResourceType(rawParams);
       const query = params.query.trim();
       const want = new Set(params.include ?? ['content', 'collections', 'topicPages']);
-      // Only the content leg applies the filter (searchCollections takes the
+      // Only the content leg applies the filter (searchCollectionsResult takes the
       // bare query), so the disclosure follows licenseFilter's gate: content
       // leg ran, and the type came from the query rather than the caller.
       const derivedType = want.has('content') && !rawParams.learningResourceType
@@ -409,6 +370,15 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           licensePagingNotice(params.license, params.skipCount ?? 0),
         ].filter(Boolean).join('\n');
         const licenceBlock = licenceNotice ? [{ type: 'text' as const, text: licenceNotice }] : [];
+        // Short page / full text not read: said in words in BOTH formats (the fields are in the envelope).
+        const contentNotices = want.has('content') ? contentBucketNotices(envelope.content) : [];
+        // JSON mode: the unreachable-source sentences ride in the same extra block.
+        const outageNotices = [
+          ...(envelope.collections.incomplete ? [incompleteNotice('Sammlungen', envelope.collections.count === 0)] : []),
+          ...(envelope.topicPages.incomplete ? [incompleteNotice('Themenseiten', envelope.topicPages.count === 0)] : []),
+        ];
+        const contentNoticeBlock = contentNotices.length || outageNotices.length
+          ? [{ type: 'text' as const, text: [...contentNotices, ...outageNotices].join('\n') }] : [];
 
         // The derived-type disclosure, same two-channel shape as the licence
         // one: a sentence for the reader, a field beside `licenseFilter` for
@@ -437,19 +407,32 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         // need to duplicate it. Explicit outputFormat="json" keeps the envelope
         // in the text for clients that only read content blocks.
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify(enriched) }, ...hintBlock, ...licenceBlock, ...derivedBlock, ...metas], structuredContent: enriched, ...previewMeta };
+          return { content: [{ type: 'text' as const, text: JSON.stringify(enriched) }, ...hintBlock, ...licenceBlock, ...derivedBlock, ...contentNoticeBlock, ...metas], structuredContent: enriched, ...previewMeta };
         }
         const md: string[] = [];
         // One ANSWER out of three rendered lists, so the registry pointer is
         // suppressed per list and appended once below. Topic pages are `ccm:map`
         // and format as collections, so a per-list hint fired twice.
         const noHint = { registryHint: false };
-        if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);        md.push(renderToText(envelope.content.results, envelope.content.total, noHint) || 'Keine Inhalte gefunden.');
+        if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);
+          // "Keine Inhalte gefunden." is a statement about the catalogue — not
+          // said over a page that is merely exhausted (`more`).
+          const listed = renderToText(envelope.content.results, envelope.content.total, noHint) || (envelope.content.more ? '' : 'Keine Inhalte gefunden.');
+          if (listed) md.push(listed);
           // Into block 0, right under the list it explains — the trailing
           // blocks never reach at least one measured client (2026-08-19).
-          if (derivedNotice) md.push(derivedNotice); }
-        if (want.has('collections')) { md.push(`# Sammlungen (${envelope.collections.count})`);  md.push(renderToText(envelope.collections.results, undefined, noHint) || 'Keine Sammlungen gefunden.'); }
-        if (want.has('topicPages'))  { md.push(`# Themenseiten (${envelope.topicPages.count})`); md.push(renderToText(envelope.topicPages.results, undefined, noHint) || 'Keine Themenseiten gefunden.'); }
+          if (derivedNotice) md.push(derivedNotice);
+          md.push(...contentNotices); }
+        // "Keine … gefunden." is a statement about the catalogue; over a source
+        // that did not answer the notice stands instead (audit 2026-11-12, K-3).
+        if (want.has('collections')) { md.push(`# Sammlungen (${envelope.collections.count})`);
+          const listed = renderToText(envelope.collections.results, undefined, noHint) || (envelope.collections.incomplete ? '' : 'Keine Sammlungen gefunden.');
+          if (listed) md.push(listed);
+          if (envelope.collections.incomplete) md.push(incompleteNotice('Sammlungen', envelope.collections.count === 0)); }
+        if (want.has('topicPages'))  { md.push(`# Themenseiten (${envelope.topicPages.count})`);
+          const listed = renderToText(envelope.topicPages.results, undefined, noHint) || (envelope.topicPages.incomplete ? '' : 'Keine Themenseiten gefunden.');
+          if (listed) md.push(listed);
+          if (envelope.topicPages.incomplete) md.push(incompleteNotice('Themenseiten', envelope.topicPages.count === 0)); }
         if (envelope.wikipedia) {
           // Quoted, not inlined: the extract is world-editable text landing
           // between our own `# Inhalte` / `# Sammlungen` headings, and a line
@@ -463,6 +446,9 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
           const notice = wikiResolutionNotice(query, envelope.wikipedia.title, envelope.wikipedia.match);
           md.push(`# Wikipedia`);
           md.push(`**${oneLine(envelope.wikipedia.title)}**${notice ? `\n\n${notice}` : ''}\n\n${quoted}\n\n[Wikipedia](${envelope.wikipedia.url})`);
+        }
+        if (envelope.wikipediaUnreachable) {
+          md.push('Wikipedia hat gerade nicht geantwortet — ob es einen Artikel zum Suchbegriff gibt, ist damit offen (KEIN Befund „kein Artikel“).');
         }
         // Gated on the envelope's own flags, not on the parameter: the
         // background cache can answer without this call asking, and a

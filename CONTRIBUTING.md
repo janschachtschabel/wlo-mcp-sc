@@ -39,7 +39,7 @@ validation error from a connection error).
 
 - **Code identifiers** (variables, functions, types): English.
 - **Code comments** (`//`, `/* */`, JSDoc): **English.**
-- **User-facing product strings** — tool descriptions passed to `server.tool(...)`,
+- **User-facing product strings** — tool descriptions passed to `registerWloTool(...)` / `registerReadTool(...)`,
   parameter `.describe(...)` texts, and runtime output (`Beschreibung:`,
   `Keine Sammlungen gefunden`, error messages) — are intentionally **German**:
   WLO is a German-language platform and these strings are seen by end users and

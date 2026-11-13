@@ -16,12 +16,12 @@ import { mapPool } from '../../concurrency.js';
 import { flattenText } from '../../text-sanitize.js';
 import { readNodeMetadata } from '../../wlo-node.js';
 import { nodeTitle } from '../../node-match.js';
-import { failureCode } from '../failure-code.js';
+import { failureCode, writeFailureCode } from '../failure-code.js';
 import { buildChangeSet, displayValue, type ChangeSet } from './change-set.js';
 import { routeFields } from './field-routing.js';
 import { readWriteBaseline, updateNodeMetadata } from './nodes.js';
 import type { ItemState, PlanItem, Step } from './plan-runner.js';
-import { createSuggestions, type SuggestionDraft } from './suggestions.js';
+import { createSuggestions, newProposals, type SuggestionDraft } from './suggestions.js';
 import { verifyWrite } from './verify.js';
 
 export const UPDATE_MANY_MAX = 200;
@@ -94,11 +94,10 @@ export async function prepareUpdates(inputs: UpdateInput[]): Promise<Prepared> {
     const routed = routeFields(input.desired);
     const write = buildChangeSet(target.targetId, 'content', before, routed.write,
       target.redirected ? { redirectedFrom: target.requestedId } : {});
-    const proposal = buildChangeSet(target.targetId, 'content', before, routed.suggest);
     const reason = input.reason?.trim() || DEFAULT_REASON;
-    const suggest = proposal.changes.flatMap(c => (c.after ?? [])
-      .filter(v => !(c.before ?? []).includes(v))
-      .map(value => ({ propertyId: c.property, value, description: reason })));
+    // The same rule as `wlo_suggest_metadata`: per value, against the original.
+    const suggest = newProposals(before, Object.entries(routed.suggest)
+      .flatMap(([propertyId, values]) => values.map(value => ({ propertyId, value, description: reason }))));
     const title = r.title || input.nodeId;
     if (write.changes.length === 0 && suggest.length === 0) {
       out.unchanged.push({ nodeId: input.nodeId, title });
@@ -210,7 +209,7 @@ export const updateStep: Step<UpdateItem> = async (item): Promise<ItemState> => 
       if (rejected) firstCode = failureCode(new Error(rejected.detail ?? ''));
     } catch (err) {
       // The request may have reached the repository before the answer was lost.
-      return { status: 'failed', code: failureCode(err), outcomeOpen: true };
+      return { status: 'failed', code: writeFailureCode(err), outcomeOpen: true };
     }
     try {
       const verified = await verifyWrite(item.write);
@@ -230,11 +229,17 @@ export const updateStep: Step<UpdateItem> = async (item): Promise<ItemState> => 
   if (item.suggest.length) {
     try {
       const out = await createSuggestions(item.targetId, item.suggest);
-      // What the repository says it created, not what was asked for: an empty
-      // list over a request for some is no proof either way (overall review, 8).
-      if (out.ok && out.suggestions.length) suggested = out.suggestions.length;
-      else if (out.ok) { suggestFailed = true; suggestOpen = true; unverified = true; }
-      else {
+      // What the repository says it created, not what was asked for.
+      if (out.ok) {
+        suggested = out.suggestions.length;
+        // Fewer named than sent: the rest is open, not stored.
+        if (suggested < item.suggest.length) { suggestFailed = true; suggestOpen = true; }
+      }
+      else if (out.accepted) {
+        // Answered 2xx and named nothing stored — no proof either way (overall
+        // review, 8). `createSuggestions` reads that answer for both tools now.
+        suggestFailed = true; suggestOpen = true; unverified = true;
+      } else {
         suggestFailed = true;
         if (out.open) suggestOpen = true;
         firstCode ??= failureCode(new Error(out.detail));

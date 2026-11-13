@@ -9,6 +9,7 @@
  * without importing `tools/` at all.
  */
 
+import { currentRequestSignal, isClientGone } from './request-scope.js';
 import { log } from './logger.js';
 
 /**
@@ -34,13 +35,16 @@ export async function mapPool<T, R>(
   let next = 0;
   const worker = async () => {
     while (true) {
+      // The client of this request is gone: the remaining items are not started
+      // (each would fail at once in `wloFetch`, with a warning apiece).
+      if (currentRequestSignal()?.aborted) break;
       const i = next++;
       if (i >= items.length) break;
       try {
         results[i] = await fn(items[i], i);
       } catch (err) {
         results[i] = null;
-        log.warn('mapPool item failed', { index: i, error: err instanceof Error ? err.message : String(err) });
+        if (!isClientGone(err)) log.warn('mapPool item failed', { index: i, error: err instanceof Error ? err.message : String(err) });
       }
     }
   };

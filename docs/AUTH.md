@@ -111,7 +111,7 @@ everything and people fetch a new one. Inconvenient beats unsafe, so *every*
 failure here closes the door: only an **absent** file counts as "first start". A
 present-but-unreadable or malformed one disables the feature and logs why.
 
-**It holds ids, never credentials** — `{ jti, label, iat }` plus the optional kind `k` and expiry `exp`, and nothing else,
+**It holds ids, never credentials** — `{ jti, label, iat }` plus the optional kind `k`, expiry `exp` and confirmed account name `acct`, and nothing else,
 asserted by test. It is also the only module in this project that writes to disk
 at runtime, which is why the container mounts exactly one writable volume and
 keeps everything else read-only. `tests/shared-rule-discipline.test.ts` enforces
@@ -181,7 +181,7 @@ the block. It grants nothing the body path did not: the property above (knowing
 the id is enough) is unchanged. The header wins over a body token.
 
 **`POST /auth/revoke-all` — by account.** Verifies a WLO login and removes every
-entry carrying that user name. This exists because the path above is unreachable
+entry of the account the repository confirms for it. This exists because the path above is unreachable
 for OAuth users: there the block goes to the AI host and **the person never sees
 it**, so an id they cannot read is an id they cannot revoke. Until 2026-08-06 an
 OAuth-issued access could only be ended by the operator editing the registry file
@@ -197,11 +197,20 @@ go through. `tests/shared-rule-discipline.test.ts` pins that there is one such
 module and that both callers use it; `tests/auth-revoke-all.test.ts` pins that a
 rejected login removes nothing.
 
-Matching is by **exact** user name. Whether edu-sharing treats `Jan` and `jan` as
-one login is unmeasured, and folding case would be a convenience if they are the
-same account and a way to wipe a stranger's accesses if they are not. The page
-reports the number removed, so a name spelt differently is visible rather than
-silent.
+Matching is by the **confirmed account**, exactly. edu-sharing accepts one login
+in several spellings — measured on staging 2026-11-12: `LEHRERIN` and `Lehrerin`
+sign in as `lehrerin` — so an entry carries, beside the spelling its block uses
+(`label`, what the block is bound to), the account the repository confirmed
+(`acct`, in full, not the 120-character display form). Revocation and the
+per-account cap go by `acct`. No case is folded by rule: on an instance where
+`Jan` and `jan` are two accounts that would wipe a stranger's accesses.
+
+Entries listed before 2026-11-12 carry no `acct`. They are found by their label:
+by the confirmed account, or by the spelling typed now — the latter only for
+entries without an `acct`, never against somebody's confirmed name. **What is
+left:** such an entry under a spelling that is neither is missed until its block
+is issued once more (which records the account) — the page reports the number
+removed, so the miss is visible rather than silent.
 
 ---
 
@@ -217,6 +226,10 @@ WLO login, the page encrypts locally, `POST /auth/issue` verifies the login
 upstream and lists the id, and the page shows the block. Two copy buttons: with
 and without the `Bearer ` prefix, because a client that wants only the token
 silently fails when the word travels with it (that cost a live afternoon).
+
+The three pages a person sees — `/auth`, `/auth-revoke.html` and the OAuth consent screen — are German
+as served and English for a browser that prefers it; a DE/EN switch sits at the top, `?lang=de|en` forces one,
+and nothing about the choice is stored. Messages the server returns stay German and are labelled as such.
 
 Revoke at `/auth-revoke.html` (or `GET /auth/revoke`, the same page) — by pasting
 the block back, or by logging in to end every access of the account at once.
@@ -484,6 +497,16 @@ is not the address for every scheme** (`abuseBucketKey`, `auth/credential.ts`):
 |---|---|---|
 | `Basic` | the client address | the guesser has no identity to bound, and this is the scheme that carries a guessable secret |
 | `wlo2.` block | its **`jti`** | under a valid access id there is exactly ONE correct password, so rotating them is guessing wherever it comes from |
+
+That sentence is only true because **a block is bound to the name its id was
+listed for** (`credentialFromAccessBlock`, since 2026-11-12). The public key is
+published, so whoever holds a listed id — their own — can mint blocks carrying
+it with any name and any password. Until the binding existed, each id was a
+fresh budget of guesses against a stranger's account, whatever the address; now
+such a block is simply not that access and answers 401. The limiter also counts
+one address in ONE bucket across `/mcp`, `/auth/status` and `/auth*` — the bare
+address on one path and `ip:<address>` on the other were two, i.e. twice the
+budget.
 
 `POST /api/uploads` (batch filing, only with `WLO_BATCH_UPLOAD_ENABLED`) proves
 the login against the repository too and uses **the same bucket** — since

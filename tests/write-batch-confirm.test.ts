@@ -13,7 +13,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BatchConfirmations, batchFingerprint, type BatchPlan } from '../src/services/write/batch-confirm.js';
+import { BatchConfirmations, TooManyBatches, batchFingerprint, type BatchPlan } from '../src/services/write/batch-confirm.js';
 
 const PLAN: BatchPlan = {
   target: 'home', folderName: 'Physik 7', layout: 'folder',
@@ -117,5 +117,58 @@ describe('batchFingerprint', () => {
     assert.equal(batchFingerprint(gedreht), batchFingerprint(PLAN));
     const andersrum: BatchPlan = { ...PLAN, entries: [...PLAN.entries].reverse() };
     assert.notEqual(batchFingerprint(andersrum), batchFingerprint(PLAN));
+  });
+});
+
+// ── audit 2026-11-12, K-13 ────────────────────────────────────────────────────
+
+describe('BatchConfirmations — a batch under way is not given up (K-13)', () => {
+  let bc: BatchConfirmations;
+  beforeEach(() => { bc = new BatchConfirmations({ clock: () => 1_000_000, maxPerOwner: 2 }); });
+
+  it('a new preparation makes room from IDLE batches only — one under way is never given up', () => {
+    const running = bc.mint('person-a', PLAN);
+    assert.equal(bc.redeem(running, 'person-a', 0).outcome, 'ok');
+    bc.record(running, 0, { status: 'stored', nodeId: 'n-0' });
+    const idle = bc.mint('person-a', PLAN);
+    bc.mint('person-a', PLAN);   // the third of two allowed: the IDLE one goes, although the running one is older
+    assert.equal(bc.redeem(idle, 'person-a', 0).outcome, 'unknown');
+    assert.equal(bc.redeem(running, 'person-a', 1).outcome, 'ok', 'the half-filed batch can still be finished');
+  });
+
+  it('when every batch in the way is under way, the new one is refused — and nothing is evicted', () => {
+    const tokens = [bc.mint('person-a', PLAN), bc.mint('person-a', PLAN)];
+    for (const t of tokens) assert.equal(bc.redeem(t, 'person-a', 0).outcome, 'ok');
+    assert.throws(() => bc.mint('person-a', PLAN), (err: unknown) => err instanceof TooManyBatches && err.scope === 'owner');
+    for (const t of tokens) assert.equal(bc.redeem(t, 'person-a', 1).outcome, 'ok');
+    assert.doesNotThrow(() => bc.mint('person-b', PLAN), 'somebody else is not affected');
+  });
+
+  it('a folder whose creation is OPEN is not created a second time', async () => {
+    const token = bc.mint('person-a', PLAN);
+    let made = 0;
+    const open = async () => { made++; return { ok: false as const, open: true as const, detail: 'HTTP 502.' }; };
+    const first = await bc.folder(token, open);
+    const second = await bc.folder(token, open);
+    assert.equal(made, 1, 'a second attempt is a second folder (renameIfExists)');
+    assert.deepEqual([first.ok, second.ok], [false, false]);
+    assert.match(!first.ok ? first.detail : '', /kein zweiter angelegt/);
+  });
+
+  it('a folder creation that got NO answer is open too; a refused one is tried again', async () => {
+    const token = bc.mint('person-a', PLAN);
+    let made = 0;
+    const timeout = async () => { made++; throw Object.assign(new Error('The operation timed out'), { name: 'TimeoutError' }); };
+    const first = await bc.folder(token, timeout);
+    await bc.folder(token, timeout);
+    assert.equal(made, 1);
+    assert.deepEqual([first.ok, !first.ok && first.open], [false, true]);
+
+    const other = bc.mint('person-b', PLAN);
+    let tries = 0;
+    const refused = async () => { tries++; return { ok: false as const, detail: 'HTTP 400.' }; };
+    await bc.folder(other, refused);
+    await bc.folder(other, refused);
+    assert.equal(tries, 2, 'a refusal created nothing — the next file may try');
   });
 });

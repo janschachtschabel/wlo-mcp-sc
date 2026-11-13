@@ -38,12 +38,12 @@ async function client(): Promise<Client> {
 
 /** Materials m1, m2 (and ref-2, a reference to m2), collections C1, C2. */
 function repository(filed: Array<[string, string]> = [], refuse: string[] = []) {
-  const nodes: Record<string, { type: string; title: string; originalId?: string }> = {
+  const nodes: Record<string, { type: string; aspects?: string[]; title: string; originalId?: string }> = {
     m1: { type: 'ccm:io', title: 'Arbeitsblatt Licht' },
     m2: { type: 'ccm:io', title: 'Video Linsen' },
     'ref-2': { type: 'ccm:io', title: 'Video Linsen', originalId: 'm2' },
-    C1: { type: 'ccm:map', title: 'Optik' },
-    C2: { type: 'ccm:map', title: 'Physik 7' },
+    C1: { type: 'ccm:map', aspects: ['ccm:collection'], title: 'Optik' },
+    C2: { type: 'ccm:map', aspects: ['ccm:collection'], title: 'Physik 7' },
   };
   const inCollection = new Set(filed.map(([n, c]) => `${n}>${c}`));
   const puts: string[] = [];
@@ -66,13 +66,13 @@ function repository(filed: Array<[string, string]> = [], refuse: string[] = []) 
       const n = nodes[meta[1]!];
       if (!n) return { status: 404, json: {} };
       return { json: { node: {
-        ref: { id: meta[1], repo: '-home-' }, type: n.type, ...(n.originalId ? { originalId: n.originalId } : {}),
+        ref: { id: meta[1], repo: '-home-' }, type: n.type, ...(n.aspects ? { aspects: n.aspects } : {}), ...(n.originalId ? { originalId: n.originalId } : {}),
         properties: { 'cclom:title': [n.title], 'cm:title': [n.title] },
       } } };
     }
     return { json: {} };
   });
-  return { mock, puts };
+  return { mock, puts, nodes };
 }
 
 interface Answer {
@@ -243,4 +243,38 @@ test('two confirmations with the same key at once run ONE plan; the second is no
     for (const r of [x, y]) assert.equal(sc(r).error?.code, undefined, JSON.stringify(sc(r).error));
     assert.equal(puts.length, 3, 'each filing done once');
   } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
+});
+
+// ── cross-package review of the audit follow-up, phase 1 ─────────────────────
+
+test('the MATERIAL side is checked like the single tool does — a collection or folder is not filed as a record', async () => {
+  setServiceCredentialForTest(MARIA);
+  const { mock, puts, nodes } = repository();
+  nodes['F1'] = { type: 'ccm:map', aspects: ['ccm:mapdata'], title: 'Ablage-Ordner' };
+  const c = await client();
+  try {
+    const r = await c.callTool({ name: TOOL, arguments: { pairs: [
+      { nodeId: 'C2', collectionId: 'C1' },     // a collection as the material
+      { nodeId: 'F1', collectionId: 'C1' },     // a folder as the material
+      { nodeId: 'm1', collectionId: 'F1' },     // a folder as the collection
+      { nodeId: 'gone', collectionId: 'C1' },   // does not exist
+    ] } });
+    assert.equal(r.isError, true);
+    const error = (r as unknown as { structuredContent: { error: { code: string; refused?: Array<Record<string, string>> } } }).structuredContent.error;
+    assert.equal(error.code, 'invalid_input');
+    // One entry per unusable id, with the code the single tool gives for it.
+    assert.deepEqual([...(error.refused ?? [])].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))), [
+      { collectionId: 'F1', code: 'not_a_collection' },
+      { nodeId: 'C2', code: 'is_a_collection' },
+      { nodeId: 'F1', code: 'is_a_folder' },
+      { nodeId: 'gone', code: 'not_found' },
+    ].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    assert.doesNotMatch(toolText(r), /confirmToken/);
+    assert.equal(puts.length, 0);
+    void mock;
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
 });

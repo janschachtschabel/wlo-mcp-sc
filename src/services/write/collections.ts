@@ -211,7 +211,18 @@ export async function createCollection(
   // The collection exists either way; whatever did not land is reported beside
   // it, not turned into a failed create — that would suggest nothing exists and
   // invite a second collection.
-  return { status: 'created', nodeId, check: await finishCollection(nodeId, fields) };
+  // `finishCollection` reads and writes again, and any of that may throw — a
+  // repository that restarts between the two requests refuses the second one.
+  // The collection EXISTS by then: losing its id to that throw reported the
+  // create as failed, and in a tree every child with it (review of audit
+  // package 7). What could not be checked is reported as exactly that.
+  let check: MutationOutcome;
+  try {
+    check = await finishCollection(nodeId, fields);
+  } catch (err) {
+    check = { status: 'unverified', detail: `Die Sammlung ist angelegt; Beschreibung und Rücklesen ließen sich nicht abschließen (${err instanceof Error ? err.message : String(err)}).` };
+  }
+  return { status: 'created', nodeId, check };
 }
 
 /** Change a collection's title and description. */

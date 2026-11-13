@@ -514,3 +514,22 @@ test('a human verdict is refused at the tool, before any preview token exists', 
     assert.equal(writeCalls(mock.calls).length, 0);
   } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }
 });
+
+test('K-14: a version is promised only where one is made — commit beside no metadata change says so', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve();
+  const client = await curationClient();
+  try {
+    const same = STORED['cclom:title']![0]!;
+    const preview = toolText(await client.callTool({
+      name: 'wlo_update_content',
+      arguments: { nodeId: NODE, title: same, content: '# Neu\n', commit: true, versionComment: 'Freigabe' },
+    }));
+    assert.doesNotMatch(preview, /Legt beim Übernehmen eine neue Version an/, preview);
+    assert.match(preview, /commit=true bleibt hier ohne Wirkung/);
+  } finally {
+    await client.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});

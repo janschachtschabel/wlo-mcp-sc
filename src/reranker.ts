@@ -10,12 +10,15 @@ import type { QueryVariant } from './query-expand.js';
 import { expandQuery } from './query-expand.js';
 import { nodeTitle, queryTerms as signalTerms, termMatches } from './node-match.js';
 import { log } from './logger.js';
+import { isClientGone } from './request-scope.js';
 
 // Candidate pool PER search variant for ranking — NOT the number of results
 // delivered (that is maxResults). Smaller pool = faster/smaller fetches at
 // minimally lower recall. Default 25 (reduced from 40), overridable via the
 // ``WLO_POOL_SIZE`` env var.
 const POOL_SIZE: number = resolvePositiveInt(process.env['WLO_POOL_SIZE'], 25, 'WLO_POOL_SIZE');
+/** How far one ranked window advances the backend offset — `enhancedSearch` reads this many per variant, whatever `maxResults` is. */
+export const ENHANCED_POOL_SIZE = POOL_SIZE;
 
 // Final-score blend: text/metadata quality dominates, cross-variant RRF
 // consensus nudges the order, and appearing in several variants earns a small
@@ -213,6 +216,12 @@ export async function enhancedSearch(
   // apparent fact about the world, and the model passes it on as one. Measured
   // 2026-07-31: a wrong service password made every call 401 and every search
   // answer "Gefundene Treffer gesamt: 0" with no error at all.
+  // The client of this request hung up: `allSettled` has swallowed that into
+  // ordinary rejections. Passed on as what it is — wrapped into "search failed"
+  // it was logged as a warning here and an error in the tool, for every caller
+  // that merely closed a tab.
+  const gone = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected' && isClientGone(r.reason));
+  if (gone) throw gone.reason;
   if (successful.length === 0) {
     const reason = settled.find(r => r.status === 'rejected')?.reason;
     const detail = reason instanceof Error ? reason.message : String(reason ?? 'unknown');
@@ -235,6 +244,9 @@ export async function enhancedSearch(
   return {
     nodes: topNodes,
     pagination: { total: apiTotal, from: skipCount, count: topNodes.length },
+    // The last window: every variant came back short of a full pool. A variant
+    // that FAILED tells nothing, so with one of those the end is not claimed.
+    exhausted: successful.length === settled.length && successful.every(r => r.response.nodes.length < POOL_SIZE),
   };
 }
 

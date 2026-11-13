@@ -879,3 +879,48 @@ test('a skill corpus larger than one page says so, rather than seeding silently'
   assert.equal(warned.length, 1, `the bound biting must be a warning — got ${warned.length}`);
   assert.match(warned[0]!, /250/, 'and it names how many records exist');
 });
+
+// ── review of audit package 3: an oversized registry document ────────────────
+
+test('a registry document past the skill bound is held as inconclusive — not re-downloaded every tick, and not "none here"', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  stopSkillRegistryCache();
+  const counts = { children: 0, download: 0 };
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/children')) {
+      counts.children++;
+      return { json: { nodes: [registryChild()], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    if (url.includes('/eduservlet/download')) { counts.download++; return { text: 'x'.repeat(SKILL_TEXT_MAX_BYTES + 5) }; }
+    return { json: {} };
+  });
+  try {
+    queueCollections(['coll-1']);
+    const report = await runCacheTick();
+    assert.equal(report.found, 0);
+    await runCacheTick();
+    await runCacheTick();
+    assert.equal(counts.download, 1, 'asking again cannot answer differently — 2 MiB per tick for nothing');
+    assert.equal(queueLength(), 0);
+
+    // Held, but it settles nothing: the caller must keep its "nicht geprüft" line.
+    const node = collNode('coll-1', 'Optik');
+    const answered = await ensureRegistries([node]);
+    assert.equal(answered.has('coll-1'), false, 'an unread registry is not "this collection approves nothing"');
+    assert.equal(node.skillRegistry, undefined);
+  } finally {
+    mock.restore();
+    stopSkillRegistryCache();
+  }
+});
+
+test('K-16: a tick asked for while one runs does not start a second — it gets the first one\'s report', async () => {
+  const { runCacheTick, stopSkillRegistryCache } = await import('../src/services/skill-registry-cache.js');
+  stopSkillRegistryCache();
+  const first = runCacheTick();
+  const second = runCacheTick();
+  assert.equal(first, second, 'the same promise: one drain of the queue, not two');
+  await first;
+  assert.notEqual(runCacheTick(), first, 'once it is done, the next call is a new tick');
+  stopSkillRegistryCache();
+});

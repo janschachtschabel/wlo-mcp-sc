@@ -10,18 +10,24 @@
  * ever needed (sampling, transports, redaction), swap this module out.
  */
 
+import { currentRequestId, currentTraceFields } from './request-id.js';
+
 type Level = 'info' | 'warn' | 'error';
 
 function emit(level: Level, msg: string, fields?: Record<string, unknown>): void {
   const head = { ts: new Date().toISOString(), level, name: 'wlo-mcp', msg };
+  // Which request caused this line (audit 2026-11-12, B-5). AFTER the fields, so
+  // none of them can overwrite it; absent at startup, in timers and under stdio.
+  const req = currentRequestId();
+  const tail = req ? { req, ...currentTraceFields() } : {};
   let line: string;
   try {
-    line = JSON.stringify({ ...head, ...fields });
+    line = JSON.stringify({ ...head, ...fields, ...tail });
   } catch (err) {
     // Logging runs in failure paths, so it must never become the failure. A
     // field that cannot be serialised (circular reference, BigInt) costs the
     // fields, not the record — and the reason is written where it is findable.
-    line = JSON.stringify({ ...head, logError: err instanceof Error ? err.message : String(err) });
+    line = JSON.stringify({ ...head, logError: err instanceof Error ? err.message : String(err), ...tail });
   }
   process.stderr.write(line + '\n');
 }

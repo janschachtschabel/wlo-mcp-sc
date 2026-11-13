@@ -301,6 +301,9 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
               lines.push(oneLine(`${pad}    · ${p.title}`));
             }
             if (n.children?.length) renderTree(n.children, indent + 1);
+            if (n.childrenUnread) {
+              lines.push(`${pad}  … die Unterthemen ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt. Später erneut: browse_collection_tree mit nodeId=${n.nodeId}`);
+            }
             if (n.hasMoreChildren) {
               lines.push(`${pad}  … weitere Unterthemen vorhanden — zum Öffnen: browse_collection_tree mit nodeId=${n.nodeId}`);
             }

@@ -92,6 +92,7 @@ async function fetchSummaryByTitle(
   lang: string,
   sections: number,
   match: 'exact' | 'fuzzy',
+  seen: Reach,
 ): Promise<WikiSummary | null> {
   const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   let res: Response;
@@ -99,9 +100,10 @@ async function fetchSummaryByTitle(
     res = await wikiFetch(url);
   } catch (err) {
     log.warn('wikipedia summary fetch failed', { title, lang, error: String(err) });
+    seen.unreachable = true;
     return null;
   }
-  if (!res.ok) return null;
+  if (!res.ok) { if (notAnAnswer(res.status)) seen.unreachable = true; return null; }
   const data = await readJson<RestSummary>(res, 'wikipedia summary');
   if (!data?.extract || (data.type && data.type !== 'standard')) return null;
   return {
@@ -123,7 +125,7 @@ async function fetchSummaryByTitle(
 const CANDIDATE_LIMIT = 10;
 
 /** opensearch → real article titles for a fuzzy query, best-first, possibly empty. */
-async function resolveTitleCandidates(query: string, lang: string): Promise<string[]> {
+async function resolveTitleCandidates(query: string, lang: string, seen: Reach): Promise<string[]> {
   const params = new URLSearchParams({
     action: 'opensearch',
     search: query,
@@ -137,9 +139,10 @@ async function resolveTitleCandidates(query: string, lang: string): Promise<stri
     res = await wikiFetch(url);
   } catch (err) {
     log.warn('wikipedia opensearch failed', { query, lang, error: String(err) });
+    seen.unreachable = true;
     return [];
   }
-  if (!res.ok) return [];
+  if (!res.ok) { if (notAnAnswer(res.status)) seen.unreachable = true; return []; }
   // opensearch shape: [query, titles[], descriptions[], urls[]]
   const data = await readJson<[string, string[], string[], string[]]>(res, 'wikipedia opensearch');
   return Array.isArray(data) && Array.isArray(data[1]) ? data[1].filter(t => typeof t === 'string') : [];
@@ -164,6 +167,38 @@ export async function fetchWikipediaSummary(
   lang = 'de',
   sections: 1 | 2 | 3 = 1,
 ): Promise<WikiSummary | null> {
+  return (await fetchWikipediaSummaryResult(query, lang, sections)).summary;
+}
+
+/**
+ * `fetchWikipediaSummary`, saying whether Wikipedia ANSWERED. "No article" is a
+ * statement about the encyclopedia; an outage, a 429 or a 5xx on the way is
+ * not, and both came back as the same `null` — a model then told a person that
+ * Wikipedia has nothing on a topic it has pages about (audit 2026-11-12, K-16).
+ * `unreachable` is set only beside `summary: null`.
+ */
+export async function fetchWikipediaSummaryResult(
+  query: string,
+  lang = 'de',
+  sections: 1 | 2 | 3 = 1,
+): Promise<{ summary: WikiSummary | null; unreachable: boolean }> {
+  const seen: Reach = { unreachable: false };
+  const summary = await summaryOf(query, lang, sections, seen);
+  return { summary, unreachable: summary === null && seen.unreachable };
+}
+
+/** Whether a lookup on the way did not answer. */
+interface Reach { unreachable: boolean }
+
+/** A status that says nothing about the article: overload, throttling, a server error. 404 IS an answer. */
+const notAnAnswer = (status: number): boolean => status === 429 || status >= 500;
+
+async function summaryOf(
+  query: string,
+  lang: string,
+  sections: 1 | 2 | 3,
+  seen: Reach,
+): Promise<WikiSummary | null> {
   // `lang` is interpolated into the request HOST (`https://<lang>.wikipedia.org`),
   // not a path/query, so it can't be percent-encoded. Reject anything that isn't
   // a plain ISO-639 code to prevent host manipulation by an untrusted caller
@@ -175,10 +210,10 @@ export async function fetchWikipediaSummary(
   // It is therefore trusted without a relevance check — checking it would only
   // reject correct answers ("Bruchrechnen" → "Bruchrechnung" share no prefix
   // any rule could relate without a stemmer).
-  const direct = await fetchSummaryByTitle(query, safeLang, sections, 'exact');
+  const direct = await fetchSummaryByTitle(query, safeLang, sections, 'exact', seen);
   if (direct) return direct;
 
-  const candidates = await resolveTitleCandidates(query, safeLang);
+  const candidates = await resolveTitleCandidates(query, safeLang, seen);
   const picked = pickRelevantTitle(query, candidates);
   if (!picked) {
     if (candidates.length) {
@@ -191,7 +226,7 @@ export async function fetchWikipediaSummary(
   // round trip to reach the same null.
   if (picked.toLowerCase() === query.toLowerCase()) return null;
 
-  return fetchSummaryByTitle(picked, safeLang, sections, 'fuzzy');
+  return fetchSummaryByTitle(picked, safeLang, sections, 'fuzzy', seen);
 }
 
 /**

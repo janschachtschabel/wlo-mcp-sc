@@ -76,8 +76,6 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 /** How much of a text is shown in the confirmation preview. */
 const EXCERPT_CHARS = 300;
-/** Enough digest to bind the bytes; the whole hash would only be noise to read. */
-const DIGEST_CHARS = 12;
 
 const TEXT_FORMATS = {
   markdown: { mimeType: 'text/markdown', ext: 'md' },
@@ -118,7 +116,10 @@ function makeFile(bytes: Buffer, mimeType: string, fileName: string, excerpt: st
     bytes,
     fileName,
     mimeType,
-    digest: createHash('sha256').update(bytes).digest('hex').slice(0, DIGEST_CHARS),
+    // The WHOLE checksum: this is what binds the bytes to the approval, and
+    // twelve characters of it were 48 bits where the full-text path binds 256
+    // (audit 2026-11-12, S-13). Long to read; it is there to be compared.
+    digest: createHash('sha256').update(bytes).digest('hex'),
     excerpt,
   };
 }

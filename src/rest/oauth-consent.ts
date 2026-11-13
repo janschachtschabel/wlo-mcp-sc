@@ -201,6 +201,8 @@ export async function grantConsent(
     // never opened in between — the password is not part of this path.
     block: anonymous ? ANONYMOUS_ACCESS_TOKEN : token,
     label: outcome.label,
+    // No account to count by: one address, one budget.
+    ...(anonymous ? { owner: `anonymous@${deps.ip}` } : {}),
   }, Date.now());
 
   // `sanitizeText` on the label like every other site that logs it: the logger's

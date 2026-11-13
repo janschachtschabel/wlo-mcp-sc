@@ -34,8 +34,9 @@ export type RevokeAllDeps = VerifyDeps;
  * Verify the login inside a block, then strike every access listed for that
  * account.
  *
- * Matching is by exact label — see `access-registry.ts` for why case is not
- * folded. A registry write that fails throws rather than reporting a revocation
+ * Matching is by the CONFIRMED account, exactly — plus, for entries listed
+ * before the account was recorded, the spelling typed now. See
+ * `access-registry.ts` for why case is not folded. A registry write that fails throws rather than reporting a revocation
  * that never reached the file; the caller's error boundary turns that into a
  * 500, because telling someone whose account is compromised that the door is
  * shut, while the next restart reopens it, is the worse answer.
@@ -47,9 +48,12 @@ export async function revokeAllForBlock(
 ): Promise<RevokeAllOutcome> {
   const verified = await verifyBlockLogin(token, deps, now, 'revocation');
   if (!verified.ok) return verified;
-  const { payload } = verified;
+  const { payload, account } = verified;
 
-  const revoked = await deps.support.registry.removeByLabel(payload.u);
+  // By the CONFIRMED account, so every spelling of the login goes (audit S-2) —
+  // and by the spelling typed now, for entries listed before the account name
+  // was recorded.
+  const revoked = await deps.support.registry.removeByLabel(account, payload.u);
   log.info('all access blocks revoked for an account', {
     label: sanitizeText(payload.u),
     revoked,

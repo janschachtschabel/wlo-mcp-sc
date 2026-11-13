@@ -13,6 +13,8 @@ permissions:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # A hung step must fail the run, not hold a runner for the default six hours.
+    timeout-minutes: 20
     steps:
       # Actions pinned to full commit SHAs (tag hijack protection); the tag is
       # kept as a comment for readability. Verified against the GitHub API.
@@ -44,3 +46,10 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Audit full tree (informational)
         run: npm audit || true
+      # The image itself: everything above runs the sources, none of it the
+      # Dockerfile, the HEALTHCHECK or the entry point the container starts.
+      # Builds it, starts it under the compose file's restrictions, and checks
+      # /health, tools/list, a clean `docker stop` and the refusal of an address
+      # that cannot work. At run time nothing leaves the runner (see the script).
+      - name: Build and smoke-test the image
+        run: npm run smoke:image

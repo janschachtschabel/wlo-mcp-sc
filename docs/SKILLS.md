@@ -257,7 +257,8 @@ yields a plausible id for the wrong record.
 Two things the parser does not guess: a block with no repository URL (an external
 link with no preview — about a third of WLO records have none) is returned with
 an empty `nodeId` rather than dropped, and an **unclosed** block is ignored, because
-the `SKILL.md` download is byte-capped and half a block is not a reference.
+half a block is not a reference. (The `SKILL.md` itself is never cut: past 2 MiB it
+is refused whole.)
 
 The hyphens in a node id are a non-issue — every tool here already takes UUIDs as
 plain JSON strings.

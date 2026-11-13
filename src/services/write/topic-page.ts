@@ -29,6 +29,7 @@
  * — would refuse most of them.
  */
 
+import { collectionTitleFromProperties } from '../../node-match.js';
 import { getChildCollectionsResult, getNodeMetadata, stripStoreRef } from '../../wlo-node.js';
 import { TOPIC_PAGE_PROPS, isUsableVariant } from '../../topic-page-variant.js';
 import { parsePageConfigOrder, setDefaultVariant } from '../../topic-page-config.js';
@@ -41,7 +42,7 @@ import { isPlaceholderTitle } from '../../topic-page-title.js';
 const PROPERTY = 'ccm:page_config';
 
 /** Only the collection fields needed to find and name the page. */
-const OWNER_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:name'];
+const OWNER_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:title', 'cm:name'];
 
 /**
  * How many variants of one page-config folder are read. Real pages have 1-3
@@ -104,7 +105,7 @@ export async function planRenderedVariant(
     };
   }
   const folderId = stripStoreRef(ref);
-  const pageTitle = sanitizeText(props['cclom:title']?.[0] ?? props['cm:name']?.[0] ?? collectionId);
+  const pageTitle = sanitizeText(collectionTitleFromProperties(props) || collectionId);
 
   // The listing must be READ, not merely empty: a 503 turned into "this variant
   // is not part of the page" would refuse a correct call with a wrong reason —

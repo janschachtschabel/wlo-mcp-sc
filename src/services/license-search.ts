@@ -31,6 +31,7 @@
  * variants and merges — would aggregate something nobody asked for.
  */
 
+import { currentRequestSignal } from '../request-scope.js';
 import type { SearchCriterion, SearchResponse } from '../wlo-api.js';
 import { FACET_BUCKET_MAX, ngsearch } from '../wlo-api.js';
 import { licenseUnresolvable, resolveLicenseSelection } from '../filter-criteria.js';
@@ -69,6 +70,11 @@ export interface LicenseSearchOptions {
   size: number;
   skipCount: number;
   run: RunSearch;
+  /**
+   * `false` skips the exact-total lookup (one facet request): a caller paging in
+   * windows needs it once, not per window.
+   */
+  withTotal?: boolean;
 }
 
 /**
@@ -132,6 +138,7 @@ async function exactLicenseTotal(
  */
 export async function searchWithLicense(opts: LicenseSearchOptions): Promise<SearchResponse> {
   const { license, criteria, size, skipCount, run } = opts;
+  const wantTotal = opts.withTotal !== false;
   // Asked for, but unresolvable: no search at all, an honest 0 — the same rule
   // as `filterByExactLicense`, and no upstream call for a filter nobody can apply.
   if (licenseUnresolvable(license)) return { nodes: [], pagination: { total: 0, from: skipCount, count: 0 } };
@@ -144,7 +151,7 @@ export async function searchWithLicense(opts: LicenseSearchOptions): Promise<Sea
   if (keys.length === 1) {
     const [resp, exact] = await Promise.all([
       run([], size, skipCount),
-      exactLicenseTotal(criteria, keys),
+      wantTotal ? exactLicenseTotal(criteria, keys) : Promise.resolve(null),
     ]);
     return withExactTotal(resp, exact);
   }
@@ -153,7 +160,7 @@ export async function searchWithLicense(opts: LicenseSearchOptions): Promise<Sea
     mapPool(keys, FANOUT_LIMIT, async key =>
       run([{ property: LICENSE_PROPERTY, values: [key] }], size, skipCount),
     ),
-    exactLicenseTotal(criteria, keys),
+    wantTotal ? exactLicenseTotal(criteria, keys) : Promise.resolve(null),
   ]);
 
   // `mapPool` answers null for a key whose request threw. Losing one licence's
@@ -164,6 +171,9 @@ export async function searchWithLicense(opts: LicenseSearchOptions): Promise<Sea
   // freely reusable material on this topic". Every other search path throws when
   // the repository is unreachable, and so does this one.
   if (!lists.length) {
+    // Nobody answered because nobody is listening any more: that is not a failed search.
+    const client = currentRequestSignal();
+    if (client?.aborted) throw client.reason;
     throw new Error(
       `Lizenz-Suche fehlgeschlagen: keine der ${keys.length} Anfragen an das Repository wurde beantwortet.`,
     );
@@ -196,5 +206,7 @@ export async function searchWithLicense(opts: LicenseSearchOptions): Promise<Sea
   return {
     nodes,
     pagination: { total: exact ?? summed, from: skipCount, count: nodes.length },
+    // The last window only when EVERY key answered and each said so.
+    exhausted: lists.length === keys.length && lists.every(a => a.exhausted === true),
   };
 }

@@ -70,21 +70,37 @@ export async function issueAccessBlock(
   if (early) return early;
   const verified = await verifyBlockLogin(token, deps, now, 'issuance');
   if (!verified.ok) return verified;
-  const { payload } = verified;
+  const { payload, account } = verified;
+
+  // The id is listed for another name: a block reusing someone's listed id under
+  // a login of its own. It could never be used (`credentialFromAccessBlock`
+  // binds id and name), so answering "issued" would hand out a dead access.
+  // The answer does tell a signed-in caller that the id exists — accepted: ids
+  // are 128 random bits, and before this check the same call answered "issued".
+  const listedFor = deps.support.registry.labelOf(payload.jti);
+  if (listedFor !== undefined && listedFor !== payload.u) {
+    log.warn('access block refused — its id is listed for another name', { label: sanitizeText(payload.u) });
+    return { ok: false, status: 400, error: 'Dieser Zugangsblock kann nicht verwendet werden. Bitte einen neuen erzeugen.' };
+  }
 
   // Already listed: the same access, confirmed — and NOT rewritten. `add`
   // replaces the whole entry, so writing again would drop an expiry the entry
   // carries (a widget block re-issued through `/auth/issue` or an AI-host
   // consent would become permanent; review 2026-11-07).
   if (deps.support.registry.has(payload.jti, now)) {
+    // An entry from before the account name was recorded learns it now —
+    // otherwise "revoke all" typed in another spelling keeps missing it. Only
+    // the account is added; the entry is not rewritten.
+    await deps.support.registry.noteAccount(payload.jti, account);
     log.info('access block issued again — already listed, entry kept', { label: sanitizeText(payload.u) });
     return { ok: true, label: payload.u, jti: payload.jti };
   }
 
   // Past this point WLO has accepted `u`, so the stored label is a real user
-  // name and goes in unaltered — the registry groups its per-account cap by it,
-  // and a capped label could fold two accounts into one bucket. It is also what
-  // revocation-by-account matches on.
+  // name and goes in unaltered — it is the name the block is bound to. The cap
+  // and revocation-by-account go by `acct`, the account WLO CONFIRMED: one
+  // login has several accepted spellings (measured 2026-11-12), and by label
+  // alone each spelling was an account of its own (audit S-2).
   //
   // `iat` is OURS, not `payload.iat`: an operator pruning or auditing the list
   // needs a timestamp this server stands behind.
@@ -93,6 +109,7 @@ export async function issueAccessBlock(
     jti: payload.jti,
     label: payload.u,
     iat,
+    acct: account,
     ...(ttlSeconds !== undefined ? { exp: iat + ttlSeconds } : {}),
   });
   log.info('access block issued', { label: sanitizeText(payload.u) });

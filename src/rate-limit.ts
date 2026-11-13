@@ -6,7 +6,7 @@
  * State is encapsulated per limiter instance — no module-level globals.
  */
 
-import { createHash } from 'node:crypto';
+import { keyedDigest } from './keyed-digest.js';
 import { isIP } from 'node:net';
 
 export interface RateLimiter {
@@ -48,9 +48,9 @@ export function clientKey(
     const raw = Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor;
     const hops = raw.split(',').map(s => s.trim()).filter(Boolean);
     const last = hops[hops.length - 1];
-    if (last) return addressBucket(last);
+    if (last) return addressUnit(last);
   }
-  return remoteAddress ? addressBucket(remoteAddress) : 'unknown';
+  return remoteAddress ? addressUnit(remoteAddress) : 'unknown';
 }
 
 /**
@@ -66,7 +66,7 @@ export function clientKey(
  * IPv4 — a /64 cut would put every IPv4 client into ONE bucket — and loopback
  * stays loopback. Anything that is not an address passes through unchanged.
  */
-function addressBucket(address: string): string {
+function addressUnit(address: string): string {
   const host = address.replace(/^\[|\]$/g, '').toLowerCase();
   if (isIP(host) !== 6) return address;
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
@@ -105,7 +105,8 @@ export interface DistinctValueLimiter {
  * a per-credential cap. What separates the two is how many distinct logins one
  * address presents: a real user has exactly one.
  *
- * Values are stored as a truncated SHA-256 digest, never in the clear: this
+ * Values are stored as a truncated KEYED digest, never in the clear and never
+ * as a bare hash: this
  * state lives for a whole window, and keeping passwords in it would create the
  * very exposure the limiter exists to reduce.
  *
@@ -115,7 +116,8 @@ export function createDistinctValueLimiter(maxDistinct: number, windowMs = 600_0
   const buckets = new Map<string, { seen: Set<string>; windowStart: number }>();
   let lastSweep = 0;
 
-  const digest = (value: string) => createHash('sha256').update(value).digest('base64').slice(0, 16);
+  // Keyed (`keyed-digest.ts`): a bare hash of a login is a password hash.
+  const digest = (value: string) => keyedDigest(value).slice(0, 24);
 
   return {
     check(key: string, value: string, now: number): boolean {

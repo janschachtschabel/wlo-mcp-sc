@@ -21,6 +21,7 @@
  * `wlo_create_content` files the hit's id without resolving it first.
  */
 
+import { nodeTitle } from '../node-match.js';
 import { ngsearch } from '../wlo-search.js';
 
 export interface UrlRecord {
@@ -49,14 +50,14 @@ export async function recordsForUrl(spelling: string): Promise<UrlRecord[]> {
     'FILES',
     URL_SCAN_LIMIT,
     0,
-    ['ccm:wwwurl', 'cclom:title', 'cm:name'],
+    ['ccm:wwwurl', 'cclom:title', 'cm:title', 'cm:name'],
   );
   return nodes.flatMap(node => {
     const url = node.properties?.['ccm:wwwurl']?.[0];
     if (!url) return [];
     return [{
       nodeId: node.ref?.id ?? '',
-      title: node.properties?.['cclom:title']?.[0] ?? node.properties?.['cm:name']?.[0] ?? '',
+      title: nodeTitle(node),
       url,
     }];
   });

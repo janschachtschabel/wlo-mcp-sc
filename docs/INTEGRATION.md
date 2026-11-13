@@ -425,9 +425,9 @@ Fassung für das Modell.
 | MCP-Endpunkt | 120 **Werkzeugaufrufe** (`tools/call`)/Minute je Adresse; alle POSTs zusammen das Dreifache | `RATE_LIMIT_RPM` |
 | MCP-Endpunkt mit `X-WLO-Client-Key` | eigenes Budget je vertrautem Client, unabhängig von der Adresse | `TRUSTED_CLIENT_KEYS` |
 | `/api/*` und die Anmeldeseiten | 30 Anfragen/Minute je Adresse | `API_RATE_LIMIT_RPM` |
-| Anfrage-Rumpf | 4 MiB | `MAX_BODY_BYTES` |
+| Anfrage-Rumpf | 4 MiB; auf `/auth*` und `/oauth/*` höchstens 64 KiB | `MAX_BODY_BYTES` |
 | Eine Datei auf `/api/uploads` | 50 MB (höchstens 100 MB) | `UPLOAD_MAX_BYTES` |
-| Alle offenen Upload-Plätze zusammen | 128 MB, 20 je Anmeldung | `UPLOAD_MAX_TOTAL_BYTES` |
+| Alle offenen Upload-Plätze zusammen | 128 MB, 20 je Anmeldung, je Anmeldung höchstens die Hälfte der Bytes | `UPLOAD_MAX_TOTAL_BYTES` |
 | Zeit für einen Upload-Rumpf | 25 s (höchstens 28 s) | `UPLOAD_REQUEST_TIMEOUT_MS` |
 
 **Ein 429 sagt, wie lange zu warten ist.** `Retry-After` ist die Restzeit des
@@ -523,7 +523,10 @@ Damit niemand darauf plant:
 | `401` mit `WWW-Authenticate` | Ein Token wurde vorgelegt und ist unbrauchbar (abgelaufen, gesperrt, fremd). **Ohne** Header gäbe es `200` |
 | Kurationswerkzeug verweigert | Keine schreibberechtigte Anmeldung (`login_required`) — die Antwort trägt die Aufforderung zum Login |
 | `login_rejected` | Das Repository hat die vorhandene Anmeldung abgelehnt, meist nach einem Passwortwechsel → neu anmelden |
-| `confirm_expired` / `plan_expired` | Schlüssel älter als 10 bzw. 30 Minuten → ohne Schlüssel neu aufrufen, neue Vorschau |
+| `confirm_expired` / `plan_expired` | Schlüssel älter als 10 Minuten bzw. Plan älter als 30 Minuten **oder nach einem Neustart des Servers verloren** → ohne Schlüssel neu aufrufen, neue Vorschau. `plan_expired` trägt `outcomeOpen: true`: frühere Aufrufe des Plans können schon Schritte ausgeführt haben — die neue Vorschau zeigt, was da ist |
+| Eine Anfrage im Server-Log wiederfinden | Jede Antwort trägt `X-Request-Id`; dieselbe Kennung steht als `req` in jeder Logzeile der Anfrage. Ein eigenes `X-Request-Id` (8–64 Zeichen aus `A–Z a–z 0–9 . _ -`) wird übernommen — so lässt sich ein Aufruf des Chatbots vom eigenen Log bis ins Server-Log verfolgen. `x-client-trace-id` und die B3-Kopfzeilen werden ebenfalls gelesen, geloggt (`client_trace_id`, `trace_id`, `span_id`) und ans Repository weitergegeben |
+| `429 too_many` auf `/api/uploads` | Kein Platz: 20 Plätze je Anmeldung, das Gesamtbudget, oder der Anteil EINER Anmeldung (die Hälfte) ist belegt. Hochladen und Ablegen abwechseln statt erst alles hochzuladen — ein abgelegter Platz ist wieder frei |
+| `429 rate_limited` auf `/api/uploads` | Das Anfrage-Budget des Aufrufers ist verbraucht (Adresse, oder der eigene Topf mit `X-WLO-Client-Key`) — geprüft vor der Anmeldung; `Retry-After`/`retryAfter` nennen den Rest des Fensters |
 | `429 too_many_logins` auf `/api/uploads` | Mehr verschiedene Anmeldungen von einer Adresse als `AUTH_CREDENTIAL_LIMIT` erlaubt → Zugangsblöcke statt `Basic` nutzen; `Retry-After`/`retryAfter` = Restzeit des Fensters |
 | `503 upstream_unreachable` auf `/api/uploads`, `/auth/issue`, `/auth/revoke-all`, `/auth/ticket`, `POST /oauth/authorize` | edu-sharing hat die Anmeldeprüfung nicht beantwortet — **kein** Urteil über die Anmeldung. Nicht neu anmelden lassen, sondern einmal nach `retryAfter` (10 s) erneut versuchen |
 | Suche liefert nichts trotz Lizenzfilter | Auf den Hinweis achten: mit ihm gibt es nichts *mit genau dieser Lizenz*, ohne ihn nichts zum Thema. Steht die Lizenz in `unresolvedFilters`, wurde sie nicht erkannt |

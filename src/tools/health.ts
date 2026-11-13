@@ -3,6 +3,8 @@
  * Reachability/latency probe against the configured repository.
  */
 
+import { nodeTitle } from '../node-match.js';
+import { registerReadTool } from '../apps/register.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { BUSY_RETRY_DEFAULT_S, failureFields } from '../services/failure-code.js';
 import { codeOfStatus } from '../services/node-details.js';
@@ -15,7 +17,7 @@ import {
 } from '../wlo-api.js';
 
 export function registerHealthTool(server: McpServer): void {
-  server.tool(
+  registerReadTool(server,
     'wlo_health_check',
     `Probe whether the WLO repository API is reachable and responding.
 Returns latency in ms, the resolved root collection nodeId, and a status flag.
@@ -50,7 +52,7 @@ Useful for callers (e.g. chatbots) to quickly tell "WLO is down" from "your quer
           repositoryUrl: WLO_REPOSITORY_URL,
           baseUrl: BASE_URL,
           rootNodeId: root,
-          rootResolved: ok ? (node.properties?.['cclom:title']?.[0] ?? node.properties?.['cm:name']?.[0] ?? null) : null,
+          rootResolved: ok ? (nodeTitle(node) || null) : null,
           latencyMs,
           checkedAt: new Date().toISOString(),
         };

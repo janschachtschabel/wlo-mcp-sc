@@ -23,6 +23,7 @@ import { resolveWriteTarget } from '../services/write/nodes.js';
 import { deleteCollection } from '../services/write/collections.js';
 import type { MutationOutcome } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
+import { CONTAINER_TYPE, CONTENT_TYPE } from '../node-kind.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
   registerCurationTool,
@@ -30,6 +31,7 @@ import {
   previewReply,
   confirmOrExplain,
   codedError,
+  wrongKind,
   reportMutation,
   timeoutOrError,
   isPreviewCall,
@@ -56,7 +58,8 @@ export function registerCurationDeleteTools(server: McpServer, challenge: WriteA
       'gibt es wlo_remove_from_collection. Mit der id des Datensatzes verschwindet das Material aus allen ' +
       'Sammlungen, in denen es vorkommt. Mit der id einer Sammlungs-Verknüpfung (das ist es, was ' +
       'Sammlungslisten liefern) verschwindet nur die Verknüpfung, und der Datensatz bleibt bestehen — die ' +
-      'Vorschau sagt, welcher der beiden Fälle vorliegt. Erfordert eine Anmeldung.',
+      'Vorschau sagt, welcher der beiden Fälle vorliegt. Nur für einzelne Datensätze: eine Sammlung oder ein ' +
+      'Ordner wird abgelehnt. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     handler: (params) => runDeletion(params, {
@@ -84,15 +87,20 @@ export function registerCurationDeleteTools(server: McpServer, challenge: WriteA
     title: 'WLO Sammlung löschen',
     description:
       'Lösche eine WLO-Sammlung endgültig, samt ihrer Untersammlungen. Die darin verlinkten Materialien ' +
-      'bleiben bestehen — eine Sammlung enthält Verweise, nicht die Inhalte selbst. ZWEISTUFIG: ohne ' +
-      'confirmToken wird nur gezeigt, was gelöscht würde. Erfordert eine Anmeldung.',
+      'bleiben bestehen — eine Sammlung enthält Verweise; nur direkt in ihr angelegte Originale gehen mit. ' +
+      'Nur für Sammlungen: ein Datensatz oder Ordner wird abgelehnt. ZWEISTUFIG: ohne confirmToken wird nur ' +
+      'gezeigt, was gelöscht würde. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     handler: (params) => runDeletion(params, {
       kind: 'collection',
+      // Measured 2026-08-09 (skill wlo-collections-references): a record that
+      // lies in the collection as an ORIGINAL — created there, not filed — goes
+      // with it. "Die Materialien bleiben bestehen" was true of links only.
       whatItMeans:
-        'Untersammlungen werden mitgelöscht. Die verlinkten Materialien bleiben bestehen — eine Sammlung ' +
-        'enthält Verweise, nicht die Inhalte selbst.',
+        'Untersammlungen werden mitgelöscht. Verlinkte Materialien bleiben bestehen — eine Sammlung enthält ' +
+        'in der Regel Verweise. Datensätze, die als Original direkt in der Sammlung angelegt wurden, werden ' +
+        'dagegen mitgelöscht.',
       remove: deleteCollection,
       notFound: 'Die Sammlung',
       context: 'Die Sammlung konnte nicht gelöscht werden',
@@ -121,6 +129,19 @@ interface DeletionSpec {
   context: string;
 }
 
+/** Which tool fits instead — appended to the refusal. */
+function useInstead(code: string, type: string | undefined): string {
+  if (code === 'is_a_collection') return ' Zum Löschen einer Sammlung: wlo_delete_collection.';
+  // Measured 2026-11-12: the folder of a batch filing is a `ccm:map` WITHOUT the
+  // collection aspect. Neither tool deletes it — a folder goes with the
+  // ORIGINALS inside it, and neither preview sentence says that.
+  if (code === 'is_a_folder' || (code === 'not_a_collection' && type === CONTAINER_TYPE)) {
+    return ' Einen Ordner samt Inhalt löscht dieser Server nicht — die enthaltenen Datensätze einzeln löschen '
+      + '(wlo_delete_content) oder den Ordner in der Redaktionsumgebung entfernen.';
+  }
+  return code === 'not_a_collection' && type === CONTENT_TYPE ? ' Zum Löschen eines Datensatzes: wlo_delete_content.' : '';
+}
+
 /**
  * The shared two-step deletion. Reads the record first so the preview can name
  * what would be lost — an id alone is not something a person can consent to.
@@ -134,6 +155,21 @@ async function runDeletion(params: Record<string, unknown>, spec: DeletionSpec) 
     const node = await getNodeMetadata(nodeId);
     if (!node) {
       return codedError('not_found', `${spec.notFound} „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+    }
+
+    // The tool must fit the node (audit 2026-11-12, K-1). Each tool has its own
+    // endpoint and its own preview sentence, and the repository checks neither:
+    // a collection id here used to get the preview of ONE record ("verschwindet
+    // aus allen Sammlungen") over a deletion of the collection. A collection is
+    // told by its ASPECT, not by `ccm:map` — a workspace folder is a map too,
+    // and under the collection preview ("verlinkte Materialien bleiben
+    // bestehen") it would go with the originals inside it. A node whose kind is
+    // not named is refused: the one irreversible act must know what it hits.
+    // (An alias such as `-userhome-` never gets here — `registerCurationTool`.)
+    const wrong = wrongKind(node, spec.kind);
+    if (wrong) {
+      return codedError(wrong.code,
+        `„${sanitizeText(nodeId)}“ ${wrong.reason}${useInstead(wrong.code, node.type)} Es wurde nichts gelöscht.`);
     }
 
     // The id is used AS GIVEN, deliberately — this is the one write path that

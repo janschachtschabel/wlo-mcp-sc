@@ -19,7 +19,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { searchCollections } from '../src/services/collection-search.js';
+import { searchCollectionsResult } from '../src/services/collection-search.js';
+
+/** The merged nodes — what most of these tests are about. */
+const searchCollections = async (...a: Parameters<typeof searchCollectionsResult>) => (await searchCollectionsResult(...a)).nodes;
 import { installFetchMock, makeNode } from './fetchMock.js';
 
 const MDS = '/mds_oeh/collections';

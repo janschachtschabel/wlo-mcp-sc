@@ -69,9 +69,9 @@ function serve() {
       };
     }
     if (url.includes(COLLECTION)) {
-      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, properties: { 'cm:title': ['Bruchrechnung'] } } } };
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: { 'cm:title': ['Bruchrechnung'] } } } };
     }
-    return { json: { node: { ref: { id: NODE, repo: '-home-' }, properties: { 'cclom:title': ['Arbeitsblatt Brüche'] } } } };
+    return { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', properties: { 'cclom:title': ['Arbeitsblatt Brüche'] } } } };
   });
 }
 
@@ -322,6 +322,34 @@ test('reviewing a proposal is NOT preparable — deciding stays here', async () 
     assert.match(toolText(res), /anmelden|Dienstkonto/i);
     assert.equal(res.structuredContent?.preparedRequest, undefined,
       'and it must not hand the write out either');
+    assert.equal(writes(mock).length, 0);
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('a filing prepared through a reference id carries the ORIGINAL in its path', async () => {
+  setServiceCredentialForTest(SERVICE);
+  const mock = installFetchMock((url) => {
+    if (url.includes('/usage/v1/')) return { json: [] };
+    if (url.includes(COLLECTION)) {
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: { 'cm:title': ['Bruchrechnung'] } } } };
+    }
+    return url.includes('original-9')
+      ? { json: { node: { ref: { id: 'original-9', repo: '-home-' }, type: 'ccm:io', properties: { 'cclom:title': ['Arbeitsblatt (Original)'] } } } }
+      : { json: { node: { ref: { id: NODE, repo: '-home-' }, type: 'ccm:io', originalId: 'original-9', properties: { 'cclom:title': ['Arbeitsblatt (Verknüpfung)'] } } } };
+  });
+  const c = await client();
+  try {
+    const preview = toolText(await c.callTool({ name: 'wlo_add_to_collection', arguments: { collectionId: COLLECTION, nodeId: NODE } }));
+    assert.match(preview, /Arbeitsblatt \(Original\)/, 'the preview names what is filed, by ITS title');
+    const res = await c.callTool({
+      name: 'wlo_add_to_collection', arguments: { collectionId: COLLECTION, nodeId: NODE, confirmToken: tokenFrom(preview) },
+    }) as PreparedResult;
+    assert.notEqual(res.isError, true, toolText(res));
+    assert.match(res.structuredContent?.preparedRequest?.path ?? '', /\/references\/original-9$/);
     assert.equal(writes(mock).length, 0);
   } finally {
     await c.close();

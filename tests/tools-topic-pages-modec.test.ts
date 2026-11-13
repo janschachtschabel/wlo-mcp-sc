@@ -109,7 +109,7 @@ test('search_wlo_topic_pages Mode C: the owner reads ask for only the fields use
     assert.deepEqual(new URL(cfgCall.url).searchParams.getAll('propertyFilter'),
       ['virtual:primaryparent_nodeid', 'ccm:page_config']);
     assert.deepEqual(new URL(ownerCall.url).searchParams.getAll('propertyFilter'),
-      ['ccm:page_config_ref', 'cclom:title', 'cm:name']);
+      ['ccm:page_config_ref', 'cclom:title', 'cm:title', 'cm:name']);
   } finally {
     mock.restore();
   }

@@ -23,9 +23,9 @@ export interface AuthStatus {
   mode: 'anonymous' | 'service' | 'user';
   /** Whether the repository actually recognises us as that identity. */
   authenticated: boolean;
-  /** Configured identity (never the secret); absent in anonymous mode. */
+  /** Configured identity (never the secret); absent in anonymous mode and for the shared service account. */
   configuredAs?: string;
-  /** What edu-sharing reports back — `esguest` when we are nobody. */
+  /** What edu-sharing reports back — `esguest` when we are nobody; `null` for the shared service account (not named). */
   authority: string | null;
   displayName?: string;
   /** How the identity reached this server. */
@@ -55,12 +55,17 @@ export function authStatusPayload(cred: WloCredential | null, identity: WloIdent
   // gets the same treatment as a publisher title. A name of nothing but control
   // characters sanitizes to "", and empty quotes would read like a bug.
   const label = cred ? (sanitizeText(cred.label) || 'ohne lesbaren Namen') : '';
+  // The service account is reported as a MODE. Whoever asks without a login of
+  // their own is answered for it, so its user name, authority and display name
+  // went to every anonymous caller — half of a login nobody needs to be handed
+  // (audit 2026-11-12, S-7). A person asking about their OWN login gets it all.
+  const shared = cred?.source === 'service';
   return {
     mode: cred ? cred.source : 'anonymous',
     authenticated: identity.authenticated,
-    ...(cred ? { configuredAs: label } : {}),
-    authority: identity.authority,
-    ...(identity.displayName ? { displayName: identity.displayName } : {}),
+    ...(cred && !shared ? { configuredAs: label } : {}),
+    authority: shared ? null : identity.authority,
+    ...(identity.displayName && !shared ? { displayName: identity.displayName } : {}),
     credential: credentialKind(cred),
     upstream: identity.unreachable ? 'unreachable' : 'ok',
     ...(expiresAtS !== undefined ? { expiresAt: new Date(expiresAtS * 1000).toISOString() } : {}),

@@ -4,6 +4,7 @@
  * facet breakdown of its files by type/subject/level).
  */
 
+import { registerReadTool } from '../apps/register.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -18,7 +19,7 @@ const BREAKDOWN_LABELS: Record<string, string> = {
 };
 
 export function registerCollectionStatsTool(server: McpServer): void {
-  server.tool(
+  registerReadTool(server,
     'get_collection_stats',
     `Verschaffe dir einen Überblick, WORAUS eine WLO-Sammlung besteht — wie viele Dateien (Inhalte) und Unter-Sammlungen, plus Aufschlüsselung der Dateien nach Materialtyp, Fach und Bildungsstufe. Nutze dies für einen schnellen Überblick vor dem Stöbern.
 Die Aufschlüsselung zählt über bis zu 100 DIREKTE Kind-Dateien (Stichprobe, nicht der ganze Unterbaum); die Ausgabe weist darauf hin, wenn die Sammlung größer ist.`,

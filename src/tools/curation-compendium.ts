@@ -12,6 +12,8 @@
  * actually clears the property.
  */
 
+import { collectionTitleFromProperties } from '../node-match.js';
+import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -37,6 +39,8 @@ import {
   desiredFromChangeSet,
   errorText,
   codedError,
+  wrongKind,
+  wrongKindReply,
   timeoutOrError,
   isPreviewCall,
 } from './curation-shared.js';
@@ -86,8 +90,15 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
         // one record while changing another.
         const baseline = await readWriteBaseline(node, nodeId);
         if (!baseline.ok) return errorText(baseline.reason);
+        // A compendium text belongs to a collection, and the property endpoint
+        // stores it on anything it is handed (measured 2026-08-09: it accepted a
+        // property on a `ccm:io`) — so this is the one place that can refuse
+        // (audit 2026-11-12, K-11). Asked of the node that will be WRITTEN: the
+        // id's own kind says nothing once a redirection is in play.
+        const wrong = wrongKind(baseline.written, 'collection');
+        if (wrong) return wrongKindReply(baseline.target.targetId, wrong);
         const { target, before } = baseline;
-        const title = sanitizeText(before['cm:title']?.[0] ?? before['cclom:title']?.[0] ?? nodeId);
+        const title = sanitizeText(collectionTitleFromProperties(before) || nodeId);
 
         if (remove) return await handleRemoval(target, title, before, params);
 
@@ -133,10 +144,15 @@ async function handleRemoval(
     return errorText(`Die Sammlung „${title}“ hat keinen Kompendialtext, der entfernt werden könnte.`);
   }
 
+  const current = before[PROPERTY]!.join('\n');
   // The id in the sentence is the one that will be changed, not the one that was
   // typed — the redirection line above it names both.
   const cs = buildChangeSet(target.targetId, 'compendium', before, {}, {
-    action: `Entfernt den Kompendialtext von „${title}“ (${target.targetId}). `
+    // WHICH text: its length and checksum are in the sentence, so they are in
+    // the fingerprint. Without them the key approved "remove whatever is there
+    // when I come back" — a text somebody rewrote in between went with it (K-14).
+    action: `Entfernt den Kompendialtext von „${title}“ (${target.targetId}) — `
+      + `${current.length} Zeichen, SHA-256 ${createHash('sha256').update(current, 'utf8').digest('hex')}. `
       + 'Die Sammlung selbst bleibt mit allen Inhalten bestehen.',
     ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
   });

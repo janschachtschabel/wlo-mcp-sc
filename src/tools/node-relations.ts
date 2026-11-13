@@ -14,7 +14,7 @@ import { oneLine, renderToText } from '../formatter.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { subjectRegistryText, toolError } from './shared.js';
-import { registerWloTool } from '../apps/register.js';
+import { registerWloTool, registerReadTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
 
 export function registerNodeRelationTools(server: McpServer, searchResultsWidgetUri?: string): void {
@@ -115,7 +115,7 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
     },
   });
 
-  server.tool(
+  registerReadTool(server,
     'get_node_breadcrumb',
     `Zeige, WO eine WLO-Sammlung im Themenbaum sitzt — der Pfad von der WLO-Wurzel bis zum Knoten (Breadcrumb). Nutze dies zur Orientierung nach einem tiefen Drilldown.
 Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Breadcrumb und liefern einen leeren Pfad.`,

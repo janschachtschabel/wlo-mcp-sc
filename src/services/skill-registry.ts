@@ -25,208 +25,27 @@
  * BEFORE the document.
  */
 
-import type { WloNode } from '../wlo-api.js';
-import { getCollectionContents, getNodeMetadata } from '../wlo-api.js';
+import { sharedReadScope } from '../auth/credential.js';
+import { shortCache } from '../short-cache.js';
+import { getNodeMetadata } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode } from '../formatter.js';
 import { mapPool } from '../concurrency.js';
-import { nodeTitle } from '../node-match.js';
 import { log } from '../logger.js';
-import { REGISTRY_CONTENT_TYPE_URI, SKILL_PROPS } from './skill-catalogue.js';
+import { SKILL_PROPS } from './skill-catalogue.js';
 import { parseSkillReferences } from './skill-references.js';
 import {
   layoutContexts, resolveContext,
   type ContextResolution, type RegistryContext, type RegistryGeneral,
 } from './registry-contexts.js';
 import { readSkillText } from './skills.js';
+import { pickRegistryNode, registryTitleOf, scanForRegistry, type ScanTruncation } from './skill-registry-detect.js';
 
-/**
- * What a SKILL.md reports as its media type.
- *
- * `text/x-web-markdown` is edu-sharing's own spelling and the only one staging
- * actually produces (measured 2026-08-10: 25/25 skill records — then still
- * `ai_prompt` — alongside `mediatype: file-markdown`). The media type is
- * unaffected by the 2026-08-12 vocabulary move; only the content type changed.
- * The IANA form and the historical `x-` form are
- * accepted too, so a repository that starts reporting either keeps working.
- */
-const MARKDOWN_MIME = new Set(['text/x-web-markdown', 'text/markdown', 'text/x-markdown']);
-
-/** edu-sharing's coarse label, derived from the mimetype — the fallback when the raw value is unhelpful. */
-const MARKDOWN_MEDIATYPE = 'file-markdown';
-
-/**
- * How a document names itself the registry — in its file name or in its title.
- *
- * ONE rule for both carriers, because the editorial team writes the same word in
- * both places and in whichever spelling is to hand. All four endings are in real
- * use, not hypothetical: `docs/SKILLS.md` asks for `SKILL_REGISTRY.md`, staging
- * carries `skill_katalog.md` (measured 2026-08-12, see `skill-catalogue.ts`)
- * beside the English `skill_catalog.md`, and the live registry on the Optik
- * collection is titled "Skillkatalog Physik Optik" — which the earlier
- * `'skill registry'` phrase did not match at all. The separator class covers
- * `skill_registry`, `Skill-Katalog`, `Skill Registry` and the run-together
- * `Skillkatalog` alike.
- *
- * Matching a little too eagerly is the safe direction here and is why this may
- * be one loose pattern rather than an exact-name list: it decides a TIE-BREAK
- * among documents that are already `ai_prompt` Markdown in one collection, never
- * whether a registry is recognised at all. Missing a real registry costs the
- * collection its catalogue; over-matching costs at most the wrong pick between
- * two documents that both look like one.
- */
-const REGISTRY_MARK = /skill[\s_-]*(registry|catalogue|catalog|katalog)/i;
-
-export function isMarkdownSkillDoc(node: WloNode): boolean {
-  return MARKDOWN_MIME.has((node.mimetype ?? '').toLowerCase()) || node.mediatype === MARKDOWN_MEDIATYPE;
-}
-
-/**
- * A registry carries the `ai_prompt` entry — the vocabulary term skills
- * themselves left behind on 2026-08-12 (see `REGISTRY_CONTENT_TYPE_URI`).
- * Imported from the one module that owns it rather than spelled out a second
- * time.
- *
- * The listing must be projected with `SKILL_PROPS` for this to see anything:
- * measured 2026-08-10, `/children` returns `ccm:oeh_extendedType` only when the
- * request asks for it — the default projection reports the same node as empty.
- */
-function isAiPrompt(node: WloNode): boolean {
-  return node.properties?.['ccm:oeh_extendedType']?.includes(REGISTRY_CONTENT_TYPE_URI) ?? false;
-}
-
-/**
- * Whether this candidate names itself the registry.
- *
- * Both carriers are asked, and each covers what the other misses. The FILE NAME
- * is what the editorial guide asks for, but it distinguishes nothing until the
- * convention spreads: every skill record on staging is named `SKILL.md`
- * (measured 2026-08-10), because that is what the upload produces. The TITLE is
- * free text an editor sets, so it is the rule that works today — and the one the
- * live Optik registry is actually found by.
- *
- * The title comes from `nodeTitle`, the canonical chain every other consumer
- * uses — NOT from `cclom:title` alone. `cm:title` is in the same projection and
- * is the carrier this repository has measured as the one actually set (109/109
- * production variants). Reading one property made a marked registry invisible,
- * and with a second prompt document present the nodeId tie-break then answered
- * with the wrong document's catalogue.
- */
-function isMarked(node: WloNode): boolean {
-  const name = node.properties?.['cm:name']?.[0] ?? '';
-  return REGISTRY_MARK.test(name) || REGISTRY_MARK.test(nodeTitle(node));
-}
-
-/**
- * File children read while looking for the registry. A content collection is not
- * a harvest folder, and the registry is one document among a collection's own
- * material — a page is plenty, and an unbounded listing would turn every search
- * result into a crawl.
- */
-const REGISTRY_SCAN_MAX = 50;
-
-/**
- * The registry among a collection's file children, and how many candidates it
- * was chosen from.
- *
- * `candidates` is not decoration: with every file named `SKILL.md`, a collection
- * holding two skills lands in the tie-break immediately, and a registry picked
- * silently out of several is exactly the kind of mistake nobody notices. The
- * caller surfaces it.
- *
- * @returns the chosen node with the candidate count, or `null` when the
- *   collection holds no `ai_prompt` Markdown at all.
- */
-export function pickRegistryNode(nodes: WloNode[]): { node: WloNode; candidates: number } | null {
-  const candidates = nodes.filter(n => isAiPrompt(n) && isMarkdownSkillDoc(n));
-  if (!candidates.length) return null;
-
-  const marked = candidates.filter(isMarked);
-  const pool = marked.length ? marked : candidates;
-  // Sorted by nodeId so the answer does not depend on the order the repository
-  // happened to list the children in — the same collection must resolve to the
-  // same registry on every call.
-  const node = [...pool].sort((a, b) => (a.ref?.id ?? '').localeCompare(b.ref?.id ?? ''))[0]!;
-  return { node, candidates: candidates.length };
-}
-
-/**
- * What a registry record is called, for a document whose title was never set.
- *
- * Same chain as everywhere else (`nodeTitle`), so the heading of an approval
- * list cannot disagree with the title the entries below it are rendered under —
- * those go through `formatNode`, which uses exactly this.
- */
-function registryTitleOf(node: WloNode): string {
-  return nodeTitle(node).trim();
-}
-
-/**
- * The HTTP status behind a failed listing, read back out of the error text.
- *
- * `getCollectionContents` throws a plain `Error` whose message it composes as
- * `getCollectionContents failed: <status> <statusText>`, and the distinction
- * between "there is no such collection" (404) and "it could not be read right
- * now" (5xx) is one a person's answer depends on. The coupling to that message
- * is deliberate and pinned by `tests/skill-registry.test.ts`, so a change to the
- * wording fails a test instead of silently turning every outage into "not found".
- */
-function statusFromError(err: unknown): number {
-  return Number(/\b(\d{3})\b/.exec(err instanceof Error ? err.message : String(err))?.[1] ?? 0);
-}
-
-/**
- * How much of the file listing was left unread.
- *
- * `null` from a scan means "no registry among the files we saw", which is only
- * the same as "this collection has none" when we saw all of them. The project
- * holds that rule for every other bounded traversal, and a definite answer over
- * a truncated read is exactly what it exists to prevent.
- */
-export interface ScanTruncation {
-  scanned: number;
-  total: number;
-}
-
-/** Find the registry record among a collection's file children, or say why not. */
-async function scanForRegistry(
-  collectionId: string,
-): Promise<{ picked: ReturnType<typeof pickRegistryNode>; reason?: RegistryMiss; truncated?: ScanTruncation }> {
-  let listing;
-  try {
-    // SKILL_PROPS, not the default projection: measured 2026-08-10, `/children`
-    // returns `ccm:oeh_extendedType` only when the request asks for it, and
-    // without it every candidate looks like ordinary material.
-    listing = await getCollectionContents(collectionId, 'files', REGISTRY_SCAN_MAX, 0, SKILL_PROPS);
-  } catch (err) {
-    const status = statusFromError(err);
-    log.warn('skill-registry: the collection could not be listed — reporting no registry', {
-      collectionId, status, error: err instanceof Error ? err.message : String(err),
-    });
-    return { picked: null, reason: status === 404 ? 'collection_not_found' : 'unreadable' };
-  }
-
-  const total = listing.pagination?.total ?? listing.nodes.length;
-  const truncated: ScanTruncation | undefined =
-    total > listing.nodes.length ? { scanned: listing.nodes.length, total } : undefined;
-
-  const picked = pickRegistryNode(listing.nodes);
-  if (!picked) {
-    if (truncated) {
-      log.warn('skill-registry: the file listing was cut short — "no registry" is not a finding of absence', {
-        collectionId, ...truncated, cap: REGISTRY_SCAN_MAX,
-      });
-    }
-    return { picked: null, reason: 'no_registry', ...(truncated ? { truncated } : {}) };
-  }
-
-  if (picked.candidates > 1) {
-    log.info('skill-registry: several ai_prompt documents in one collection — one was chosen', {
-      collectionId, candidates: picked.candidates, chosen: picked.node.ref?.id,
-    });
-  }
-  return { picked };
-}
+// Finding the registry document among a collection's children lives in
+// `skill-registry-detect.ts` (split out 2026-11-13, audit A-5): what COUNTS as a
+// registry is one question, what is built from it is another. Re-exported for
+// the callers that already import these from here.
+export { isMarkdownSkillDoc, pickRegistryNode, type ScanTruncation } from './skill-registry-detect.js';
 
 /**
  * One skill the registry declares. Title and nodeId come out of the `:::` block
@@ -365,7 +184,7 @@ const REGISTRY_POOL = 10;
 export async function loadSkillRegistry(
   collectionId: string,
   opts: { resolveHeads?: boolean } = {},
-): Promise<{ registry: SkillRegistry | null; reason?: RegistryMiss; scanTruncated?: ScanTruncation }> {
+): Promise<{ registry: SkillRegistry | null; reason?: RegistryMiss; scanTruncated?: ScanTruncation; tooLarge?: true }> {
   const { picked, reason, truncated } = await scanForRegistry(collectionId);
   if (!picked) return { registry: null, reason, ...(truncated ? { scanTruncated: truncated } : {}) };
   return buildRegistryFrom(picked, collectionId, opts);
@@ -385,7 +204,7 @@ export async function buildRegistryFrom(
   picked: NonNullable<ReturnType<typeof pickRegistryNode>>,
   collectionId: string,
   opts: { resolveHeads?: boolean } = {},
-): Promise<{ registry: SkillRegistry; reason?: RegistryMiss }> {
+): Promise<{ registry: SkillRegistry; reason?: RegistryMiss; tooLarge?: true }> {
   const registryNodeId = picked.node.ref?.id ?? '';
   const base: SkillRegistry = {
     collectionId,
@@ -399,10 +218,13 @@ export async function buildRegistryFrom(
     ...(picked.candidates > 1 ? { ambiguous: { candidates: picked.candidates, chosen: registryNodeId } } : {}),
   };
 
-  const markdown = await readSkillText(registryNodeId);
+  // A registry document past the skill bound reads as unreadable — but marked:
+  // reading it again cannot answer differently, so the cache must not retry it
+  // on every tick (`tooLarge`).
+  const { text: markdown, refused } = await readSkillText(registryNodeId);
   // The record exists — saying "no registry here" would be a different and wrong
   // claim, so it comes back named, with the reason attached.
-  if (markdown === null) return { registry: base, reason: 'unreadable' };
+  if (markdown === null) return { registry: base, reason: 'unreadable', ...(refused === 'too_large' ? { tooLarge: true as const } : {}) };
 
   const blocks = parseSkillReferences(markdown);
   const referenced = blocks.filter(r => r.kind === 'ki-skill');
@@ -536,19 +358,36 @@ export function narrowRegistry(registry: SkillRegistry, wanted: string | undefin
  * tier lists it too, and dropping it would make the same collection answer
  * shorter for having looked closer.
  */
+/** nodeId → description ('' = read, and it has none). */
+const descriptionCache = shortCache<string>(500);
+
 export async function describeEntries(
   entries: readonly RegistryEntry[],
 ): Promise<{ described: RegistryEntry[]; unreadable: RegistryEntry[] }> {
   // Spread rather than widening the parameter: `readonly` is the promise to the
   // caller that its list is not touched, and `mapPool` takes a mutable one.
-  const heads = await mapPool([...entries], REGISTRY_POOL, e => getNodeMetadata(e.nodeId, SKILL_PROPS));
+  // A description is remembered for a minute (`short-cache.ts`, audit P-4): the
+  // same three heads were read again for every answer about a collection. Only
+  // a head that was READ is kept — "not readable" is asked again each time.
+  // Keyed by whose rights read it: a skill that is not public answers 403 to an
+  // anonymous caller, and must not be described to them out of somebody else's read.
+  const scope = sharedReadScope();
+  const heads = await mapPool([...entries], REGISTRY_POOL, async (e) => {
+    const key = `${scope}:${e.nodeId}`;
+    const kept = scope ? descriptionCache.get(key) : undefined;
+    if (kept !== undefined) return { description: kept };
+    const node = await getNodeMetadata(e.nodeId, SKILL_PROPS);
+    if (!node) return null;
+    const description = formatNode(node).description ?? '';
+    if (scope) descriptionCache.set(key, description);
+    return { description };
+  });
   const described: RegistryEntry[] = [];
   const unreadable: RegistryEntry[] = [];
   entries.forEach((entry, i) => {
-    const node = heads[i];
-    if (!node) { unreadable.push(entry); return; }
-    const description = formatNode(node).description;
-    if (description) described.push({ ...entry, description });
+    const head = heads[i];
+    if (!head) { unreadable.push(entry); return; }
+    if (head.description) described.push({ ...entry, description: head.description });
   });
   return { described, unreadable };
 }
@@ -596,7 +435,7 @@ export function contextInstructions(
 /**
  * The catalogue in the shape a result node carries it.
  *
- * Four writers produce it: `enrichSkillRegistry` below, and in
+ * Four writers produce it: `refreshRegistries`, and in
  * `services/skill-registry-cache.ts` the live fallback, the background tick and
  * the corpus seed. A copy per writer drifts on exactly the field that is set
  * least often — `truncated`, the disclosure that the catalogue is shorter than
@@ -621,35 +460,4 @@ export function toRegistrySummary(registry: SkillRegistry): NonNullable<Formatte
       : {}),
     ...(registry.truncated ? { truncated: registry.truncated } : {}),
   };
-}
-
-/**
- * Attach each collection's skill registry to a list of results.
- *
- * Lives here rather than in `services/search.ts`, where it started: two callers
- * now need it — `searchAll` and the collection search, which does not go through
- * `searchAll` — and "how a registry is attached to a node" is registry knowledge,
- * not search knowledge.
- *
- * Uses the cheap tier, which resolves nothing: `resolveHeads: false` reads the
- * children listing and the document, and takes title and nodeId straight out of
- * the `:::` blocks. Two requests per collection, whatever the registry declares.
- *
- * Opt-in for a measured reason (staging, 2026-08-10): it adds ~1.0–1.4 s to a
- * search, and the cost is the `/children` call, paid whether or not a registry
- * exists. The default path instead points a model at `get_skill_registry` and
- * lets it pay for the ONE collection it is working with.
- *
- * Failures are swallowed per collection on purpose: the registry is an extra,
- * and one unreadable collection must not cost the caller the search they asked
- * for. `mapPool` nulls a thrown entry and `loadSkillRegistry` already degrades
- * rather than throwing, so both paths simply leave the field unset.
- */
-export async function enrichSkillRegistry(collections: FormattedNode[]): Promise<void> {
-  await mapPool(collections, REGISTRY_POOL, async (n) => {
-    const { registry } = await loadSkillRegistry(n.nodeId, { resolveHeads: false });
-    if (!registry) return null;
-    n.skillRegistry = toRegistrySummary(registry);
-    return null;
-  });
 }

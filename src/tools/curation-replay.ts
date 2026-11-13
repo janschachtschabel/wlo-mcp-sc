@@ -34,6 +34,14 @@ const KEY_SPENT = 'Der Bestätigungsschlüssel ist damit verbraucht — derselbe
 const LOOK_FIRST = 'Es kann bereits etwas geschrieben sein — vor einem neuen Versuch in WLO nachsehen, was schon '
   + 'angekommen ist, sonst entsteht womöglich eine Dublette. Erst danach den Aufruf ohne confirmToken senden und die '
   + 'neue Vorschau bestätigen.';
+/**
+ * The call CREATED a record (`error.recordExists`). A new preview is then the
+ * one thing not to do: a record carrying a file has no URL a duplicate check
+ * could find it by, so "preview again" made the second record (review of audit
+ * package 11). What is missing is added to the record that exists.
+ */
+const RECORD_EXISTS = 'Der Datensatz existiert — NICHT über eine neue Vorschau erneut anlegen. Was fehlt, am '
+  + 'vorhandenen Datensatz nachtragen (wlo_update_content mit seiner nodeId).';
 const NOTHING_WRITTEN = 'Es wurde nichts geschrieben. Für einen neuen Versuch den Aufruf ohne confirmToken senden '
   + 'und die neue Vorschau bestätigen.';
 
@@ -71,13 +79,16 @@ function keySpent(result: WloToolResult): WloToolResult {
   const { retryAfter: _dropped, ...error } = (sc['error'] ?? {}) as Record<string, unknown>;
   void _dropped;
   const outcomeOpen = error['outcomeOpen'] !== false;
+  const recordExists = error['recordExists'] === true;
+  const next = recordExists ? RECORD_EXISTS : outcomeOpen ? LOOK_FIRST : NOTHING_WRITTEN;
   return {
     ...result,
-    content: [...(result.content ?? []),
-      { type: 'text' as const, text: `${KEY_SPENT} ${outcomeOpen ? LOOK_FIRST : NOTHING_WRITTEN}` }],
+    content: [...(result.content ?? []), { type: 'text' as const, text: `${KEY_SPENT} ${next}` }],
     structuredContent: {
       ...sc,
-      error: { code: 'unverified', ...error, outcomeOpen, requiresNewPreview: true },
+      // Not `requiresNewPreview` over a record that exists: that field is what a
+      // program reads as "start over".
+      error: { code: 'unverified', ...error, outcomeOpen, requiresNewPreview: !recordExists },
     },
   };
 }
@@ -91,15 +102,16 @@ function inProgress(): WloToolResult {
   };
 }
 
-const MISMATCH_TEXT = 'Dieser Bestätigungsschlüssel wurde schon für andere Angaben eingelöst. Es wurde nichts '
-  + 'geschrieben. Für eine neue Änderung bitte den Aufruf ohne confirmToken wiederholen und die Vorschau bestätigen.';
+const MISMATCH_TEXT = 'Dieser Bestätigungsschlüssel wurde schon für andere Angaben eingelöst. Dieser Aufruf hat '
+  + 'nichts geschrieben; der FRÜHERE Aufruf mit diesem Schlüssel kann geschrieben haben. Für eine neue Änderung bitte '
+  + 'den Aufruf ohne confirmToken wiederholen und die Vorschau bestätigen.';
 
 /** The answer a replay lookup stands for, or null when there is nothing to replay. */
 export function replayAnswer(found: ReplayLookup): WloToolResult | null {
   switch (found.kind) {
     case 'done': return replayed(found.result);
     case 'running': return inProgress();
-    case 'mismatch': return codedErrorResult('confirm_mismatch', MISMATCH_TEXT);
+    case 'mismatch': return codedErrorResult('confirm_mismatch', MISMATCH_TEXT, { outcomeOpen: true });
     default: return null;
   }
 }

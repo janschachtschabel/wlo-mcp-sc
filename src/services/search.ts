@@ -10,29 +10,24 @@
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
 import {
   getCollectionContents,
-  getNodeTextContent,
-  ngsearch,
-} from '../wlo-api.js';
-import { searchCollections } from './collection-search.js';
-import { enhancedSearch, rerankNodes } from '../reranker.js';
+  ngsearch } from '../wlo-api.js';
+import { searchCollectionsResult, type CollectionSearchLeg } from './collection-search.js';
+import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes, resolveFacetCounts } from '../formatter.js';
 import type { LabeledCriterion, UnresolvedFilter } from '../filter-criteria.js';
-import { buildFilterCriteria, filterByExactLicense, licenseUnresolvable, pageSizeForLicense } from '../filter-criteria.js';
+import { buildFilterCriteria, filterByExactLicense, licenseUnresolvable } from '../filter-criteria.js';
 import { mapPool } from '../concurrency.js';
 import type { WikiSummary } from '../wikipedia-api.js';
-import { fetchWikipediaSummary } from '../wikipedia-api.js';
+import { fetchWikipediaSummaryResult } from '../wikipedia-api.js';
 import { nodeMatchesCriteria, nodeMatchesText } from '../node-match.js';
 import { log } from '../logger.js';
-import { capText } from '../text-cap.js';
-import { dedupeByUrl } from '../result-dedupe.js';
-import { searchWithLicense } from './license-search.js';
+import { enrichStoredText, searchContent, type StoredTextReport } from './content-search.js';
 import { getCompendiumTexts } from './compendium.js';
-import { enrichSkillRegistry } from './skill-registry.js';
-import { ensureRegistries } from './skill-registry-cache.js';
+import { ensureRegistries, refreshRegistries } from './skill-registry-cache.js';
 import type { SwimlanePayload } from './topic-page.js';
 import { resolveTopicPageSwimlanes } from './topic-page.js';
-import { searchTopicPageCollections } from '../topic-page-api.js';
+import { searchTopicPageCollectionsResult } from '../topic-page-api.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
 
 export interface SearchWithinCollectionOptions {
@@ -205,7 +200,14 @@ export interface LicenseFilterCounts {
 
 export interface SearchAllEnvelope {
   query: string;
-  content:     { total: number; count: number; results: FormattedNode[]; licenseFilter?: LicenseFilterCounts };
+  content:     {
+    total: number; count: number; results: FormattedNode[]; licenseFilter?: LicenseFilterCounts;
+    /** The page came back short although the catalogue holds more (`services/content-search.ts`). */
+    more?: { nextSkipCount: number };
+    /** Hits whose full text was not read (bound) resp. could not be read. */
+    textContentSkipped?: string[];
+    textContentUnreadable?: string[];
+  };
   collections: {
     total: number;
     count: number;
@@ -221,6 +223,11 @@ export interface SearchAllEnvelope {
      * condition from the options.
      */
     registryChecked?: true;
+    /**
+     * A source this bucket draws on did not ANSWER, so the list may lack hits —
+     * and an empty one is "not found out", never "there are none".
+     */
+    incomplete?: true;
   };
   topicPages:  {
     total: number;
@@ -228,19 +235,12 @@ export interface SearchAllEnvelope {
     results: TopicPageResult[];
     /** Same meaning as on `collections` — a Themenseite IS a collection. */
     registryChecked?: true;
+    /** Same meaning as on `collections`. */
+    incomplete?: true;
   };
   wikipedia?:  WikiSummary;
-}
-
-const TEXT_CONTENT_CAP = 4000;
-
-/** Fill each node's stored full text (bounded concurrency, capped). */
-async function enrichTextContent(nodes: FormattedNode[]): Promise<void> {
-  await mapPool(nodes, 10, async (n) => {
-    const full = await getNodeTextContent(n.nodeId);
-    n.textContent = full ? capText(full, TEXT_CONTENT_CAP).text : '';
-    return null;
-  });
+  /** `includeWikipedia` was asked and Wikipedia did not ANSWER — not "no article". */
+  wikipediaUnreachable?: true;
 }
 
 /**
@@ -291,51 +291,53 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   const { criteria: filters } = buildFilterCriteria(opts);
 
   const needColl = want.has('collections') || want.has('topicPages');
-  const EMPTY = { nodes: [] as WloNode[], pagination: { total: 0, from: 0, count: 0 } };
 
   // Content search, collection search, portal match, and the optional
   // Wikipedia lookup all run in one parallel block — wall time ≈ the slowest.
-  const [contentResp, collNodes, portalNodes, wiki] = await Promise.all([
+  const [contentResp, collSearch, portalSearch, wiki] = await Promise.all([
+    // The same search `search_wlo_content` runs (services/content-search.ts) —
+    // one course for exclusion, dedupe, the licence pass and the refill.
     want.has('content')
-      ? searchWithLicense({
-          license: opts.license,
-          criteria: [{ property: 'ngsearchword', values: [query || '*'] }, ...filters],
-          size: pageSizeForLicense(maxContent + excluded.size, opts.license),
-          skipCount,
-          run: (extra, size, skip) => enhancedSearch(query, 'FILES', [...filters, ...extra], size, skip),
-        })
-      : Promise.resolve(EMPTY),
+      ? searchContent({ query, filters, license: opts.license, max: maxContent, skipCount, excluded, emptyQuery: 'ranked' })
+      : Promise.resolve(null),
     needColl
       // Degrade like the wiki leg below: a thrown collections search (timeout,
       // DNS, reset) must not discard the content results already fetched.
-      ? searchCollections(query, (maxColl + excluded.size) * 2).catch((err) => {
+      ? searchCollectionsResult(query, (maxColl + excluded.size) * 2).catch((err) => {
           log.warn('searchAll: collections search failed, continuing without', {
             error: err instanceof Error ? err.message : String(err),
           });
-          return [] as WloNode[];
+          return { nodes: [] as WloNode[], unreachable: ['keyword', 'name'] as CollectionSearchLeg[] };
         })
-      : Promise.resolve([] as WloNode[]),
+      : Promise.resolve({ nodes: [] as WloNode[], unreachable: [] as CollectionSearchLeg[] }),
     // The keyword-collections endpoint cannot surface Themenseiten (fixed
     // reduced projection without ccm:page_config_ref; the subject portals are
     // absent from its hits — live-verified 2026-07-17), so the topicPages
     // bucket is fed by the root portals matched locally against the query.
     want.has('topicPages')
-      ? searchTopicPageCollections(query).catch(() => [] as WloNode[])
-      : Promise.resolve([] as WloNode[]),
+      ? searchTopicPageCollectionsResult(query).catch(() => ({ nodes: [] as WloNode[], reachable: false }))
+      : Promise.resolve({ nodes: [] as WloNode[], reachable: true }),
     opts.includeWikipedia
-      ? fetchWikipediaSummary(query, 'de').catch(() => null)
-      : Promise.resolve(null),
+      ? fetchWikipediaSummaryResult(query, 'de').catch(() => ({ summary: null, unreachable: true }))
+      : Promise.resolve({ summary: null, unreachable: false }),
   ]);
 
+  const collNodes = collSearch.nodes;
+  const portalNodes = portalSearch.nodes;
+  // A source that did not ANSWER (audit 2026-11-12, K-3). The two buckets draw
+  // on different sources: Themenseiten come from the portal listing (the
+  // collection indexes cannot surface them), plain collections from the two
+  // indexes — one of which down may already hide hits, since neither is a
+  // superset of the other.
+  const collectionsIncomplete = want.has('collections') && collSearch.unreachable.length > 0;
+  const topicPagesIncomplete = want.has('topicPages') && (!portalSearch.reachable || collSearch.unreachable.length > 0);
   const ok = (id: string) => !!id && !excluded.has(id);
   // Dedupe BEFORE the cap — see result-dedupe.ts. Collections and topic pages
   // are left alone: their `url` is a per-node render link, so it never collides.
   // Kept apart so the caller can say WHY a licence-filtered bucket came back
   // short: `count` is post-cap and `total` is the corpus, so neither can tell a
   // licence drop from ordinary paging.
-  const contentCandidates = dedupeByUrl(formatNodes(contentResp.nodes).filter(n => ok(n.nodeId)));
-  const contentLicensed = filterByExactLicense(contentCandidates, opts.license);
-  const contentFmt = contentLicensed.slice(0, maxContent);
+  const contentFmt = contentResp?.results ?? [];
   // Merge portals into the collection pool (portal copies first: on an id
   // collision they are the ones carrying the config ref → topicPageUrl), then
   // rerank by relevance; topic pages inherit the ranking.
@@ -361,11 +363,16 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
 
   // Enrichments run in parallel once the base results are known; each touches a
   // distinct field, so they cannot conflict on shared nodes. All are opt-in.
+  let textReport: StoredTextReport | undefined;
+  let forcedAnswered = new Set<string>();
+  let forcedFailed = new Set<string>();
   await Promise.all([
-    opts.includeTextContent ? enrichTextContent(contentFmt) : Promise.resolve(),
+    opts.includeTextContent ? enrichStoredText(contentFmt).then((report) => { textReport = report; }) : Promise.resolve(),
     opts.includeCompendium ? enrichCompendium([...collectionsFmt, ...topicPagesFmt]) : Promise.resolve(),
     opts.includeTopicPageContent ? enrichTopicPageContent(topicPagesFmt, opts.maxPerSwimlane ?? 3) : Promise.resolve(),
-    forceLiveRegistry ? enrichSkillRegistry([...collectionsFmt, ...topicPagesFmt]) : Promise.resolve(),
+    forceLiveRegistry
+      ? refreshRegistries([...collectionsFmt, ...topicPagesFmt]).then((forced) => { forcedAnswered = forced.answered; forcedFailed = forced.failed; })
+      : Promise.resolve(),
   ]);
 
   // AFTER the forced pass, so a fresh answer is never overwritten. A cache hit
@@ -378,7 +385,9 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // search returned for it named none of them. One call, not two, because the
   // buckets then share the live-fallback cap — two calls would double the
   // upstream budget a single search may spend.
-  const registriesAnswered = await ensureRegistries([...collectionsFmt, ...topicPagesFmt]);
+  // Not for a collection whose FORCED lookup just failed: the remembered
+  // catalogue in its place would read as the fresh one that was asked for.
+  const registriesAnswered = await ensureRegistries([...collectionsFmt, ...topicPagesFmt].filter(n => !forcedFailed.has(n.nodeId)));
   // "Checked" means the CHILDREN listing answered for every node of THAT
   // bucket, live or remembered. Anything less and the caller keeps its pointer
   // line: a collection without a registry carries no field, so the results
@@ -388,40 +397,47 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // not "2 of 2 collections", and a count-based union marks the NORMAL (mixed)
   // search unchecked while its catalogues are right there in the answer.
   //
-  // The forced pass has to be its own term, not inferred from the set: a live
-  // lookup that found NOTHING leaves no field behind either, so counting
-  // fields would report a completed check as skipped.
+  // The forced pass is its own term — but per ID, the ids that really answered
+  // (`refreshRegistries`): taking the pass as a whole for an answer reported a
+  // lookup that FAILED as "checked, none there" (audit 2026-11-12, K-15).
   const bucketChecked = (bucket: readonly FormattedNode[]): boolean =>
-    bucket.length > 0 && (forceLiveRegistry || bucket.every(n => registriesAnswered.has(n.nodeId)));
+    bucket.length > 0 && bucket.every(n => forcedAnswered.has(n.nodeId) || registriesAnswered.has(n.nodeId));
   const registryChecked = bucketChecked(collectionsFmt);
   const topicPagesChecked = bucketChecked(topicPagesFmt);
 
   const envelope: SearchAllEnvelope = {
     query,
     content: {
-      total: contentResp.pagination.total,
+      total: contentResp?.total ?? 0,
       count: contentFmt.length,
       results: contentFmt,
+      ...(contentResp?.more ? { more: contentResp.more } : {}),
+      ...(textReport?.skipped.length ? { textContentSkipped: textReport.skipped } : {}),
+      ...(textReport?.unreadable.length ? { textContentUnreadable: textReport.unreadable } : {}),
       // Only when the content leg actually ran: with `include: ['collections']`
       // nothing was checked, and `{checked: 0, kept: 0}` reads like a filter that
       // emptied the bucket. Its presence is what callers gate their licence
       // disclosure on, so it has to mean "a licence pass happened here".
       ...(opts.license && want.has('content')
-        ? { licenseFilter: { checked: contentCandidates.length, kept: contentLicensed.length } }
+        ? { licenseFilter: { checked: contentResp?.checked ?? 0, kept: contentResp?.kept ?? 0 } }
         : {}),
     },
     collections: {
+      ...(collectionsIncomplete ? { incomplete: true as const } : {}),
       total: collectionsFmt.length,
       count: collectionsFmt.length,
       results: collectionsFmt,
       ...(registryChecked ? { registryChecked: true as const } : {}),
     },
     topicPages:  {
+      ...(topicPagesIncomplete ? { incomplete: true as const } : {}),
       total: topicPagesFmt.length, count: topicPagesFmt.length, results: topicPagesFmt,
       ...(topicPagesChecked ? { registryChecked: true as const } : {}),
     },
   };
-  if (wiki) envelope.wikipedia = wiki;
+  if (wiki.summary) envelope.wikipedia = wiki.summary;
+  // Asked for, and Wikipedia did not answer: no statement about the article.
+  else if (wiki.unreachable) envelope.wikipediaUnreachable = true;
   return envelope;
 }
 

@@ -13,7 +13,7 @@
  * guarded at runtime (typeof / Array.isArray), which is the actual contract. */
 
 import type { WloNode } from './wlo-api.js';
-import { getChildCollections, getNodeMetadata, stripStoreRef } from './wlo-api.js';
+import { getChildCollectionsResult, getNodeMetadata, stripStoreRef } from './wlo-api.js';
 import { nodeTitle } from './node-match.js';
 import { TOPIC_PAGE_PROPS, isUsableVariant, type TargetGroup } from './topic-page-variant.js';
 import { orderVariants, readPageConfigOrder } from './topic-page-config.js';
@@ -81,13 +81,15 @@ function parsePageVariantConfig(raw: string | undefined): Swimlane[] {
  *   - `no_page_config_ref`  — a real collection, but it has no Themenseite
  *   - `no_variant`          — the page config holds no usable (non-template) variant
  *   - `empty_config`        — a variant exists but configures zero swimlanes
+ *   - `source_unreachable`  — the search for the page did not answer: NOT a finding
  */
 export type TopicPageMiss =
   | 'no_match'
   | 'node_not_found'
   | 'no_page_config_ref'
   | 'no_variant'
-  | 'empty_config';
+  | 'empty_config'
+  | 'source_unreachable';
 
 export interface TopicPageContentResult {
   structure: TopicPageStructure | null;
@@ -111,7 +113,7 @@ export async function getTopicPageContent(
 
   const hasVariantConfig = (n: WloNode | null) => !!n?.properties?.['ccm:page_variant_config']?.[0];
 
-  // Fast path: the caller knows BOTH ids — `findTopicPagesByQuery` returns them
+  // Fast path: the caller knows BOTH ids — `findTopicPagesByQueryResult` returns them
   // together. Reading the variant and the collection in parallel replaces the
   // two-hop chain (collection → page-config folder children → variant) with a
   // single round-trip, and still yields the header the collection route was
@@ -157,8 +159,10 @@ export async function getTopicPageContent(
     // the real (non-template) variant directly among the children. This also saves
     // the per-child getCollectionContents fan-out (fewer edu-sharing calls).
     const configId = stripStoreRef(ref);
-    const configChildren = await getChildCollections(configId, 50, 0, TOPIC_PAGE_PROPS);
-    const found = configChildren.filter(isUsableVariant);
+    const listing = await getChildCollectionsResult(configId, 50, 0, TOPIC_PAGE_PROPS);
+    // The variants could not be READ: that is not "this page has no variant".
+    if (!listing.reachable) return { structure: null, reason: 'source_unreachable' };
+    const found = listing.nodes.filter(isUsableVariant);
     // Which one the page actually renders is recorded on the config folder
     // (`ccm:page_config.default`), not derivable from the children order — that
     // the two agreed in all 13 measured multi-variant pages is an accident of

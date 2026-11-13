@@ -10,14 +10,16 @@
  *
  * It holds IDS, never a credential — the credential lives encrypted inside the
  * user's own block and is only ever in memory here. `tests/access-registry.test.ts`
- * asserts the written file carries exactly `jti`, `label` and `iat`.
+ * asserts the written file carries `jti`, `label` and `iat` plus the optional
+ * `k`, `exp` and `acct` — and nothing resembling a credential.
  *
  * The only module in this project that writes to disk at runtime. The container
  * therefore mounts one writable volume and keeps `read_only: true` for
  * everything else.
  */
 
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { open, readFile, rename } from 'node:fs/promises';
 import { log } from '../logger.js';
 
 export interface RegistryEntry {
@@ -57,7 +59,27 @@ export interface RegistryEntry {
    * direction for people, and a known one for the operator.
    */
   exp?: number;
+  /**
+   * The account the repository CONFIRMED for this login (audit 2026-11-12, S-2).
+   *
+   * `label` is the spelling the block carries, and it must stay that: a block is
+   * bound to it (`credentialFromAccessBlock`). But edu-sharing accepts one login
+   * in several spellings — measured on staging 2026-11-12: `LEHRERIN` and
+   * `Lehrerin` sign in as `lehrerin` — so by label alone one account was several:
+   * "revoke everything" missed the other spellings, and the per-account cap
+   * counted each apart. Revocation and the cap therefore go by this name where
+   * it is known.
+   *
+   * Optional, so no format bump: an old build ignores it and falls back to the
+   * label, which is the behaviour before this field. Absent on entries written
+   * before 2026-11-12 and on ticket entries, whose label already IS the
+   * confirmed name.
+   */
+  acct?: string;
 }
+
+/** The account an entry belongs to: the confirmed name, else the label. */
+const accountOf = (e: RegistryEntry): string => e.acct ?? e.label;
 
 /** How long a ticket block or a widget's OAuth block stays listed: 12 h. */
 export const SESSION_BLOCK_TTL_S = 12 * 60 * 60;
@@ -79,6 +101,11 @@ export interface AccessRegistry {
   known(jti: string): boolean;
   /** The entry's `exp` (seconds), or undefined for an entry without one or no entry at all. */
   expiresAt(jti: string): number | undefined;
+  /**
+   * The name the id was listed for — the spelling its block carries. A block
+   * presenting the id under ANOTHER name is not that access (audit S-1).
+   */
+  labelOf(jti: string): string | undefined;
   add(entry: RegistryEntry): Promise<void>;
   remove(jti: string): Promise<boolean>;
   /**
@@ -89,11 +116,25 @@ export interface AccessRegistry {
    * they cannot read is an id they cannot revoke. The caller must have PROVEN
    * the login first — see `access-revoke.ts`.
    *
-   * Matching is exact. Whether edu-sharing treats `Jan` and `jan` as one login
-   * is unmeasured, and case-folding would be a convenience if they are the same
-   * account and a way to wipe a stranger's accesses if they are not.
+   * `account` is matched exactly against each entry's account (`acct`, else its
+   * label). `typed` — the spelling the login was typed in — is matched against
+   * the LABEL of entries that carry no `acct`, and only those: it is there to
+   * find entries listed before the account name was recorded, and matching it
+   * against a confirmed account would end a stranger's access wherever an
+   * instance accepts an alias that equals somebody else's name.
+   *
+   * No case-folding: that one instance treats `Jan` and `jan` as one login
+   * (measured 2026-11-12) is why the CONFIRMED name is recorded. Folding by rule
+   * would wipe a stranger's accesses on an instance where the two differ.
    */
-  removeByLabel(label: string): Promise<number>;
+  removeByLabel(account: string, typed?: string): Promise<number>;
+  /**
+   * Record the confirmed account on an entry that has none — an entry listed
+   * before `acct` existed, when its block is issued again. Everything else
+   * (order, `exp`, `k`, `iat`) stays. Unknown ids and entries that already
+   * carry an account are left alone.
+   */
+  noteAccount(jti: string, account: string): Promise<void>;
 }
 
 /**
@@ -162,6 +203,32 @@ export const MAX_BLOCKS_PER_LABEL = 10;
  */
 const REGISTRY_FILE_OPTIONS = { encoding: 'utf8', mode: 0o600 } as const;
 
+/**
+ * Write the registry: temp file, SYNC, rename.
+ *
+ * The rename is atomic for the name, not for the bytes: without the sync the
+ * new file's content may still sit in the page cache, and a hard stop then
+ * leaves an empty file under the real name. That fails closed — and switches
+ * every personal access off until someone notices (audit 2026-11-12, S-9).
+ */
+async function writeSynced(path: string, body: string): Promise<void> {
+  const temp = `${path}.tmp`;
+  const handle = await open(temp, 'w', REGISTRY_FILE_OPTIONS.mode);
+  try {
+    await handle.writeFile(body, REGISTRY_FILE_OPTIONS.encoding);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temp, path);
+  // The rename itself lives in the DIRECTORY entry. Best effort: a platform
+  // that cannot open a directory for syncing (Windows) loses nothing it had.
+  try {
+    const dir = await open(dirname(path), 'r');
+    try { await dir.sync(); } finally { await dir.close(); }
+  } catch { /* not supported here */ }
+}
+
 function isEntry(value: unknown): value is RegistryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
@@ -173,6 +240,8 @@ function isEntry(value: unknown): value is RegistryEntry {
   // An expiry we cannot read fails closed the same way: dropping it would turn a
   // 12-hour access into one that never ends.
   if (e['exp'] !== undefined && typeof e['exp'] !== 'number') return false;
+  // Revocation and the cap go by it: a value we cannot read fails closed.
+  if (e['acct'] !== undefined && (typeof e['acct'] !== 'string' || !e['acct'])) return false;
   return typeof e['jti'] === 'string' && !!e['jti']
     && typeof e['label'] === 'string'
     && typeof e['iat'] === 'number';
@@ -237,7 +306,10 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     // for the first person who tries to fetch a block. One line in the boot log
     // is worth more than a correct-looking startup and a 500 for a stranger.
     try {
-      await writeFile(path, JSON.stringify({ v: FORMAT_VERSION, entries: [] }), REGISTRY_FILE_OPTIONS);
+      // Write-then-rename like every later commit: a stop signal between
+      // creating the file and filling it would leave an EMPTY file, which the
+      // next start reads as malformed and answers by switching the feature off.
+      await writeSynced(path, JSON.stringify({ v: FORMAT_VERSION, entries: [] }));
       log.info('access registry created — starting empty', { path });
     } catch (err) {
       log.error('access registry cannot be written — per-user access stays off', {
@@ -279,11 +351,9 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
       if (!undo) return;
       try {
         const body = JSON.stringify({ v: FORMAT_VERSION, entries: [...entries.values()] });
-        const temp = `${path}.tmp`;
         // Write-then-rename: a crash mid-write leaves the previous registry
         // intact rather than a truncated file that would fail closed on restart.
-        await writeFile(temp, body, REGISTRY_FILE_OPTIONS);
-        await rename(temp, path);
+        await writeSynced(path, body);
       } catch (err) {
         undo();
         throw err;
@@ -323,12 +393,12 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
    * past `EXPIRED_KEPT_S`, because until then they are the record that stops
    * the id being issued again.
    */
-  function evictOldest(label: string, kind: RegistryEntry['k'], nowMs: number): void {
+  function evictOldest(account: string, kind: RegistryEntry['k'], nowMs: number): void {
     const expired = (e: RegistryEntry) => e.exp !== undefined && nowMs >= e.exp * 1000;
     for (const e of [...entries.values()]) {
-      if (e.label === label && e.exp !== undefined && nowMs >= (e.exp + EXPIRED_KEPT_S) * 1000) entries.delete(e.jti);
+      if (accountOf(e) === account && e.exp !== undefined && nowMs >= (e.exp + EXPIRED_KEPT_S) * 1000) entries.delete(e.jti);
     }
-    const mine = [...entries.values()].filter((e) => e.label === label && e.k === kind && !expired(e));
+    const mine = [...entries.values()].filter((e) => accountOf(e) === account && e.k === kind && !expired(e));
     const excess = mine.length - MAX_BLOCKS_PER_LABEL;
     for (const e of excess > 0 ? mine.slice(0, excess) : []) entries.delete(e.jti);
   }
@@ -340,6 +410,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     },
     known: (jti) => entries.has(jti),
     expiresAt: (jti) => entries.get(jti)?.exp,
+    labelOf: (jti) => entries.get(jti)?.label,
     async add(entry) {
       await commit(() => {
         // Undo restores the WHOLE map in its old order: re-inserting evicted
@@ -350,7 +421,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
         // on an existing key keeps its old position.
         entries.delete(entry.jti);
         entries.set(entry.jti, entry);
-        evictOldest(entry.label, entry.k, Date.now());
+        evictOldest(accountOf(entry), entry.k, Date.now());
         return () => {
           entries.clear();
           for (const [jti, e] of before) entries.set(jti, e);
@@ -368,10 +439,20 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
       });
       return removed;
     },
-    async removeByLabel(label) {
+    async noteAccount(jti, account) {
+      await commit(() => {
+        const previous = entries.get(jti);
+        if (!previous || previous.acct !== undefined) return null;
+        // `set` on an existing key keeps its position: the entry does not become the newest.
+        entries.set(jti, { ...previous, acct: account });
+        return () => { entries.set(jti, previous); };
+      });
+    },
+    async removeByLabel(account, typed) {
       let count = 0;
       await commit(() => {
-        const mine = [...entries.values()].filter((e) => e.label === label);
+        const mine = [...entries.values()].filter((e) =>
+          accountOf(e) === account || (typed !== undefined && e.acct === undefined && e.label === typed));
         if (!mine.length) return null;
         for (const e of mine) entries.delete(e.jti);
         count = mine.length;

@@ -508,3 +508,26 @@ test('a created record whose fields did not land is outcomeOpen: true — a new 
     setServiceCredentialForTest(null);
   }
 });
+
+test('K-14: a record already in the queue is not "submitted" a second time on the first one\'s receipt', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock((url, init) => {
+    if ((init?.method ?? 'GET') === 'GET') {
+      return { json: { node: { ref: { id: NODE, repo: '-home-' },
+        properties: { 'cclom:title': ['Brüche verstehen'], 'ccm:wf_status': ['200_tocheck'] } } } };
+    }
+    return { json: {} };
+  });
+  const client = await curationClient();
+  try {
+    const r = await client.callTool({ name: 'wlo_submit_content', arguments: { nodeId: NODE, comment: 'Bitte prüfen' } });
+    const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
+    assert.equal(error?.['code'], 'already_submitted', toolText(r));
+    assert.doesNotMatch(toolText(r), /confirmToken/);
+    assert.equal(calls(mock, '/workflow').length, 0);
+  } finally {
+    await client.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});

@@ -24,6 +24,8 @@ const STRINGS = {
     // completion is the content itself (see shared/announce.ts).
     resultsLoaded: 'WLO-Inhalte geladen.',
     noResults: 'Keine Treffer gefunden.',
+    noResultsMore: 'Auf dieser Seite keine weiteren Treffer — der Katalog hält mehr.',
+    sourceUnreachable: 'Die Suche war nicht vollständig erreichbar — das ist kein Befund „nichts vorhanden“.',
     // Split from the count so the number can be composed in without an
     // interpolating `t()`; both halves are one sentence in the rendering.
     noResultsLicense: 'Kein Treffer mit genau der gewählten Lizenz.',
@@ -105,6 +107,8 @@ const STRINGS = {
     loading: 'Loading WLO content …',
     resultsLoaded: 'WLO content loaded.',
     noResults: 'No results found.',
+    noResultsMore: 'No further results on this page — the catalogue holds more.',
+    sourceUnreachable: 'The search was not fully reachable — this is not a finding of “nothing there”.',
     noResultsLicense: 'Nothing carries exactly the licence you asked for.',
     licenseCandidatesChecked: 'candidates checked',
     licenseFamilyHint: 'The repository can only filter licence families — the exact selection happens afterwards.',

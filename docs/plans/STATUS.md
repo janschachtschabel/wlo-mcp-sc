@@ -4478,3 +4478,423 @@ Im Zahlen-Wächter traf das Muster für „50 Werkzeuge im Registry-Modus“ nic
 beides per Gegenprobe rot gesehen; die Erwartungen je Skill-Modus sind gemessen
 statt gerechnet; „die Zahl bleibt 42“ in beiden READMEs ist 51; `docs/TOOLS.md`
 nennt alle Schalter, die die Liste verändern.
+
+## Audit-Nacharbeit (Plan `2026-11-12-audit-nacharbeit.md`)
+
+**P1 Zugang (S-1, S-2, S-6) — umgesetzt 2026-11-12.** Ein Zugangsblock gilt nur
+noch für den Namen, für den seine ID gelistet wurde (`registry.labelOf`); die
+Ausgabe lehnt einen Block mit fremder ID ab. Gemessen auf Staging: edu-sharing
+nimmt einen Login in anderer Groß-/Kleinschreibung an und bestätigt dasselbe
+Konto — deshalb trägt ein Eintrag jetzt zusätzlich den bestätigten Kontonamen
+(`acct`, optional, kein Formatwechsel), nach dem „alle sperren“ und die
+Obergrenze je Konto gehen. Die Anmeldesperre zählt eine Adresse in einem
+Zählraum (`addressBucket`); beim Umstellen fielen vier Tests, weil die
+Restwartezeit noch unter dem alten Schlüssel nachgeschlagen wurde — mit
+umgestellt. Acht Gegenproben, alle rot gesehen.
+
+**Review P1 (unabhängiger Prüfer): 6 MINOR, 4 NIT — alle behoben.** Der
+Kontoschlüssel ist jetzt die Authority in voller Länge (`WloIdentity.account`),
+nicht ihre auf 120 Zeichen gekappte Anzeigeform; die getippte Schreibweise
+trifft beim Sperren nur Einträge OHNE bestätigtes Konto; ein Alt-Eintrag
+bekommt sein Konto nachgetragen, wenn sein Block erneut ausgegeben wird
+(`noteAccount`, Ablauf und Reihenfolge bleiben); Ticket-Einträge tragen das
+Konto ebenfalls; der Standard-Zählraum eines Anmeldenachweises ist die Adresse.
+Ticket-Roundtrip durch die Namensbindung getestet. AUTH.md §4 neu gefasst, mit
+der benannten Restlücke.
+
+**P2 Schreibziel (K-1, K-11) — umgesetzt 2026-11-12.** Die Lösch-Werkzeuge
+verlangen den genauen Knotentyp und lehnen Platzhalter ab; Einordnen leitet
+eine Verknüpfung aufs Original um wie das Sammelwerkzeug; Einordnen,
+Herausnehmen, Umbenennen und Kompendium lehnen ein Ziel ab, das keine Sammlung
+ist. Neuer Code `is_a_collection`. Zwölf Gegenproben (P1-Review und P2), alle
+rot gesehen. Nach außen: nur Fehlbedienungen, die vorher durchliefen, werden
+jetzt abgelehnt.
+
+**P3 Grenzen (P-2, S-3) — umgesetzt 2026-11-12.** `get_skill` lädt ganz oder
+gar nicht: kein Kürzen (Entscheidung vom 2026-08-20 bleibt), aber eine
+Nicht-Text-Datei wird gar nicht erst geladen und ein Text über 2 MiB als Ganzes
+abgelehnt (`contentRefused`). Anmelde- und OAuth-Routen lesen höchstens 64 KiB
+Rumpf; Statuscodes unverändert. Acht Gegenproben, alle rot gesehen. Nach außen:
+neues optionales Feld `skill.contentRefused`; sonst nur Missbrauchsfälle.
+
+**Review P2 (unabhängiger Prüfer): 2 MAJOR, 6 MINOR, 3 NIT — alle behoben, eine
+Messung dazu.** Kernbefund: `ccm:map` ist der allgemeine Container, keine
+Sammlung. Gegen Staging gemessen (2026-11-12, `tests/live/node-kinds.test.ts`,
+4 Tests grün): Sammlung = `ccm:map` MIT Aspekt `ccm:collection`; Ablage-Ordner
+(angelegt als `cm:folder`), `-userhome-`, Seitenkonfigurations-Ordner und
+Variante = `ccm:map` OHNE ihn; Verknüpfung = `ccm:io` mit `originalId` (3/3).
+Eine Regel in `src/node-kind.ts`, die Werkzeuge gehen über `wrongKind`
+(`curation-shared.ts`); Wächter in `shared-rule-discipline.test.ts`. Ordner:
+von beiden Lösch-Werkzeugen abgelehnt (neuer Code `is_a_folder`) — vor P2 lief
+ein Ordner samt Inhalt unbemerkt durch `wlo_delete_content`. Platzhalter-Riegel
+jetzt in `registerCurationTool` für jedes id-Argument jedes Kuratier-Werkzeugs.
+Einordnen: Materialseite geprüft, Original gelesen, schon Enthaltenes wird
+nicht gesendet. 14 Gegenproben, alle rot gesehen.
+
+**Review P3 (unabhängiger Prüfer): 7 MINOR, 5 NIT — alle behoben.** Die
+Schranke gilt jetzt auch auf dem Rückfallpfad über den Text-Extrakt; ein leerer
+Download fällt auf den Extrakt zurück; die Vorab-Regel ist eine Sperrliste
+sicher binärer Typen statt „alles außer `text/*`" (gemessen ist nur
+`text/x-web-markdown` — auf Verdacht abzulehnen hätte eine funktionierende
+JSON-Begleitdatei gebrochen); der Task-Pfad nennt den Ablehnungsgrund
+(`task.refused`); ein übergroßes Registry-Dokument wird gemerkt statt je Tick
+neu geladen und gilt nicht als Antwort (`CacheEntry.oversized`, dieselbe Form
+wie `scanTruncated`); die ungenutzte Hülle `getNodeDownloadText` ist entfernt.
+S-3-Test deckt `/auth/ticket` und einen Betreiberwert unter 64 KiB. Acht
+Gegenproben, alle rot gesehen. Offen und bewusst nicht in diesem Paket:
+`getNodeTextContent` liest überall ohne Byte-Schranke (Extrakt, nicht
+Rohdatei) — gehört zu P5 (`wloFetch`).
+
+**P4 Herunterfahren (B-1) — umgesetzt 2026-11-13.** `src/shutdown.ts`: auf
+SIGTERM/SIGINT keine neuen Verbindungen, laufende Anfragen zu Ende, Exit 0;
+nach 25 s wird abgeschnitten (Exit 1), ein zweites Signal beendet sofort.
+`docker-compose.yml`: `init: true`, `stop_grace_period: 30s`. Am gebauten Image
+gemessen: `docker stop` 2,3 s (Node als PID 1) bzw. 1,0 s (mit `--init`),
+Exit-Code 0, beide Logzeilen vorhanden. Sechs Tests an einem echten
+`http.Server`; einer davon fand, dass einmaliges Schließen der Leerlauf-
+Verbindungen nicht reicht (Keep-Alive hielt den Exit ~5 s auf).
+
+**Review P4 (unabhängiger Prüfer): 1 MAJOR, 5 MINOR, 6 NIT — alle behoben.**
+Kern: die erste Fassung wartete auf VERBINDUNGEN (`server.close`), und das war
+in beide Richtungen falsch (vom Prüfer an node:http gemessen): eine Verbindung
+ohne Anfrage hielt den Exit die ganze Frist auf und endete als „erzwungen",
+während ein Client, der mitten in der Anfrage auflegt, keine Verbindung
+hinterlässt — der Exit kam mitten im Schreibvorgang. Jetzt zählt ARBEIT:
+Handler nicht zurückgekehrt, Antwort nicht ausgeliefert, oder vom Request
+gelöste Arbeit (`detachedFromRequest`, die Schreibvorgänge). Frist 70 s
+(vorher 25 s — zu kurz für genau die Schreibaufrufe, um die es geht),
+`stop_grace_period: 75s`. Der falsche Satz in DEPLOYMENT §5.0 („Schlüssel
+erneut vorlegen") ist ersetzt: nach einem Neustart kennt der Server den
+Schlüssel nicht mehr. Erststart der Zugangsliste schreibt über temp+rename.
+13 Tests, 13 Gegenproben rot gesehen.
+
+**Übergreifendes Review Phase 1 (P1–P3): 2 MAJOR, 5 MINOR, 5 NIT — behoben,
+ein Punkt bewusst offen.** (1) `wlo_add_to_collections` prüft jetzt die
+Materialseite wie das Einzelwerkzeug und nennt je unbrauchbarer id einen Code
+(`error.refused`). (2) `wlo_create_collection` liest sein `parentId` und
+verlangt eine Sammlung; die Vorschau nennt sie mit Titel. Dazu: Volltext auf
+einem Container wird abgelehnt (`not_a_record`), `get_collection_overview`
+fragt dieselbe Regel, die Art-Entscheidung liegt in `node-kind.ts` (Dienste und
+Werkzeuge teilen sie), der Wächter deckt `services/write/` ab. **Offen und eine
+Entscheidung, kein Fehler:** `wlo_update_content[s]`, die Vorschlags-Werkzeuge
+und `wlo_submit_content` nehmen weiterhin jede Knotenart — ob Sammlungs-
+Metadaten darüber gepflegt werden dürfen, ändert bestehendes Verhalten und
+gehört dem Nutzer (vorgemerkt für P11).
+
+Nachmessung P4 am gebauten Image (2026-11-13, nach dem Umbau auf „Arbeit
+zählen"): `docker stop` 1,3 s (Node als PID 1), 1,4 s (`--init`), 1,0 s mit
+einer offenen Verbindung, die nie eine Anfrage schickt — jeweils Exit 0.
+
+**P5 Gesamtlimit und Abbruchsignal (P-1, dazu P-3) — umgesetzt 2026-11-13.**
+`src/upstream-gate.ts`: prozessweite Obergrenze für Aufrufe ans Repository
+(`WLO_UPSTREAM_CONCURRENCY`, Standard 24, 0 = aus), FIFO, unterhalb der Grenze
+synchron wie bisher; ohne Platz binnen `WLO_FETCH_TIMEOUT_MS` wird nicht
+gesendet und 503 + `Retry-After` geantwortet (→ `upstream_busy`).
+`src/request-scope.ts`: das Verbindungsende der eingehenden Anfrage bricht die
+Repository-Aufrufe ab (`/mcp`, `/api/*`); Kuratier-Werkzeuge laufen bewusst
+davon gelöst (`registerCurationTool`), der gemeinsame Registry-Abruf ebenfalls.
+14 Tests (10 Einheit, 4 über einen echten Server), 13 Gegenproben rot gesehen.
+Nach außen: neue Betreiber-Einstellung; unter Überlast `upstream_busy` statt
+ungebremster Last. Hinweis zur Audit-Aussage „das Repository drosselt ab etwa
+11 Anfragen je Sekunde": das ist keine Messung einer Drossel, sondern die in
+CLAUDE.md errechnete Dauerlast eines Vollabzugs — der Standardwert 24 ist
+deshalb am Bedarf EINES Aufrufs bemessen, nicht an einer gemessenen Grenze.
+
+**Review P5 (unabhängiger Prüfer): 2 MAJOR, 4 MINOR, 4 NIT — behoben bis auf
+einen Punkt, der Paket 9 ist.** Die Zählung selbst war korrekt (kein Leck, keine
+Doppelfreigabe, vom Prüfer per Sonde bestätigt). Behoben: die
+Bereitschaftsprüfung läuft am Limit vorbei (`outsideUpstreamGate`) — sonst
+meldete `/ready` eigene Überlast 30 s lang als „Repository nicht erreichbar";
+eigene Wartegrenze 5 s statt des 20-s-Timeouts, Warteschlange auf das
+Vierfache des Limits begrenzt, `Retry-After` 5; ein Client, der schon vor
+Arbeitsbeginn aufgelegt hat, wird erkannt; ein Hang-up ist `ClientGoneError`
+(Info-Log statt Fehler, Fan-out bricht ab statt je Element zu scheitern, nie
+als Zeitüberschreitung gewertet); Verhaltenstest über einen echten Server,
+dass ein Kuratier-Werkzeug NICHT abgebrochen wird; SSE-Modus getestet.
+**Offen = P9:** sechs Lese-Helfer schwächen ein 503 zu „leer" ab — auch das
+selbst erzeugte. Dokumentiert, nicht mehr als „jeder Aufrufer meldet
+upstream_busy" behauptet. 24 Tests, 19 Gegenproben rot gesehen.
+
+**P6 Image, Starttest, Adressprüfung (B-3, T-1, B-6) — umgesetzt 2026-11-13.**
+`scripts/smoke-image.sh` (CI-Schritt in GitHub; lokal gelaufen: grün) baut das
+Image, startet es unter den Compose-Einschränkungen und prüft `/health`, den
+HEALTHCHECK-Befehl im Container, `tools/list`, ein fehlerfreies Startlog,
+sauberes `docker stop` und die Ablehnung einer unbrauchbaren Adresse.
+Gegenprobe: Image ohne Signal-Handler → Skript rot (Exit 143).
+`tests/start.test.ts` startet `src/http.ts` und `src/stdio.ts` als
+Kindprozesse (5 s). `repositoryUrlProblem` + Abbruch beim Start in beiden
+Einstiegen. 6 Gegenproben rot gesehen. GitLab-Pipeline unverändert (kein
+Docker-Daemon im Job) — dort vermerkt.
+
+**P7 offene Ausgänge und ein Plan-Gerüst (A-4, K-4, K-5, K-7) — umgesetzt
+2026-11-13.** `runPlannedCall` (`tools/curation-plan.ts`) trägt den Ablauf der
+vier Sammel-Werkzeuge einmal (zusammen ~120 Zeilen weniger, Verhalten
+unverändert, alle bestehenden Tests grün). `isOutcomeOpen`: Verbindungsabbruch
+nach abgesandter Anfrage = offen wie eine Zeitüberschreitung. `outcomeOpen` an
+`plan_expired` (true), `plan_mismatch`/`too_many_plans` (false), den
+Stapel-Fehlern und `confirm_unknown` (true; Satz „Es wurde nichts geschrieben"
+ersetzt). `reportOutcome`: das Zurücklesen entscheidet auch über ein Feld,
+dessen Schreibaufruf mit Fehler beantwortet wurde. 13 neue Tests, 13
+Gegenproben: 11 rot, 2 lehrreich überlebt — eine doppelte Zeile (entfernt) und
+`canonicalArgs`: die Audit-Aussage „andere Schlüsselreihenfolge findet den Plan
+nicht" traf nicht zu, zod ordnet deklarierte Schlüssel bereits (im Code
+vermerkt). Nach außen: additive Felder; `timeout` jetzt auch bei Abriss.
+
+**Review P6 (unabhängiger Prüfer): 1 MAJOR, 9 MINOR, 7 NIT — alle behoben.**
+MAJOR: zwei ältere Warnungen schrieben die Adresse VOR der Ablehnung ungekürzt
+ins Log — mit Passwort, einmal je Neustart; jetzt überall `addressForLog`
+(Herkunft + Pfad), per Starttest belegt (Passwort in keiner Logzeile).
+Schema-Regel verengt (ein `:` oder `//` weiter hinten im Pfad startet wieder)
+und erweitert (`https:/host`, nacktes `http://`, nacktes `?`/`#`); eine
+Funktion für beide Einstiege (`startup-check.ts`), für beide getestet.
+Smoke-Skript: echter HEALTHCHECK-Befehl aus dem Image, Zeitgrenzen, kein
+`| grep -q` unter pipefail, freier Port, `npm run smoke:image`, CI mit
+`timeout-minutes`; `.gitattributes` (LF für `*.sh` — die Datei lag mit CRLF
+vor, was Linux-bash bricht). Kindprozesse der Starttests laufen unter netguard.
+Smoke lokal erneut grün.
+
+**Review P7 (unabhängiger Prüfer): 0 CRITICAL/MAJOR, 8 MINOR, 7 NIT — alle
+behoben.** Der Umbau der vier Sammel-Werkzeuge wurde Pfad für Pfad gegen die
+Baseline als verhaltensgleich bestätigt. Behoben: ein mit 5xx oder ohne
+verwertbare ID beantwortetes Anlegen ist `failed` UND offen (Stapel-Ordner und
+-Datei; der Text riet zuvor „erneut senden" über einem Ordner, der existierte);
+eine angelegte Sammlung behält ihre ID, wenn eine SPÄTERE Anfrage desselben
+Anlegens abgelehnt wird (im Baum scheiterten sonst alle Kinder); abgelehnt mit
+5xx + nicht sichtbar = offen; die Sammel-Schritte melden einen Abriss als
+`timeout`; ein offener Schritt wird höchstens dreimal versucht
+(`MAX_OPEN_TRIES`), dann `failed` + offen; `plan_mismatch` und
+`confirm_mismatch` über einem schon eingelösten Schlüssel sind offen; die
+beiden Quelltext-Wächter prüfen jetzt den NAMEN statt einer Aufruf-Schreibweise
+(`findPlan<T>(` rutschte durch). 21 Tests in `curation-open-outcomes.test.ts`.
+
+**P8 Inhaltssuche (A-1, K-2, P-5) — umgesetzt 2026-11-13.**
+`services/content-search.ts`: EIN Ablauf für `search_wlo_content` und den
+Inhalts-Teil von `search_wlo_all`. K-2: eine zu kurze Seite wird aus bis zu drei
+weiteren Fenstern aufgefüllt (`REFILL_ROUNDS`), der Rest als
+`more {nextSkipCount}` offengelegt — in beiden Werkzeugen (beide Formate) und
+auf der HTML-Seite; „Keine Inhalte gefunden" steht nicht mehr über einer bloß
+erschöpften Seite. P-5: Volltext nur für die ersten 20 Treffer
+(`textContentSkipped`), fehlgeschlagene Abrufe als `textContentUnreadable`.
+12 Tests, 19 Gegenproben rot gesehen. Nach außen: additive Felder; mehr
+Treffer je Seite als vorher, wo vorher zu wenige kamen. **Teil-Erledigung
+A-1:** der Einzelfall-Handler von `get_node_details` (rund 200 Zeilen neben dem
+Dienst) ist nur um die Volltext-Regel entdoppelt (`readStoredTextAnswer`); das
+Zusammenlegen gehört zu A-5 (P14) und ist dort vorgemerkt.
+
+**Review P8 + übergreifendes Review Phase 2: 1 MAJOR, 10 MINOR, 2 NIT (+2
+vorbestehend) — behoben.** MAJOR: das Ende einer geblätterten Suche wurde an
+`total` abgelesen; die Zahl zählt aber die Voll-Variante bzw. die exakte
+Lizenz, geblättert wird über alle Varianten bzw. die Lizenzfamilie — bei
+„Unterrichtsstunde …"-Formulierungen und einer einzelnen Lizenz lief die Suche
+weiter leer. Jetzt sagt das FENSTER, ob es das letzte war
+(`SearchResponse.exhausted`). Dazu: Auffüllen erst aus dem Rest des gereihten
+Fensters; Lizenz-Gesamtzahl einmal je Aufruf; Hang-up bleibt Hang-up;
+Schreibvorgänge werden an der Schlange nie abgewiesen (`patient`);
+`/api/search?fields=` und das Widget tragen die Hinweise; ungelesene Liste nach
+abgelehntem Anlegen lässt den Baum-Schritt offen. Die sechs Sonden des Prüfers
+sind als Regressionstests übernommen.
+
+**P9 „nicht erreichbar" ≠ „leer" (K-3, K-15) — umgesetzt 2026-11-13.** Die
+Sammlungs-Indizes und die Portal-Liste sagen, ob sie GEANTWORTET haben;
+`search_wlo_all` trägt `collections.incomplete` / `topicPages.incomplete`,
+`search_wlo_collections` `incomplete`, ein Wortlaut (`incompleteNotice`) in
+allen Ausgaben; `search_wlo_topic_pages` meldet einen nicht antwortenden Index
+als Fehler. Der erzwungene Registry-Frischabruf läuft durch den
+Zwischenspeicher (`refreshRegistries`). 10 Tests in
+`search-unreachable.test.ts`, 3 in `tools-registry-param.test.ts`. Nach außen:
+additive Felder; während eines Ausfalls Fehler statt „keine Themenseiten".
+
+**P10 eine Registrierung für alle Werkzeuge (A-2) — umgesetzt 2026-11-13.**
+Zwölf Lesewerkzeuge riefen `server.tool` direkt und gingen damit an
+`registerWloTool` vorbei — der einen Stelle, an der die Abschaltung unsicherer
+Werkzeuge hängt. Sie nutzen jetzt `registerReadTool` (dieselbe Kurzform, durch
+die gemeinsame Stelle). `tools/list` vor und nach der Umstellung verglichen:
+Byte für Byte identisch (253 299 Bytes). Wächter in
+`shared-rule-discipline.test.ts`, per eingespielter Verletzung rot gesehen.
+**Bewusst nicht in diesem Paket:** Ausgabeschemata für die zwölf — ein Schema
+ist ein Vertrag je Werkzeug (`additionalProperties: false`), kein Rundumschlag;
+vorgemerkt für P14.
+
+**Review P9 (unabhängig, 3 MAJOR · 8 MINOR · 4 NIT) — alle behoben 2026-11-13.**
+Der Kern: das Paket hatte die Suche selbst ehrlich gemacht, aber nicht die Wege
+EINEN Schritt dahinter. (1) `search_wlo_topic_pages`/`get_topic_page_content`
+mit `query` meldeten „keine Themenseite", wenn die Fachportal-Liste nicht
+antwortete → `findTopicPagesByQueryResult {pages, incomplete}`, eigener Grund
+`source_unreachable`. (2) Eine nicht LESBARE Sammlung galt als Sammlung ohne
+Themenseite → `getCollectionThemePages` wirft außer bei 404/403/401. (3) Der
+Baum-Rückfall von `search_wlo_collections` zählt ungelesene Unterlisten.
+Dazu: fehlgeschlagener Frischabruf zeigt nicht mehr den alten Katalog
+(`refreshRegistries` → `{answered, failed}`), JSON-Blockreihenfolge, flache
+Widget-Form, HTML-Seite ohne „Keine Treffer." neben der Warnung, Namens-Index-
+Treffer ohne Nachlesen, schlankes `search` (leer + Ausfall = Fehler). Die vier
+Kurzformen ohne „hat es geantwortet?" sind entfernt; der Wächter „nur ein Modul
+kennt beide Indizes" traf seit der Umbenennung keinen Aufruf mehr und ist
+repariert (Verletzung eingespielt: rot). Gegenproben: 13 Mutationen, alle rot
+(eine erst nach einem zusätzlichen Test — der Fachportal-Term war im
+bisherigen Fixture von einem anderen mit abgedeckt). 2945 Tests grün.
+**Nach außen sichtbar:** `search_wlo_topic_pages` mit `collectionId` und
+`search` (schlank) antworten bei einem Ausfall jetzt mit `isError` statt leer.
+
+**P11 Vorschläge und die id eines angelegten Datensatzes (K-6, K-8, K-9, K-10) — umgesetzt 2026-11-13.**
+K-6: `createContentNode` wirft nicht mehr, wenn ein Schritt NACH dem Anlegen
+keine Antwort bekommt — `created` mit `incomplete`, das Werkzeug meldet
+`unverified` mit `error.nodeId`; 5xx beim Anlegen ist `outcomeOpen: true`.
+K-8: Annehmen fügt bei mehrwertigen Feldern hinzu (`valuesAfterAccept`).
+K-9: Einzel- und Sammelwerkzeug teilen `newProposals`/`createSuggestions`;
+hinterlegt wird am Original; leere Antwort = offen; Auflisten/Entscheiden
+sehen am genannten Knoten UND am Original nach (`suggestionsFor`).
+K-10: nur OFFENE Vorschläge sind entscheidbar (`already_decided`), der Status
+wird nach dem PATCH zurückgelesen (`suggestion_not_marked`).
+Tests zuerst (14 rot → grün), 14 Mutationen alle rot, 2963 Tests grün.
+**Ungemessen:** ob das Repository Vorschläge über eine Verknüpfungs-id selbst
+aufs Original auflöst — Staging kann derzeit keine Verknüpfungen anlegen
+(PUT references 500). Deshalb fragt `suggestionsFor` beide Knoten.
+
+**Review P10+P11 (unabhängig, 1 MAJOR · 7 MINOR · 2 NIT) — alle behoben 2026-11-13.**
+MAJOR: die K-6-Antwort sagte „NICHT erneut anlegen" und hängte danach den
+Standardhinweis für einen verbrauchten Schlüssel an („neue Vorschau
+bestätigen") — beim Datei-Weg entsteht genau so der zweite Datensatz. Ein
+Fehler über einem angelegten Datensatz trägt jetzt `recordExists: true`,
+`requiresNewPreview: false` und den Hinweis, am vorhandenen nachzutragen.
+MINOR: jeder Schritt nach dem Anlegen hat sein eigenes try (ein Upload ohne
+Antwort kostet nicht mehr den Titel); „hinzugefügt" nur, wenn hinzugefügt wird;
+Autor/Herausgeber bewusst ersetzend (begründet im Code); Vorschlag nach der
+Entscheidung nicht mehr in der Liste = offen; weniger genannt als gesendet =
+`unverified`; Dubletten im selben Aufruf; Wächter der Registrierung liest die
+ganze Datei ohne Kommentare und fängt jeden Empfänger.
+
+**P12 Beobachtbarkeit (B-5) — umgesetzt 2026-11-13.** `X-Request-Id` an jeder
+Antwort und als `req` in jeder Logzeile der Anfrage (eigener ALS-Speicher,
+`src/request-id.ts` — er überlebt `detachedFromRequest`, weil gerade der
+Schreibvorgang verfolgbar sein soll). `GET /metrics` (`src/metrics.ts`,
+`src/rest/metrics-route.ts`) nur mit `METRICS_TOKEN`, ohne Abhängigkeit;
+Zählung an den drei Nahtstellen: Antwortende in `http-app.ts`, Werkzeugaufruf
+in `registerWloTool`, Repository-Aufruf in `wloFetch`. Container-Log auf
+5 × 10 MB begrenzt. Nicht Code: eine Verfügbarkeitsprüfung von AUSSEN
+(DEPLOYMENT §5.0.1). Neue Betreiber-Einstellung: `METRICS_TOKEN`.
+
+**P13 übrige Sicherheitsbefunde (S-4, S-5, S-7 … S-13) — umgesetzt 2026-11-13.**
+S-4 Upload-Route: Protokoll-Budget VOR der Anmeldung, abgelehnte Anmeldung 60 s
+gemerkt, je Anmeldung höchstens die Hälfte des Byte-Budgets. S-5 Vorschau nennt
+JEDE Datei; abweichende Größe wird nicht abgelegt. S-7 Dienstkonto nur noch als
+Modus (`authority: null`). S-8 anonyme OAuth-Codes je Adresse. S-9 `fsync` vor
+dem Umbenennen der Zugangsliste. S-10 `src/keyed-digest.ts` — ein Geheimnis je
+Prozess für jedes Wiedererkennen einer Anmeldung. S-12 fremde Identität
+verbraucht keinen Schlüssel; das Dienstkonto ist nicht EINE Person. S-13 volle
+Prüfsumme bindet den Datei-Upload. Tests zuerst (`tests/security-leftovers.test.ts`).
+**S-11 nur als Startwarnung:** OAuth ohne `WLO_PUBLIC_BASE_URL` abzuschalten
+würde Installationen brechen, die auf dem Host-Kopf laufen — Betreiber-
+entscheidung, im Abschlussbericht genannt.
+**Nach außen sichtbar:** `/auth/status` und `wlo_auth_status` nennen das
+Dienstkonto nicht mehr beim Namen (Felder bleiben, `authority` ist dort `null`);
+die Datei-Vorschau zeigt 64 statt 12 Zeichen Prüfsumme; `/api/uploads` kann
+`429 rate_limited` antworten.
+
+**Review über Phase 3 (P12, P13, Querbezüge P9–P13; 2 MAJOR · 6 MINOR · 6 NIT) — behoben 2026-11-13.**
+MAJOR 1: scheiterte nach einem ANGELEGTEN Datensatz nur das Zurücklesen, fehlte
+`recordExists` — der Hinweis für den verbrauchten Schlüssel lautete wieder
+„neue Vorschau". MAJOR 2: der Anteil je Anmeldung am Upload-Budget konnte
+kleiner sein als eine erlaubte Datei. Dazu: Stapel-Eigentümer als
+Schlüssel-Hash (übersehene Stelle von S-10, jetzt mit Wächter über ganz `src`),
+abgelaufener Bestätigungsschlüssel antwortet seine ganze Stunde `expired`,
+Dienstkonto mit eigenem Anteil (500) statt ohne Deckel, `confirm_mismatch`
+nennt die andere Anmeldung, abgebrochener Aufruf zählt als `cancelled`,
+Verzeichnis-`fsync` wo möglich. CHANGELOG hat einen gesammelten Abschnitt
+„Changed — visible to clients". 6 Gegenproben rot, 3006 Tests grün.
+Nicht umgesetzt (begründet): Ratenbegrenzung für `/metrics` (Token ≥ 16 Zeichen,
+Vergleich kostet zwei Hashes).
+
+**P14 begonnen:** D-1 (Datenschutzerklärung nennt Benutzernamen/IP in Logs),
+D-3 (acht Variablen in beiden READMEs, Wächter aus dem Quelltext; echte
+Clone-Adresse; Compose ohne Zahl), X-1 (`.github/dependabot.yml`), F-1
+(Markdown-Darsteller: Code und Links vor Fett/Kursiv geschützt). K-12 war
+bereits mit P7 erledigt (Nachschau ohne Antwort → `pending/not_checked`).
+
+**P14, erster Teil — umgesetzt 2026-11-13:** K-13 (laufende Stapel werden nicht
+verdrängt → `too_many_batches`; offener Ordner wird nicht zweimal angelegt),
+K-14 (vier Stellen: Version nur versprechen, wo eine entsteht · `already_submitted`
+· Kompendium-Entfernen bindet Länge+Prüfsumme · Stapel-Titel bis 200 Zeichen),
+K-16 (Skill-Durchlauf meldet `incomplete` · ein Cache-Takt zur Zeit · Wikipedia
+`unreachable`), F-1 (Markdown), F-2 (Anmeldeseiten DE/EN — im Browser geprüft:
+Umschalten per Tastatur, sichtbarer Fokus, 375 px ohne Überlauf; KEIN
+Screenreader-Test), D-1, D-3, X-1. 11 Gegenproben rot. 3027 Tests grün.
+Bewusst so entschieden: bei offenem Ordner wird NICHT nachgesehen und
+weiterverwendet (die Form der Ordnerliste im eigenen Bereich ist ungemessen;
+das Testkonto darf keine Ordner anlegen) — der Stapel bleibt ohne Ordner und
+muss neu vorbereitet werden.
+
+**P14, zweiter Teil — umgesetzt 2026-11-13:** P-3 (rekursiver Sammlungsinhalt
+ebenenweise in Sechsergruppen; Reihenfolge des Baums, Besuchsdeckel 50
+unverändert), P-4 (`src/short-cache.ts`: Fachportal-Liste und
+Skill-Beschreibungen 60 s; nur Antworten, nie ein Ausfall, nie ein laufendes
+Promise), A-6 (0 Import-Zyklen über 238 Dateien, gemessen), A-7 (eine Stelle
+für die Titelwahl, zwei Ketten mit Begründung; Wächter fand beim Einbau zwei
+weitere Stellen), A-5 teilweise (`curation-shared.ts` 613→443,
+`skill-registry.ts` 641→458, Lesepfad von `get_node_details` in den Dienst),
+T-2 teilweise (`tests/live/suggestions.test.ts`, grün gegen Staging).
+**Gemessen 2026-11-13 (Staging):** `POST /suggestions` nennt die angelegten
+Vorschläge (2 von 2, mit `confidence: 0`); `PATCH` + `GET` zeigt den neuen
+Status am selben Knoten; **das Repository lässt DECLINED → ACCEPTED zu** —
+unsere Sperre `already_decided` ist die einzige; `ccm:taxonid` mit zwei Werten
+kommt als zwei Werte zurück. 3033 Tests grün.
+
+**Bewusst NICHT umgesetzt — braucht eine Entscheidung (siehe Abschlussbericht):**
+- A-3 (einheitlicher Vertrag: eine Form für „nicht gefunden", gleiche
+  Vorgabewerte, Weiterblättern überall) — ändert Antwortformen und Vorgaben,
+  also die Außenschnittstelle.
+- A-2-Rest (Ausgabeschemata für die zwölf Lesewerkzeuge) — jedes Schema ist
+  ein veröffentlichter Vertrag (`additionalProperties: false`).
+- D-2 (CHANGELOG/CLAUDE.md/STATUS kürzen, Versionen schneiden, `/health`
+  meldet 1.0.0) — Dokumente und Versionsnummer des Nutzers.
+- S-11 hart (OAuth nur mit `WLO_PUBLIC_BASE_URL`) — bräche laufende
+  Installationen; umgesetzt ist die Startwarnung.
+- Aus P11: sollen Metadaten-Werkzeuge Sammlungen/Ordner ablehnen?
+**Offen ohne Entscheidung, nur Aufwand:** restliche Aufteilungen aus A-5
+(`skill-registry-cache.ts` 730, `http-app.ts` 618, `wlo-config.ts` 572,
+`curation-content.ts` 545 Zeilen), die laut knip ungenutzten Exporte (nicht
+geprüft — knip ist nicht installiert), weitere Live-Tests (Einreichen,
+Themenseite, Sammlungsbaum; Einordnen und Stapel scheitern derzeit an der
+Staging-Regression) und ein nächtlicher Lauf (die CI hat keine Zugangsdaten).
+
+**Review P14 (unabhängig, 3 MAJOR · 8 MINOR · NITs) — behoben 2026-11-13.**
+MAJOR 1: der neue Minuten-Zwischenspeicher war nur nach Knoten geschlüsselt —
+eine mit den Rechten einer Person gelesene Skill-Beschreibung ging eine Minute
+lang an anonyme Aufrufer. Schlüssel trägt jetzt, wessen Rechte gelesen haben
+(`sharedReadScope`); Lesungen einer persönlichen Anmeldung werden gar nicht
+behalten. MAJOR 2: Stapel-Zusammenfassung sprengte mit 200-Zeichen-Titeln ihr
+Feld → Titel in der Zusammenfassung auf 120 gekappt. MAJOR 3: im parallelen
+Durchlauf konnte eine Sammlung den Aufruf scheitern lassen, die der serielle
+nie gefragt hätte → `allSettled`. Dazu acht kleinere (Wikipedia-Ausfall in
+REST und `search_wlo_all`, `get_skill_for_task`, Stapel-Texte und -Verdrängung,
+Titelketten, Markdown, Fokusring, Cache-Stop, Variablen-Wächter).
+`tests/audit-p14-review.test.ts` (12 Tests), Gegenproben rot bis auf drei
+gleichwertige Mutanten (begründet). **3045 Tests grün**, tsc, Lint, Build,
+Image-Starttest (`npm run smoke:image`, jetzt auch unter Git Bash/Windows).
+Nicht übernommen (geprüft, kein Fehler): „Wiederholung nach verlorener Antwort
+bekommt `already_submitted`“ — die Wiedergabe eines eingelösten Schlüssels
+läuft an der gemeinsamen Nahtstelle VOR dem Handler.
+Offen aus dem Review, ohne Umsetzung: Statuszeilen behalten nach einem
+Sprachwechsel die alte Sprache; deutsche Servermeldungen im englischen Modus
+tragen kein `lang="de"`.
+
+**Audit-Nacharbeit: P1–P14 abgeschlossen bis auf die oben genannten
+Entscheidungspunkte.** Nichts ist committet.
+
+**Rückmeldung des Chatbot-Teams vom 2026-11-13 — der vertragsneutrale Teil ist umgesetzt.**
+(1) Hinweis „voller Durchlass wird zu leer": die letzten vier Aufrufer ohne
+`reachable` melden es jetzt (`get_collection_contents` rekursiv →
+`incomplete`, `browse_collection_tree` → `childrenUnread`, Skill-Durchlauf →
+`incomplete`, Varianten einer Themenseite → `source_unreachable`); die Kurzform
+`getChildCollections` ist entfernt. (2) Hinweis „Leerfall als Satz":
+`structuredContent` trug `total/count/results[/incomplete]` schon; neu ist der
+parsebare erste Block im JSON-Modus. (3) W6: `get_skill` mit
+`structuredContent {found, contentLoaded, contentRefused?}`. (4) W5:
+`x-client-trace-id` und B3 gelesen, geloggt, ans Repository weitergegeben
+(`src/request-id.ts`). 10 Tests (`tests/chatbot-feedback-1113.test.ts`),
+12 Gegenproben rot, 3055 Tests grün.
+**Nicht angefasst — Entscheidung des Nutzers bzw. außerhalb des Codes:** die
+fünf Entscheide (D-2 Versionen, A-3, Ausgabeschemata, S-11, Sammlungen in den
+Metadaten-Werkzeugen), der Diensteleitfaden von Team 6 (zweiter Port,
+Log-Feldnamen/stdout, `LOG_LEVEL`, getrennte Readiness, Helm, OpenAPI,
+Dienst-ID), W1/W4 (warten auf den Staging-Fix), W2/W3 (hängen an Fragen ans
+Repository-Team), W7.

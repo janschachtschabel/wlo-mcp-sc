@@ -44,13 +44,24 @@ export const MANIFEST_NAME = /^vorgang( \(\d+\))?\.json$/i;
 export interface ManifestEntry { index: number; titel: string; nodeId?: string; stand: string; rolle?: BatchRole }
 export interface ManifestSummary { format: string; ordner: string; layout: string; inhalte: ManifestEntry[] }
 
+/**
+ * A title as the SUMMARY carries it. The size figures above hold for titles of
+ * at most 121 characters; a batch title may be 200 since 2026-11-13, and at
+ * that length two hundred entries pass what the property keeps (~62 900 against
+ * 53 950) — the manifest would read back `unverified` and the batch list could
+ * not show it. The full title stays in the manifest FILE and on the record.
+ */
+const SUMMARY_TITLE_CHARS = 120;
+const summaryTitle = (title: string): string =>
+  title.length > SUMMARY_TITLE_CHARS ? `${title.slice(0, SUMMARY_TITLE_CHARS)}…` : title;
+
 /** The summary of a server-built manifest — the same entries, without checksum, size and file name. */
 export function summarizeManifest(manifest: { ordner: string; layout: string; inhalte: ManifestEntry[] }): ManifestSummary {
   return {
     format: MANIFEST_FORMAT,
     ordner: manifest.ordner,
     layout: manifest.layout,
-    inhalte: manifest.inhalte.map(e => ({ index: e.index, titel: e.titel, ...(e.nodeId ? { nodeId: e.nodeId } : {}), stand: e.stand,
+    inhalte: manifest.inhalte.map(e => ({ index: e.index, titel: summaryTitle(e.titel), ...(e.nodeId ? { nodeId: e.nodeId } : {}), stand: e.stand,
       ...(e.rolle === 'structure' ? { rolle: e.rolle } : {}) })),
   };
 }

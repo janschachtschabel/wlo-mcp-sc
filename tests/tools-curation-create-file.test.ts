@@ -54,10 +54,17 @@ interface Served {
  * @param opts.uploadOk  does the upload endpoint accept the request
  * @param opts.siblings  titles already in the storage location
  */
-function serve(opts: { stored?: boolean; uploadOk?: boolean; siblings?: string[] } = {}) {
+function serve(opts: {
+  stored?: boolean; uploadOk?: boolean; siblings?: string[];
+  /** A step AFTER the create that gets no answer at all. */
+  dies?: 'upload' | 'metadata' | 'readback';
+  /** What the create itself answers with. */
+  createStatus?: number;
+} = {}) {
   const { stored = true, uploadOk = true, siblings = [] } = opts;
   const seen: Served = { uploaded: null, contentCalls: 0 };
   const props: Record<string, string[]> = { 'cclom:title': ['Brüche kürzen'] };
+  let metadataWritten = false;
 
   const mock = installFetchMock((url, init) => {
     const method = init?.method ?? 'GET';
@@ -68,8 +75,14 @@ function serve(opts: { stored?: boolean; uploadOk?: boolean; siblings?: string[]
       })) } };
     }
     if (url.includes('/children') && method === 'POST') {
+      if (opts.createStatus) return { status: opts.createStatus, json: {} };
       return { json: { node: { ref: { id: NODE, repo: '-home-' } } } };
     }
+    if (opts.dies === 'upload' && url.includes('/content?')) throw new TypeError('fetch failed');
+    if (opts.dies === 'metadata' && url.includes('/metadata') && method !== 'GET') throw new TypeError('fetch failed');
+    // Everything landed; only the look afterwards gets no answer.
+    if (opts.dies === 'readback' && method === 'GET' && url.includes('/metadata') && metadataWritten) throw new TypeError('fetch failed');
+    if (url.includes('/metadata') && method !== 'GET') metadataWritten = true;
     if (url.includes('/content?')) {
       seen.contentCalls++;
       return uploadOk ? { json: {} } : { status: 403, json: { error: 'AccessDenied' } };
@@ -224,6 +237,84 @@ test('a refused upload is reported beside the id, not swallowed', async (t) => {
 
   assert.match(text, new RegExp(`Angelegt: ${NODE}`));
   assert.match(text, /fehlgeschlagen/i);
+});
+
+/**
+ * Audit 2026-11-12, K-6. The record EXISTS once the create answered; a step
+ * after it that gets no answer used to throw, and the reply then said "ob der
+ * Datensatz angelegt wurde, ist unklar" without the id. A record carrying a file
+ * has no URL to be found again by, so the retry that sentence invites made a
+ * second one.
+ */
+for (const dies of ['upload', 'metadata'] as const) {
+  test(`K-6: the ${dies} step getting no answer does not lose the id of the record that exists`, async (t) => {
+    setServiceCredentialForTest(USER);
+    const s = serve({ dies });
+    t.after(() => { s.mock.restore(); setServiceCredentialForTest(null); });
+
+    const client = await curationClient();
+    const key = keyFrom(toolText(await create(client, { title: 'Brüche kürzen', content: MARKDOWN })));
+    const r = await create(client, { title: 'Brüche kürzen', content: MARKDOWN, confirmToken: key });
+    const text = toolText(r);
+
+    assert.match(text, new RegExp(`Angelegt: ${NODE}`), text);
+    assert.match(text, /NICHT erneut anlegen/);
+    const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
+    assert.equal(error?.['outcomeOpen'], true, 'never "nothing written" over a record that exists');
+    assert.equal(error?.['nodeId'], NODE, 'a program gets the id too');
+    // The key is spent, and the usual advice for that — "preview again" — is the
+    // one thing that makes the second record (review of package 11).
+    assert.doesNotMatch(text, /neue Vorschau bestätigen/);
+    assert.equal(error?.['requiresNewPreview'], false);
+    assert.equal(error?.['recordExists'], true);
+    if (dies === 'upload') {
+      const put = s.mock.calls.find((c) => c.url.includes('/metadata') && (c.init?.method ?? 'GET') !== 'GET');
+      assert.ok(put, 'an upload without an answer does not cost the record its title');
+      assert.match(text, /Hochladen der Datei/, 'and the reply names the step');
+    } else {
+      assert.match(text, /Schreiben der Metadaten/);
+    }
+  });
+}
+
+test('K-6: a read-back without an answer is still a record that EXISTS — never "preview again"', async (t) => {
+  setServiceCredentialForTest(USER);
+  const s = serve({ dies: 'readback' });
+  t.after(() => { s.mock.restore(); setServiceCredentialForTest(null); });
+
+  const client = await curationClient();
+  const key = keyFrom(toolText(await create(client, { title: 'Brüche kürzen', content: MARKDOWN })));
+  const r = await create(client, { title: 'Brüche kürzen', content: MARKDOWN, confirmToken: key });
+  const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
+  assert.match(toolText(r), new RegExp(`Angelegt: ${NODE}`), toolText(r));
+  assert.equal(error?.['recordExists'], true, toolText(r));
+  assert.equal(error?.['requiresNewPreview'], false);
+  assert.doesNotMatch(toolText(r), /neue Vorschau bestätigen/);
+});
+
+test('K-6: a create the repository answered 5xx is OPEN — the record may exist', async (t) => {
+  setServiceCredentialForTest(USER);
+  const s = serve({ createStatus: 500 });
+  t.after(() => { s.mock.restore(); setServiceCredentialForTest(null); });
+
+  const client = await curationClient();
+  const key = keyFrom(toolText(await create(client, { title: 'Brüche kürzen', content: MARKDOWN })));
+  const r = await create(client, { title: 'Brüche kürzen', content: MARKDOWN, confirmToken: key });
+  const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
+  assert.equal(error?.['outcomeOpen'], true, toolText(r));
+  assert.match(toolText(r), /offen/);
+});
+
+test('K-6: a create the repository REFUSED (4xx) wrote nothing', async (t) => {
+  setServiceCredentialForTest(USER);
+  const s = serve({ createStatus: 403 });
+  t.after(() => { s.mock.restore(); setServiceCredentialForTest(null); });
+
+  const client = await curationClient();
+  const key = keyFrom(toolText(await create(client, { title: 'Brüche kürzen', content: MARKDOWN })));
+  const r = await create(client, { title: 'Brüche kürzen', content: MARKDOWN, confirmToken: key });
+  const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
+  assert.equal(error?.['outcomeOpen'], false, toolText(r));
 });
 
 // ── the gate between the two paths ─────────────────────────────────────────

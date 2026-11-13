@@ -12,9 +12,10 @@ import type { SearchAllEnvelope } from '../services/search.js';
 
 export interface ProjectedEnvelope {
   query: string;
-  content: { total: number; count: number; results: Record<string, unknown>[] };
-  collections: { total: number; count: number; results: Record<string, unknown>[] };
-  topicPages: { total: number; count: number; results: Record<string, unknown>[] };
+  // Each bucket also keeps what it says about itself (`licenseFilter`, `more`, `incomplete`, …).
+  content: { total: number; count: number; results: Record<string, unknown>[] } & Record<string, unknown>;
+  collections: { total: number; count: number; results: Record<string, unknown>[] } & Record<string, unknown>;
+  topicPages: { total: number; count: number; results: Record<string, unknown>[] } & Record<string, unknown>;
   wikipedia?: unknown;
 }
 
@@ -35,11 +36,14 @@ export function projectItems(items: readonly unknown[], fields: readonly string[
  * counts, wikipedia) is preserved unchanged.
  */
 export function projectEnvelope(env: SearchAllEnvelope, fields: readonly string[]): ProjectedEnvelope {
-  const bucket = (b: { total: number; count: number; results: readonly unknown[] }) => ({
-    total: b.total,
-    count: b.count,
-    results: projectItems(b.results, fields),
-  });
+  // `fields` trims the ITEMS. What a bucket says about itself — a licence pass,
+  // a short page, an unreachable source, a text that was not read — is not an
+  // item field, and a disclosure that disappears when the response is trimmed
+  // is no disclosure (the rule the HTML page already follows).
+  const bucket = (b: { total: number; count: number; results: readonly unknown[] }) => {
+    const { results, ...about } = b as { results: readonly unknown[] } & Record<string, unknown>;
+    return { ...about, total: b.total, count: b.count, results: projectItems(results, fields) };
+  };
   return {
     query: env.query,
     content: bucket(env.content),

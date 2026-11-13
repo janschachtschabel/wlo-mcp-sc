@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  getChildCollections,
+  getChildCollectionsResult,
   getCollectionContents,
   getNodeMetadata,
   getNodeParents,
@@ -24,10 +24,10 @@ import { installFetchMock } from './fetchMock.js';
 /** HTTP 200 with a body that is not JSON — the gateway/maintenance-page case. */
 const notJson = () => installFetchMock(() => ({ text: '<html>maintenance</html>' }));
 
-test('getChildCollections: an unparseable 200 body degrades to []', async () => {
+test('getChildCollectionsResult: an unparseable 200 body is no nodes AND not reachable', async () => {
   const mock = notJson();
   try {
-    assert.deepEqual(await getChildCollections('c-1'), []);
+    assert.deepEqual(await getChildCollectionsResult('c-1'), { nodes: [], reachable: false });
   } finally { mock.restore(); }
 });
 

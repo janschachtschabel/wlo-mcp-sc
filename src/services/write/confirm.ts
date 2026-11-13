@@ -38,6 +38,8 @@ const MAX_PENDING = 1000;
  * number an identity makes room from its OWN oldest previews.
  */
 export const MAX_PENDING_PER_IDENTITY = 50;
+/** The shared service account is many visitors at once: half the store, never all of it. */
+export const MAX_PENDING_SHARED_IDENTITY = 500;
 
 /**
  * `replay`: the key was already redeemed by a call with the same identity and
@@ -122,8 +124,15 @@ function prune(now: number, identity: string): void {
   }
   for (const [token, until] of expired) if (until <= now) expired.delete(token);
   // Insertion order is age order, so the first matching entries are the oldest.
+  // The per-identity cap is a cap per PERSON. The shared service account is
+  // every visitor at once (`WLO_ALLOW_SERVICE_WRITES`), so fifty previews there
+  // were fifty for everybody together and each new one evicted a stranger's
+  // (audit 2026-11-12, S-12). It gets a share of its own — half of everything —
+  // rather than none: without any, one visitor of a service-write deployment
+  // could fill the store and push out every PERSON's pending key.
+  const cap = identity.startsWith('service:') ? MAX_PENDING_SHARED_IDENTITY : MAX_PENDING_PER_IDENTITY;
   const own = [...pending].filter(([, entry]) => entry.identity === identity);
-  for (let i = 0; i <= own.length - MAX_PENDING_PER_IDENTITY; i++) pending.delete(own[i]![0]);
+  for (let i = 0; i <= own.length - cap; i++) pending.delete(own[i]![0]);
   while (pending.size >= MAX_PENDING) {
     const oldest = pending.keys().next();
     if (oldest.done) break;
@@ -143,7 +152,7 @@ export function mintToken(cs: ChangeSet, now: number = Date.now()): string {
 /**
  * Redeem a token for the change it was minted for.
  *
- * The token is consumed on every recognised attempt, `mismatch` included: a
+ * The token is consumed on every attempt BY ITS OWNER, `mismatch` included: a
  * caller must not be able to keep trying different changes against one
  * approval. A mismatch means the plan is no longer what the user saw — the
  * right answer is a fresh preview, not a retry.
@@ -156,15 +165,21 @@ export function consumeToken(token: string, cs: ChangeSet, now: number = Date.no
     // tool seam, because two calls sent at once both pass the seam before
     // either redeems.
     if (lookupReplayInCall(token, currentIdentity(), now).kind !== 'none') return 'replay';
-    // Answers once, like the token it stands for.
+    // Answers for as long as it is kept, whoever asks. It used to answer ONCE —
+    // and a tombstone carries no identity, so anybody presenting the key took
+    // the owner's "expired" (nothing was written) and left them "unknown"
+    // (look first). Bounded by its hour and by `MAX_TOMBSTONES` either way.
     const until = expired.get(token);
     if (until === undefined || until <= now) return 'unknown';
-    expired.delete(token);
     return 'expired';
   }
+  const identity = currentIdentity();
+  // Somebody ELSE presenting the key does not use it up: it stays its owner's.
+  // Before, any caller who had seen a key could burn it (S-12). Trying changes
+  // against it gains them nothing — the identity is part of every fingerprint.
+  if (entry.identity !== identity) return 'mismatch';
   pending.delete(token);
   if (entry.expiresAt <= now) return 'expired';
-  const identity = currentIdentity();
   if (!sameHash(entry.hash, fingerprint(cs, identity))) return 'mismatch';
   markRedeemed(token, identity, now);
   return 'ok';

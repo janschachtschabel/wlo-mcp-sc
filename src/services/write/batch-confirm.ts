@@ -20,6 +20,8 @@
  * In memory, one server instance (like `confirm.ts`). Logs carry no titles.
  */
 
+import { isOutcomeOpen } from './timeouts.js';
+import { keyedDigest } from '../../keyed-digest.js';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { BatchRole } from './batch-manifest.js';
@@ -47,6 +49,8 @@ export interface StoreResult {
   status: 'stored' | 'dropped' | 'unverified' | 'failed';
   nodeId?: string;
   detail?: string;
+  /** With `failed`: something MAY exist all the same (a 5xx, an answer without an id). */
+  open?: true;
 }
 
 export type Redeem =
@@ -56,7 +60,7 @@ export type Redeem =
 
 export type FolderChoice =
   | { ok: true; parent: string; denied: boolean }
-  | { ok: false; detail: string };
+  | { ok: false; detail: string; open?: true };
 
 interface Pending {
   owner: string;
@@ -66,6 +70,8 @@ interface Pending {
   /** Indices handed out but not yet recorded — a parallel second call is `already` too. */
   inFlight: Set<number>;
   folder?: Promise<FolderChoice>;
+  /** The folder creation ended open: this batch files nothing more (see `folder`). */
+  folderOpen?: true;
   /**
    * The manifest: not claimed, being filed, or the result of filing it. Three
    * states, not a flag — a claim whose filing was aborted must answer "open" to
@@ -78,6 +84,8 @@ export const BATCH_TTL_MS = 30 * 60 * 1000;
 /** Batches held at once across ALL owners — the owner is a header hash, so the per-owner cap alone
  *  bounds memory only as far as the per-address login limiter does. Oldest out. */
 const MAX_TOTAL_BATCHES = 500;
+const FOLDER_OPEN_NOTE = 'Ob der Ordner angelegt wurde, ist offen — für diesen Stapel wird kein zweiter angelegt. '
+  + 'Bitte im persönlichen Bereich nachsehen und den Stapel neu vorbereiten.';
 const MANIFEST_IN_FLIGHT: StoreResult = { status: 'unverified', detail: 'vorgang.json wird gerade abgelegt.' };
 
 function stable(value: unknown): unknown {
@@ -97,7 +105,16 @@ export function batchFingerprint(plan: BatchPlan): string {
 /** The owner key of a credential: its header, hashed (see the module head). */
 export function batchOwner(cred: { header: string; source: string } | null): string | null {
   if (!cred || cred.source !== 'user') return null;
-  return createHash('sha256').update(`batch:${cred.header}`).digest('hex');
+  // Keyed (`keyed-digest.ts`): a bare hash of the header is a password hash, and this one is held for the batch's lifetime.
+  return keyedDigest(`batch:${cred.header}`);
+}
+
+/** Every batch in the way of a new one is being filed — `scope` says whose limit it is. */
+export class TooManyBatches extends Error {
+  constructor(readonly scope: 'owner' | 'server') {
+    super(`too many batches under way (${scope})`);
+    this.name = 'TooManyBatches';
+  }
 }
 
 export class BatchConfirmations {
@@ -117,22 +134,47 @@ export class BatchConfirmations {
     for (const [token, p] of this.pending) if (p.expires <= now) this.pending.delete(token);
   }
 
+  /**
+   * Room is made only from batches nobody has STARTED. A sixth preparation used
+   * to push out the owner's oldest batch whatever its state — mid-filing, its
+   * next file then answered `batch_unknown` over a half-filed folder (audit
+   * 2026-11-12, K-13). When every batch in the way is under way, the new one is
+   * refused instead (`TooManyBatches`): finish one, or let it run out.
+   */
   mint(owner: string, plan: BatchPlan): string {
     this.sweep();
-    const eigene = [...this.pending].filter(([, p]) => p.owner === owner);
-    // Map iteration is insertion order: the oldest batch of this owner goes first.
-    for (const [token] of eigene.slice(0, Math.max(0, eigene.length - this.maxPerOwner + 1))) {
-      this.pending.delete(token);
-    }
-    while (this.pending.size >= this.maxTotal) {
-      const oldest = this.pending.keys().next();
-      if (oldest.done) break;
-      this.pending.delete(oldest.value);
-    }
+    // Under way: something of it was filed or is being filed, and its manifest —
+    // the last step — is not in yet. A FINISHED batch is history, not work.
+    const finished = (p: Pending) => typeof p.manifest === 'object';
+    // A batch whose folder creation ended OPEN cannot be continued (see
+    // `folder`): it is no work in progress either, and must not hold a place.
+    const started = (p: Pending) => !finished(p) && !p.folderOpen
+      && (p.results.size > 0 || p.inFlight.size > 0 || Boolean(p.folder) || p.manifest === 'inFlight');
+    // Map iteration is insertion order: the oldest idle batch goes first.
+    // DECIDED before anything is deleted: a preparation that is refused must
+    // leave every batch where it was — the owner's idle ones included.
+    const idleToEvict = (inTheWay: Array<[string, Pending]>, limit: number, gone: Set<string>): string[] | null => {
+      const left = inTheWay.filter(([token]) => !gone.has(token));
+      const need = left.length - limit + 1;
+      if (need <= 0) return [];
+      const idle = left.filter(([, p]) => !started(p)).slice(0, need).map(([token]) => token);
+      return idle.length === need ? idle : null;
+    };
+    const all = [...this.pending];
+    const own = idleToEvict(all.filter(([, p]) => p.owner === owner), this.maxPerOwner, new Set());
+    if (!own) throw new TooManyBatches('owner');
+    const any = idleToEvict(all, this.maxTotal, new Set(own));
+    if (!any) throw new TooManyBatches('server');
+    for (const token of [...own, ...any]) this.pending.delete(token);
     const token = `${randomBytes(18).toString('base64url')}.${batchFingerprint(plan).slice(0, 12)}`;
     this.pending.set(token, { owner, plan: structuredClone(plan), expires: this.clock() + BATCH_TTL_MS,
       results: new Map(), inFlight: new Set(), manifest: 'none' });
     return token;
+  }
+
+  /** Test seam: forget every batch. */
+  resetForTest(): void {
+    this.pending.clear();
   }
 
   private live(token: string, owner: string): Pending | 'unknown' | 'expired' | 'mismatch' {
@@ -170,16 +212,28 @@ export class BatchConfirmations {
     this.pending.get(token)?.inFlight.delete(index);
   }
 
-  /** The batch's folder choice: made once (also for parallel first files); a failed attempt is
-   *  forgotten so the next file tries again. */
+  /**
+   * The batch's folder choice: made once (also for parallel first files). A
+   * REFUSED attempt is forgotten so the next file tries again. An OPEN one — a
+   * 5xx, an answer without an id, no answer at all — is KEPT: the folder may
+   * exist, and trying again made a second one (`renameIfExists`), with the
+   * batch's files split between the two (K-13). The batch then stays without a
+   * folder; the person looks and prepares it anew.
+   */
   folder(token: string, make: () => Promise<FolderChoice>): Promise<FolderChoice> {
     const p = this.pending.get(token);
     if (!p) return make();
     if (!p.folder) {
       p.folder = make().then((choice) => {
-        if (!choice.ok) delete p.folder;
-        return choice;
-      }, (err: unknown) => {
+        if (!choice.ok && !choice.open) delete p.folder;
+        if (choice.ok || !choice.open) return choice;
+        p.folderOpen = true;
+        return { ...choice, detail: `${choice.detail} ${FOLDER_OPEN_NOTE}` };
+      }, (err: unknown): FolderChoice => {
+        if (isOutcomeOpen(err)) {
+          p.folderOpen = true;
+          return { ok: false, open: true, detail: `Vom Repository kam keine Antwort. ${FOLDER_OPEN_NOTE}` };
+        }
         delete p.folder;
         throw err;
       });

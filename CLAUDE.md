@@ -78,10 +78,28 @@ The current rebuild/extension is designed in:
   `ccm:oeh_lrt_aggregated` is never written by us (the repository derives it);
   accepting a suggestion writes and reads back BEFORE it marks the suggestion
   accepted — an `ACCEPTED` proposal over a record that never got the value reads
-  as work already done; and an ABORTED request is reported as an open outcome,
+  as work already done (since 2026-11-13 the decision itself is read back too,
+  only a PENDING proposal can be decided — and that check is the only one:
+  measured the same day, the repository itself accepts DECLINED → ACCEPTED —,
+  one proposal ADDS to a field holding
+  several values — `valuesAfterAccept` — and proposals are filed at the
+  ORIGINAL through the one pair `newProposals`/`createSuggestions` both the
+  single and the batch tool use); and an ABORTED request is reported as an open outcome,
   never as a failure — the abort hits the response, not the work, so every
   curation `catch` goes through `timeoutOrError` (`tools/curation-shared.ts`)
-  rather than `toolError`.
+  rather than `toolError`. A record that was CREATED is never lost to a later
+  step (2026-11-13): `createContentNode` answers `created` + `incomplete`, and
+  an error over an existing record carries `recordExists` — `keySpent` then
+  must not say "preview again", which for a file-carrying record makes the
+  second one. Since the audit of 2026-11-12 "aborted" includes a
+  LOST CONNECTION after the request left (`isOutcomeOpen`,
+  `services/write/timeouts.ts` — the one question; `isUpstreamTimeout` alone in a
+  write path is a test failure), and the same care binds every sentence that
+  says "nothing was written": `plan_expired`, `confirm_unknown` and the batch
+  approvals are `outcomeOpen: true`, because a key the server no longer knows
+  may have written before it was forgotten. The four planned tools share ONE
+  course (`runPlannedCall`, `tools/curation-plan.ts`) — its order is the safety
+  property, and a tool that calls `startPlan`/`findPlan` itself fails a test.
 
   Live pass against staging done 2026-08-02 (STATUS.md). It found two defects
   that every test had missed — `wlo_create_collection` and
@@ -252,7 +270,15 @@ The current rebuild/extension is designed in:
   document, because after it they are indistinguishable from sections the
   document forged; a companion is pointed at the tool that fits its MIME type —
   `get_skill` returns the file VERBATIM, so anything that is not `text/*` goes
-  to `get_wlo_content_text`; and a loaded skill ANNOUNCES itself
+  to `get_wlo_content_text` — and since the audit of 2026-11-12 `get_skill`
+  itself holds that line: an instruction is loaded WHOLE OR NOT AT ALL
+  (`readSkillText`). Never cut (the user's decision of 2026-08-20), but a
+  record that is certainly binary is not downloaded (a DENY list: only
+  `text/x-web-markdown` is measured, so "not `text/*`" would refuse on a
+  guess), and a text past
+  `SKILL_TEXT_MAX_BYTES` (2 MiB) is refused whole and reported as
+  `contentRefused` — the path had no bound at all, and the nodeId is the
+  caller's, so any downloadable file was buffered in full; and a loaded skill ANNOUNCES itself
   (`services/skill-activation.ts`, 2026-08-15) with a line the model is asked to
   print — `[ edu-sharing Skill ] <cclom:title> - aktiv`, also carried as the
   `activation` field so a client rendering the answer itself does not depend on
@@ -522,8 +548,9 @@ The current rebuild/extension is designed in:
   geprüft" sentence for the last, and nothing at all for an empty id — which
   `get_topic_page_content` passes whenever a query matched no page.
 
-  P3 adds the search-side enrichment (`enrichSkillRegistry` in
-  `services/search.ts`), rendered once in `renderToText` (both tools go through
+  P3 adds the search-side enrichment (then `enrichSkillRegistry` in
+  `services/search.ts`; removed 2026-11-13 — the cache's `ensureRegistries` /
+  `refreshRegistries` are the one way in), rendered once in `renderToText` (both tools go through
   it, every line via `oneLine`, the FULL catalogue listed per collection).
   Two rules from 2026-08-11, both the user's decision, and they interlock —
   changing one without the other makes a sentence in the output false.
@@ -758,7 +785,13 @@ The current rebuild/extension is designed in:
   Two rules bind any change. **Do not exempt blocks from the counter** on the
   argument that they are "already proven": `AUTH.md` §4 — the public key is
   published, so whoever learns a `jti` can mint blocks carrying it with any
-  password. And **the bucket key is never logged or returned** — for a block it
+  password. The same fact is why **a block is bound to the NAME its id was
+  listed for** (`credentialFromAccessBlock` → `registry.labelOf`, audit
+  2026-11-12): the holder of one listed id — their own — otherwise mints blocks
+  with a stranger's name, a fresh ten guesses per id. `label` stays the spelling
+  the block carries (the binding); the account edu-sharing CONFIRMED is the
+  optional `acct`, which revocation and the cap go by, because one login has
+  several accepted spellings (measured 2026-11-12). And **the bucket key is never logged or returned** — for a block it
   IS the access id, the secret revocation hangs on; the refusal names its
   `scope` and the address instead.
 
@@ -958,6 +991,21 @@ The current rebuild/extension is designed in:
   schwieg, während `structuredContent` `originalId` trug. Einzige erlaubte
   Ausnahme ist `tools/skill-registry.ts` — ein Registry-Eintrag stammt aus einem
   `:::`-Block, nicht aus einem Knoten-Abruf, und hat keine `originalId`.
+
+  **Eine Sammlung erkennt man am Aspekt, nicht am Typ (gemessen 2026-11-12,
+  `tests/live/node-kinds.test.ts`).** `ccm:map` ist der allgemeine Container:
+  der Ablage-Ordner (angelegt als `cm:folder`), `-userhome-`, der
+  Seitenkonfigurations-Ordner und eine Variante melden ihn ebenfalls — nur eine
+  Sammlung trägt `ccm:collection`. Eine Verknüpfung ist `ccm:io` mit
+  `originalId`. Die Regel steht einmal (`src/node-kind.ts`), die
+  Kuratier-Werkzeuge gehen über `wrongKind` (`tools/curation-shared.ts`), und
+  ein Typ-Literal in einem `curation-*.ts` ist ein Testfehler. Der erste Schnitt
+  des Audit-Pakets 2 las den Typ allein: `wlo_delete_collection` hätte einen
+  Ordner angenommen, unter einer Vorschau, die verspricht, sein Inhalt bleibe.
+  Ein Ordner wird von BEIDEN Lösch-Werkzeugen abgelehnt (`is_a_folder`) — keine
+  ihrer Vorschauen beschreibt, was dabei verloren geht. Ein Repository-Platzhalter
+  (`-userhome-` …) wird in `registerCurationTool` für jedes id-Argument jedes
+  Kuratier-Werkzeugs abgelehnt, nicht je Werkzeug.
 
   **P1 ist gebaut (2026-08-17), und drei Regeln binden jede Änderung daran.**
   (a) Die Auflösung entscheidet sich am **DTO-Feld `originalId`**
@@ -1537,6 +1585,12 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
 
 - ESM everywhere: intra-project imports MUST use the `.js` extension
   (`./tools/collections.js`) even though the source is `.ts` — NodeNext requires it.
+- Every tool is registered through ONE seam, `registerWloTool`
+  (`src/apps/register.ts`) — directly, through `registerReadTool` (the short
+  positional form for a plain read tool) or through `registerCurationTool`. A
+  `server.tool(` / `server.registerTool(` in `src/tools/` fails
+  `tests/shared-rule-discipline.test.ts`: the operator's switch for unsafe
+  tools hangs on that seam, and twelve tools went past it until 2026-11-13.
 - Each tool group lives in `src/tools/<area>.ts` and exports a
   `register<Area>Tool(s)(server)` function; `src/server.ts` assembles them and
   registration order = display order in `tools/list`.
@@ -1581,7 +1635,10 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 19 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
-  two-step preview/confirm/report they share, `curation-fields.ts` the 13-field
+  two-step preview/confirm conversation they share — split 2026-11-13: the
+  reply shapes are in `curation-reply.ts` (a leaf), the outcome reports in
+  `curation-report.ts`, both re-exported from `curation-shared.ts` so no tool
+  imports differently —, `curation-fields.ts` the 13-field
   write surface both editing and proposing draw from), grouped by responsibility (collections,
   content-search, node-details, node-relations, vocabulary, topic-pages,
   topic-pages-present, topic-page-content, browse, compendium, wikipedia,
@@ -1594,6 +1651,51 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   Themenseiten listing, swimlane outline) must pass every repository-supplied
   value through `oneLine` (`text-line.ts`, re-exported by `formatter.ts`) — a newline in a title otherwise
   forges a second record with a nodeId the next call acts on.
+- `src/services/content-search.ts` — the ONE search for individual materials,
+  behind `search_wlo_content` and the content leg of `searchAll` (audit
+  2026-11-12, A-1/K-2/P-5). Three rules bind it. (1) The ranked search reads ONE
+  fixed window per call (`WLO_POOL_SIZE` per variant) whatever is asked — so a
+  page that comes up short after exclusion, dedupe and the licence pass is
+  REFILLED from following windows (`REFILL_ROUNDS` = 3, each a whole ranked
+  search), and what the bound did not reach is disclosed as
+  `more {nextSkipCount}`. The END is read off the window
+  (`SearchResponse.exhausted`: no variant returned a full pool), NEVER off
+  `total` — that number counts the full-query variant resp. the exact licence,
+  while the paging runs over all variants resp. the licence family. Measured on
+  the two cases the first cut broke: a framing query whose full variant matches
+  0 while its topic variant holds 480, and a licence family of 343 for 42
+  exact. The ranked search is asked for its WHOLE merged window (it costs
+  nothing upstream), so a short page is filled from better-ranked hits before
+  any further window is read; the exact licence total is asked once, not per
+  window. Paging by `excludeNodeIds` read the same window every
+  time and answered "Keine Inhalte gefunden" over thousands. (2) That sentence is
+  a statement about the CATALOGUE: no renderer prints it over a page that
+  carries `more` — and every renderer says it: both tools in both formats, the
+  HTML page, `/api/search` with `fields` (`projectEnvelope` keeps what a bucket
+  says about itself) and the search widget's empty state. An envelope field the
+  renderer drops is no disclosure.
+  (3) `enrichStoredText` reads for the first `TEXT_ENRICH_MAX` hits only and
+  keeps `textContent` UNSET for a text it did not read or could not read
+  (`textContentSkipped` / `textContentUnreadable`) — an empty string means "the
+  repository answered, and there is none".
+- **"Not reachable" is not "nothing there" (audit 2026-11-12, K-3/K-15).** Since
+  2026-11-13 there is NO listing helper left that drops `reachable` (the plain
+  `getChildCollections` is gone): every caller that "only navigated" turned an
+  unanswered listing — a 5xx or our own full gate — into a branch without
+  children. The
+  low-level collection searches and the portal listing say whether they
+  ANSWERED (`…Result` variants: `reachable` / `unreachable[]`); `searchAll`
+  carries `collections.incomplete` / `topicPages.incomplete`,
+  `search_wlo_collections` `incomplete`, and no renderer prints "Keine …
+  gefunden." over a source that did not answer (`incompleteNotice`, one
+  wording). `searchPageVariants` THROWS on a non-answer like `ngsearch` — it is
+  the primary read of the listing it serves — and `findTopicPagesByQueryResult` throws
+  only when ALL its sources are down. A forced registry lookup
+  (`includeSkillRegistry`) goes THROUGH the cache (`refreshRegistries`): the
+  fresh answer replaces the entry (a removed registry removes the node's
+  catalogue), and only ids that really answered count as checked — the forced
+  pass as a whole used to be taken for an answer, so a failed lookup read as
+  "checked, none there".
 - `src/services/collection-search.ts` — "which collections match this word?",
   asked of BOTH repository backends and merged. The one place that knows there
   are two; see the plan entry above for the three rules that bind it.
@@ -1696,8 +1798,11 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   nothing there. The FIRST hit wins, not the newest — the newest was an untouched
   `1.0` copy while the only edited record (`1.2`) was the oldest, and neither
   date nor version is in the search projection. Dedupe runs before the result
-  cap; the page is NOT widened to compensate, so a copy-heavy query returns fewer
-  results while `total` still reports the real backend count. `src/vocabs.ts` — local vocabulary label↔URI tables (no
+  cap. Since the audit of 2026-11-12 a page left short by it IS filled: first
+  from the rest of the ranked window in hand, then from further windows
+  (`services/content-search.ts`) — the earlier rule "the page is not widened, a
+  copy-heavy query returns fewer results" is superseded. `total` still reports
+  the real backend count. `src/vocabs.ts` — local vocabulary label↔URI tables (no
   API call). `src/text-sanitize.ts` — makes foreign text safe to embed where it
   carries elevated authority (injected user messages, confirm previews): drops
   invisible Unicode and flattens control characters (`flattenText`), plus a
@@ -1713,8 +1818,9 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   rule (cut at a word boundary, disclose the full length): `capText` for a text
   block, `cutAtWordBoundary` when the caller needs its own marker (the
   confirmation preview is line-oriented, so `\n\n[…gekürzt]` would forge a change
-  line), and the exported `TRUNCATION_MARKER` for the byte-capped download, which
-  cannot use a character-based cap at all. The ONLY module that may write that
+  line), and the exported `TRUNCATION_MARKER` for whoever must RECOGNISE the
+  marker (the byte-capped download that appended it was removed 2026-11-12 —
+  the skill path refuses instead of cutting). The ONLY module that may write that
   marker.
   `src/read-json.ts` — the one place an upstream body is parsed: `res.ok` says
   the server answered, not that the body is JSON, so every client goes through
@@ -1724,10 +1830,81 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   found violated by modules written after the helper existed (6 and 1
   respectively). A unit test of a helper proves the helper is right and says
   nothing about whether anyone uses it.
+  `src/shutdown.ts` — what a stop signal does (audit 2026-11-12, B-1): stop
+  accepting, let the WORK in hand finish, exit; cut after `SHUTDOWN_GRACE_MS`
+  (70 s — sized for a `ccm:wwwurl` write and a plan slice, and free when nothing
+  runs), which `stop_grace_period` in the compose file must EXCEED. Without a
+  handler Node as PID 1 ignores SIGTERM, so every deploy ended in SIGKILL. It
+  counts work, not connections, and both directions were measured wrong in the
+  first cut: a connection that never sent a request held `server.close` for the
+  whole grace period, and a client that hung up mid-request left no connection
+  while its write still ran. Work = a handler not returned (`trackRequests`), an
+  answer not flushed, and anything running `detachedFromRequest`. Installed only
+  from `http.ts`.
+  `src/upstream-gate.ts` — the process-wide bound on calls open at the
+  repository (`WLO_UPSTREAM_CONCURRENCY`, default 24; audit 2026-11-12, P-1).
+  Every other bound is per call or per client, and one OER search alone starts
+  ~25 requests. Three rules: below the limit the slot is taken SYNCHRONOUSLY
+  (`tryAcquireUpstreamSlot`) — an `await` before `fetch` changed when a call is
+  sent and a test caught it; the call's timeout starts when it is SENT, not
+  while it waits; and a call with no slot within `GATE_MAX_WAIT_MS` (5 s — far
+  below the call timeout, so "busy" arrives while someone still listens) or
+  meeting a full queue is NOT sent and answered as a synthetic 503 +
+  `Retry-After`: `upstream_busy` to callers that throw on non-OK, "empty" to the
+  six read helpers that degrade (as for a real 503 — package 9). The readiness
+  probe runs `outsideUpstreamGate`: it measures the repository, and our own
+  queue read as "unreachable" for 30 s on the endpoint a circuit-breaker
+  watches. Only the repository host is counted. The default is sized by
+  what ONE call needs — the audit's "throttles at ~11 req/s" is not a measured
+  throttle but the crawl rate computed in the cache block above.
+  `src/request-scope.ts` — whether anybody still waits for the work in hand.
+  `http-app.ts` runs `/mcp` and `/api/*` with a signal that aborts when the
+  connection closes BEFORE the answer finished; `wloFetch` honours it. **Writes
+  never do:** `registerCurationTool` runs every curation handler
+  `detachedFromRequest` — the abort hits the response, not the work, and what an
+  aborted write loses is our read-back and the stored result a re-presented key
+  replays. The abort reason is `ClientGoneError` — its own class, named neither
+  "abort" nor "timeout", because `isUpstreamTimeout` reads both and a hang-up is
+  not an open outcome; `toolError` logs it at info and `mapPool` stops on it. Detached work is COUNTED (the shutdown waits for it); a shared
+  background read (the registry lookup several callers await) uses
+  `sharedAcrossRequests`, which is neither bound to one caller nor counted. A
+  write is also never SHED at the gate (`patient`): the synthetic 503 is
+  something a write path cannot tell from the repository's own, and after a
+  spent key a 5xx reads as "open" or ends a plan step as failed for a request
+  that was never sent — so detached work waits for its slot, bounded by its own
+  timeout only.
   `src/request-url.ts` — the one place an inbound request target is parsed.
   node:http accepts targets `new URL()` refuses (`//[`), and three layers used
   to parse the same `req.url` with only the first one guarded; the throw moved
   down a layer, escaped the handler, and the caller got no answer at all.
+  `src/short-cache.ts` — a minute of memory for reads every request repeats
+  (audit 2026-11-12, P-4: the subject-portal list, a collection's first three
+  skill descriptions). Three rules: only an ANSWER is kept, never "could not be
+  read"; the VALUE is kept, never a promise in flight (it belongs to the
+  request that started it and dies with that request's abort signal); and
+  nothing that must be current goes through it (a read-back, a preview).
+  `tests/fetchMock.ts` clears it on every install — a test that replaces
+  `fetch` itself must call `clearShortCaches()`.
+  A TITLE is chosen in `src/node-match.ts` and nowhere else (A-7): `nodeTitle` /
+  `titleFromProperties` (record: `cclom:title` first) and
+  `collectionTitleFromProperties` (`cm:title` first — what the collection
+  endpoint writes). A chain written out elsewhere fails a test.
+  `src/keyed-digest.ts` — how a credential is REMEMBERED (audit 2026-11-12,
+  S-10): as an HMAC under a per-process secret, never as a bare hash — a
+  SHA-256 of `Basic user:pass` is a password hash. Every place that keeps a
+  login only to recognise it again uses this one function.
+  `src/request-id.ts` — one id per inbound request (audit 2026-11-12, B-5):
+  answered as `X-Request-Id`, and the logger puts it on every line as `req`.
+  Its OWN store, not `request-scope.ts`: a write leaves that scope on purpose
+  and must keep its id. A caller's id is adopted only as a plain token — it
+  lands in every log line. The same module holds the caller's TRACE context
+  (`x-client-trace-id`, B3): read only when well-formed, logged, and handed on
+  by `wloFetch` to the repository alone, as a child span; never invented. `src/metrics.ts` + `src/rest/metrics-route.ts` —
+  `GET /metrics`, off unless `METRICS_TOKEN` is set. Counted at the three
+  seams (response end in `http-app.ts`, `registerWloTool`, `wloFetch`). Two
+  rules: a label value comes from OUR code (route class, tool name, status
+  class), never from the caller — a path or a query as a label is unbounded
+  memory and a record of who did what; and a metric is declared in `METRICS`.
   `src/logger.ts`, `src/rate-limit.ts`, `src/read-body.ts` — support.
 - `docs/plans/` — design documents, including the
   [full-codebase review plan](docs/plans/2026-08-02-full-review-plan.md) (12

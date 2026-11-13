@@ -22,6 +22,7 @@
  * file names.
  */
 
+import { keyedDigest } from '../../keyed-digest.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 
@@ -54,6 +55,8 @@ export interface SlotOptions {
   maxPerIdentity?: number;
   maxTotal?: number;
   maxTotalBytes?: number;
+  /** The share of `maxTotalBytes` ONE identity may hold. Default: half of it. */
+  maxBytesPerIdentity?: number;
   ttlMs?: number;
   clock?: () => number;
 }
@@ -65,6 +68,7 @@ export class UploadSlots {
   private readonly maxPerIdentity: number;
   private readonly maxTotal: number;
   private readonly maxTotalBytes: number;
+  private readonly maxBytesPerIdentity: number;
   private readonly ttlMs: number;
   private readonly clock: () => number;
   private readonly slots = new Map<string, Slot>();
@@ -76,6 +80,14 @@ export class UploadSlots {
     this.maxPerIdentity = o.maxPerIdentity ?? 20;
     this.maxTotal = o.maxTotal ?? 100;
     this.maxTotalBytes = o.maxTotalBytes ?? 128 * 1024 * 1024;
+    // One account with three large files held the whole shared budget for the
+    // slot lifetime (audit 2026-11-12, S-4). Half is still room for a real
+    // batch and leaves the other half to everybody else — but never less than
+    // ONE file of the allowed size, or raising `UPLOAD_MAX_BYTES` past half the
+    // total would refuse every upload of that size. An upload without a
+    // Content-Length reserves `maxBytes` against this share, like against the
+    // total: a client that uploads and files in turn never meets either bound.
+    this.maxBytesPerIdentity = o.maxBytesPerIdentity ?? Math.max(Math.floor(this.maxTotalBytes / 2), this.maxBytes);
     this.ttlMs = o.ttlMs ?? 30 * 60 * 1000;
     this.clock = o.clock ?? Date.now;
   }
@@ -100,12 +112,20 @@ export class UploadSlots {
     return bytes;
   }
 
+  private bytesHeldBy(identity: string): number {
+    let bytes = 0;
+    for (const b of this.reserved.get(identity) ?? []) bytes += b;
+    for (const s of this.slots.values()) if (s.identity === identity) bytes += s.size;
+    return bytes;
+  }
+
   /** ``declared``: the Content-Length, when the client sent one (reserved instead of ``maxBytes``). */
   async put(identity: string, body: Readable, clientName: string, declared?: number): Promise<PutResult> {
     this.sweep();
     const reserve = declared !== undefined && declared >= 0 ? Math.min(declared, this.maxBytes) : this.maxBytes;
     if (this.openOf(identity) >= this.maxPerIdentity || this.open >= this.maxTotal
-        || this.bytesHeld() + reserve > this.maxTotalBytes) {
+        || this.bytesHeld() + reserve > this.maxTotalBytes
+        || this.bytesHeldBy(identity) + reserve > this.maxBytesPerIdentity) {
       body.resume();
       return { ok: false, code: 'too_many' };
     }
@@ -248,6 +268,15 @@ const VERIFY_TTL_MS = 10 * 60 * 1000;
 const MAX_VERIFIED = 1000;
 
 /**
+ * Logins the repository REFUSED, remembered briefly. Without it every request
+ * with the same wrong header was another failed login against the person's real
+ * account, and another upstream call (audit 2026-11-12, S-4). Only a refusal —
+ * never "unreachable" or "limited", which are no verdict on the login.
+ */
+const refusedLogins = new Map<string, number>();
+const REFUSED_TTL_MS = 60_000;
+
+/**
  * The slot identity of an upload — only for a credential the repository CONFIRMS as a person
  * (review MA-1/MA-2, finding 2): a Basic `x:y` is otherwise just a name, and a stranger could fill a
  * known person's slots or mint identities. Goes through the shared `proveLogin` (distinct-login
@@ -260,9 +289,15 @@ export async function verifiedSlotIdentity(
 ): Promise<{ identity: string } | { refused: 'login' | 'unreachable' } | { refused: 'limited'; retryAfter: number }> {
   const identity = slotIdentity(cred);
   if (!cred || !identity) return { refused: 'login' };
-  const key = createHash('sha256').update(cred.header).digest('hex');
+  // Keyed (`keyed-digest.ts`): a bare hash of the header is a password hash.
+  const key = keyedDigest(cred.header);
   const hit = verified.get(key);
   if (hit && hit.until > now) return { identity: hit.identity };
+  const refusedUntil = refusedLogins.get(key);
+  if (refusedUntil !== undefined) {
+    if (refusedUntil > now) return { refused: 'login' };
+    refusedLogins.delete(key);
+  }
   // Bucketed like `POST /mcp` (`abuseBucketKey`): a block per access id, Basic per address. Keyed by
   // address alone, the eleventh signed-in person behind one chatbot backend got 429 — the relay-client
   // defect the MCP path was fixed for on 2026-08-12. Only a REGISTERED access id reaches this line
@@ -276,7 +311,10 @@ export async function verifiedSlotIdentity(
       const bucket = abuseBucketKey(cred, deps.ip);
       return { refused: 'limited', retryAfter: deps.authAbuseLimiter.retryAfterSeconds?.(bucket, now) ?? 600 };
     }
-    return { refused: proof.reason === 'unreachable' ? 'unreachable' : 'login' };
+    if (proof.reason === 'unreachable') return { refused: 'unreachable' };
+    if (refusedLogins.size >= MAX_VERIFIED) refusedLogins.clear();
+    refusedLogins.set(key, now + REFUSED_TTL_MS);
+    return { refused: 'login' };
   }
   if (verified.size >= MAX_VERIFIED) verified.clear();
   verified.set(key, { identity, until: now + VERIFY_TTL_MS });

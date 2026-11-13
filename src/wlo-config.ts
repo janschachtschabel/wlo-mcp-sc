@@ -66,6 +66,22 @@ export function sanitizeRepositoryUrl(raw: string): string {
  * (pinned by `tests/deploy-env-passthrough.test.ts`, because a second copy of a
  * default is how this went wrong in the first place).
  */
+/**
+ * A repository address as it may appear in a LOG: origin and path, nothing
+ * else. An address can be configured with a password in it
+ * (`https://user:secret@host/…`) — the start refuses that, but two warnings
+ * above the refusal used to print the value in full first (review of audit
+ * package 6), and a container that restarts prints it on every start.
+ */
+export function addressForLog(address: string): string {
+  try {
+    const url = new URL(address);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return '(not a parseable address)';
+  }
+}
+
 const _DEFAULT_REPOSITORY_URL = 'https://repository.staging.openeduhub.net/edu-sharing';
 export const WLO_REPOSITORY_URL: string = (() => {
   const raw = process.env['WLO_REPOSITORY_URL'] ?? '';
@@ -87,12 +103,42 @@ export const WLO_REPOSITORY_URL: string = (() => {
   if (suspicious.length > 0) {
     log.warn('WLO_REPOSITORY_URL looks suspicious', {
       issues: suspicious,
-      resolved,
+      resolved: addressForLog(resolved),
       expected: 'https://<host>/edu-sharing (no trailing /rest, no /components)',
     });
   }
   return resolved;
 })();
+
+/**
+ * Why a resolved repository address cannot work, or ``null`` when it can.
+ *
+ * The checks above only WARN, and stay that way: a deep link still reaches a
+ * repository. This one is for an address no request can ever be sent to — it
+ * used to show up as a failure of the first tool call, long after the start
+ * looked fine (audit 2026-11-12, B-6). The entry points refuse to start on it.
+ *
+ * The message never repeats the value: an address may carry a password, which
+ * is itself one of the things refused.
+ */
+export function repositoryUrlProblem(resolved: string = WLO_REPOSITORY_URL): string | null {
+  let url: URL;
+  try { url = new URL(resolved); } catch { return 'it is not a parseable address'; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'it must begin with http:// or https://';
+  if (url.username || url.password) return 'it carries credentials — a request cannot be sent to such an address; use WLO_SERVICE_USER / WLO_SERVICE_PASSWORD';
+  // On the raw text: `URL.search` is empty for a bare "?" or "#", and the REST
+  // base appended to such an address addresses another resource.
+  if (/[?#]/.test(resolved)) return 'it carries a query or a fragment — the repository root is expected';
+  // `sanitizeRepositoryUrl` prepends https:// to anything without a scheme, so a
+  // MISTYPED scheme arrives here in one of two shapes: "htps://host/…" as host
+  // "htps" with a path that starts over ("//host/…"), and "https:/host" or a
+  // bare "http://" as a host that is literally named "http" or "https". Nothing
+  // else is judged — a colon or a doubled slash further down a path is a
+  // working address.
+  if (url.pathname.startsWith('//')) return 'its scheme looks mistyped — the path starts a second address';
+  if (/^https?$/i.test(url.hostname)) return 'its scheme looks mistyped — the host reads "http" or "https"';
+  return null;
+}
 
 /** REST API base — ``<repository-url>/rest``. */
 export const BASE_URL: string = `${WLO_REPOSITORY_URL}/rest`;
@@ -150,7 +196,7 @@ export const WLO_ROOT_COLLECTION_ID: string = (() => {
     log.warn(
       'WLO_ROOT_COLLECTION_ID not set and the repository host is not a known WLO instance — ' +
         'using the WLO root id, which will not exist on an unrelated repository. Set WLO_ROOT_COLLECTION_ID.',
-      { repository: WLO_REPOSITORY_URL, fallback: r.id },
+      { repository: addressForLog(WLO_REPOSITORY_URL), fallback: r.id },
     );
   }
   return r.id;
@@ -368,6 +414,17 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
  */
 export const WLO_FETCH_TIMEOUT_MS: number =
   resolvePositiveInt(process.env['WLO_FETCH_TIMEOUT_MS'], DEFAULT_FETCH_TIMEOUT_MS, 'WLO_FETCH_TIMEOUT_MS');
+
+/**
+ * How many calls the whole PROCESS may have open at the repository at once
+ * (`upstream-gate.ts`, audit 2026-11-12, P-1). Every other bound is per call or
+ * per client. The default lets one ordinary call through unslowed — a search
+ * with the OER filter starts about 25 requests — and bounds everything above
+ * it. ``0`` switches the gate off. Override via ``WLO_UPSTREAM_CONCURRENCY``.
+ */
+export const DEFAULT_UPSTREAM_CONCURRENCY = 24;
+export const WLO_UPSTREAM_CONCURRENCY: number = resolveNonNegativeInt(
+  process.env['WLO_UPSTREAM_CONCURRENCY'], DEFAULT_UPSTREAM_CONCURRENCY, 'WLO_UPSTREAM_CONCURRENCY');
 
 /**
  * Base URL of the text-extraction service used to read the full text of a

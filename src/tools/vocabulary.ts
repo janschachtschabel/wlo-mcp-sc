@@ -10,6 +10,7 @@
  * writing one, so "filter vocabulary" stopped covering what this tool lists.
  */
 
+import { registerReadTool } from '../apps/register.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -112,7 +113,7 @@ function qualityScaleLookup(): string {
 }
 
 export function registerVocabularyTool(server: McpServer): void {
-  server.tool(
+  registerReadTool(server,
     'lookup_wlo_vocabulary',
     `Look up the values a WLO field accepts — for SEARCH filters and for WRITING.
 Filters: valid labels and URIs for Bildungsstufe (educational context),
@@ -183,7 +184,7 @@ wlo_suggest_metadata.`,
 }
 
 export function registerPublisherTool(server: McpServer): void {
-  server.tool(
+  registerReadTool(server,
     'lookup_wlo_publishers',
     `List the publishers/sources (Anbieter/Quellen) that provide WLO content, with the
 number of materials each has.

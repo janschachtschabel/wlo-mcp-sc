@@ -29,6 +29,15 @@ export interface WloIdentity {
   authenticated: boolean;
   /** The reported authority, or null when the repository could not be asked. */
   authority: string | null;
+  /**
+   * The authority exactly as the repository sent it — an account KEY, never for
+   * display. `authority` is sanitised for model-facing text (capped at 120
+   * characters, invisible characters dropped); as a key that would fold two
+   * accounts whose names agree up to there into one, and one's "revoke all"
+   * would end the other's access (review of audit package 1). Set whenever
+   * `authority` is.
+   */
+  account?: string;
   /** Display name when the profile carries one. */
   displayName?: string;
   /**
@@ -81,6 +90,7 @@ export async function checkIdentity(): Promise<WloIdentity> {
     return {
       authenticated: authority !== ANONYMOUS_AUTHORITY,
       authority,
+      account: data!.person!.authorityName!,
       ...(displayName ? { displayName } : {}),
     };
   } catch (err) {

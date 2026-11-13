@@ -5,13 +5,14 @@
  * per swimlane.
  */
 
+import { incompleteNotice } from '../services/collection-search.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { TargetGroup } from '../topic-page-variant.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
 import type { SwimlanePayload } from '../services/topic-page.js';
-import { findTopicPagesByQuery, resolveTopicPageSwimlanes } from '../services/topic-page.js';
+import { findTopicPagesByQueryResult, resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import { oneLine } from '../formatter.js';
 import { log } from '../logger.js';
 import { codedErrorResult, subjectRegistryText, toolError } from './shared.js';
@@ -69,6 +70,7 @@ Gib EINES an:
       try {
         const tg = params.targetGroup as TargetGroup | undefined;
         let collectionId = params.collectionId;
+        let lookupIncomplete = false;
         let variantId = params.variantId;
 
         if (!collectionId && !variantId) {
@@ -82,16 +84,20 @@ Gib EINES an:
           // variant lets getTopicPageContent skip the page-config walk and read
           // the two nodes in parallel instead.
           // No match falls through to the empty-payload path below.
-          const found = await findTopicPagesByQuery(params.query, { targetGroup: tg });
+          const lookup = await findTopicPagesByQueryResult(params.query, { targetGroup: tg });
+          const found = lookup.pages;
           if (found.length) {
             collectionId = found[0].collectionId ?? undefined;
             variantId = found[0].variantId || undefined;
           }
+          // Nothing found beside a source that did not answer is not "no page
+          // for this query" — it gets its own reason below.
+          lookupIncomplete = lookup.incomplete && !found.length;
         }
 
         const { structure: struct, reason } = (collectionId || variantId)
           ? await getTopicPageContent({ collectionId, variantId, targetGroup: tg })
-          : { structure: null, reason: 'no_match' as const };
+          : { structure: null, reason: lookupIncomplete ? 'source_unreachable' as const : 'no_match' as const };
         if (!struct || struct.swimlanes.length === 0) {
           // A valid-but-empty payload keeps the structuredContent contract even
           // when no variant / an empty config is found (this is not an error).
@@ -124,7 +130,9 @@ Gib EINES an:
             if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
             return { content: emptyContent, structuredContent: empty };
           }
-          const prose = `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
+          const prose = reason === 'source_unreachable'
+            ? incompleteNotice('Themenseiten', true)
+            : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
           return {
             content: [{ type: 'text' as const, text: emptyRegistry ? `${prose}\n\n${emptyRegistry}` : prose }],
             structuredContent: empty,

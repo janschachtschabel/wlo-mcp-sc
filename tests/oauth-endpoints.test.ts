@@ -907,3 +907,18 @@ test('too many distinct logins at the consent carry too_many_logins and the rest
   assert.equal(r.json()?.code, 'too_many_logins');
   assert.equal(r.out.headers['Retry-After'], '120');
 });
+
+test('S-8: anonymous connections from one address do not push out another address\'s login in progress', async (t) => {
+  await support(t);
+  const store = createCodeStore();
+  const { MAX_CODES_PER_LABEL } = await import('../src/auth/oauth-codes.js');
+  const consent = async (ip: string) => {
+    const r = res();
+    await handleOAuthEndpoint(req('POST', '/oauth/authorize', JSON.stringify(consentBody({ token: undefined, anonymous: true }))),
+      r, deps({ codeStore: store, ip }));
+    return new URL(String(r.json()?.['redirect'])).searchParams.get('code')!;
+  };
+  const other = await consent('203.0.113.9');
+  for (let i = 0; i <= MAX_CODES_PER_LABEL; i++) await consent('198.51.100.7');
+  assert.ok(store.consume(other, Date.now()), 'counted per address, not as one "anonymous" for everybody');
+});

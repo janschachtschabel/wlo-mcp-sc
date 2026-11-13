@@ -11,7 +11,7 @@
  */
 
 import type { WloNode } from '../wlo-api.js';
-import { DISPLAY_PROPS, getChildCollections, getCollectionContents } from '../wlo-api.js';
+import { DISPLAY_PROPS, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
 import { nodeMatchesCriteria } from '../node-match.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
@@ -88,7 +88,9 @@ const SKILL_POOL = 10;
  * an arbitrary window that may hold no skills at all, and its fixed projection
  * carries no `ccm:oeh_extendedType` to filter on.
  */
-export async function collectSkillNodes(rootId: string, includeSubcollections: boolean): Promise<WloNode[]> {
+export async function collectSkillNodes(
+  rootId: string, includeSubcollections: boolean,
+): Promise<{ nodes: WloNode[]; incomplete: boolean }> {
   const visited = new Set<string>([rootId]);
   const found: WloNode[] = [];
   let candidates = 0;
@@ -97,6 +99,7 @@ export async function collectSkillNodes(rootId: string, includeSubcollections: b
   let skipped = 0;   // sub-collections the visit cap refused
   let failed = 0;    // collections whose read threw
   let read = 0;      // collections successfully read
+  let cutShort = 0;  // collections holding more files than one page reads
 
   while (level.length && depth <= SKILL_DEPTH_MAX && found.length < SKILL_CATALOGUE_MAX) {
     // A collection's files and its sub-collections are two independent reads,
@@ -106,16 +109,23 @@ export async function collectSkillNodes(rootId: string, includeSubcollections: b
     const results = await mapPool(level, SKILL_POOL, async (id) => Promise.all([
       getCollectionContents(id, 'files', SKILL_PAGE_MAX, 0, SKILL_PROPS),
       includeSubcollections
-        ? getChildCollections(id, SKILL_PAGE_MAX, 0, ['sys:node-uuid'])
-        : Promise.resolve([] as WloNode[]),
+        ? getChildCollectionsResult(id, SKILL_PAGE_MAX, 0, ['sys:node-uuid'])
+        : Promise.resolve({ nodes: [] as WloNode[], reachable: true }),
     ]));
 
     const next: string[] = [];
     for (const result of results) {
       if (!result) { failed += 1; continue; }   // mapPool nulls a failed collection
       read += 1;
-      const [listing, subs] = result;
+      const [listing, subListing] = result;
+      // Sub-collections that could not be LISTED are skillsets nobody looked into.
+      if (!subListing.reachable) failed += 1;
+      const subs = subListing.nodes;
       candidates += listing.nodes.length;
+      // ONE page per collection. A collection holding more than that was read
+      // in part, and the skill wanted may be on the part that was not — which
+      // nothing said (audit 2026-11-12, K-16).
+      if ((listing.pagination?.total ?? 0) > listing.nodes.length) cutShort += 1;
       for (const n of listing.nodes) {
         if (nodeMatchesCriteria(n, [{ property: 'ccm:oeh_extendedType', values: [SKILL_CONTENT_TYPE_URI] }])) {
           found.push(n);
@@ -146,9 +156,10 @@ export async function collectSkillNodes(rootId: string, includeSubcollections: b
   // it as the whole catalogue. `skipped` matters on its own: the visit cap can
   // refuse every child of the LAST level read, which leaves no next level and
   // therefore no other trace.
-  if (level.length || skipped > 0 || failed > 0) {
+  const incomplete = level.length > 0 || skipped > 0 || failed > 0 || cutShort > 0;
+  if (incomplete) {
     log.warn('skills: the subtree could not be read completely — listing may be incomplete', {
-      rootId, collectionsRead: read, notVisited: skipped + level.length, unreadable: failed,
+      rootId, collectionsRead: read, notVisited: skipped + level.length, unreadable: failed, cutShort, pageMax: SKILL_PAGE_MAX,
       depthReached: depth, depthMax: SKILL_DEPTH_MAX, visitMax: SKILL_VISIT_MAX,
     });
   }
@@ -161,5 +172,5 @@ export async function collectSkillNodes(rootId: string, includeSubcollections: b
       rootId, candidates, expected: SKILL_CONTENT_TYPE_URI,
     });
   }
-  return found;
+  return { nodes: found, incomplete };
 }

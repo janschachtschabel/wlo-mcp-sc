@@ -9,17 +9,19 @@
  * after the create is a partial result, never a reason to undo the record.
  */
 
+import { collectionTitleFromProperties } from '../../node-match.js';
+import { isCollectionNode } from '../../node-kind.js';
 import { getNodeMetadata } from '../../wlo-api.js';
 import { getNodeCollections } from '../node-collections.js';
 import { addToCollection } from './collections.js';
-import { isUpstreamTimeout } from './timeouts.js';
+import { isOutcomeOpen } from './timeouts.js';
 
 export interface FilingTarget {
   nodeId: string;
   title: string;
 }
 
-export type FilingCode = 'forbidden' | 'not_found' | 'timeout' | 'not_visible' | 'upstream_error';
+export type FilingCode = 'forbidden' | 'not_found' | 'timeout' | 'not_visible' | 'upstream_busy' | 'upstream_error';
 
 export interface FilingOutcome {
   nodeId: string;
@@ -31,19 +33,19 @@ export interface FilingOutcome {
  * The collection as the preview names it — or why it cannot be one. Checked
  * BEFORE the preview: a material id passed as the collection would otherwise
  * create a record and then fail to file it, a partial result nobody needed.
- * `ccm:map` is necessary, not sufficient (crawler folders are maps too); the
- * filing's own read-back catches the rest.
+ * A collection is told by its aspect, not by `ccm:map` — crawler, workspace and
+ * page-config folders are maps too (`node-kind.ts`, measured 2026-11-12).
  */
 export async function readFilingTarget(
   collectionId: string,
 ): Promise<{ ok: true; target: FilingTarget } | { ok: false; reason: 'not_found' | 'not_a_collection' }> {
   const node = await getNodeMetadata(collectionId);
   if (!node) return { ok: false, reason: 'not_found' };
-  if (node.type !== 'ccm:map') return { ok: false, reason: 'not_a_collection' };
+  if (!isCollectionNode(node)) return { ok: false, reason: 'not_a_collection' };
   const p = node.properties ?? {};
   return {
     ok: true,
-    target: { nodeId: collectionId, title: p['cclom:title']?.[0] ?? p['cm:title']?.[0] ?? p['cm:name']?.[0] ?? collectionId },
+    target: { nodeId: collectionId, title: collectionTitleFromProperties(p) || collectionId },
   };
 }
 
@@ -73,13 +75,14 @@ export async function fileRecord(nodeId: string, target: FilingTarget): Promise<
         ...base,
         status: 'failed',
         code: outcome.httpStatus === 403 || outcome.httpStatus === 401 ? 'forbidden'
-          : outcome.httpStatus === 404 ? 'not_found' : 'upstream_error',
+          : outcome.httpStatus === 404 ? 'not_found'
+            : outcome.httpStatus === 429 || outcome.httpStatus === 503 ? 'upstream_busy' : 'upstream_error',
       };
     }
   } catch (err) {
     // An abort hits the RESPONSE, not the work: the filing may well have
     // happened, so it is reported as open, never as failed.
-    return isUpstreamTimeout(err)
+    return isOutcomeOpen(err)
       ? { ...base, status: 'unverified', code: 'timeout' }
       : { ...base, status: 'failed', code: 'upstream_error' };
   }

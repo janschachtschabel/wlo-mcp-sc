@@ -125,3 +125,42 @@ test('empty input yields empty output, not a stray element', () => {
   assert.equal(renderMarkdown(''), '');
   assert.equal(renderMarkdown('   \n\n  '), '');
 });
+
+// ── audit 2026-11-12, F-1: code and links are protected from the emphasis rules ──
+
+test('a link target with parentheses is kept whole', () => {
+  const html = renderMarkdown('Siehe [Optik](https://de.wikipedia.org/wiki/Optik_(Physik)) dazu.');
+  assert.match(html, /href="https:\/\/de\.wikipedia\.org\/wiki\/Optik_\(Physik\)"/);
+  assert.match(html, />Optik<\/a> dazu\./, 'and nothing of the target is left behind as text');
+});
+
+test('asterisks inside a link target do not become emphasis', () => {
+  const html = renderMarkdown('[Suche](https://example.org/a*b*c) und *wirklich* kursiv');
+  assert.match(html, /href="https:\/\/example\.org\/a\*b\*c"/);
+  assert.equal((html.match(/<em>/g) ?? []).length, 1, html);
+  assert.match(html, /<em>wirklich<\/em>/);
+});
+
+test('a link written inside inline code stays code — it is not made clickable', () => {
+  const html = renderMarkdown('Schreibe `[Titel](https://example.org)` für einen Link.');
+  assert.doesNotMatch(html, /<a /);
+  assert.match(html, /<code>\[Titel\]\(https:\/\/example\.org\)<\/code>/);
+});
+
+test('asterisks inside inline code stay asterisks', () => {
+  const html = renderMarkdown('Der Ausdruck `a*b*c` und **fett**.');
+  assert.match(html, /<code>a\*b\*c<\/code>/);
+  assert.match(html, /<strong>fett<\/strong>/);
+});
+
+test('emphasis still works INSIDE a link label', () => {
+  const html = renderMarkdown('[**Wichtig**](https://example.org)');
+  assert.match(html, /<a [^>]*><strong>Wichtig<\/strong><\/a>/);
+});
+
+test('a source that already contains the placeholder character cannot smuggle markup back in', () => {
+  const html = renderMarkdown('vor \u00000\u0000 nach `code` [x](https://example.org)');
+  assert.equal(html.includes('\u0000'), false);
+  assert.equal((html.match(/<a /g) ?? []).length, 1);
+  assert.equal((html.match(/<code>/g) ?? []).length, 1);
+});

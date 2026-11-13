@@ -85,9 +85,11 @@ export interface WloCredential {
  *   their address. Unchanged, and it must stay: this is the scheme that carries
  *   a guessable secret in the clear.
  * - **A `wlo2.` block** has one, its `jti`. Under a valid access id there is
- *   exactly ONE correct password, so a legitimate holder contributes a single
- *   entry for the life of the block, while a guesser contributes many — and they
- *   land in the same bucket however many addresses they come from.
+ *   exactly ONE correct password — and ONE name, which `credentialFromAccessBlock`
+ *   enforces; until 2026-11-12 it did not, and "one correct password" was only
+ *   true of honest blocks — so a legitimate holder contributes a single entry
+ *   for the life of the block, while a guesser contributes many — and they land
+ *   in the same bucket however many addresses they come from.
  *
  * Keying a block by address instead was wrong in both directions. It refused a
  * RELAY client (a chatbot backend serving many people from one address hit the
@@ -98,7 +100,16 @@ export interface WloCredential {
  * other's budget.
  */
 export function abuseBucketKey(cred: WloCredential, ip: string): string {
-  return cred.jti ? `jti:${cred.jti}` : `ip:${ip}`;
+  return cred.jti ? `jti:${cred.jti}` : addressBucket(ip);
+}
+
+/**
+ * The bucket of one client address — the ONE spelling. Whoever asks the limiter
+ * how long an address must wait uses this too: a bare address is a different
+ * key, and reads back "no wait" for a bucket that is full (audit 2026-11-12, S-6).
+ */
+export function addressBucket(ip: string): string {
+  return `ip:${ip}`;
 }
 
 /**
@@ -197,6 +208,11 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   const payload = decodeAccessToken(raw, accessSupport.keys);
   if (!payload) return null;
   if (!accessSupport.registry.has(payload.jti)) return null;
+  // The id is listed for ONE name. The public key is published, so whoever holds
+  // a listed id — their own — can mint blocks carrying it with any name and any
+  // password; without this line that was a fresh guessing budget per id against
+  // a stranger's account (audit 2026-11-12, S-1).
+  if (accessSupport.registry.labelOf(payload.jti) !== payload.u) return null;
   // A ticket block carries an edu-sharing ticket, and the scheme the repository
   // accepts for one is `EDU-TICKET` (the md-editor's production embedding path).
   // Everything else about the block — registry, revocation, abuse bucket — is
@@ -309,6 +325,19 @@ export function runAnonymous<T>(fn: () => T): T {
  * The credential for the current call, walking the chain:
  * per-request user → service account → none (anonymous).
  */
+/**
+ * Whose rights a read in this scope is made with, as far as SHARING its answer
+ * goes: `anonymous`, `service` (one account for everybody), or `null` for a
+ * personal login — whose answers are never shared. A short cache keyed without
+ * this served a description read with one person's rights to an anonymous
+ * caller for a minute (review of audit package 14).
+ */
+export function sharedReadScope(): 'anonymous' | 'service' | null {
+  const cred = currentCredential();
+  if (!cred) return 'anonymous';
+  return cred.source === 'service' ? 'service' : null;
+}
+
 export function currentCredential(): WloCredential | null {
   const scoped = perRequest.getStore();
   // `undefined` = no scope was opened (fall back to the service account);

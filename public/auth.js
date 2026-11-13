@@ -10,6 +10,10 @@
  */
 
 import { encodeAccessBlock, fetchPublicKey } from './access-block.js';
+import { initI18n, msg, serverMessage } from './auth-i18n.js';
+
+// First: the page is in the visitor's language before anything is announced.
+initI18n();
 
 const form = document.getElementById('issue-form');
 const userInput = document.getElementById('user');
@@ -39,13 +43,13 @@ form.addEventListener('submit', async (event) => {
   // Checked here rather than with `required` alone so the message lands in the
   // live region, where a screen reader announces it.
   if (!user || !secret) {
-    say('Bitte Benutzername und Passwort ausfüllen.', 'error');
+    say(msg('fill_both', 'Bitte Benutzername und Passwort ausfüllen.'), 'error');
     (user ? secretInput : userInput).focus();
     return;
   }
 
   submit.disabled = true;
-  say('Verschlüsseln und prüfen …', 'busy');
+  say(msg('issue_busy', 'Verschlüsseln und prüfen …'), 'busy');
   result.hidden = true;
 
   try {
@@ -62,19 +66,19 @@ form.addEventListener('submit', async (event) => {
       // The server distinguishes "WLO rejected these credentials" from
       // everything else; showing its text means a typo says so plainly instead
       // of surfacing days later as "the tools return nothing".
-      throw new Error(detail?.error ?? 'Der Zugang konnte nicht erzeugt werden.');
+      throw new Error(detail?.error ? serverMessage(detail.error) : msg('issue_failed', 'Der Zugang konnte nicht erzeugt werden.'));
     }
 
     plainBlock = block;
     blockOut.value = `Bearer ${block}`;
     result.hidden = false;
-    say('Zugang erzeugt. Er gilt, bis du ihn sperrst.', 'ok');
+    say(msg('issue_done', 'Zugang erzeugt. Er gilt, bis du ihn sperrst.'), 'ok');
     // The form keeps its values — clearing it would look like a failure — but
     // the password does not stay on screen once it is no longer needed.
     secretInput.value = '';
     blockOut.focus();
   } catch (err) {
-    say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    say(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
   } finally {
     submit.disabled = false;
   }
@@ -90,19 +94,19 @@ form.addEventListener('submit', async (event) => {
  * The message names WHICH form was copied, so the live region is useful rather
  * than merely reassuring.
  */
-async function copy(text, what) {
+async function copy(text, done) {
   try {
     await navigator.clipboard.writeText(text);
-    copyStatus.textContent = `${what} kopiert.`;
+    copyStatus.textContent = done();
     copyStatus.className = 'status ok';
   } catch {
     // Clipboard access can be denied, and an unusable button with no
     // explanation is worse than none: the text is selectable either way.
     blockOut.select();
-    copyStatus.textContent = 'Kopieren nicht erlaubt — der Wert ist jetzt markiert.';
+    copyStatus.textContent = msg('copy_denied', 'Kopieren nicht erlaubt — der Wert ist jetzt markiert.');
     copyStatus.className = 'status busy';
   }
 }
 
-copyButton.addEventListener('click', () => copy(blockOut.value, 'Kopfzeilen-Wert'));
-copyPlainButton.addEventListener('click', () => copy(plainBlock, 'Block'));
+copyButton.addEventListener('click', () => copy(blockOut.value, () => msg('copied_header', 'Kopfzeilen-Wert kopiert.')));
+copyPlainButton.addEventListener('click', () => copy(plainBlock, () => msg('copied_block', 'Block kopiert.')));

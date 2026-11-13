@@ -52,6 +52,10 @@ export interface NodeList {
    * "nothing under this licence".
    */
   licenseFilter?: { checked: number; kept: number };
+  /** The page came back short although the catalogue holds more. */
+  more?: { nextSkipCount: number };
+  /** A source of this bucket did not answer. */
+  incomplete?: true;
 }
 
 export interface WikiSummary {

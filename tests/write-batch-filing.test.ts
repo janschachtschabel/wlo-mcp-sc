@@ -135,6 +135,22 @@ test('an error after the node exists keeps its id (finding 5)', async () => {
   }
 });
 
+test('a metadata step without an answer keeps the id too (review of package 11)', async () => {
+  const mock = installFetchMock((url, init) => {
+    if (url.includes('/children?')) return { status: 200, json: { node: { ref: { id: 'n-8' } } } };
+    if (url.includes('/metadata') && (init?.method ?? 'GET') !== 'GET') throw new Error('timeout');
+    return { status: 200, json: { node: { ref: { id: 'n-8' }, size: 3, downloadUrl: 'https://repo.example/dl' } } };
+  });
+  try {
+    const r = await fileBatchEntry('ordner-1', ENTRY, SLOT);
+    assert.equal(r.status, 'unverified');
+    assert.equal(r.nodeId, 'n-8');
+    assert.match(r.detail ?? '', /Metadaten/);
+  } finally {
+    mock.restore();
+  }
+});
+
 test('the upload deadline grows with the size', async () => {
   const { uploadTimeoutMs } = await import('../src/services/write/batch-filing.js');
   assert.equal(uploadTimeoutMs(1), 22_000);

@@ -11,6 +11,7 @@
  * conversation blurs exactly that kind of difference.
  */
 
+import { collectionTitleFromProperties, titleFromProperties } from '../node-match.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -27,6 +28,8 @@ import {
 import type { MutationOutcome } from '../services/write/verify.js';
 import type { PrepareOutcome } from '../services/write/prepared-request.js';
 import { getNodeMetadata } from '../wlo-node.js';
+import { resolveWriteTarget } from '../services/write/nodes.js';
+import { isAlreadyFiled, readFilingTarget } from '../services/write/create-filing.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
   registerCurationTool,
@@ -35,6 +38,9 @@ import {
   confirmOrExplain,
   errorText,
   codedError,
+  plainText,
+  wrongKind,
+  wrongKindReply,
   reportMutation,
   preparedReply,
   prependText,
@@ -43,6 +49,7 @@ import {
   type ParamMap,
   timeoutOrError,
   isPreviewCall,
+  recordTitle,
 } from './curation-shared.js';
 
 const CONFIRM_TOKEN = z.string().optional()
@@ -62,7 +69,7 @@ const COLLECTION_FIELDS: ParamMap = {
 
 /** Title of a node as shown to the user, whatever property carries it. */
 function titleOf(properties: Record<string, string[]> | undefined, fallback: string): string {
-  const raw = properties?.['cm:title']?.[0] ?? properties?.['cclom:title']?.[0] ?? properties?.['cm:name']?.[0];
+  const raw = collectionTitleFromProperties(properties);
   return raw ? sanitizeText(raw) : fallback;
 }
 
@@ -95,6 +102,16 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         const collected = collectDesired(params, COLLECTION_FIELDS);
         if (!collected.ok) return rejectionReply(collected.reasons);
         const parentId = typeof params['parentId'] === 'string' && params['parentId'] ? params['parentId'] : null;
+        // The parent is read and must be a collection — the check the tree tool
+        // and `addToCollectionId` already apply (`readFilingTarget`). The create
+        // endpoint was handed any id: a folder's, a record's (cross-package
+        // review of the audit follow-up, phase 1).
+        const parent = parentId ? await readFilingTarget(parentId) : null;
+        if (parent && !parent.ok) {
+          return parent.reason === 'not_found'
+            ? codedError('not_found', `Die übergeordnete Sammlung „${sanitizeText(parentId!)}“ wurde nicht gefunden oder ist nicht lesbar. Es wurde nichts angelegt.`)
+            : codedError('not_a_collection', `„${sanitizeText(parentId!)}“ ist keine Sammlung — eine Untersammlung braucht eine Sammlung als Eltern. Es wurde nichts angelegt.`);
+        }
 
         // The collection does not exist yet, so the change set is anchored on
         // the intended title — that is what identifies it before it has an id.
@@ -102,8 +119,10 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         // and the token binds it; carrying it beside the change set would let an
         // approved create write text nobody was shown.
         const cs = buildChangeSet(`neu:${title}`, 'collection', {}, collected.desired, {
-          action: parentId
-            ? `Legt die Untersammlung „${sanitizeText(title)}“ unter ${parentId} an.`
+          // Named by its title: the key binds to this sentence, and a bare id is
+          // not something a person can check.
+          action: parent?.ok
+            ? `Legt die Untersammlung „${sanitizeText(title)}“ unter „${sanitizeText(parent.target.title)}“ (${parentId}) an.`
             : `Legt die Sammlung „${sanitizeText(title)}“ auf oberster Ebene an.`,
         });
         const refusal = gate(params, cs, 'Zum Anlegen bitte bestätigen.');
@@ -148,6 +167,9 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
 
         const node = await getNodeMetadata(nodeId);
         if (!node) return codedError('not_found', `Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        // The repository validates nothing here; the tool boundary is the one place that can (audit K-11).
+        const wrong = wrongKind(node, 'collection');
+        if (wrong) return wrongKindReply(nodeId, wrong);
         const old = titleOf(node.properties, nodeId);
 
         // Both values are diffed against the record, so the preview shows the
@@ -182,8 +204,9 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
     title: 'WLO Material in Sammlung aufnehmen',
     description:
       'Nimm ein vorhandenes Material in eine WLO-Sammlung auf. Das Material bleibt dabei dort, wo es ist — ' +
-      'eine Sammlung enthält Verweise, es wird nichts verschoben oder kopiert. ZWEISTUFIG: ohne confirmToken ' +
-      'nur Vorschau. Erfordert eine Anmeldung.',
+      'eine Sammlung enthält Verweise, es wird nichts verschoben oder kopiert. Die id einer Verknüpfung (aus ' +
+      'einer Sammlungsliste) wird aufs Original umgeleitet; liegt das Material schon in der Sammlung, wird ' +
+      'nichts gesendet. ZWEISTUFIG: ohne confirmToken nur Vorschau. Erfordert eine Anmeldung.',
     inputSchema: {
       collectionId: z.string().describe('nodeId der Sammlung.'),
       nodeId: z.string().describe('nodeId des Materials.'),
@@ -196,8 +219,10 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         `Nimmt „${material}“ in die Sammlung „${collection}“ auf (${ids}). ` +
         'Das Material selbst wird dabei nicht verändert.',
       apply: addToCollection,
-      // Filing needs no lookup — both ids are the caller's, so the descriptor
-      // is ready by construction.
+      fileOriginal: true,
+      // Filing needs no lookup — the collection is the caller's and the record
+      // id is already resolved to the original, so the descriptor is ready by
+      // construction.
       prepare: (collection, nodeId) => ({ status: 'ready', request: addToCollectionRequest(collection, nodeId) }),
       done: (material, collection) => `„${material}“ ist jetzt in „${collection}“.`,
       context: 'Das Material konnte nicht aufgenommen werden',
@@ -243,6 +268,16 @@ interface ReferenceSpec {
   prepare?: (collection: string, nodeId: string) => PrepareOutcome | Promise<PrepareOutcome>;
   done: (material: string, collection: string) => string;
   context: string;
+  /**
+   * File the ORIGINAL when the id names a collection reference — the rule of the
+   * batch tool (`filing-plan.ts`: "the filing PUT takes the original"), which
+   * the single tool did not follow (audit 2026-11-12, K-11). Ids from a
+   * collection listing are reference ids, so this is the ordinary case.
+   *
+   * Only for adding. A REMOVAL addresses the reference node itself, and the
+   * removal path resolves that on its own.
+   */
+  fileOriginal?: true;
 }
 
 /**
@@ -262,12 +297,44 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
     ]);
     if (!collection) return codedError('not_found', `Die Sammlung „${sanitizeText(collectionId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
     if (!material) return codedError('not_found', `Das Material „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+    const notCollection = wrongKind(collection, 'collection');
+    if (notCollection) return wrongKindReply(collectionId, notCollection);
+    // Both ends are checked: what is filed is a RECORD (a reference is one too,
+    // measured 2026-11-12). A collection or folder id here was sent on as given.
+    const notRecord = wrongKind(material, 'content');
+    if (notRecord) return wrongKindReply(nodeId, notRecord);
+
+    // What is SENT: the original for a filing, the id as given otherwise. It is
+    // in the change set's key and in the sentence the key binds to, so the
+    // person approves the record that is actually filed.
+    const sentId = spec.fileOriginal ? resolveWriteTarget(material, nodeId).targetId : nodeId;
+    // When redirected, the ORIGINAL is read: the preview names what is filed (an
+    // overridden reference carries a title of its own), and an original that
+    // cannot be read is found out here, not after the key was spent.
+    const sent = sentId === nodeId ? material : await getNodeMetadata(sentId);
+    if (!sent) {
+      return codedError('not_found', `„${sanitizeText(nodeId)}“ ist eine Verknüpfung; aufgenommen würde das Original `
+        + `${sanitizeText(sentId)}, das aber nicht lesbar ist. Es wurde nichts geändert.`);
+    }
 
     const collectionTitle = titleOf(collection.properties, collectionId);
-    const materialTitle = titleOf(material.properties, nodeId);
+    // A MATERIAL: the record chain, not the collection's.
+    const materialTitle = titleFromProperties(sent.properties) ? recordTitle(sent.properties) : sentId;
 
-    const cs = buildChangeSet(`${collectionId}/${nodeId}`, 'collection', {}, {}, {
-      action: spec.action(materialTitle, collectionTitle, `${collectionId} / ${nodeId}`),
+    // Already there: nothing is sent and no key is issued — the rule of the
+    // batch tool (`filingStep`). The redirection makes the case ordinary: a
+    // reference id from collection X filed "into X" is its original, which X
+    // already holds. `null` (could not be found out) files as before.
+    if (spec.fileOriginal && await isAlreadyFiled(sentId, collectionId) === true) {
+      return plainText(`„${materialTitle}“ ist bereits in „${collectionTitle}“ — es wurde nichts gesendet.`);
+    }
+
+    const ids = sentId === nodeId
+      ? `${collectionId} / ${nodeId}`
+      : `${collectionId} / Verknüpfung ${nodeId} — aufgenommen wird das Original ${sentId}`;
+
+    const cs = buildChangeSet(`${collectionId}/${sentId}`, 'collection', {}, {}, {
+      action: spec.action(materialTitle, collectionTitle, ids),
     });
     const refusal = gate(params, cs, `Zum ${spec.verb} bitte bestätigen.`);
     if (refusal) return refusal;
@@ -280,7 +347,7 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
       if (!spec.prepare) {
         return errorText('Dieser Vorgang lässt sich in dieser Betriebsart nicht vorbereiten. Es wurde nichts geändert.');
       }
-      const prepared = await spec.prepare(collectionId, nodeId);
+      const prepared = await spec.prepare(collectionId, sentId);
       // A refusal is a finding about the collection, not a failure of this
       // server — and it must not become a request anyway, since somebody else
       // would then send it with a real person's rights.
@@ -289,7 +356,7 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
     }
 
     return reportMutation(
-      await spec.apply(collectionId, nodeId),
+      await spec.apply(collectionId, sentId),
       spec.done(materialTitle, collectionTitle),
       spec.context,
     );

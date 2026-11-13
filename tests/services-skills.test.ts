@@ -613,3 +613,189 @@ test('pickBestSkill returns null when nothing matches', async () => {
     mock.restore();
   }
 });
+
+// ── audit 2026-11-12, P-2: whole or not at all — never cut, never unbounded ───
+
+const fileNode = (mimetype: string, size: number) => ({ ...skillNode('s-big', 'Datei', 'D.'), mimetype, size: String(size) });
+
+test('getSkill does not download a record that is not a text file — the nodeId is the caller\'s (audit P-2)', async () => {
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: fileNode('video/mp4', 900_000_000) } };
+    if (url.includes('/eduservlet/download')) throw new Error('must not be downloaded');
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-big', { includeFiles: false });
+    assert.ok(skill);
+    assert.equal(skill!.content, null);
+    assert.equal(skill!.contentRefused, 'not_text');
+    assert.equal(mock.calls.filter(c => c.url.includes('/eduservlet/download') || c.url.includes('/textContent')).length, 0);
+  } finally { mock.restore(); }
+});
+
+test('getSkill refuses a text file past the bound instead of cutting it (audit P-2)', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: fileNode('text/x-web-markdown', SKILL_TEXT_MAX_BYTES + 1) } };
+    if (url.includes('/eduservlet/download')) throw new Error('must not be downloaded');
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-big', { includeFiles: false });
+    assert.equal(skill!.content, null);
+    assert.equal(skill!.contentRefused, 'too_large');
+  } finally { mock.restore(); }
+});
+
+test('a download that outgrows the bound with no size in the metadata is refused whole — no truncated instruction (audit P-2)', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: skillNode('s-plan', 'Stunde planen', 'Plant.') } };
+    if (url.includes('/eduservlet/download')) return { text: 'x'.repeat(SKILL_TEXT_MAX_BYTES + 10) };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-plan', { includeFiles: false });
+    assert.equal(skill!.content, null, 'a model follows the half it got — so it gets none');
+    assert.equal(skill!.contentRefused, 'too_large');
+  } finally { mock.restore(); }
+});
+
+test('an instruction far past the ordinary 64-KiB download cap still arrives WHOLE (decision 2026-08-20)', async () => {
+  const body = `# Lang\n\n${'Regel. '.repeat(40_000)}ENDE`; // ~280 KB
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: { ...skillNode('s-plan', 'Stunde planen', 'Plant.'), mimetype: 'text/x-web-markdown', size: String(body.length) } } };
+    if (url.includes('/eduservlet/download')) return { text: body };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-plan', { includeFiles: false });
+    assert.equal(skill!.content, body);
+    assert.equal(skill!.contentRefused, undefined);
+  } finally { mock.restore(); }
+});
+
+// ── review of audit package 3 ────────────────────────────────────────────────
+
+test('a refused download never falls back to the extract — refused means not loaded', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: skillNode('s-plan', 'Stunde planen', 'Plant.') } };
+    if (url.includes('/eduservlet/download')) return { text: 'x'.repeat(SKILL_TEXT_MAX_BYTES + 10) };
+    // An extract that WOULD answer: if the refusal ran on into the fallback, this text would come back.
+    if (url.includes('/textContent')) return { json: { text: 'Text aus dem Extrakt' } };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-plan', { includeFiles: false });
+    assert.equal(skill!.content, null);
+    assert.equal(skill!.contentRefused, 'too_large');
+    assert.equal(mock.calls.filter(c => c.url.includes('/textContent')).length, 0);
+  } finally { mock.restore(); }
+});
+
+test('the bound holds on the extract too — whichever read answered', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: skillNode('s-plan', 'Stunde planen', 'Plant.') } };
+    if (url.includes('/eduservlet/download')) return { status: 403, json: {} };
+    if (url.includes('/textContent')) return { json: { text: 'x'.repeat(SKILL_TEXT_MAX_BYTES + 1) } };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-plan', { includeFiles: false });
+    assert.equal(skill!.content, null);
+    assert.equal(skill!.contentRefused, 'too_large');
+  } finally { mock.restore(); }
+});
+
+test('a download that answers 200 with an empty body falls back to the extract', async () => {
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: skillNode('s-plan', 'Stunde planen', 'Plant.') } };
+    if (url.includes('/eduservlet/download')) return { text: '' };
+    if (url.includes('/textContent')) return { json: { text: 'Text aus dem Extrakt' } };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-plan', { includeFiles: false });
+    assert.equal(skill!.content, 'Text aus dem Extrakt');
+    assert.equal(skill!.contentRefused, undefined);
+  } finally { mock.restore(); }
+});
+
+test('exactly the bound is loaded — by the metadata and by the stream', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  const body = 'y'.repeat(SKILL_TEXT_MAX_BYTES);
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('/metadata')) return { json: { node: fileNode('text/x-web-markdown', SKILL_TEXT_MAX_BYTES) } };
+    if (url.includes('/eduservlet/download')) return { text: body };
+    return { json: {} };
+  });
+  try {
+    const skill = await getSkill('s-big', { includeFiles: false });
+    assert.equal(skill!.contentRefused, undefined);
+    assert.equal(skill!.content?.length, SKILL_TEXT_MAX_BYTES);
+  } finally { mock.restore(); }
+});
+
+// Only `text/x-web-markdown` is measured for a SKILL.md. What the repository
+// reports for a companion or an unclassified `.md` is not — so the metadata
+// rule is a DENY list of what is certainly binary, and the rest is left to the
+// stream bound.
+for (const mime of ['application/json', 'application/x-yaml', 'application/octet-stream', '']) {
+  test(`a small file reported as "${mime}" is still loaded — only certain binaries are ruled out unread`, async () => {
+    const mock = installFetchMock((url): MockResult => {
+      if (url.includes('/metadata')) return { json: { node: fileNode(mime, 20) } };
+      if (url.includes('/eduservlet/download')) return { text: '{"schritt": 1}' };
+      return { json: {} };
+    });
+    try {
+      const skill = await getSkill('s-big', { includeFiles: false });
+      assert.equal(skill!.content, '{"schritt": 1}');
+    } finally { mock.restore(); }
+  });
+}
+
+for (const mime of ['application/pdf', 'image/png', 'audio/mpeg', 'application/zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']) {
+  test(`a file reported as ${mime} is not downloaded`, async () => {
+    const mock = installFetchMock((url): MockResult => {
+      if (url.includes('/metadata')) return { json: { node: fileNode(mime, 20) } };
+      if (url.includes('/eduservlet/download')) throw new Error('must not be downloaded');
+      return { json: {} };
+    });
+    try {
+      assert.equal((await getSkill('s-big', { includeFiles: false }))!.contentRefused, 'not_text');
+    } finally { mock.restore(); }
+  });
+}
+
+// ── audit 2026-11-12, K-16 ───────────────────────────────────────────────────
+
+test('K-16: a collection holding more files than one page reads makes the catalogue INCOMPLETE — and says so', async () => {
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('filter=folders')) return { json: { nodes: [] } };
+    if (url.includes('filter=files')) {
+      return { json: { nodes: [skillNode('s-1', 'Stunde planen', 'Plant.')], pagination: { total: 120, from: 0, count: 1 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    const out = await searchSkillsDetailed({ collectionId: 'skills-root' });
+    assert.equal(out.incomplete, true);
+    assert.equal(out.skills.length, 1, 'what was read is still returned');
+  } finally { mock.restore(); }
+});
+
+test('K-16: a collection read in full is not flagged', async () => {
+  // Its own mock: `collectionMock` states one total for every collection it lists.
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes('filter=folders')) return { json: { nodes: [] } };
+    if (url.includes('filter=files')) {
+      return { json: { nodes: [skillNode('s-plan', 'Stunde planen', 'Plant.')], pagination: { total: 1, from: 0, count: 1 } } };
+    }
+    return { json: {} };
+  });
+  try {
+    assert.equal('incomplete' in await searchSkillsDetailed({ collectionId: 'skills-root' }), false);
+  } finally { mock.restore(); }
+});

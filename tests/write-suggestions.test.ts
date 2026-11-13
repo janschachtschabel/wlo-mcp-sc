@@ -123,28 +123,101 @@ test('a status filter is passed upstream rather than applied locally', async () 
   }
 });
 
-test('deciding sends id and status on the query and answers null on success', async () => {
-  const mock = installFetchMock(() => ({ json: {} }));
+/** A repository that records the decision (or, with `record: false`, answers 200 and does not). */
+function deciding(opts: { record?: boolean; listStatus?: number } = {}) {
+  let status = 'PENDING';
+  return installFetchMock((url, init) => {
+    if (init?.method === 'PATCH') {
+      if (opts.record !== false) status = new URL(url).searchParams.get('status') ?? status;
+      return { json: {} };
+    }
+    if (opts.listStatus) return { status: opts.listStatus, json: {} };
+    return { json: { suggestions: { 'cclom:title': [{ id: 's-1', propertyId: 'cclom:title', value: 'x', status }] } } };
+  });
+}
+
+test('deciding sends id and status on the query — and is taken only once the list SHOWS it (K-10)', async () => {
+  const mock = deciding();
   try {
-    const failure = await setSuggestionStatus(NODE, 's-1', 'ACCEPTED');
-    assert.equal(failure, null);
+    assert.deepEqual(await setSuggestionStatus(NODE, 's-1', 'ACCEPTED'), { ok: true });
     const call = mock.calls[0]!;
     assert.equal(call.init?.method, 'PATCH');
     assert.match(call.url, /id=s-1/);
     assert.match(call.url, /status=ACCEPTED/);
+    assert.equal(mock.calls.length, 2, 'one read-back');
   } finally {
     mock.restore();
   }
 });
 
-test('a failed decision answers with the detail so the tool can report it', async () => {
-  const mock = installFetchMock(() => ({ status: 404, json: {} }));
+test('a 200 that recorded nothing is not a decision — and nothing is open about it', async () => {
+  const mock = deciding({ record: false });
   try {
-    const failure = await setSuggestionStatus(NODE, 's-1', 'DECLINED');
-    assert.match(failure ?? '', /404/);
+    const out = await setSuggestionStatus(NODE, 's-1', 'ACCEPTED');
+    assert.equal(out.ok, false);
+    assert.equal(!out.ok && out.open, false, 'read back as still pending');
+    assert.match(!out.ok ? out.detail : '', /offen/);
   } finally {
     mock.restore();
   }
+});
+
+test('a read-back that does not answer leaves the decision OPEN', async () => {
+  const mock = deciding({ listStatus: 503 });
+  try {
+    const out = await setSuggestionStatus(NODE, 's-1', 'DECLINED');
+    assert.deepEqual([out.ok, !out.ok && out.open], [false, true]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('a proposal GONE from the list after the decision is open — not "still pending"', async () => {
+  const mock = installFetchMock((_url, init) => (init?.method === 'PATCH' ? { json: {} } : { json: { suggestions: {} } }));
+  try {
+    const out = await setSuggestionStatus(NODE, 's-1', 'ACCEPTED');
+    assert.deepEqual([out.ok, !out.ok && out.open], [false, true]);
+    assert.doesNotMatch(!out.ok ? out.detail : '', /unbekannt/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('a refused decision answers with the detail; a 5xx is open, a 4xx is not', async () => {
+  for (const [status, open] of [[404, false], [500, true]] as const) {
+    const mock = installFetchMock(() => ({ status, json: {} }));
+    try {
+      const out = await setSuggestionStatus(NODE, 's-1', 'DECLINED');
+      assert.equal(out.ok, false);
+      assert.match(!out.ok ? out.detail : '', new RegExp(String(status)));
+      assert.equal(!out.ok && out.open, open);
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+test('createSuggestions: a 200 naming no stored proposal is open, not zero proposals stored (K-9)', async () => {
+  const mock = installFetchMock(() => ({ json: [] }));
+  try {
+    const out = await createSuggestions(NODE, [{ propertyId: 'cclom:title', value: 'x', description: 'r' }]);
+    assert.deepEqual([out.ok, !out.ok && out.open, !out.ok && out.accepted], [false, true, true]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test('newProposals / valuesAfterAccept: per value; several-valued fields add, single-valued replace', async () => {
+  const { newProposals, valuesAfterAccept } = await import('../src/services/write/suggestions.js');
+  const d = (propertyId: string, value: string) => ({ propertyId, value, description: 'r' });
+  const before = { 'ccm:taxonid': ['u/mathe'], 'cclom:title': ['Alt'], 'cclom:general_keyword': ['Optik'] };
+  assert.deepEqual(
+    newProposals(before, [d('ccm:taxonid', 'u/mathe'), d('ccm:taxonid', 'u/physik'), d('cclom:title', 'Alt'),
+      d('cclom:title', 'alt'), d('cclom:general_keyword', 'optik')]).map(x => x.value),
+    ['u/physik', 'alt'], 'a title differing in case IS a proposal; a keyword differing in case is not');
+  assert.deepEqual(valuesAfterAccept('ccm:taxonid', ['u/mathe'], ['u/physik']), ['u/mathe', 'u/physik']);
+  assert.deepEqual(valuesAfterAccept('ccm:taxonid', ['u/mathe'], ['u/mathe']), ['u/mathe']);
+  assert.deepEqual(valuesAfterAccept('cclom:title', ['Alt'], ['Neu']), ['Neu']);
 });
 
 test('createSuggestions: an unparseable 200 body is reported, not counted as zero proposals', async () => {

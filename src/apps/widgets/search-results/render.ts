@@ -73,7 +73,13 @@ function allNodes(payload: SearchAllPayload | undefined): WidgetNode[] {
  * is not `search_wlo_all` (`search_wlo_content`, `get_collection_contents`,
  * `get_related_content`).
  */
-type FlatNodeList = { query?: string; total: number; count: number; results: WidgetNode[] };
+type FlatNodeList = {
+  query?: string; total: number; count: number; results: WidgetNode[];
+  /** search_wlo_content: the page came back short although the catalogue holds more. */
+  more?: { nextSkipCount: number };
+  /** search_wlo_collections: a collection index did not answer. */
+  incomplete?: true;
+};
 
 /**
  * Accept both payload shapes so ONE widget serves every list tool. Which tool
@@ -97,8 +103,16 @@ function toEnvelope(payload: SearchAllPayload | FlatNodeList | undefined): Searc
     query: payload.query ?? '',
     // `total` describes the whole upstream list; it belongs to whichever bucket
     // actually holds the results, so paging counts stay truthful.
-    content: items.length ? { ...bucket(items), total: colls.length ? items.length : payload.total ?? items.length } : bucket([]),
-    collections: colls.length ? { ...bucket(colls), total: items.length ? colls.length : payload.total ?? colls.length } : bucket([]),
+    content: {
+      ...(items.length ? { ...bucket(items), total: colls.length ? items.length : payload.total ?? items.length } : bucket([])),
+      // What the flat list says about itself goes to the bucket it describes —
+      // dropped here, an exhausted page or an unreachable index rendered as "no results".
+      ...(payload.more ? { more: payload.more } : {}),
+    },
+    collections: {
+      ...(colls.length ? { ...bucket(colls), total: items.length ? colls.length : payload.total ?? colls.length } : bucket([])),
+      ...(payload.incomplete ? { incomplete: true as const } : {}),
+    },
     topicPages: bucket([]),
   };
 }
@@ -132,7 +146,11 @@ export function renderSearchResults(
         `${lf.checked} ${escapeHtml(t(locale, 'licenseCandidatesChecked'))}. ` +
         `${escapeHtml(t(locale, 'licenseFamilyHint'))}</p>`
       : '';
-    return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, 'noResults'))}</p>${reason}</div>`;
+    // "No results" is a statement about the catalogue. Not made over a page that
+    // is merely exhausted, nor over a source that did not answer.
+    const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete;
+    const headline = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable' : 'noResults';
+    return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, headline))}</p>${reason}</div>`;
   }
 
   const query = escapeHtml(payload?.query ?? '');

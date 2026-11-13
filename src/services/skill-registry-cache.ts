@@ -34,6 +34,7 @@
  * nothing.
  */
 
+import { sharedAcrossRequests } from '../request-scope.js';
 import type { WloNode } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
 import { capText } from '../text-cap.js';
@@ -102,6 +103,14 @@ export interface CacheEntry {
    * not count it, so the caller keeps its pointer line.
    */
   scanTruncated?: ScanTruncation;
+  /**
+   * Set when a registry document WAS found but is larger than the skill bound,
+   * so it was not read. The same shape as `scanTruncated`: a reply that asking
+   * again cannot change (a 2-MiB download per tick, for nothing), remembered so
+   * it is not repeated — and settling nothing, because "no approved skills" is
+   * not what was learned.
+   */
+  oversized?: true;
   /**
    * The registry's general instruction — the prose above its first H2, capped.
    *
@@ -190,7 +199,10 @@ type RegistryLookup = Awaited<ReturnType<typeof loadSkillRegistry>>;
 function lookupOnce(collectionId: string): Promise<RegistryLookup> {
   const running = inFlight.get(collectionId);
   if (running) return running;
-  const pending = loadSkillRegistry(collectionId, { resolveHeads: false });
+  // Outside the request scope: this promise is SHARED by every caller wanting the
+  // collection, and its result feeds the cache — one of them hanging up must not
+  // fail the others.
+  const pending = sharedAcrossRequests(() => loadSkillRegistry(collectionId, { resolveHeads: false }));
   inFlight.set(collectionId, pending);
   // `then(done, done)` rather than `finally`, which would leave the rejection of
   // its own derived promise unhandled.
@@ -198,6 +210,9 @@ function lookupOnce(collectionId: string): Promise<RegistryLookup> {
   void pending.then(done, done);
   return pending;
 }
+
+/** Whether an entry ANSWERS the question — a capped scan and an oversized document are held, and answer nothing. */
+const settles = (entry: CacheEntry): boolean => !entry.scanTruncated && !entry.oversized;
 
 /**
  * What a finished lookup means for the cache, or `null` when it means nothing.
@@ -210,7 +225,8 @@ function lookupOnce(collectionId: string): Promise<RegistryLookup> {
  * answer, so it is remembered — but marked, so it settles nothing.
  */
 function entryFrom(result: RegistryLookup | null, checkedAt: number): CacheEntry | null {
-  if (!result || result.reason === 'unreadable') return null;
+  if (!result) return null;
+  if (result.reason === 'unreadable') return result.tooLarge ? { registry: null, checkedAt, oversized: true } : null;
   const general = result.registry?.general.instruction;
   return {
     registry: result.registry ? toRegistrySummary(result.registry) : null,
@@ -290,7 +306,7 @@ export function attachCachedRegistries(nodes: FormattedNode[]): Set<string> {
     // Held so the capped page is not read again, but it answered nothing: a
     // registry past the scan cap is invisible to it. Counting it would print
     // "geprüft" over a look that saw 50 of 400 files.
-    if (entry.scanTruncated) continue;
+    if (!settles(entry)) continue;
     answered.add(node.nodeId);
   }
   if (cold.length) queueCollections(cold);
@@ -352,9 +368,49 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<Set<stri
     if (!entry) return;                        // nothing learned; stays queued
     remember(node.nodeId, entry);
     if (entry.registry) node.skillRegistry = entry.registry;
-    if (!entry.scanTruncated) answered.add(node.nodeId);
+    if (settles(entry)) answered.add(node.nodeId);
   });
   return answered;
+}
+
+/**
+ * A FRESH lookup for every collection among `nodes`, whatever the cache holds —
+ * the caller asked for it (`includeSkillRegistry`). Through the cache, which is
+ * the point (audit 2026-11-12, K-15). The forced pass used to run beside it:
+ *
+ *  - a registry that had been REMOVED left no field on the node, and the cache
+ *    pass that followed filled the stale catalogue back in;
+ *  - what the fresh lookup learned was not written back, so the next call
+ *    answered from the old entry again;
+ *  - and a lookup that FAILED counted as "checked, none there", because the
+ *    forced pass as a whole was taken for an answer.
+ *
+ * So: each answer replaces the entry — a registry that is gone leaves an entry
+ * saying so, and the ordinary pass that follows attaches nothing — and only the
+ * ids that really answered are returned — a failed or
+ * inconclusive lookup leaves the node to the ordinary pass and its "nicht
+ * geprüft" line. Works with the cache switched off too: the lookup is what was
+ * asked for; only the remembering depends on the switch.
+ */
+export async function refreshRegistries(nodes: FormattedNode[]): Promise<{ answered: Set<string>; failed: Set<string> }> {
+  const answered = new Set<string>();
+  // Asked, and no answer came. The caller must NOT fall back to the remembered
+  // catalogue for these: shown beside a request for the state now, an entry up
+  // to its TTL old reads as that state (review of audit package 9).
+  const failed = new Set<string>();
+  const targets = nodes.filter(n => n.nodeType === 'collection');
+  if (!targets.length) return { answered, failed };
+  const results = await mapPool(targets, CACHE_POOL, n => lookupOnce(n.nodeId));
+  const checkedAt = Date.now();
+  targets.forEach((node, i) => {
+    const entry = entryFrom(results[i], checkedAt);
+    if (!entry) { failed.add(node.nodeId); return; }   // did not answer: nothing is claimed
+    if (WLO_SKILL_CACHE) remember(node.nodeId, entry);
+    if (!settles(entry)) return;               // capped scan / oversized: held, but no answer
+    if (entry.registry) node.skillRegistry = entry.registry;
+    answered.add(node.nodeId);
+  });
+  return { answered, failed };
 }
 
 /**
@@ -418,7 +474,7 @@ export async function ensureRegistryFor(
   if (known) {
     return {
       registry: known.registry,
-      answered: !known.scanTruncated,
+      answered: settles(known),
       ...(known.generalInstruction ? { generalInstruction: known.generalInstruction } : {}),
     };
   }
@@ -435,7 +491,7 @@ export async function ensureRegistryFor(
   remember(collectionId, entry);
   return {
     registry: entry.registry,
-    answered: !entry.scanTruncated,
+    answered: settles(entry),
     ...(entry.generalInstruction ? { generalInstruction: entry.generalInstruction } : {}),
   };
 }
@@ -491,7 +547,23 @@ function expireStale(now: number): number {
  * asymmetry is what lets a remembered `registry: null` count as an answer — it
  * can only come from a listing that replied.
  */
-export async function runCacheTick(opts: { now?: number } = {}): Promise<CacheTickReport> {
+export function runCacheTick(opts: { now?: number } = {}): Promise<CacheTickReport> {
+  // ONE tick at a time. The timer fires on a schedule, not when the last tick
+  // is done: against a slow repository a tick outlives its interval, and two
+  // ticks then drain the same queue with twice the upstream calls while the
+  // slowness that caused it gets worse (audit 2026-11-12, K-16). A tick asked
+  // for while one runs gets that one's report.
+  if (ticking) return ticking;
+  const run: Promise<CacheTickReport> = tick(opts).finally(() => { if (ticking === run) ticking = null; });
+  ticking = run;
+  return ticking;
+}
+
+let ticking: Promise<CacheTickReport> | null = null;
+/** Raised by every stop, so a tick in flight can tell that its cache is gone. */
+let generation = 0;
+
+async function tick(opts: { now?: number }): Promise<CacheTickReport> {
   const startedAt = Date.now();
   // Injected so a test can age the cache instead of sleeping through the TTL.
   const expired = expireStale(opts.now ?? startedAt);
@@ -502,7 +574,11 @@ export async function runCacheTick(opts: { now?: number } = {}): Promise<CacheTi
   let failed = 0;
   let inconclusive = 0;
 
+  const mine = generation;
   const results = await mapPool(batch, CACHE_POOL, (id) => lookupOnce(id));
+  // Stopped (or reset) while this tick was out: what it learned belongs to a
+  // cache that no longer exists, and writing it would refill the new one.
+  if (mine !== generation) return { resolved: 0, found: 0, failed: 0, inconclusive: 0, expired, queueLeft: queue.size, ms: Date.now() - startedAt };
 
   const checkedAt = Date.now();
   // Paired by index rather than by a returned id: `mapPool` keeps order and
@@ -519,7 +595,7 @@ export async function runCacheTick(opts: { now?: number } = {}): Promise<CacheTi
       return;
     }
     if (entry.registry) found++;
-    else if (entry.scanTruncated) inconclusive++;
+    else if (!settles(entry)) inconclusive++;
     remember(id, entry);
   });
 
@@ -654,6 +730,8 @@ export function cacheWarmup(): Promise<void> {
  */
 export function stopSkillRegistryCache(): void {
   if (timer) { clearInterval(timer); timer = null; }
+  generation += 1;
+  ticking = null;
   warmup = Promise.resolve();
   entries.clear();
   queue.clear();

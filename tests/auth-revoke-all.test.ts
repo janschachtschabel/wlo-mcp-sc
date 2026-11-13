@@ -230,3 +230,99 @@ test('the page encrypts in the browser rather than posting a password', async ()
   assert.ok(page.includes("from './access-block.js'"), 'must use the shared encoder');
   assert.ok(page.includes('encodeAccessBlock'), 'must build a block, not send credentials');
 });
+
+// ── audit 2026-11-12, S-2 and S-6 ─────────────────────────────────────────────
+
+test('revoking under another spelling of the login still ends every block of that account (audit S-2)', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'laptop', label: 'Lehrerin', acct: 'lehrerin', iat: 1_754_300_000 });
+  await registry.add({ jti: 'widget', label: 'lehrerin', iat: 1_754_300_001, k: 'ticket' });
+  // Listed before the account name was recorded: found by the spelling typed now.
+  await registry.add({ jti: 'alt', label: 'LEHRERIN', iat: 1_754_300_002 });
+  await registry.add({ jti: 'fremd', label: 'jemand-anders', iat: 1_754_300_003 });
+  // edu-sharing confirms the one account for any spelling (measured on staging 2026-11-12).
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  await handleAuthEndpoint(post(block(keys, 'LEHRERIN')), r, deps());
+
+  assert.equal(r.out.status, 200);
+  assert.equal(r.json()?.['revoked'], 3);
+  assert.equal(registry.has('fremd'), true);
+});
+
+test('the login limiter counts one address ONCE across /mcp and /auth (audit S-6)', async (t) => {
+  const { keys } = await support(t);
+  t.after(upstream('lehrerin'));
+  const { abuseBucketKey } = await import('../src/auth/credential.js');
+  const d = deps(); // 3 distinct logins per address
+  // Three distinct Basic logins on /mcp, counted the way /mcp counts them.
+  for (const n of [1, 2, 3]) {
+    const header = `Basic ${Buffer.from(`u${n}:p`).toString('base64')}`;
+    assert.equal(d.authAbuseLimiter.check(abuseBucketKey({ header, label: `u${n}`, source: 'user' }, d.ip), header, Date.now()), false);
+  }
+  // The fourth distinct login from the same address, now on /auth: the budget is spent.
+  const r = res();
+  await handleAuthEndpoint(post(block(keys, 'lehrerin')), r, d);
+  assert.equal(r.out.status, 429);
+});
+
+const issue = (keys: AuthKeys, jti: string, u: string) => req('POST', '/auth/issue', JSON.stringify({
+  token: encodeAccessToken({ v: 2, jti, u, secret: 'geheim', iat: Math.floor(Date.now() / 1000) }, keys.publicKeyPem),
+}));
+
+test('issuing lists the block under the spelling it carries AND the confirmed account (audit S-2)', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  await handleAuthEndpoint(issue(keys, 'neu', 'Lehrerin'), r, deps());
+
+  assert.equal(r.out.status, 200, r.out.body);
+  assert.equal(registry.labelOf('neu'), 'Lehrerin', 'the name the block is bound to');
+  assert.equal(await registry.removeByLabel('lehrerin'), 1, 'and it is found by the account WLO confirmed');
+});
+
+test('a block reusing an id that is listed for another name is not issued (audit S-1)', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'vergeben', label: 'angreifer', iat: 1_754_300_000 });
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  await handleAuthEndpoint(issue(keys, 'vergeben', 'lehrerin'), r, deps());
+
+  assert.equal(r.out.status, 400, 'answering "issued" would hand out an access that can never be used');
+  assert.equal(registry.labelOf('vergeben'), 'angreifer', 'and the listed entry is untouched');
+});
+
+test('issuing an already listed legacy block again records its account — "revoke all" then finds it (review P1, 3)', async (t) => {
+  const { keys, registry } = await support(t);
+  // Listed before the account name was recorded, with an expiry that must survive.
+  await registry.add({ jti: 'alt', label: 'Lehrerin', iat: 1_754_300_000, exp: 9_999_999_999 });
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  await handleAuthEndpoint(issue(keys, 'alt', 'Lehrerin'), r, deps());
+  assert.equal(r.out.status, 200, r.out.body);
+  assert.equal(registry.expiresAt('alt'), 9_999_999_999);
+
+  const r2 = res();
+  await handleAuthEndpoint(post(block(keys, 'lehrerin')), r2, deps());
+  assert.equal(r2.json()?.['revoked'], 1, 'typed in the other spelling, found by the account');
+});
+
+test('the account is recorded in full — two names agreeing in their first 120 characters stay two accounts (review P1, 1)', async (t) => {
+  const { keys, registry } = await support(t);
+  const mine = `sso-${'x'.repeat(130)}-A`;
+  const theirs = `sso-${'x'.repeat(130)}-B`;
+  await registry.add({ jti: 'fremd', label: 'du', acct: theirs, iat: 2 });
+  t.after(upstream(mine));
+
+  const r = res();
+  await handleAuthEndpoint(issue(keys, 'meiner', 'ich'), r, deps());
+  assert.equal(r.out.status, 200, r.out.body);
+  // The display form of an authority is capped at 120 characters; as an ACCOUNT
+  // key that would fold these two into one — one's "revoke all" ending the other's access.
+  assert.equal(await registry.removeByLabel(mine), 1, 'listed under the full name');
+  assert.equal(registry.has('fremd'), true);
+});

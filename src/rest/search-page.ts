@@ -17,6 +17,9 @@ interface PageBucket {
   total?: number;
   count?: number;
   results?: Record<string, unknown>[];
+  /** A source of this bucket did not answer / the page is merely exhausted — an empty page is then no finding. */
+  incomplete?: boolean;
+  more?: unknown;
 }
 
 export interface SearchPageData {
@@ -97,7 +100,10 @@ export function renderSearchPage(data: SearchPageData): string {
     section('Inhalte', data.content) +
     section('Sammlungen', data.collections) +
     section('Themenseiten', data.topicPages);
-  const empty = body
+  // "Keine Treffer." is a statement about the catalogue: not beside a warning
+  // that a source did not answer or that the page is merely exhausted.
+  const notAFinding = Boolean(data.collections?.incomplete || data.topicPages?.incomplete || data.content?.more);
+  const empty = body || notAFinding
     ? ''
     : `<p>Keine Treffer.${q ? '' : ' Suchbegriff in den Pfad setzen: /api/search/&lt;Begriff&gt;?format=html'}</p>`;
   return (

@@ -22,8 +22,10 @@ export interface WloNode {
    * metadata read — gets 403 resp. the repository's permission-shield image.
    */
   isPublic?: boolean;
-  /** edu-sharing object type — `ccm:io` (file) or `ccm:map` (collection). */
+  /** edu-sharing object type — `ccm:io` (a record) or `ccm:map` (a CONTAINER: a collection, but also a page-config or crawler folder — see `node-kind.ts`). */
   type?: string;
+  /** The node's aspects — top-level in every DTO, whatever the `propertyFilter` (measured 2026-11-12). `ccm:collection` marks a collection. */
+  aspects?: string[];
   /**
    * For a REFERENCE node (one created by filing material into a collection):
    * the id of the original it points at. Absent on originals. Collection
@@ -63,6 +65,14 @@ export interface WloNode {
 export interface SearchResponse {
   nodes: WloNode[];
   pagination: { total: number; from: number; count: number };
+  /**
+   * Set by the searches that are PAGED in windows: `true` when no source of
+   * this window returned a full one, so the next window holds nothing.
+   * `pagination.total` cannot stand in for it — it counts one query variant
+   * (resp. the exact licence) while the paging runs over all variants (resp.
+   * the licence family). See `services/content-search.ts`.
+   */
+  exhausted?: boolean;
   /**
    * Facet aggregation buckets, only present when `ngsearch` was called with
    * `facets`. Values are property URIs with their document counts (no

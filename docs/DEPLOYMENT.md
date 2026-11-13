@@ -60,7 +60,7 @@ tracked compose file. The full list with defaults is in
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | Upstream edu-sharing repository. **Defaults to STAGING** — set `https://redaktion.openeduhub.net/edu-sharing` explicitly to write to production. |
+| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | Upstream edu-sharing repository. **Defaults to STAGING** — set `https://redaktion.openeduhub.net/edu-sharing` explicitly to write to production. An address no request can be sent to (unparseable, credentials or a query in it, a mistyped scheme) **stops the start** with exit code 1 — under `restart: unless-stopped` a restart loop with one error line per start. |
 | `MCP_SSE` | `1` | `1` = real SSE streaming (needed by ChatGPT). `0` = single-JSON responses. |
 | `TRUST_PROXY` | `1` | Take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
 | `RATE_LIMIT_RPM` | `120` | Tool calls per minute on `/mcp`, per client address. Only `tools/call` counts; all POSTs together may use 3× this (`initialize`/notifications never reach edu-sharing). A 429 carries the rest of the window as `Retry-After` and a JSON-RPC error with `data.code: "rate_limited"`. `0` disables both. |
@@ -84,7 +84,7 @@ tracked compose file. The full list with defaults is in
 | `HOST_PORT` | `3000` | Host-side port of the published mapping. |
 | `WLO_BATCH_UPLOAD_ENABLED` | _(unset)_ | Switches on **batch filing** into a person's own area: four curation tools (`wlo_prepare_file_batch`, `wlo_store_batch_file`, `wlo_store_batch_manifest`, `wlo_list_my_batches`) and the route `POST /api/uploads`. Off: neither exists and `tools/list` is unchanged. Personal login only — the service account is refused even with `WLO_ALLOW_SERVICE_WRITES`. Upload bytes, approvals and plans live **in memory**: run one instance, and a restart drops open batches. |
 | `UPLOAD_MAX_BYTES` | `52428800` (50 MB, at most 100 MB) | Largest single file one upload slot takes. Your reverse proxy must allow at least this much on `/api/uploads` (§4). |
-| `UPLOAD_MAX_TOTAL_BYTES` | `134217728` (128 MB) | All open upload slots together — the memory the batch path may hold at once (also 20 slots per identity). |
+| `UPLOAD_MAX_TOTAL_BYTES` | `134217728` (128 MB) | All open upload slots together — the memory the batch path may hold at once (also 20 slots per identity, and one login holds at most half of the bytes, never less than one file of `UPLOAD_MAX_BYTES`). |
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` (at most 28000) | How long one upload body may take. Kept below the server-wide 30 s request timeout so the route answers 408 itself. |
 | `AUTH_CREDENTIAL_LIMIT` | `10` | Distinct secrets per identity before the guessing guard refuses: per address for `Basic`, per access id for a `wlo2.` block — on `/mcp` and on `/api/uploads` alike. A chatbot backend is one address for all its users, so with `Basic` this has to fit the number of people; with blocks it does not. |
 
@@ -196,6 +196,11 @@ proxy can reach the container — otherwise a direct client could spoof
 
 ## 5. Verify the deployment
 
+Before a deploy, the image can be proven locally the way CI does it —
+`npm run smoke:image` builds it, starts it under the compose file's
+restrictions and checks `/health`, `tools/list`, a clean `docker stop` and that
+an unusable `WLO_REPOSITORY_URL` stops the start. At run time nothing leaves the machine.
+
 ```bash
 # Local (on the host):
 curl localhost:3000/health
@@ -224,6 +229,54 @@ diffing bytes:
 ```bash
 curl -s https://mcp.example.org/health | grep -o '"widgets":{[^}]*}'
 ```
+
+### 5.0 Stopping and redeploying
+
+On `SIGTERM` (`docker stop`, `docker compose up -d` replacing the container) the
+server stops accepting connections, lets the work in hand finish and exits `0`.
+Measured on the image: `docker stop` returns in 1.0–1.4 s with nothing in flight — also with a connection open that never sent a request.
+A stop takes as long as the longest call that is running — there is no
+long-lived stream here; the SSE stream of a call ends with its answer. Work
+still running after 70 s is cut and the exit code is `1`; in practice only a
+write that sets a source URL (up to 60 s) or one slice of a batch plan (about
+40 s) comes near that, and those are the calls the wait is sized for.
+`stop_grace_period: 75s` in the compose file is deliberately longer — with
+Docker's default of 10 s the process would be killed while still waiting. A
+second signal ends the wait at once.
+
+**While it drains, new connections are refused.** Behind the reverse proxy that
+is a `502` from the moment of the signal until the new container listens: the
+length of the longest running call plus the start. A client that treats `502`
+as "try again shortly" is right.
+
+**A call that IS cut** reaches its caller as a broken connection, and for a
+confirmed write its outcome is open. The new process does not know the old
+one's confirmation keys, stored results or plans — they lived in its memory —
+so re-presenting the key answers `confirm_unknown` with `outcomeOpen: true`:
+that call wrote nothing, and it says itself that an earlier one under the same
+key may have. Look in the repository first (`find_content_by_url`, the
+collection's listing), then start from a new preview.
+
+### 5.0.1 Watching it: request ids, metrics, log size
+
+- **Request id.** Every response carries `X-Request-Id`, and every log line the
+  request caused carries the same value as `req` — the upstream calls and the
+  write it started included. A caller may send its own `X-Request-Id` (8–64
+  characters of `A–Z a–z 0–9 . _ -`); anything else is replaced. "It failed at
+  14:02" becomes `grep '"req":"<id>"'`.
+- **Metrics.** Set `METRICS_TOKEN` (16+ characters) and scrape
+  `GET /metrics` with `Authorization: Bearer <token>`; without the variable the
+  path answers 404. `wlo_http_requests_total{route,status}`,
+  `wlo_tool_calls_total{tool,outcome}`, `wlo_tool_duration_seconds_sum/_count`,
+  `wlo_upstream_requests_total{outcome}` (`shed` = not sent, our own limit),
+  plus gauges for the upstream queue, uptime and memory. Counters start at zero
+  with the process. Labels never carry a caller, a path or a query.
+- **An outside check.** Nothing in the container can report that the container
+  is gone. Point an external monitor at `GET /ready` (503 while the repository
+  is unreachable) or `GET /health` (the process itself) and alert from there.
+- **Log size.** `docker-compose.yml` bounds the container log to 5 × 10 MB. If
+  you start the image another way, pass `--log-opt max-size=10m --log-opt
+  max-file=5` yourself — Docker's default keeps everything.
 
 ### 5.1 Rolling back
 
@@ -290,9 +343,13 @@ For a desktop MCP client that speaks stdio instead of HTTP, override the image
 command:
 
 ```bash
-docker run --rm -i -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing \
+docker run --rm -i --init -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing \
   wlomcp:latest node dist/stdio.js
 ```
+
+`--init` matters here: the stdio entry point installs no signal handler (it ends
+when its input closes), and Node as PID 1 ignores `SIGTERM` without one — a
+`docker stop` would wait ten seconds and kill it.
 
 ## 8. Troubleshooting
 

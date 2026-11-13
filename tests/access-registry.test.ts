@@ -482,3 +482,69 @@ test('a renewed entry counts as the NEWEST — renewal does not leave it first i
   assert.equal(registry.has('t-0'), true, 'the renewed one stays');
   assert.equal(registry.has('t-1'), false, 'the oldest live one goes');
 });
+
+// ── audit 2026-11-12, S-1/S-2: whose entry it is ──────────────────────────────
+
+test('labelOf names the account an id was listed for, and nothing for an unknown id', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  await registry.add({ jti: 'a', label: 'lehrerin', iat: 1 });
+  assert.equal(registry.labelOf('a'), 'lehrerin');
+  assert.equal(registry.labelOf('fehlt'), undefined);
+});
+
+test('the confirmed account name survives a restart and is what revocation and the cap go by (audit S-2)', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+  // edu-sharing accepts "Lehrerin" and "LEHRERIN" for the account "lehrerin" (measured 2026-11-12).
+  await registry.add({ jti: 'laptop', label: 'Lehrerin', acct: 'lehrerin', iat: 1 });
+  await registry.add({ jti: 'handy', label: 'LEHRERIN', acct: 'lehrerin', iat: 2 });
+  await registry.add({ jti: 'widget', label: 'lehrerin', iat: 3, k: 'ticket' });
+  await registry.add({ jti: 'fremd', label: 'jemand', acct: 'jemand', iat: 4 });
+
+  const reopened = await opened(path);
+  assert.equal(reopened.labelOf('laptop'), 'Lehrerin', 'the label stays the spelling the block carries');
+  assert.equal(await reopened.removeByLabel('lehrerin'), 3, 'every spelling of the one account goes');
+  assert.equal(reopened.has('fremd'), true);
+});
+
+test('the per-account cap counts every spelling of one account together (audit S-2)', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  for (let i = 1; i <= MAX_BLOCKS_PER_LABEL + 1; i++) {
+    // A new spelling each time: counted per label this would never reach the cap.
+    await registry.add({ jti: `id-${i}`, label: `Lehrerin${'!'.repeat(i)}`, acct: 'lehrerin', iat: i });
+  }
+  assert.equal(registry.has('id-1'), false, 'the oldest gave way');
+  assert.equal(registry.has(`id-${MAX_BLOCKS_PER_LABEL + 1}`), true);
+});
+
+test('an account name that is not a string fails the file closed', async (t) => {
+  const bad = join(tempDir(t), 'bad.json');
+  writeFileSync(bad, JSON.stringify({ v: 1, entries: [{ jti: 'x', label: 'l', iat: 1, acct: 7 }] }));
+  assert.equal(await openRegistry(bad), null);
+});
+
+test('the spelling typed now finds only entries WITHOUT a confirmed account — never another account by its name (review P1, 2)', async (t) => {
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  await registry.add({ jti: 'fremd', label: 'x', acct: 'alias', iat: 1 });   // someone else's account "alias"
+  await registry.add({ jti: 'alt', label: 'alias', iat: 2 });                // my own legacy entry, typed "alias"
+  // I am "ich"; the instance accepted "alias" as a spelling of my login.
+  assert.equal(await registry.removeByLabel('ich', 'alias'), 1);
+  assert.equal(registry.has('fremd'), true, 'the typed spelling must not match a confirmed account');
+  assert.equal(registry.has('alt'), false);
+});
+
+test('noteAccount adds the confirmed account to a legacy entry and keeps everything else (review P1, 3)', async (t) => {
+  const path = join(tempDir(t), 'registry.json');
+  const registry = await opened(path);
+  await registry.add({ jti: 'alt', label: 'Lehrerin', iat: 5, exp: 9_999_999_999 });
+  await registry.add({ jti: 'neuer', label: 'jemand', iat: 6 });
+  await registry.noteAccount('alt', 'lehrerin');
+
+  const reopened = await opened(path);
+  assert.equal(reopened.expiresAt('alt'), 9_999_999_999, 'the expiry survives');
+  assert.equal(reopened.labelOf('alt'), 'Lehrerin');
+  assert.equal(await reopened.removeByLabel('lehrerin'), 1, 'and the entry is now found by its account');
+  // An entry that already has one keeps it; an unknown id is not created.
+  await registry.noteAccount('unbekannt', 'x');
+  assert.equal(registry.known('unbekannt'), false);
+});

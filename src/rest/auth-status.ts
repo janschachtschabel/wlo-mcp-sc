@@ -23,7 +23,7 @@
  * Under `/auth*`, so it carries no CORS header (`isCredentialSurface`).
  */
 
-import { createHmac, randomBytes } from 'node:crypto';
+import { keyedDigest } from '../keyed-digest.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
@@ -52,9 +52,6 @@ export interface AuthStatusDeps {
   challenge: () => string;
 }
 
-/** Per process, so a heap dump holds no dictionary-attackable hash of a login. */
-const CACHE_KEY_SECRET = randomBytes(32);
-
 /**
  * The cache key: the header the CALLER PRESENTED, not the upstream login it
  * resolves to (review 2026-11-07). Two blocks of one account open to the same
@@ -64,7 +61,7 @@ const CACHE_KEY_SECRET = randomBytes(32);
  */
 function cacheKey(header: string | undefined, source: 'user' | 'service' | 'anonymous'): string {
   const value = source === 'user' ? `user:${header ?? ''}` : source;
-  return createHmac('sha256', CACHE_KEY_SECRET).update(value).digest('hex');
+  return keyedDigest(value);
 }
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {

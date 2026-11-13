@@ -5,6 +5,7 @@
  * mode dispatch and upstream I/O; merge/sort/render live in topic-pages-present.
  */
 
+import { incompleteNotice } from '../services/collection-search.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -153,20 +154,27 @@ Kein „discipline"-Parameter: über educationalContext und targetGroup eingrenz
       const merge = params.mergeVariants !== false;
 
       try {
-        const { results, queryType } = await collectThemePages(params, filters);
+        const { results, queryType, incomplete } = await collectThemePages(params, filters);
 
         if (results.length === 0) {
-          const hint = params.query
+          // "Keine Themenseiten …" is a statement about the catalogue; over a source
+          // that did not answer the notice stands instead.
+          const hint = incomplete ? incompleteNotice('Themenseiten', true) : params.query
             ? `Keine Themenseiten für "${params.query}" gefunden. Die Sammlung hat möglicherweise keine konfigurierte Themenseite (ccm:page_config_ref fehlt).`
             : 'Keine Themenseiten gefunden.';
+          const empty = { total: 0, count: 0, results: [], ...(incomplete ? { incomplete: true as const } : {}) };
           // A miss still satisfies the schema, so the widget shows its empty
           // state instead of the host failing on a missing structuredContent.
           return {
             // An ignored filter matters MOST here: "keine Themenseiten" plus a
             // typo the caller cannot see is the pair that sends someone looking
             // for pages that exist.
-            content: [{ type: 'text' as const, text: hint }, ...unresolvedBlock],
-            structuredContent: { total: 0, count: 0, results: [] },
+            // JSON mode: block 0 is the (empty) payload a client parses, the
+            // sentence its own block — prose alone broke `JSON.parse` on a miss.
+            content: [
+              ...(params.outputFormat === 'json' ? [{ type: 'text' as const, text: JSON.stringify(empty) }] : []),
+              { type: 'text' as const, text: hint }, ...unresolvedBlock],
+            structuredContent: empty,
           };
         }
 
@@ -210,9 +218,11 @@ Kein „discipline"-Parameter: über educationalContext und targetGroup eingrenz
           if (registry) page.skillRegistry = registry;
         }
         const rendered = renderThemePages(out, tpMeta, params.outputFormat);
+        // Hits beside a source that did not answer: the list may lack pages.
+        const partial = incomplete ? [{ type: 'text' as const, text: incompleteNotice('Themenseiten', false) }] : [];
         return {
-          content: [...rendered.content, ...unresolvedBlock],
-          structuredContent: themePagesAsNodeList(out),
+          content: [...rendered.content, ...partial, ...unresolvedBlock],
+          structuredContent: { ...themePagesAsNodeList(out), ...(incomplete ? { incomplete: true as const } : {}) },
         };
       } catch (err) {
         return toolError('Fehler bei der Themenseiten-Suche', err);

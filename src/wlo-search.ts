@@ -2,7 +2,7 @@
  * wlo-search.ts – edu-sharing search endpoints.
  *
  * `ngsearch` (full-text FILE search, with optional server-side facet
- * aggregation) and `searchCollectionsByKeyword` (the COLLECTIONS endpoint that
+ * aggregation) and `searchCollectionsByKeywordResult` (the COLLECTIONS endpoint that
  * correctly returns `ccm:map` nodes). Both go through the shared `wloFetch` +
  * `propertyFilter` helpers in `wlo-config`.
  */
@@ -17,7 +17,7 @@ import type { SearchCriterion, SearchResponse, WloNode } from './wlo-types.js';
  * POST /search/v1/queries/-home-/mds_oeh/ngsearch
  * Search for FILE nodes. Uses contentType=FILES (default).
  * NOTE: contentType=FOLDERS/COLLECTIONS returns 0 for anonymous users —
- *       use searchCollectionsByKeyword() for collection search instead.
+ *       use searchCollectionsByKeywordResult() for collection search instead.
  */
 export type NgsearchContentType = 'FILES' | 'FILES_AND_FOLDERS';
 
@@ -104,11 +104,11 @@ export async function ngsearch(
  * Full-text keyword search that returns real COLLECTION nodes (isDirectory=true).
  * Unlike ngsearch with filter=collections, this endpoint correctly returns ccm:map nodes.
  */
-export async function searchCollectionsByKeyword(
+export async function searchCollectionsByKeywordResult(
   query: string,
   maxItems = 10,
   props: string[] | undefined = DISPLAY_PROPS,
-): Promise<WloNode[]> {
+): Promise<CollectionSearchResult> {
   const params = new URLSearchParams({
     contentType: 'COLLECTIONS',
     maxItems: String(maxItems),
@@ -118,9 +118,9 @@ export async function searchCollectionsByKeyword(
   const url = `${BASE_URL}/search/v1/queries/-home-/mds_oeh/collections?${params}`;
   const body = JSON.stringify({ criteria: [{ property: 'ngsearchword', values: [query] }] });
   const res = await wloFetch(url, { method: 'POST', headers: HEADERS, body });
-  if (!res.ok) { logUpstreamMiss('searchCollectionsByKeyword', res); return []; }
+  if (!res.ok) { logUpstreamMiss('searchCollectionsByKeyword', res); return { nodes: [], reachable: false }; }
   const data = await readJson<{ nodes?: WloNode[] }>(res, 'searchCollectionsByKeyword');
-  return data?.nodes ?? [];
+  return data ? { nodes: data.nodes ?? [], reachable: true } : { nodes: [], reachable: false };
 }
 
 /**
@@ -149,12 +149,13 @@ export async function searchCollectionsByKeyword(
  * Latency scales with the number of collections returned (~0.25 s each), so the
  * cap is the cost lever: 0.9–2.7 s at `maxItems=10` versus 1.3–9.7 s at 40.
  *
- * Degrades to `[]` like `searchCollectionsByKeyword`, and for the same reason —
- * it is one leg of a search that must still answer when the other one works.
+ * Degrades to no nodes like the keyword leg, and for the same reason — it is
+ * one leg of a search that must still answer when the other one works. It SAYS
+ * so (`reachable`): an index that did not answer is not an index without hits.
  */
-export async function searchCollectionsByName(query: string, maxItems = 10): Promise<WloNode[]> {
+export async function searchCollectionsByNameResult(query: string, maxItems = 10): Promise<CollectionSearchResult> {
   const q = query.trim();
-  if (!q) return [];
+  if (!q) return { nodes: [], reachable: true };
   const params = new URLSearchParams({
     query: q,
     maxItems: String(maxItems),
@@ -162,7 +163,16 @@ export async function searchCollectionsByName(query: string, maxItems = 10): Pro
   });
   const url = `${BASE_URL}/collection/v1/collections/-home-/search?${params}`;
   const res = await wloFetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) { logUpstreamMiss('searchCollectionsByName', res); return []; }
+  if (!res.ok) { logUpstreamMiss('searchCollectionsByName', res); return { nodes: [], reachable: false }; }
   const data = await readJson<{ collections?: WloNode[] }>(res, 'searchCollectionsByName');
-  return data?.collections ?? [];
+  return data ? { nodes: data.collections ?? [], reachable: true } : { nodes: [], reachable: false };
 }
+
+/**
+ * What a collection index answered — and WHETHER it did. `nodes: []` with
+ * `reachable: false` is "we did not find out", which is a different statement
+ * from "nothing matches" (audit 2026-11-12, K-3): the first is a fact about the
+ * server, the second about the catalogue, and callers used to get one empty
+ * list for both.
+ */
+export interface CollectionSearchResult { nodes: WloNode[]; reachable: boolean }

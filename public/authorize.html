@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-i18n-title="consent_doc_title">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,15 +9,19 @@
 </head>
 <body>
 <main>
-  <h1>Zugriff auf dein WLO-Konto erlauben</h1>
-  <p class="lede">
+  <div class="lang" role="group" aria-label="Sprache / Language">
+    <button type="button" data-lang="de" aria-pressed="true" lang="de" aria-label="Deutsch">DE</button>
+    <button type="button" data-lang="en" aria-pressed="false" lang="en" aria-label="English">EN</button>
+  </div>
+  <h1 data-i18n="consent_title">Zugriff auf dein WLO-Konto erlauben</h1>
+  <p class="lede" data-i18n="consent_lede">
     Ein KI-Programm möchte über WirLernenOnline mit deinen Rechten arbeiten.
     Melde dich an, wenn du das erlauben willst.
   </p>
   <p class="lang-note" lang="en">English: an AI client is asking to use the WLO MCP server with your account.</p>
 
   <div class="card">
-    <h2 id="who-heading">Wer fragt</h2>
+    <h2 id="who-heading" data-i18n="consent_who">Wer fragt</h2>
     <!-- Both values are filled in by the script from data this server checked.
          Never from the query string: the point of the screen is to say what was
          recognised, not to repeat back what the caller wrote. -->
@@ -28,19 +32,19 @@
          against the registration, and it is the only value on screen that can
          contradict the name. -->
     <dl class="who" aria-labelledby="who-heading">
-      <dt>Dein Zugang wird hierhin gesendet</dt>
+      <dt data-i18n="consent_destination">Dein Zugang wird hierhin gesendet</dt>
       <!-- The id sits on the <strong>, not the <dd>: the script fills it with
            textContent, which would otherwise replace the emphasis with plain
            text the moment the real value arrives. -->
       <dd class="mono"><strong id="redirect-origin">wird geprüft …</strong></dd>
-      <dt>Selbst angegebener Name des Programms</dt>
+      <dt data-i18n="consent_name">Selbst angegebener Name des Programms</dt>
       <dd id="client-name" dir="auto">wird geprüft …</dd>
     </dl>
-    <p class="hint">
+    <p class="hint" data-i18n="consent_name_hint">
       Den Namen wählt das Programm selbst — <strong>maßgeblich ist die Adresse oben</strong>.
       Erlaube den Zugriff nur, wenn du sie erkennst.
     </p>
-    <p class="hint">
+    <p class="hint" data-i18n="consent_scope_hint">
       Das Programm kann danach in deinem Namen suchen und — soweit dein Konto es
       erlaubt — Inhalte bearbeiten. Du kannst den Zugang jederzeit auf
       <a href="/auth-revoke.html">„Zugang sperren"</a> beenden.
@@ -48,29 +52,29 @@
   </div>
 
   <div class="card">
-    <h2 id="form-heading">Anmelden</h2>
+    <h2 id="form-heading" data-i18n="consent_form">Anmelden</h2>
     <!-- No native submit: the form is handled in JS so the password is
          encrypted before anything leaves the page. The CSP forbids form-action
          entirely, so a scripting failure cannot fall back to a plain POST. -->
     <form id="authorize-form" novalidate aria-labelledby="form-heading">
       <div class="field">
-        <label for="user">WLO-Benutzername</label>
+        <label for="user" data-i18n="user_label">WLO-Benutzername</label>
         <input id="user" name="user" type="text" autocomplete="username"
                required aria-describedby="user-hint" />
-        <p class="hint" id="user-hint">Derselbe Name, mit dem du dich auf WirLernenOnline anmeldest.</p>
+        <p class="hint" id="user-hint" data-i18n="user_hint">Derselbe Name, mit dem du dich auf WirLernenOnline anmeldest.</p>
       </div>
       <div class="field">
-        <label for="secret">WLO-Passwort</label>
+        <label for="secret" data-i18n="secret_label">WLO-Passwort</label>
         <input id="secret" name="secret" type="password" autocomplete="current-password"
                required aria-describedby="secret-hint" />
-        <p class="hint" id="secret-hint">
+        <p class="hint" id="secret-hint" data-i18n="secret_hint">
           Wird <strong>in deinem Browser verschlüsselt</strong> und verlässt dieses Gerät nur als
           unlesbarer Block. Wir speichern es nicht.
         </p>
       </div>
       <div class="actions">
-        <button type="submit" id="submit" disabled>Anmelden und erlauben</button>
-        <button type="button" id="deny" class="secondary">Ablehnen</button>
+        <button type="submit" id="submit" disabled data-i18n="consent_submit">Anmelden und erlauben</button>
+        <button type="button" id="deny" class="secondary" data-i18n="consent_deny">Ablehnen</button>
       </div>
     </form>
 
@@ -78,10 +82,10 @@
          token and cannot simply send none, so without this its only choices are
          signing in or cancelling — and cancelling is not a connection. -->
     <div class="actions" id="anonymous-actions">
-      <button type="button" id="anonymous" class="secondary" disabled>
+      <button type="button" id="anonymous" class="secondary" disabled data-i18n="consent_anonymous">
         Ohne eigenes WLO-Konto verbinden
       </button>
-      <p class="hint" id="anonymous-hint">
+      <p class="hint" id="anonymous-hint" data-i18n="consent_anonymous_hint">
         Du siehst dann alles, was auch ohne Anmeldung öffentlich ist — Suche, Sammlungen,
         Themenseiten und Volltexte. <strong>Inhalte anlegen oder ändern geht damit nicht.</strong>
         Du kannst dich später jederzeit anmelden, indem du die Verbindung neu einrichtest.
@@ -103,12 +107,12 @@
   </div>
 
   <div class="warn">
-    <p><strong>Nur anmelden, wenn du dieses Programm gerade selbst verbunden hast.</strong>
+    <p data-i18n="consent_warn"><strong>Nur anmelden, wenn du dieses Programm gerade selbst verbunden hast.</strong>
       Wer den Zugriff bekommt, kann bis zur Sperrung mit deinen WLO-Rechten arbeiten.</p>
   </div>
 
   <footer>
-    <p>WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
+    <p data-i18n="footer">WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
   </footer>
 </main>
 <script type="module" src="/authorize.js"></script>

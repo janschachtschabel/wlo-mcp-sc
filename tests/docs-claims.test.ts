@@ -247,7 +247,8 @@ function skillToolsPerMode(): { 'two-tool': number; 'one-tool': number; 'no-sear
   const count = (mode: 'two-tool' | 'one-tool', disableSearch = false): number => {
     const names: string[] = [];
     const probe = {
-      tool: (name: string) => { names.push(name); },
+      // Every tool is registered through the one seam, which calls `registerTool`.
+      registerTool: (name: string) => { names.push(name); return {}; },
     } as unknown as Parameters<typeof registerSkillTools>[0];
     registerSkillTools(probe, { collectionId: '', mode, disableSearch });
     return names.length;
@@ -501,4 +502,40 @@ test('the READMEs document no parameter the schema does not have', async () => {
     }
   }
   assert.deepEqual(wrong, [], 'a documented parameter that does not exist makes the tool call fail');
+});
+
+/**
+ * A setting the server reads and no table names (audit 2026-11-12, D-3).
+ *
+ * Eight variables were missing from both README tables — every one of them
+ * added with a feature whose own documentation was complete, which is exactly
+ * how a table falls behind: nothing fails when it does. Measured from the
+ * SOURCE (`process.env[...]`), not from a list somebody keeps.
+ */
+test('every environment variable the server reads is documented where an operator looks', () => {
+  const srcDir = fileURLToPath(new URL('../src', import.meta.url));
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+    .flatMap(e => (e.isDirectory() ? walk(`${dir}/${e.name}`) : e.name.endsWith('.ts') ? [`${dir}/${e.name}`] : []));
+  const used = new Set<string>();
+  for (const file of walk(srcDir)) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(/process\.env(?:\[['"]|\.)([A-Z][A-Z0-9_]{2,})/g)) used.add(m[1]!);
+    // Read through a helper that takes the NAME (`envMs('WLO_…', …)`): not a `process.env[...]` literal.
+    for (const m of text.matchAll(/\benvMs\(\s*'([A-Z][A-Z0-9_]{2,})'/g)) used.add(m[1]!);
+  }
+  assert.ok(used.size > 30, `the scan found only ${used.size} variables — the pattern no longer matches the code`);
+  // NODE_ENV and the like are the platform's, not settings of this server.
+  for (const platform of ['NODE_ENV']) used.delete(platform);
+
+  const missing: string[] = [];
+  for (const doc of ['README.md', 'README.de.md', 'docs/MCP-REFERENZ.md', '.env.example']) {
+    const text = read(doc);
+    // The WHOLE name: `PORT` is not documented by `HOST_PORT`, nor `WLO_SKILL_CACHE` by `WLO_SKILL_CACHE_TTL_MS`.
+    for (const name of used) if (!new RegExp(`(?<![A-Z0-9_])${name}(?![A-Z0-9_])`).test(text)) missing.push(`${doc}: ${name}`);
+  }
+  // The compose file passes every setting through — except PORT, which is the
+  // container's own (3000) and published through HOST_PORT.
+  const compose = read('docker-compose.yml');
+  for (const name of used) if (name !== 'PORT' && !new RegExp(`(?<![A-Z0-9_])${name}:`).test(compose)) missing.push(`docker-compose.yml: ${name}`);
+  assert.deepEqual(missing, [], 'a setting nobody can find is a setting nobody uses');
 });

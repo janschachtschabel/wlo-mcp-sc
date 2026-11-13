@@ -1,0 +1,5 @@
+# Shell scripts and the Dockerfile run on Linux whatever machine they were
+# written on: a CRLF line ending breaks `set -euo pipefail` in bash, and Git
+# Bash on Windows tolerates it, so a local green run proves nothing about it.
+*.sh text eol=lf
+Dockerfile text eol=lf

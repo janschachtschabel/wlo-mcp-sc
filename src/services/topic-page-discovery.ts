@@ -22,7 +22,7 @@ import {
 } from '../topic-page-api.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
-import { findTopicPagesByQuery } from './topic-page.js';
+import { findTopicPagesByQueryResult } from './topic-page.js';
 
 // Mode B bound: each candidate costs one metadata fetch (plus one children
 // fetch when it has a page config), so cap the merged portal+keyword set.
@@ -174,7 +174,7 @@ async function enrichPage(group: WloNode[]): Promise<ThemePageInfo[]> {
 export async function collectThemePages(
   params: { collectionId?: string; withinCollectionId?: string; query?: string; maxResults?: number },
   filters: VariantFilters,
-): Promise<{ results: ThemePageInfo[]; queryType: string }> {
+): Promise<{ results: ThemePageInfo[]; queryType: string; incomplete?: boolean }> {
   const maxResults = params.maxResults ?? 5;
 
   // ── Mode A: Direct collection check ──────────────────────────────────
@@ -193,10 +193,10 @@ export async function collectThemePages(
   }
   // ── Mode B: Topic-based search (collection → page_config_ref) ────────
   // The resolution core is shared with get_topic_page_content's one-step topic
-  // path (services/topic-page.findTopicPagesByQuery).
+  // path (services/topic-page.findTopicPagesByQueryResult).
   if (params.query?.trim()) {
-    const pages = await findTopicPagesByQuery(params.query, filters, MODE_B_CANDIDATE_MAX);
-    return { results: pages.slice(0, maxResults * 3), queryType: 'topic_pages_by_keyword' };
+    const { pages, incomplete } = await findTopicPagesByQueryResult(params.query, filters, MODE_B_CANDIDATE_MAX);
+    return { results: pages.slice(0, maxResults * 3), queryType: 'topic_pages_by_keyword', ...(incomplete ? { incomplete } : {}) };
   }
   // ── Mode C: List all Themenseiten (page_variant API) ─────────────────
   return {

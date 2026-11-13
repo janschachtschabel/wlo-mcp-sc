@@ -98,6 +98,7 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   // its parameters check out (see AUTHORIZE_ASSET).
   '/authorize.js': { relPath: 'authorize.js', contentType: JS },
   '/access-block.js': { relPath: 'access-block.js', contentType: JS },
+  '/auth-i18n.js': { relPath: 'auth-i18n.js', contentType: JS },
 };
 
 /**

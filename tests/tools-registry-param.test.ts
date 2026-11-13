@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { stopSkillRegistryCache } from '../src/services/skill-registry-cache.js';
-import { connectedClient, installFetchMock, makeNode, toolText } from './fetchMock.js';
+import { connectedClient, installFetchMock, makeNode, toolText, type MockResult } from './fetchMock.js';
 import { REGISTRY_CONTENT_TYPE_URI } from '../src/services/skill-catalogue.js';
 
 const SKILL_A = '00000001-0000-4000-8000-000000000000';
@@ -26,9 +26,12 @@ function collectionNode(id: string, title: string) {
 }
 
 /** A collection search whose one collection carries a registry; counts the lookups. */
+/** The handler of the last `searchMock()` — so a test can answer one URL differently and delegate the rest. */
+let searchAnswer: (url: string, init?: RequestInit) => MockResult = () => ({ json: {} });
+
 function searchMock() {
   const counts = { children: 0, download: 0 };
-  const mock = installFetchMock((url) => {
+  const handler = (url: string): MockResult => {
     if (url.includes('/collections')) return { json: { nodes: [collectionNode('coll-1', 'Sammlung Optik')] } };
     if (url.includes('/ngsearch')) {
       return { json: { nodes: [makeNode('c-1', 'Arbeitsblatt')], pagination: { total: 1, from: 0, count: 1 } } };
@@ -48,7 +51,9 @@ function searchMock() {
     }
     if (url.includes('/eduservlet/download')) { counts.download++; return { text: REGISTRY_MD }; }
     return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
-  });
+  };
+  searchAnswer = handler;
+  const mock = installFetchMock(handler);
   return { mock, counts };
 }
 
@@ -69,9 +74,92 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
       assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
       assert.equal(counts.children, 1, 'exactly one lookup for the one collection');
       assert.equal(counts.download, 1);
+
+      // The fresh answer is WRITTEN BACK (audit 2026-11-12, K-15): the next call
+      // without the parameter is served from memory and costs nothing.
+      const again = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
+      assert.match(again, /Skill-Registry: Skill Registry Optik/);
+      assert.equal(counts.children, 1, 'no second listing — the forced lookup fed the cache');
     } finally {
       await client.close();
       mock.restore();
+      stopSkillRegistryCache();
+    }
+  });
+
+  test(`${tool}: a forced lookup that FAILS is not "checked, none there" (audit K-15)`, async () => {
+    stopSkillRegistryCache();
+    searchMock().mock.restore();
+    const mock = installFetchMock((url, init): MockResult => {
+      // The collection is found; its children listing — where a registry would be — does not answer.
+      if (url.includes('/coll-1/children')) return { status: 503, json: {} };
+      return searchAnswer(url, init);
+    });
+    const client = await connectedClient();
+    try {
+      const result = await client.callTool({ name: tool, arguments: { query: 'optik', includeSkillRegistry: true } });
+      const text = toolText(result);
+      assert.match(text, /nicht geprüft/, `the pointer line stays — nothing was learned:\n${text}`);
+      assert.doesNotMatch(text, /Skill-Registry: Skill Registry Optik/);
+      if (tool === 'search_wlo_all') {
+        const sc = (result as unknown as { structuredContent: { collections: Record<string, unknown>; topicPages: Record<string, unknown> } }).structuredContent;
+        assert.notEqual(sc.collections['registryChecked'], true);
+        assert.notEqual(sc.topicPages['registryChecked'], true);
+      }
+    } finally {
+      await client.close();
+      mock.restore();
+      stopSkillRegistryCache();
+    }
+  });
+
+  test(`${tool}: a forced lookup that FAILS over a remembered catalogue does not show the old one as the fresh answer`, async () => {
+    stopSkillRegistryCache();
+    let down = false;
+    searchMock().mock.restore();
+    const mock = installFetchMock((url, init): MockResult => {
+      if (down && url.includes('/coll-1/children')) return { status: 503, json: {} };
+      return searchAnswer(url, init);
+    });
+    const client = await connectedClient();
+    try {
+      const warm = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
+      assert.match(warm, /Skill-Registry: Skill Registry Optik/, 'remembered');
+      down = true;
+      const forced = toolText(await client.callTool({ name: tool, arguments: { query: 'optik', includeSkillRegistry: true } }));
+      assert.doesNotMatch(forced, /Skill-Registry: Skill Registry Optik/,
+        'the caller asked for the state NOW; a catalogue up to its TTL old must not stand in for it');
+      assert.match(forced, /nicht geprüft/);
+    } finally {
+      await client.close();
+      mock.restore();
+      stopSkillRegistryCache();
+    }
+  });
+
+  test(`${tool}: a forced lookup that finds the registry GONE removes the remembered catalogue (audit K-15)`, async () => {
+    stopSkillRegistryCache();
+    let registryThere = true;
+    searchMock().mock.restore();
+    const mock = installFetchMock((url, init): MockResult => {
+      if (url.includes('/coll-1/children') && !registryThere) {
+        return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+      }
+      return searchAnswer(url, init);
+    });
+    const client = await connectedClient();
+    try {
+      const first = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
+      assert.match(first, /Skill-Registry: Skill Registry Optik/, 'remembered');
+      registryThere = false;   // the editors removed the registry document
+      const forced = toolText(await client.callTool({ name: tool, arguments: { query: 'optik', includeSkillRegistry: true } }));
+      assert.doesNotMatch(forced, /Skill Registry Optik/, 'the stale catalogue is not filled back in');
+      const after = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
+      assert.doesNotMatch(after, /Skill Registry Optik/, 'and the cache has learned it');
+    } finally {
+      await client.close();
+      mock.restore();
+      stopSkillRegistryCache();
     }
   });
 

@@ -133,7 +133,7 @@ zur Laufzeit auf Platte schreibt.
 | MCP-Endpunkt | 120/Min. je Adresse | Last |
 | `/api/*`, `/auth*`, `/oauth/authorize` | 30/Min. je Adresse | Dort wird ein Passwort getippt |
 | Verschiedene Zugangsdaten je Adresse | 10 in 10 Min. | **Passwort-Raten** — gezählt werden *unterschiedliche* Zugangsdaten, nicht Versuche |
-| Anfrage-Rumpf | 4 MiB | Speichererschöpfung |
+| Anfrage-Rumpf | 4 MiB (`/mcp`), 64 KiB auf `/auth*` und `/oauth/*` | Speichererschöpfung |
 
 **`/auth*` und `/oauth/authorize` senden bewusst KEINEN CORS-Header:** beide
 Schranken zählen pro Adresse, also könnte eine beliebige Webseite sonst das

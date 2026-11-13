@@ -109,3 +109,71 @@ test('die Zustimmungsseite bietet einen dritten Ausgang: ohne eigenes Konto', ()
   assert.ok(js.includes('anonymous: true'), 'die Absicht wird nicht mitgeschickt');
   assert.ok(!js.includes('token: block, anonymous'), 'anonym und Anmeldung sind zwei Wege, nicht einer');
 });
+
+// ── audit 2026-11-12, F-2: the three pages in English too ────────────────────
+
+const PAGES = ['auth.html', 'auth-revoke.html', 'authorize.html'];
+const SCRIPTS = ['auth.js', 'auth-revoke.js', 'authorize.js'];
+
+test('the language module is served, under the pages\' own policy', () => {
+  const r = resolveStaticRoute('GET', '/auth-i18n.js');
+  assert.equal(r?.status, 200);
+  assert.match(r!.asset!.contentType, /javascript/);
+  for (const script of SCRIPTS) assert.match(read(script), /from '\.\/auth-i18n\.js'/, `${script} uses it`);
+});
+
+test('every text marked for translation has an English text, and no English text is orphaned', async () => {
+  const { EN } = await import('../public/auth-i18n.js') as { EN: Record<string, string> };
+  const used = new Set<string>();
+  for (const page of PAGES) {
+    for (const m of read(page).matchAll(/data-i18n(?:-title)?="([^"]+)"/g)) used.add(m[1]!);
+  }
+  for (const script of SCRIPTS) {
+    for (const m of read(script).matchAll(/\bmsg\('([^']+)'/g)) used.add(m[1]!);
+  }
+  used.add('server_said');   // used by `serverMessage` inside the module
+  const missing = [...used].filter(k => !EN[k]);
+  const orphaned = Object.keys(EN).filter(k => !used.has(k));
+  assert.deepEqual(missing, [], 'marked in a page or script, but there is no English text');
+  assert.deepEqual(orphaned, [], 'an English text nothing shows');
+  assert.ok(used.size > 60, `only ${used.size} keys found — the patterns no longer match the pages`);
+});
+
+test('every page offers the switch as a real, labelled button group', () => {
+  for (const page of PAGES) {
+    const html = read(page);
+    assert.match(html, /<div class="lang" role="group" aria-label="[^"]+">/, page);
+    assert.match(html, /<button type="button" data-lang="de" aria-pressed="true" lang="de" aria-label="Deutsch">DE<\/button>/, page);
+    assert.match(html, /<button type="button" data-lang="en" aria-pressed="false" lang="en" aria-label="English">EN<\/button>/, page);
+  }
+});
+
+test('which language: asked for, else the browser\'s, else English for everybody else', async () => {
+  const { pickLang } = await import('../public/auth-i18n.js') as { pickLang: (s: string, l: readonly string[]) => string };
+  assert.equal(pickLang('?lang=en', ['de-DE']), 'en', 'an explicit choice wins');
+  assert.equal(pickLang('?lang=de', ['en-US']), 'de');
+  assert.equal(pickLang('?lang=fr', ['de-AT', 'en']), 'de', 'an unknown value is no choice');
+  assert.equal(pickLang('', ['fr-FR', 'en-GB', 'de']), 'en', 'the first of the two we have');
+  assert.equal(pickLang('', ['de']), 'de');
+  assert.equal(pickLang('', ['tr-TR']), 'en', 'whoever reads neither gets the more widely read one');
+  assert.equal(pickLang('', []), 'en');
+});
+
+test('a message from script keeps its German when there is no English, and fills its numbers', async () => {
+  const { msg, currentLang } = await import('../public/auth-i18n.js') as {
+    msg: (k: string, de: string, v?: Record<string, number>) => string; currentLang: () => string;
+  };
+  assert.equal(currentLang(), 'de', 'German until a page says otherwise');
+  assert.equal(msg('revoke_all_many', '{n} Zugänge wurden gesperrt.', { n: 3 }), '3 Zugänge wurden gesperrt.');
+  assert.equal(msg('gibt-es-nicht', 'Bleibt deutsch.'), 'Bleibt deutsch.');
+});
+
+test('the values the SERVER confirmed are never marked for translation — a switch must not overwrite them', () => {
+  const html = read('authorize.html');
+  for (const id of ['redirect-origin', 'client-name', 'status']) {
+    const tag = new RegExp(`<[^>]*id="${id}"[^>]*>`).exec(html)?.[0] ?? '';
+    assert.ok(tag, id);
+    assert.doesNotMatch(tag, /data-i18n/, id);
+  }
+  assert.doesNotMatch(read('auth-i18n.js'), /(?:localStorage|sessionStorage)\s*[.[]|document\.cookie/, 'the choice is not stored');
+});

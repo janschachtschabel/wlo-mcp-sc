@@ -55,7 +55,7 @@ function repository(existing: Array<{ id: string; parent: string; title: string 
     const children = /\/node\/v1\/nodes\/-home-\/([^/]+)\/children/.exec(url);
     if (children) {
       const list = [...nodes].filter(([, n]) => n.parent === children[1]).map(([id, n]) => ({
-        ref: { id, repo: '-home-' }, type: 'ccm:map', properties: { 'cclom:title': [n.title], 'cm:title': [n.title] },
+        ref: { id, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: { 'cclom:title': [n.title], 'cm:title': [n.title] },
       }));
       return { json: { nodes: list, pagination: { total: list.length, from: 0, count: list.length } } };
     }
@@ -64,7 +64,7 @@ function repository(existing: Array<{ id: string; parent: string; title: string 
       const n = nodes.get(meta[1]!);
       if (!n) return { status: 404, json: {} };
       const props = { 'cclom:title': [n.title], 'cm:title': [n.title] };
-      return { json: { node: { ref: { id: meta[1], repo: '-home-' }, type: 'ccm:map', title: n.title, properties: props },
+      return { json: { node: { ref: { id: meta[1], repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], title: n.title, properties: props },
         collection: { ref: { id: meta[1] }, title: n.title, properties: props } } };
     }
     return { json: {} };

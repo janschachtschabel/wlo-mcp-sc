@@ -85,11 +85,27 @@ const facetsSchema = z.record(z.string(), z.array(z.object({
   label: z.string(), count: z.number(), uri: z.string(),
 }))).optional();
 
+/**
+ * The two disclosures of a content search (`services/content-search.ts`),
+ * declared once for both tools that carry them. `more`: the page came back
+ * short although the catalogue holds more — continue at `nextSkipCount`.
+ * `textContent…`: hits whose full text was not read (past the bound) or could
+ * not be read; neither is "the record has no text" (that is `textContent: ''`).
+ */
+const contentSearchDisclosures = {
+  more: z.object({ nextSkipCount: z.number() }).optional(),
+  textContentSkipped: z.array(z.string()).optional(),
+  textContentUnreadable: z.array(z.string()).optional(),
+};
+
 /** `{ total, count, results }` — search_wlo_content / search_wlo_collections. */
 export const nodeListSchema = z.object({
   total: z.number(),
   count: z.number(),
   results: z.array(formattedNodeSchema),
+  ...contentSearchDisclosures,
+  /** search_wlo_collections: a collection index did not answer — the list may lack hits (K-3). */
+  incomplete: z.literal(true).optional(),
   /**
    * Content type derived from a medium word in the query (never set for an
    * explicit `learningResourceType`). Declared here because an undeclared key
@@ -203,12 +219,15 @@ export const searchAllEnvelopeSchema = z.object({
     /** Same placement rule as `licenseFilter`: a content-leg disclosure lives
      *  in the content bucket. See `nodeListSchema.derivedResourceType`. */
     derivedResourceType: z.string().optional(),
+    ...contentSearchDisclosures,
   }),
   // `registryChecked` declared for the same reason as `skillRegistry` above:
   // an undeclared field breaks the advertised schema (see the header).
   collections: z.object({
     total: z.number(), count: z.number(), results: z.array(formattedNodeSchema),
     registryChecked: z.literal(true).optional(),
+    // A source of this bucket did not answer: the list may lack hits (K-3).
+    incomplete: z.literal(true).optional(),
   }),
   // `registryChecked` here too: a Themenseite IS a collection and carries the
   // same disclosure since 2026-08-19 — undeclared, it would break the
@@ -216,8 +235,10 @@ export const searchAllEnvelopeSchema = z.object({
   topicPages: z.object({
     total: z.number(), count: z.number(), results: z.array(topicPageResultSchema),
     registryChecked: z.literal(true).optional(),
+    incomplete: z.literal(true).optional(),
   }),
   wikipedia: wikiSummarySchema.optional(),
+  wikipediaUnreachable: z.literal(true).optional(),
   // Call-level, not per bucket: the filters are the call's (only the content
   // leg applies them; `_queryMeta` repeats them per leg for the same reason).
   unresolvedFilters: unresolvedFiltersSchema,
@@ -234,6 +255,8 @@ export type BrowseTreeNode = z.infer<typeof formattedNodeSchema> & {
   children?: BrowseTreeNode[];
   /** Upstream holds more sub-collections than this listing shows. */
   hasMoreChildren?: boolean;
+  /** The listing of this node's sub-collections did not answer. */
+  childrenUnread?: boolean;
 };
 
 const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
@@ -242,6 +265,7 @@ const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
     contentPreview: z.array(formattedNodeSchema).optional(),
     children: z.array(browseTreeNodeSchema).optional(),
     hasMoreChildren: z.boolean().optional(),
+    childrenUnread: z.boolean().optional(),
   }),
 );
 

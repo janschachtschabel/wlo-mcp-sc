@@ -755,10 +755,10 @@ test('get_skill never advertises a finder that is not registered', () => {
 // SKILL.md past that came back cut, with the marker. An instruction that
 // arrives half is worse than none — the model follows the half it got.
 
-test('get_skill loads an instruction of ANY size, uncut', async () => {
-  // 1.5 MiB — deliberately past the 1-MiB bound the first fix chose, because
-  // the user's decision replaced it: there is NO length limit on the skill
-  // path. The ordinary 64-KiB download cap stays for every other file read.
+test('get_skill loads a large instruction uncut', async () => {
+  // 1.5 MiB — past the ordinary 64-KiB download cap and below the skill bound
+  // (2 MiB, audit 2026-11-12): inside it nothing is ever cut, past it the
+  // file is refused whole (next tests).
   const body = '# Grosser Skill' + String.fromCharCode(10)
     + 'x'.repeat(1536 * 1024) + String.fromCharCode(10) + 'LETZTE ZEILE DES SKILLS';
   const mock = installFetchMock((url) => {
@@ -783,3 +783,34 @@ test('get_skill loads an instruction of ANY size, uncut', async () => {
     mock.restore();
   }
 });
+
+// ── audit 2026-11-12, P-2: what the caller is TOLD about a file not loaded ───
+
+for (const [why, node, body, mustSay] of [
+  ['not a text file', { mimetype: 'video/mp4', size: 900_000_000 }, 'never read', 'keine Textdatei'],
+  ['larger than the bound', { mimetype: 'text/markdown' }, 'x'.repeat(2 * 1024 * 1024 + 10), 'NICHT geladen'],
+] as const) {
+  test(`get_skill names a file it did not load — ${why} (audit P-2)`, async () => {
+    let downloads = 0;
+    const mock = installFetchMock((url) => {
+      if (url.includes('/metadata')) return { json: { node: { ...skillNode('f-1', 'Datei', 'd'), ...node } } };
+      if (url.includes('/eduservlet/download')) { downloads++; return { text: body }; }
+      return { json: {} };
+    });
+    const client = await skillClient();
+    try {
+      const args = { nodeId: 'f-1', includeFiles: false };
+      const text = toolText(await client.callTool({ name: 'get_skill', arguments: args }));
+      assert.ok(text.includes(mustSay), text);
+      assert.ok(!text.includes('kein Anleitungstext abrufbar'), 'not the sentence for a record without a file');
+      assert.ok(!text.includes(TRUNCATION_MARKER) && !text.includes('xxxx'), 'nothing of a refused file is shown');
+      if (why === 'not a text file') assert.equal(downloads, 0, 'a video is not downloaded at all');
+      const json = JSON.parse(toolText(await client.callTool({ name: 'get_skill', arguments: { ...args, outputFormat: 'json' } })));
+      assert.equal(json.skill.content, null);
+      assert.ok(json.skill.contentRefused, 'the JSON says why there is no content');
+    } finally {
+      await client.close();
+      mock.restore();
+    }
+  });
+}

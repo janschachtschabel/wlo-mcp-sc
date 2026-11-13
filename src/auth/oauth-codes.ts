@@ -37,6 +37,13 @@ export interface CodeRecord {
   block: string;
   /** WLO user name, for the log line at exchange. */
   label: string;
+  /**
+   * Whose budget of outstanding codes this one counts against; `label` when
+   * absent. Anonymous connections all carry ONE label, so counted by it they
+   * shared twenty codes between everybody (audit 2026-11-12, S-8) — they are
+   * counted per address instead.
+   */
+  owner?: string;
   /** Absolute expiry, computed at mint time. */
   expiresAt: number;
 }
@@ -95,7 +102,12 @@ export function createCodeStore(
     mint(record, now) {
       sweep(now);
       // Insertion order is age order: the first matching keys are the oldest.
-      const own = [...codes].filter(([, r]) => r.label === record.label);
+      // Counted by `owner`, which for a login is `label` — the spelling typed — not by the confirmed account
+      // the registry groups by: another spelling of one login gets a budget of
+      // its own here. Harmless (a code lives minutes, the store is capped as a
+      // whole), and noted so it is not mistaken for the registry's rule.
+      const owner = record.owner ?? record.label;
+      const own = [...codes].filter(([, r]) => (r.owner ?? r.label) === owner);
       for (let i = 0; i <= own.length - perLabel; i++) codes.delete(own[i]![0]);
       // Sweeping usually suffices; the eviction below covers the case where a
       // burst arrives faster than the TTL expires anything.

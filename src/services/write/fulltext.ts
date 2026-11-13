@@ -35,8 +35,9 @@ import { readNodeMetadata, readNodeTextContent, stripStoreRef, type WloNode } fr
 import { BASE_URL, WLO_TEXT_TIMEOUT_MS } from '../../wlo-config.js';
 import { wloFetch } from '../../wlo-fetch.js';
 import { nodeTitle } from '../../node-match.js';
+import { wrongKind } from '../../node-kind.js';
 import { flattenText } from '../../text-sanitize.js';
-import { failureCode } from '../failure-code.js';
+import { failureCode, writeFailureCode } from '../failure-code.js';
 import { failureDetail, resolveWriteTarget } from './nodes.js';
 
 /** Bytes (UTF-8) per full text. Measured to round-trip at 2 MB in a property (2026-11-07); a call carries one. */
@@ -68,7 +69,7 @@ export interface FulltextInput {
 
 export type RefusalCode =
   | 'not_found' | 'forbidden' | 'unreadable' | 'unreadable_original' | 'too_large' | 'exists' | 'nothing_to_change'
-  | 'would_replace_file' | 'link_record' | 'text_unreadable';
+  | 'would_replace_file' | 'link_record' | 'text_unreadable' | 'not_a_record';
 
 export interface FulltextPlan {
   requestedId: string;
@@ -132,6 +133,11 @@ export async function planFulltext(input: FulltextInput): Promise<PlanOutcome> {
     original = read.node;
   }
   const title = flattenText(nodeTitle(original) || target.targetId);
+  // A full text is the CONTENT of a record. A collection or folder has no file
+  // and no source URL, so it passed every safeguard below — and the write would
+  // have put content on a container.
+  const wrong = wrongKind(original, 'content');
+  if (wrong) return refuse('not_a_record', `„${flattenText(target.targetId)}“ ${wrong.reason} Es wurde nichts geschrieben.`);
 
   if (stripStoreRef(original.properties?.['ccm:wwwurl']?.[0])) {
     return refuse('link_record', 'Der Datensatz verweist auf eine Webseite; deren Text liest das Repository selbst '
@@ -254,7 +260,7 @@ export async function writeFulltext(plan: FulltextPlan, markdown: string): Promi
     });
   } catch (err) {
     // The request may have arrived; the answer did not.
-    return { status: 'failed', code: failureCode(err), outcomeOpen: true, detail: err instanceof Error ? err.message : String(err) };
+    return { status: 'failed', code: writeFailureCode(err), outcomeOpen: true, detail: err instanceof Error ? err.message : String(err) };
   }
   if (!res.ok) {
     const detail = await failureDetail(res);

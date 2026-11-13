@@ -16,10 +16,12 @@ import {
 } from '../services/search.js';
 import { getCompendiumTexts } from '../services/compendium.js';
 import { buildFilterCriteria, licenseFilterNotice, licensePagingNotice } from '../filter-criteria.js';
+import { contentBucketNotices } from '../services/content-search.js';
+import { incompleteNotice } from '../services/collection-search.js';
 import { resolveTopicPageSwimlanes } from '../services/topic-page.js';
 import type { TargetGroup } from '../topic-page-variant.js';
 import { getTopicPageContent } from '../topic-page-structure.js';
-import { fetchWikipediaSummary } from '../wikipedia-api.js';
+import { fetchWikipediaSummaryResult } from '../wikipedia-api.js';
 import { WLO_SKILLS_COLLECTION_ID } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
 import { listSkills, loadSkillMarkdown } from './skills.js';
@@ -150,6 +152,10 @@ export async function handleSearch(params: URLSearchParams): Promise<RestResult>
           licensePagingNotice(opts.license, opts.skipCount ?? 0),
         ].filter(Boolean)
       : [];
+    // The short-page and full-text disclosures, from the unprojected envelope too.
+    notices.push(...contentBucketNotices(envelope.content));
+    if (envelope.collections.incomplete) notices.push(incompleteNotice('Sammlungen', envelope.collections.count === 0));
+    if (envelope.topicPages.incomplete) notices.push(incompleteNotice('Themenseiten', envelope.topicPages.count === 0));
     const page = { ...(response as SearchPageData) };
     if (notices.length) page.warnings = [...(page.warnings ?? []), ...notices];
     return { status: 200, raw: renderSearchPage(page), contentType: HTML_TYPE };
@@ -227,7 +233,11 @@ export async function handleWikipedia(params: URLSearchParams): Promise<RestResu
   if (!lang.ok) return badRequest(lang.error);
   const sections = clampInt(params.get('sections'), 1, 3, 1) as 1 | 2 | 3;
 
-  const summary = await fetchWikipediaSummary(q.value, lang.value, sections);
+  const { summary, unreachable } = await fetchWikipediaSummaryResult(q.value, lang.value, sections);
+  // "No article" is a statement about Wikipedia; an outage on the way is not one.
+  if (!summary && unreachable) {
+    return { status: 503, json: { error: 'Wikipedia did not answer', code: 'upstream_unreachable' } };
+  }
   if (!summary) return { status: 404, json: { error: 'No Wikipedia article found' } };
   return { status: 200, json: summary };
 }

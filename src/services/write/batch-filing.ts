@@ -48,7 +48,8 @@ export async function folderLayout(): Promise<'folder' | 'flat'> {
 export type FolderOutcome =
   | { status: 'created'; nodeId: string }
   | { status: 'denied' }
-  | { status: 'failed'; detail: string };
+  /** `open`: the folder MAY exist (a 5xx, or an answer without an id). */
+  | { status: 'failed'; detail: string; open?: true };
 
 export async function createBatchFolder(name: string): Promise<FolderOutcome> {
   const folderName = flattenText(name).slice(0, FOLDER_NAME_CHARS).trim() || 'Ablage';
@@ -57,11 +58,11 @@ export async function createBatchFolder(name: string): Promise<FolderOutcome> {
     method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ 'cm:name': [folderName] }),
   });
   if (res.status === 403) return { status: 'denied' };
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), ...(res.status >= 500 ? { open: true as const } : {}) };
   const created = await readJson<{ node?: { ref?: { id?: string } } }>(res, 'createBatchFolder');
   const nodeId = created?.node?.ref?.id;
   return nodeId ? { status: 'created', nodeId }
-    : { status: 'failed', detail: 'Der Ordner wurde angelegt, aber ohne verwertbare ID gemeldet.' };
+    : { status: 'failed', open: true, detail: 'Der Ordner wurde angelegt, aber ohne verwertbare ID gemeldet.' };
 }
 
 export interface SlotBytes {
@@ -79,10 +80,13 @@ async function fileFile(
   parent: string, title: string, file: UploadFile, extra: Record<string, string[]> = {},
 ): Promise<StoreResult> {
   const out = await createContentNode({ 'cclom:title': [title], ...extra },
-    { mode: 'user', parent, file, keepIdOnError: true, uploadTimeoutMs: uploadTimeoutMs(file.bytes.length) });
+    { mode: 'user', parent, file, uploadTimeoutMs: uploadTimeoutMs(file.bytes.length) });
   if (out.status !== 'created') {
-    return { status: 'failed', detail: out.status === 'failed' ? out.detail : 'Bereits vorhanden.' };
+    return { status: 'failed', detail: out.status === 'failed' ? out.detail : 'Bereits vorhanden.',
+      ...(out.status === 'failed' && out.open ? { open: true as const } : {}) };
   }
+  // The record exists and a later step got no answer: its id is reported, its state is open.
+  if (out.incomplete) return { status: 'unverified', nodeId: out.nodeId, detail: out.incomplete };
   const upload = out.upload;
   if (!upload || upload.status === 'failed' || upload.status === 'dropped') {
     // The record exists without its bytes — the person can delete it (the id is reported).
@@ -98,12 +102,15 @@ async function fileFile(
 }
 
 export async function fileBatchEntry(parent: string, entry: BatchEntry, slot: SlotBytes): Promise<StoreResult> {
-  if (slot.sha256 !== entry.sha256 || slot.type.ext !== entry.ext) {
-    return { status: 'failed', detail: 'Die Datei passt nicht zur freigegebenen (Prüfsumme oder Art).' };
+  // The SIZE too, although an equal checksum implies it: the size is what the
+  // preview SHOWED, and a caller that declared 1 kB for a 40 MB file had the
+  // person approve a line that was not true (audit 2026-11-12, S-5).
+  if (slot.sha256 !== entry.sha256 || slot.type.ext !== entry.ext || slot.data.length !== entry.size) {
+    return { status: 'failed', detail: 'Die Datei passt nicht zur freigegebenen (Prüfsumme, Art oder Größe).' };
   }
   return fileFile(parent, entry.title, {
     bytes: slot.data, fileName: entry.fileName, mimeType: slot.type.mimeType,
-    digest: slot.sha256.slice(0, 16), excerpt: '',
+    digest: slot.sha256, excerpt: '',
   });
 }
 

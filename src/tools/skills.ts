@@ -11,14 +11,15 @@
  *
  * Trust boundary: a skill is uploaded content in the repository, so the
  * returned Markdown is UNTRUSTED (indirect prompt injection). Both renderings
- * frame it as curated suggestions to review. Downloads are byte-capped
- * (`getNodeDownloadText`).
+ * frame it as curated suggestions to review. An instruction is loaded whole
+ * or not at all (`readSkillText`: never cut, refused past 2 MiB).
  */
 
+import { registerReadTool } from '../apps/register.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { getSkill, pickBestSkill, searchSkillsDetailed, type SkillDocument, type SkillSummary } from '../services/skills.js';
+import { getSkill, pickBestSkillResult, searchSkillsDetailed, type SkillDocument, type SkillSummary } from '../services/skills.js';
 import { formatUnresolvedHint } from '../filter-criteria.js';
 import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
@@ -84,6 +85,11 @@ const UNTRUSTED_NOTE =
  * would act on. A skill's `content` is deliberately NOT flattened — that one IS
  * the document.
  */
+/** Said under a listing the walk could not complete — with hits and, above all, without. */
+const INCOMPLETE_WALK_NOTE = 'Hinweis: Die Sammlung wurde nicht vollständig gelesen (Seitengröße, Tiefe oder ein '
+  + 'nicht lesbarer Teil) — die Liste kann Skills auslassen, und eine leere Liste ist hier KEIN Befund „keine Skills“. '
+  + 'Die Freigabeliste einer Sammlung liefert get_skill_registry.';
+
 function renderCatalogue(skills: SkillSummary[], query: string | undefined): string {
   if (!skills.length) {
     return oneLine(`Keine Skills gefunden${query ? ` (Suche: „${query}“)` : ''}.`);
@@ -121,10 +127,24 @@ export function renderSkill(skill: SkillDocument): string {
   lines.push(...renderFileManifest(skill));
   lines.push(...renderReferences(skill));
   lines.push('', UNTRUSTED_NOTE, '', '---', '');
-  lines.push(skill.content
-    ? skill.content.trim()
-    : oneLine(`_Für diesen Skill ist kein Anleitungstext abrufbar (${skill.url || skill.downloadUrl})._`));
+  lines.push(skill.content ? skill.content.trim() : oneLine(noContentLine(skill)));
   return lines.join('\n');
+}
+
+/**
+ * Why there is no instruction text. A file that was NOT loaded is named as
+ * such: "kein Text abrufbar" over a video would send the caller looking for a
+ * text that does not exist, and over an oversized file it would hide that one does.
+ */
+function noContentLine(skill: SkillDocument): string {
+  const where = skill.url || skill.downloadUrl;
+  if (skill.contentRefused === 'not_text') {
+    return `_Dieser Datensatz ist keine Textdatei — get_skill lädt nur Anleitungen im Textformat. Für den Inhalt anderer Dateien: get_wlo_content_text (${where})._`;
+  }
+  if (skill.contentRefused === 'too_large') {
+    return `_Die Datei ist zu groß für eine Anleitung und wurde NICHT geladen — eine Anleitung wird nie gekürzt, also ganz oder gar nicht (${where})._`;
+  }
+  return `_Für diesen Skill ist kein Anleitungstext abrufbar (${where})._`;
 }
 
 /**
@@ -283,7 +303,7 @@ const SEARCH_SCHEMA = {
 };
 
 function registerSearchSkill(server: McpServer, collectionId: string): void {
-  server.tool(
+  registerReadTool(server,
     'search_skill',
     `Sucht WLO-Skills — kuratierte KI-Skills (Inhaltsart "ai_skill") mit angehängter Anleitung (SKILL.md).
 Liefert pro Treffer nodeId, Titel, Beschreibung und Keywords, damit das Modell den passenden Skill
@@ -297,7 +317,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
     { readOnlyHint: true },
     async (params) => {
       try {
-        const { skills, unresolved } = await searchSkillsDetailed({
+        const { skills, unresolved, incomplete } = await searchSkillsDetailed({
           query: params.query,
           maxResults: params.maxResults ?? 10,
           discipline: params.discipline,
@@ -314,6 +334,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
           // skill out of a list that has none.
           return { content: [{ type: 'text' as const, text: JSON.stringify({
             query: params.query ?? null, skills, unresolved,
+            ...(incomplete ? { incomplete: true, incompleteNote: INCOMPLETE_WALK_NOTE } : {}),
             ...(skills.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
           }) }] };
         }
@@ -323,7 +344,9 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
         return { content: [{ type: 'text' as const, text:
           (hint ? `${hint}
 
-` : '') + renderCatalogue(skills, params.query) }] };
+` : '') + renderCatalogue(skills, params.query) + (incomplete ? `
+
+${INCOMPLETE_WALK_NOTE}` : '') }] };
       } catch (err) {
         return toolError('Fehler bei der Skill-Suche', err);
       }
@@ -332,7 +355,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
 }
 
 function registerGetSkill(server: McpServer, finder: SkillFinder): void {
-  server.tool(
+  registerReadTool(server,
     'get_skill',
     getSkillDescription(finder),
     {
@@ -350,12 +373,21 @@ function registerGetSkill(server: McpServer, finder: SkillFinder): void {
         const skill = await getSkill(params.nodeId.trim(), { includeFiles: params.includeFiles !== false });
         if (!skill) {
           return { content: [{ type: 'text' as const, text:
-            oneLine(`Skill ${params.nodeId} ist nicht abrufbar (unbekannte nodeId oder kein Zugriff).`) }] };
+            oneLine(`Skill ${params.nodeId} ist nicht abrufbar (unbekannte nodeId oder kein Zugriff).`) }],
+            structuredContent: { found: false, nodeId: params.nodeId.trim(), contentLoaded: false } };
         }
+        // What a program needs to branch on, in BOTH formats (chatbot feedback
+        // 2026-11-13, W6): a refused instruction was recognisable only by the
+        // closing line of the text. Fields, not an error — the record was found,
+        // and its metadata is a useful answer.
+        const structuredContent = {
+          found: true, nodeId: skill.nodeId, title: skill.title, contentLoaded: Boolean(skill.content),
+          ...(skill.contentRefused ? { contentRefused: skill.contentRefused } : {}),
+        };
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ skill }) }] };
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ skill }) }], structuredContent };
         }
-        return { content: [{ type: 'text' as const, text: renderSkill(skill) }] };
+        return { content: [{ type: 'text' as const, text: renderSkill(skill) }], structuredContent };
       } catch (err) {
         return toolError('Fehler beim Laden des Skills', err);
       }
@@ -364,7 +396,7 @@ function registerGetSkill(server: McpServer, finder: SkillFinder): void {
 }
 
 function registerGetSkillForTask(server: McpServer, collectionId: string): void {
-  server.tool(
+  registerReadTool(server,
     'get_skill_for_task',
     `Wählt den zur Aufgabe passenden WLO-Skill (kuratierter KI-Skill, Inhaltsart "ai_skill") selbst aus und liefert direkt
 dessen Anleitung (SKILL.md) als Markdown — Suche, Ranking und Abruf in einem Aufruf. Die übrigen
@@ -379,15 +411,16 @@ Arbeitsablauf passt. Nicht für gewöhnliche OER-Inhalte — dafür \`search_wlo
     { readOnlyHint: true },
     async (params) => {
       try {
-        const picked = await pickBestSkill({
+        const { picked, incomplete } = await pickBestSkillResult({
           query: params.task,
           discipline: params.discipline,
           educationalContext: params.educationalContext,
           ...resolveScope(params, collectionId),
         });
         if (!picked) {
-          return { content: [{ type: 'text' as const, text:
-            oneLine(`Keine Skills gefunden (Suche: „${params.task}“).`) }] };
+          return { content: [{ type: 'text' as const, text: incomplete
+            ? INCOMPLETE_WALK_NOTE
+            : oneLine(`Keine Skills gefunden (Suche: „${params.task}“).`) }] };
         }
         if ((params.outputFormat ?? 'markdown') === 'json') {
           return { content: [{ type: 'text' as const, text: JSON.stringify(picked) }] };

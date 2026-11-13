@@ -73,7 +73,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 > diesem Hinweis heißt es „nichts mit genau dieser Lizenz“, ohne ihn hat die
 > Suche selbst nichts gefunden.
 >
-> **Zweitens:** `OER` wird als fünf getrennte Suchen beantwortet. Auf Seite 2 und
+> **Zweitens:** `OER` wird als vier getrennte Suchen beantwortet. Auf Seite 2 und
 > danach ist das Ergebnis deshalb keine Fortsetzung, sondern die zweite Seite
 > *jeder* der fünf Lizenzen — Material wiederholt sich, anderes wird
 > übersprungen. Zum verlässlichen Weiterblättern die bereits gesehenen IDs über
@@ -162,9 +162,11 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 > **Leeres Ergebnis lesen:** Findet sich nichts Darstellbares, kommt kein
 > Fehler, sondern eine gültige leere Antwort mit `reason` — `no_match` (Thema
 > ohne Treffer), `node_not_found` (ID existiert nicht), `no_page_config_ref`
-> (Sammlung ohne Themenseite), `no_variant` (nur Vorlagen vorhanden) oder
-> `empty_config` (Variante ohne Schwimmlinien). Damit muss ein Client keine
-> weiteren Kandidaten blind durchprobieren. Bei `outputFormat: "json"` steht
+> (Sammlung ohne Themenseite), `no_variant` (nur Vorlagen vorhanden),
+> `empty_config` (Variante ohne Schwimmlinien) oder `source_unreachable` (die
+> Suche nach der Seite hat nicht geantwortet — **kein** Befund, später erneut
+> versuchen). Damit muss ein Client keine weiteren Kandidaten blind
+> durchprobieren. Bei `outputFormat: "json"` steht
 > die Antwort auch im Leerfall als JSON im Textblock.
 
 ### Stöbern & Navigieren
@@ -569,21 +571,21 @@ zurück.
 | `wlo_update_content` | Datensatz ändern — Metadaten **und/oder den Inhalt** (`content`/`fileBase64` ersetzt die hinterlegte Datei; die alte Fassung bleibt in der Versionshistorie). Metadaten: Titel, Beschreibung, Schlagwörter (ergänzt, nicht ersetzt), Quell-URL, Sprache, Autor, Herausgeber, Lizenz, Inhaltstyp, Fach, Stufe, Zielgruppe, **Prüfergebnis einer maschinellen Qualitätsprüfung** (Sachrichtigkeit, Urheberrecht, Strafrecht, Persönlichkeitsrecht, Jugendschutz — nur die Maschinen-Werte, ein Mensch-Ergebnis wird abgelehnt) | *„Ergänze bei diesem Material das Fach Biologie und die Stufe Sek I“*, *„Trage ein, dass die Sachrichtigkeitsprüfung keine Auffälligkeiten ergeben hat“* |
 | `wlo_create_content` | Neuen Datensatz anlegen — **zwei Wege**: `url` für Material, das woanders liegt (prüft vorher auf ein Duplikat und nennt den vorhandenen), oder `content`/`fileBase64`, wenn der Datensatz den Inhalt **selbst tragen** soll (im Chat erstelltes Markdown, erzeugtes Bild). Bleibt ein **Entwurf** | *„Leg für diese Seite einen WLO-Datensatz an“* · *„Speichere dieses Arbeitsblatt in WLO“* |
 | `wlo_submit_content` | Einen vorhandenen Datensatz zur redaktionellen Prüfung einreichen — ein eigener Schritt, nie automatisch | *„Reiche diesen Datensatz zur Prüfung ein“* |
-| `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen. Über die id einer **Sammlungs-Verknüpfung** verschwindet nur die Verknüpfung — der Datensatz bleibt; die Vorschau sagt, welcher Fall vorliegt | *„Lösche diesen Datensatz“* |
+| `wlo_delete_content` | Datensatz löschen. Über diesen Server nicht rückgängig zu machen. Über die id einer **Sammlungs-Verknüpfung** verschwindet nur die Verknüpfung — der Datensatz bleibt; die Vorschau sagt, welcher Fall vorliegt. Eine Sammlung oder ein Ordner wird abgelehnt | *„Lösche diesen Datensatz“* |
 
 ### Sammlungen pflegen
 | Tool | Funktion | Bester Chat-Trigger |
 |---|---|---|
 | `wlo_create_collection` | Sammlung anlegen (eine kuratierte Themenseite), oberste Ebene oder Untersammlung | *„Leg eine Sammlung ‚Bruchrechnung Klasse 6‘ an“* |
 | `wlo_rename_collection` | Titel und Beschreibung einer Sammlung ändern | *„Benenne diese Sammlung um in …“* |
-| `wlo_add_to_collection` | Vorhandenes Material in eine Sammlung aufnehmen. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise | *„Nimm dieses Video in meine Sammlung auf“* |
+| `wlo_add_to_collection` | Vorhandenes Material in eine Sammlung aufnehmen. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise. Eine Verknüpfungs-id wird aufs Original umgeleitet (die Vorschau nennt es); schon Enthaltenes wird nicht erneut gesendet | *„Nimm dieses Video in meine Sammlung auf“* |
 | `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen | *„Nimm dieses Material aus der Sammlung heraus“* |
 | `wlo_create_collection_tree` | Ganzen Baum von Untersammlungen mit EINER Bestätigung anlegen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder). Abschnitte von ~40 s, `continuationToken` bis fertig; ein erneut vorgelegter Schlüssel setzt fort, legt nie doppelt an. Antwort `nodes [{path, nodeId, status, code}]` | *„Lege unter Optik diese Gliederung als Sammlungen an“* |
 | `wlo_add_to_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aufnehmen; Verknüpfung → Original (`filedId`), schon Enthaltenes `already`, Einzelfehler halten den Rest nicht auf. Noch nicht live geprüft | *„Nimm diese zwölf Materialien in die passenden Sammlungen auf“* |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung; beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt (der Server entscheidet je Feld) | — (Chatbot-Ablauf, viele Datensätze) |
 | `wlo_attach_fulltext` | Volltext (Markdown) im `textContent` eines Datensatzes ablegen, zweistufig und zurückgelesen; Datensätze mit Datei vorerst abgelehnt (`would_replace_file`) | — (Chatbot-Ablauf, Volltexte) |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit EINER Bestätigung (≤ 3 MB je Aufruf), je Datensatz die Regeln von `wlo_attach_fulltext` | — (Chatbot-Ablauf, Volltexte) |
-| `wlo_delete_collection` | Sammlung samt Untersammlungen löschen. Das verlinkte Material bleibt bestehen | *„Lösche diese Sammlung“* |
+| `wlo_delete_collection` | Sammlung samt Untersammlungen löschen. Das verlinkte Material bleibt bestehen; direkt in der Sammlung angelegte Originale gehen mit. Nur für Sammlungen — ein Ordner wird abgelehnt | *„Lösche diese Sammlung“* |
 | `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: Stapel-Ablage in den persönlichen Bereich vorbereiten (Vorschau, ein Freigabe-Schlüssel) | — (Upload-Modul des Chatbots, nicht für ein Modell) |
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes vorher über `POST /api/uploads`) | — (Upload-Modul) |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel ablegen (Kennzahlen zusätzlich in `cm:description`) | — (Upload-Modul) |

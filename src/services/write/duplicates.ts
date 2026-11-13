@@ -16,6 +16,7 @@
  * growing a second reason to change - and it names the seam a newcomer looks for.
  */
 
+import { nodeTitle } from '../../node-match.js';
 import { recordsForUrl } from '../url-matches.js';
 import { getCollectionContents } from '../../wlo-node.js';
 import { log } from '../../logger.js';
@@ -80,7 +81,7 @@ export async function findByTitle(title: string, parentId: string): Promise<Exis
   let nodes;
   try {
     ({ nodes } = await getCollectionContents(parentId, 'files', TITLE_SCAN_LIMIT, 0, [
-      'cclom:title', 'cm:name', 'ccm:wwwurl',
+      'cclom:title', 'cm:title', 'cm:name', 'ccm:wwwurl',
     ]));
   } catch (err) {
     log.warn('duplicate-by-title check could not list the storage location', {
@@ -91,7 +92,7 @@ export async function findByTitle(title: string, parentId: string): Promise<Exis
   }
 
   for (const node of nodes) {
-    const stored = node.properties?.['cclom:title']?.[0] ?? node.title ?? node.name ?? '';
+    const stored = nodeTitle(node);
     if (stored.trim().toLowerCase() !== wanted) continue;
     return {
       nodeId: node.ref?.id ?? '',

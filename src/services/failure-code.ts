@@ -7,7 +7,7 @@
  * reads the same everywhere.
  */
 
-import { isUpstreamTimeout } from './write/timeouts.js';
+import { isOutcomeOpen, isUpstreamTimeout } from './write/timeouts.js';
 
 /**
  * `upstream_busy` (plan 2026-11-07, S2b): the repository answered 429 or 503 —
@@ -41,6 +41,16 @@ export function failureCode(err: unknown): FailureCode {
   const status = statusOf(messageOf(err));
   if (status === 429 || status === 503) return 'upstream_busy';
   return status === 401 || status === 403 ? 'forbidden' : 'upstream_error';
+}
+
+/**
+ * The code of a WRITE that threw: `timeout` for every "sent, no answer" — a
+ * timeout and a lost connection alike (`isOutcomeOpen`) — else `failureCode`.
+ * The batch steps used `failureCode`, which knows timeouts only, so a reset was
+ * `upstream_error` there and `timeout` in every other write tool.
+ */
+export function writeFailureCode(err: unknown): FailureCode {
+  return isOutcomeOpen(err) ? 'timeout' : failureCode(err);
 }
 
 /** Seconds to wait for a busy repository: its own `Retry-After` (see `upstream-error.ts`), else the estimate. */

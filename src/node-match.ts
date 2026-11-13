@@ -62,8 +62,36 @@ export function termMatches(term: string, text: string): boolean {
  * ("PAGE_VARIANT_<uuid>") while the readable title lives in cm:title.
  */
 export function nodeTitle(node: WloNode): string {
-  const p = node.properties ?? {};
-  return p['cclom:title']?.[0] || p['cm:title']?.[0] || p['cm:name']?.[0] || node.name || node.title || '';
+  return titleFromProperties(node.properties) || node.name || node.title || '';
+}
+
+type Properties = Record<string, string[]> | undefined;
+
+/**
+ * The canonical chain on a bare property bag — for code that holds a record's
+ * properties and not the node (change sets, previews). '' when none is set.
+ *
+ * ONE place for the order, with the next function. The write path had five
+ * hand-written chains, and they differed in exactly the way that matters: two
+ * of them skipped `cm:title`, the carrier this repository actually fills on
+ * collections and page variants, and fell through to the technical `cm:name`
+ * (audit 2026-11-12, A-7). A chain written out anywhere else fails a test.
+ */
+export function titleFromProperties(properties: Properties): string {
+  const p = properties ?? {};
+  return p['cclom:title']?.[0] || p['cm:title']?.[0] || p['cm:name']?.[0] || '';
+}
+
+/**
+ * A COLLECTION's title: `cm:title` first. That is the property the collection
+ * endpoint writes (measured 2026-08-02 — `wlo_rename_collection` sets it), so
+ * it is the one that is current; a `cclom:title` beside it can be a leftover.
+ * For a record it is the other way round, which is why there are two chains
+ * and not one.
+ */
+export function collectionTitleFromProperties(properties: Properties): string {
+  const p = properties ?? {};
+  return p['cm:title']?.[0] || p['cclom:title']?.[0] || p['cm:name']?.[0] || '';
 }
 
 /**

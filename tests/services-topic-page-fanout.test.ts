@@ -1,7 +1,10 @@
+import { clearShortCaches } from '../src/short-cache.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { findTopicPagesByQuery } from '../src/services/topic-page.js';
+import { findTopicPagesByQueryResult } from '../src/services/topic-page.js';
+
+const findTopicPagesByQuery = async (...a: Parameters<typeof findTopicPagesByQueryResult>) => (await findTopicPagesByQueryResult(...a)).pages;
 import { WLO_ROOT_COLLECTION_ID, WLO_TOPIC_POOL } from '../src/wlo-api.js';
 import { makeNode } from './fetchMock.js';
 
@@ -74,6 +77,8 @@ test('findTopicPagesByQuery: a failing keyword search does not discard the porta
   // (the keyword-collections endpoint returns a reduced projection without it).
   // Losing the whole call because the supplementary leg threw is the defect
   // searchAll already guards against at services/search.ts.
+  // Its own fetch, so nothing clears the portal list an earlier mock left behind.
+  clearShortCaches();
   const real = globalThis.fetch;
   const seen: string[] = [];
   globalThis.fetch = (async (input: unknown) => {

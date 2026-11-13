@@ -24,14 +24,15 @@
  *      value (e.g. `get_wikipedia_summary`'s `openWorldHint: true`).
  *   3. The ChatGPT `openai/toolInvocation/invoking|invoked` status strings, by
  *      tool name (the copy table lives in `tool-status.ts`).
- *   4. A human-readable `title` for the plain `server.tool` registrations
- *      (that signature has no title parameter; the Apps SDK expects a title
- *      next to the machine name — TOOL_TITLES below).
+ *   4. A human-readable `title` for tools registered in the short form
+ *      (`registerReadTool` takes none; the Apps SDK expects a title next to the
+ *      machine name — TOOL_TITLES below).
  *
  * Applied in ONE place by wrapping the server's two tool-registration methods,
- * so the defaults land on ALL tools — both the `registerWloTool` seam (which
- * calls `registerTool`) and the plain `server.tool` registrations — without
- * churning the ~14 call sites. The wrap only augments the public
+ * so the defaults land on ALL tools. Every tool in `src/tools/` goes through
+ * the `registerWloTool` seam (which calls `registerTool`) since 2026-11-13;
+ * `server.tool` is wrapped too because tests and embedders still register that
+ * way. The wrap only augments the public
  * `RegisteredTool` fields, which `tools/list` reads back at list time.
  */
 
@@ -75,13 +76,13 @@ export const OAUTH_SECURITY_SCHEMES: ReadonlyArray<{ type: 'oauth2'; scopes: str
   [{ type: 'oauth2', scopes: [...SCOPES] }];
 
 /**
- * Human-readable titles for the tools registered via plain `server.tool`,
- * which has no title parameter (the Apps SDK expects a title next to the
- * machine name, and the submission scan reads it). The `registerWloTool` seam
- * sets its titles at the registration site — those win via the `??=` below, so
- * this table only needs the plain-registered tools.
+ * Human-readable titles for the read tools registered in the short positional
+ * form (`registerReadTool`, which takes no title — the Apps SDK expects one next
+ * to the machine name, and the submission scan reads it). A tool that names its
+ * title at the registration site wins via the `??=` below, so this table only
+ * needs the others.
  */
-const TOOL_TITLES: Readonly<Record<string, string>> = {
+export const TOOL_TITLES: Readonly<Record<string, string>> = {
   get_collection_contents: 'WLO Sammlungsinhalte',
   search_wlo_within_collection: 'WLO Suche in Sammlung',
   get_node_details: 'WLO Inhaltsdetails',
@@ -144,8 +145,7 @@ function withErrorCode(result: ToolResultLike, code: string): ToolResultLike {
 /**
  * Wrap a tool handler so a rejected personal login is reported as what it is
  * (auth review 2026-11-05). Applied HERE because this is the one place every
- * tool passes through — the `registerWloTool` seam and the plain `server.tool`
- * registrations alike. A result produced without a rejected login is returned
+ * tool passes through, whichever of the SDK's two registration methods it used. A result produced without a rejected login is returned
  * exactly as the tool built it.
  */
 function reportRejectedLogin(tool: RegisteredTool, challenge: string | undefined): void {

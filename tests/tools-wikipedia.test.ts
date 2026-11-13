@@ -151,3 +151,30 @@ test('get_wikipedia_summary: maxChars 200000 passes the schema', async () => {
     mock.restore();
   }
 });
+
+test('K-16: Wikipedia not answering is not "kein Artikel gefunden"', async () => {
+  for (const status of [503, 429]) {
+    const mock = installFetchMock(() => ({ status, json: {} }));
+    const client = await connectedClient();
+    try {
+      const text = ((await client.callTool({ name: 'get_wikipedia_summary', arguments: { query: 'Optik' } }))
+        .content as Array<{ text: string }>)[0]?.text ?? '';
+      assert.match(text, /KEIN Befund/, `${status}: ${text}`);
+      assert.doesNotMatch(text, /Kein Wikipedia-Artikel gefunden/);
+      const json = JSON.parse(((await client.callTool({ name: 'get_wikipedia_summary', arguments: { query: 'Optik', outputFormat: 'json' } }))
+        .content as Array<{ text: string }>)[0]?.text ?? '{}');
+      assert.deepEqual([json.found, json.unreachable], [false, true]);
+    } finally { await client.close(); mock.restore(); }
+  }
+});
+
+test('K-16: a 404 IS an answer — no article, and nothing about an outage', async () => {
+  const mock = installFetchMock((url) => (url.includes('/w/api.php') ? { json: ['x', [], [], []] } : { status: 404, json: {} }));
+  const client = await connectedClient();
+  try {
+    const json = JSON.parse(((await client.callTool({ name: 'get_wikipedia_summary', arguments: { query: 'zzzz', outputFormat: 'json' } }))
+      .content as Array<{ text: string }>)[0]?.text ?? '{}');
+    assert.equal(json.found, false);
+    assert.equal('unreachable' in json, false);
+  } finally { await client.close(); mock.restore(); }
+});

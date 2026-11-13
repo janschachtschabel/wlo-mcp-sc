@@ -16,6 +16,7 @@
  *   where it decides whether a request goes out.
  */
 
+import { wrongKind } from '../../node-kind.js';
 import { getNodeMetadata } from '../../wlo-api.js';
 import { mapPool } from '../../concurrency.js';
 import { sanitizeText } from '../../text-sanitize.js';
@@ -39,10 +40,17 @@ export interface FilingItem extends PlanItem {
   materialTitle: string;
 }
 
+/** One unusable id of a batch, as a program reads it — the codes of the single tool. */
+export interface PairRefusal {
+  nodeId?: string;
+  collectionId?: string;
+  code: 'not_found' | 'not_a_collection' | 'is_a_collection' | 'is_a_folder' | 'refused';
+}
+
 /** Read both ends of every pair; refuse with one reason per unusable id. */
 export async function resolvePairs(
   pairs: PairInput[],
-): Promise<{ ok: true; items: FilingItem[] } | { ok: false; reasons: string[] }> {
+): Promise<{ ok: true; items: FilingItem[] } | { ok: false; reasons: string[]; refused: PairRefusal[] }> {
   const nodeIds = [...new Set(pairs.map(p => p.nodeId.trim()))];
   const collectionIds = [...new Set(pairs.map(p => p.collectionId.trim()))];
   const [materials, collections] = await Promise.all([
@@ -50,24 +58,40 @@ export async function resolvePairs(
     mapPool(collectionIds, READ_POOL, id => readFilingTarget(id)),
   ]);
   const reasons: string[] = [];
+  const refused: PairRefusal[] = [];
   const material = new Map<string, { filedId: string; title: string }>();
   nodeIds.forEach((id, i) => {
     const node = materials[i];
-    if (!node) { reasons.push(`Das Material „${sanitizeText(id)}“ wurde nicht gefunden oder ist nicht lesbar.`); return; }
+    if (!node) {
+      reasons.push(`Das Material „${sanitizeText(id)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+      refused.push({ nodeId: id, code: 'not_found' });
+      return;
+    }
+    // What is filed is a RECORD — the check `wlo_add_to_collection` applies. A
+    // collection or folder id was sent on as a reference PUT (cross-package
+    // review of the audit follow-up, phase 1).
+    const wrong = wrongKind(node, 'content');
+    if (wrong) {
+      reasons.push(`„${sanitizeText(id)}“ ${wrong.reason}`);
+      refused.push({ nodeId: id, code: wrong.code });
+      return;
+    }
     material.set(id, { filedId: resolveWriteTarget(node, id).targetId, title: sanitizeText(nodeTitle(node) || id) });
   });
   const target = new Map<string, FilingTarget>();
   collectionIds.forEach((id, i) => {
     const t = collections[i];
     if (!t || !t.ok) {
-      reasons.push(t && t.reason === 'not_a_collection'
+      const notOne = t && t.reason === 'not_a_collection';
+      reasons.push(notOne
         ? `„${sanitizeText(id)}“ ist keine Sammlung.`
         : `Die Sammlung „${sanitizeText(id)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+      refused.push({ collectionId: id, code: notOne ? 'not_a_collection' : 'not_found' });
       return;
     }
     target.set(id, { nodeId: t.target.nodeId, title: sanitizeText(t.target.title) });
   });
-  if (reasons.length) return { ok: false, reasons };
+  if (reasons.length) return { ok: false, reasons, refused };
 
   const items: FilingItem[] = [];
   const seen = new Set<string>();

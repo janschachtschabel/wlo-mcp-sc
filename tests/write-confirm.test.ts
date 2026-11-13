@@ -178,5 +178,9 @@ test('an expired token still answers expired after another token was minted (fee
   const token = mintToken(cs, t0);
   mintToken(cs, t0 + TOKEN_TTL_MS + 1);
   assert.equal(consumeToken(token, cs, t0 + TOKEN_TTL_MS + 2), 'expired');
-  assert.equal(consumeToken(token, cs, t0 + TOKEN_TTL_MS + 3), 'unknown', 'the grave answers once');
+  // For its whole hour, whoever asks: it used to answer ONCE, and since a
+  // tombstone carries no identity anybody could take that answer from its owner.
+  assert.equal(runWithCredential(BOB, () => consumeToken(token, cs, t0 + TOKEN_TTL_MS + 3)), 'expired');
+  assert.equal(consumeToken(token, cs, t0 + TOKEN_TTL_MS + 4), 'expired', 'the owner still learns that nothing was written');
+  assert.equal(consumeToken(token, cs, t0 + TOKEN_TTL_MS + 2 * 60 * 60 * 1000), 'unknown', 'and after its hour it is gone');
 });

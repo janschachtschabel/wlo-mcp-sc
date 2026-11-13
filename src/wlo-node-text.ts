@@ -15,7 +15,6 @@
 import { BASE_URL, WLO_REPOSITORY_URL } from './wlo-config.js';
 import { wloFetch } from './wlo-fetch.js';
 import { readJson } from './read-json.js';
-import { TRUNCATION_MARKER } from './text-cap.js';
 
 
 /** Anonymous binary-download URL for a node's uploaded file (works without auth). */
@@ -63,30 +62,32 @@ export async function readNodeTextContent(
 
 /**
  * Fetch a node's uploaded file as raw text via its anonymous `downloadUrl`
- * (`eduservlet/download`). Unlike `getNodeTextContent` (extracted/indexed text),
- * this returns the file verbatim — the right source for an uploaded Markdown
- * "skill". Returns null on a non-OK response.
+ * (`eduservlet/download`), reading at most `maxBytes`. Unlike
+ * `getNodeTextContent` (extracted/indexed text) this is the file verbatim — the
+ * right source for an uploaded Markdown "skill". `null` on a non-OK response.
+ *
+ * It says WHETHER it was cut instead of marking the text: its one caller treats
+ * a cut instruction as worse than none and refuses the whole thing
+ * (`readSkillText`). `text` is what was read up to the bound. (A marker-appending
+ * wrapper with a 64-KiB default existed until 2026-11-12; nothing used it.)
  */
-/** Byte cap for anonymous file downloads — bounds memory and model-context use. */
-const DOWNLOAD_TEXT_CAP_BYTES = 64 * 1024;
-const DOWNLOAD_TRUNCATION_MARKER = TRUNCATION_MARKER;
-
-export async function getNodeDownloadText(
+export async function readNodeDownload(
   nodeId: string,
-  maxBytes: number = DOWNLOAD_TEXT_CAP_BYTES,
-): Promise<string | null> {
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean } | null> {
   const res = await wloFetch(buildDownloadUrl(nodeId), {
     headers: { Accept: 'text/markdown, text/plain, */*' },
   });
   if (!res.ok) return null;
 
   // Bounded read: stop after maxBytes and cancel the stream, so a large uploaded
-  // file cannot exhaust server memory or flood the model context window. Falls
-  // back to a capped full read when the body stream is unavailable.
+  // file cannot exhaust server memory or flood the model context window. A
+  // response WITHOUT a body stream (204/205 with real fetch — empty) is read in
+  // full and cut afterwards; that branch bounds the result, not the read.
   if (!res.body) {
     const buf = Buffer.from(await res.text(), 'utf-8');
-    if (buf.length <= maxBytes) return buf.toString('utf-8');
-    return decodeTruncated(buf.subarray(0, maxBytes)) + DOWNLOAD_TRUNCATION_MARKER;
+    if (buf.length <= maxBytes) return { text: buf.toString('utf-8'), truncated: false };
+    return { text: decodeTruncated(buf.subarray(0, maxBytes)), truncated: true };
   }
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -107,8 +108,8 @@ export async function getNodeDownloadText(
   }
   const buf = Buffer.concat(chunks.map(c => Buffer.from(c)));
   return truncated
-    ? decodeTruncated(buf) + DOWNLOAD_TRUNCATION_MARKER
-    : buf.toString('utf-8');
+    ? { text: decodeTruncated(buf), truncated: true }
+    : { text: buf.toString('utf-8'), truncated: false };
 }
 
 /**

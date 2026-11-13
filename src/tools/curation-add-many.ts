@@ -19,14 +19,11 @@ import { requireWrite } from '../services/write/credential-gate.js';
 import {
   FILING_MAX_PAIRS, filingLine, filingStep, resolvePairs, type FilingItem, type PairInput,
 } from '../services/write/filing-plan.js';
-import {
-  PLAN_BUDGET_MS, findPlan, hasPlanCapacity, runPlan, startPlan, type ItemState, type StoredPlan,
-} from '../services/write/plan-runner.js';
+import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
 import type { WloToolResult } from '../apps/register.js';
-import {
-  confirmOrExplain, previewReply, rejectionReply, timeoutOrError, isPreviewCall, registerCurationTool, type WriteAuthChallenge,
-} from './curation-shared.js';
-import { planErrorReply, planReply } from './curation-plan-reply.js';
+import { previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
+import { planReply } from './curation-plan-reply.js';
+import { runPlannedCall } from './curation-plan.js';
 
 const KIND = 'add-to-collections';
 
@@ -67,54 +64,32 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     handler: async (params) => {
-      // What is LEFT of this call's budget after the reads (rule 3 of plan 2026-11-08):
-      // a confirmation that read 200 records must not add a full 40 s on top.
-      const started = Date.now();
-      const remaining = () => Math.max(0, PLAN_BUDGET_MS - (Date.now() - started));
       requireWrite();
       const pairs = params['pairs'] as PairInput[];
-      // The plan is bound to the pairs as NAMED — resolving them again for a
-      // continuation would cost the reads the plan exists to save.
-      const args = JSON.stringify(pairs.map(p => [p.nodeId.trim(), p.collectionId.trim()]));
-
-      const key = String(params['continuationToken'] ?? '') || String(params['confirmToken'] ?? '');
-      if (key) {
-        const found = findPlan<FilingItem>(KIND, key, args);
-        if (found && !found.ok) return planErrorReply(found.code);
-        if (found) return answer(found.plan, await runPlan(found.plan, filingStep, remaining()));
-        if (params['continuationToken']) return planErrorReply('plan_expired');
-      }
-
-      try {
-        const resolved = await resolvePairs(pairs);
-        if (!resolved.ok) return rejectionReply(resolved.reasons);
-        const items = resolved.items;
-        const cs = buildChangeSet('add-to-collections', 'collection', {}, {}, {
-          action: `Führt ${items.length} Aufnahmen aus (${new Set(items.map(i => i.filedId)).size} Materialien, `
-            + `${new Set(items.map(i => i.collection.nodeId)).size} Sammlungen). Die Materialien selbst werden nicht verändert:`,
-          items: items.map(filingLine),
-        });
-        const token = String(params['confirmToken'] ?? '');
-        if (!token) return previewReply(cs, 'Zum Aufnehmen bitte bestätigen.');
-        // A second call with the same key may have started the plan while this
-        // one was reading; without this look it reaches the spent key, answers
-        // `confirm_unknown` and asks for a new preview — whose confirmation would
-        // run the plan a second time (overall review W1–W4, 2026-11-08).
-        const running = findPlan<FilingItem>(KIND, token, args);
-        if (running && !running.ok) return planErrorReply(running.code);
-        if (running) return answer(running.plan, await runPlan(running.plan, filingStep, remaining()));
-        // Checked BEFORE the key is redeemed: refused here, it stays valid.
-        if (!hasPlanCapacity()) return planErrorReply('too_many_plans');
-        const refusal = confirmOrExplain(token, cs);
-        if (refusal) return refusal;
-
-        const planId = startPlan(KIND, args, items, new Map(), token);
-        const plan = findPlan<FilingItem>(KIND, planId, args);
-        if (!plan?.ok) return planErrorReply('plan_expired');
-        return answer(plan.plan, await runPlan(plan.plan, filingStep, remaining()));
-      } catch (err) {
-        return timeoutOrError('Fehler beim Aufnehmen in Sammlungen', err, 'Ob schon Materialien aufgenommen wurden', { preview: isPreviewCall(params) });
-      }
+      return runPlannedCall<FilingItem>({
+        kind: KIND, params,
+        // The plan is bound to the pairs as NAMED — resolving them again for a
+        // continuation would cost the reads the plan exists to save.
+        args: JSON.stringify(pairs.map(p => [p.nodeId.trim(), p.collectionId.trim()])),
+        step: () => filingStep,
+        answer,
+        prepare: async () => {
+          const resolved = await resolvePairs(pairs);
+          // `refused` names each unusable id with the code the single tool gives
+          // for it — `invalid_input` alone cannot tell "does not exist" from "is
+          // not a collection" to a program that reads only the code.
+          if (!resolved.ok) return { reply: rejectionReply(resolved.reasons, { refused: resolved.refused }) };
+          const items = resolved.items;
+          const cs = buildChangeSet('add-to-collections', 'collection', {}, {}, {
+            action: `Führt ${items.length} Aufnahmen aus (${new Set(items.map(i => i.filedId)).size} Materialien, `
+              + `${new Set(items.map(i => i.collection.nodeId)).size} Sammlungen). Die Materialien selbst werden nicht verändert:`,
+            items: items.map(filingLine),
+          });
+          return { draft: { cs, items, preview: () => previewReply(cs, 'Zum Aufnehmen bitte bestätigen.') } };
+        },
+        context: 'Fehler beim Aufnehmen in Sammlungen',
+        whatIsOpen: 'Ob schon Materialien aufgenommen wurden',
+      });
     },
   });
 }

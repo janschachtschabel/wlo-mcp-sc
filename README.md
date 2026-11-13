@@ -118,8 +118,8 @@ stateless proxy in front of edu-sharing.
 ## Installation
 
 ```bash
-git clone <repo-url>
-cd wlo-mcp-server
+git clone https://github.com/janschachtschabel/wlo-mcp-sc.git
+cd wlo-mcp-sc
 npm install
 npm run build
 ```
@@ -153,7 +153,7 @@ else has sensible defaults.
 
 | Variable | Default | Scope | Description |
 |---|---|---|---|
-| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. **The default is STAGING; production must be named explicitly** (changed 2026-08-06 — a deployment whose `.env` lacked this line wrote into the live catalogue while everything around it said staging). Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. |
+| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. **The default is STAGING; production must be named explicitly** (changed 2026-08-06 — a deployment whose `.env` lacked this line wrote into the live catalogue while everything around it said staging). Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. A value no request can be sent to — unparseable, not http(s), with credentials or a query, or with a mistyped scheme such as `htps://` — **stops the start** with exit code 1 and a log line naming the variable. |
 | `WLO_ROOT_COLLECTION_ID` | per host | all | Root node of the collection hierarchy — **repository-bound**. The known WLO hosts (prod `redaktion.openeduhub.net`, staging `repository.staging.openeduhub.net`) get a per-host default automatically (the same id on both today, live-verified 2026-07-17, but maintained per host). Any **other** edu-sharing instance must set this explicitly — otherwise the server logs a startup warning and falls back to the WLO id, which will not exist there. |
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it, and `search_skill` narrows to that subtree. Unset → callers pass an explicit `?nodeId=`. |
 | `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` with `get_skill_for_task`, which ranks and loads in one call — the count stays 51, and `get_skill` stays in every mode: the registry and every collection result hand out nodeIds only it can load. Fewer round-trips, less control over the choice. Anything else leaves the search in place. |
@@ -162,6 +162,8 @@ else has sensible defaults.
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | all | How long a remembered answer stands before it is checked again. Never below the refresh interval. A registry created two minutes ago therefore appears with a delay — `get_skill_registry` and `includeSkillRegistry: true` read live and see it at once. |
 | `WLO_POOL_SIZE` | `25` | all | Candidate pool size **per search variant** for reranking (`enhancedSearch`) — **not** the number of returned hits (that is `maxResults`). Smaller = faster/smaller fetches at minimally lower recall. |
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | all | Per-request timeout (ms) for every upstream edu-sharing call. Prevents a hung backend socket from blocking a tool call. Sized from measurement (staging, 2026-08-02): creating a record takes 4.2–8.0 s, every other call under 2.5 s. |
+| `WLO_UPSTREAM_CONCURRENCY` | `24` | all | How many calls the whole **process** may have open at the repository at once. Every other bound is per call or per client; one search with the OER filter alone starts about 25. A call that gets no slot within 5 s — or meets a queue of four times the limit — is not sent; tools that report failures by code answer `upstream_busy` with the wait. `0` switches the bound off. |
+| `METRICS_TOKEN` | _(unset)_ | http | Switches `GET /metrics` on (Prometheus text format) and is the Bearer token it answers to; at least 16 characters. Unset: the path does not exist. Counts requests by route class, tool calls by tool and outcome, repository calls by outcome — never a caller, a path or a query. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | all | Optional service account. Unset (default) → the server reads **anonymously**, public content only, exactly as before. Both set → every call authenticates as that one account via HTTP Basic, so **all** users of this MCP see the same elevated content. Use a purpose-made, read-only account: whatever it can see, every user can see, and edu-sharing's audit trail shows the service account rather than the person. Half a credential is treated as none. **Wrong credentials do not downgrade to public content** — the repository answers `401` (measured against production 2026-07-31, on the identity and the search endpoints alike), so every query fails and the server returns nothing at all. Unset both variables to run anonymously instead. Check with the `wlo_auth_status` tool: `mode: "service"` together with `authenticated: false` and `upstream: "ok"` means the credentials are being rejected (`upstream: "unreachable"` means the repository did not answer — no verdict on the credentials). HTTP Basic is used because it is the only scheme besides the session cookie that edu-sharing's own OpenAPI declares. **Scope:** the service account applies to the MCP endpoint only. The public REST layer (`GET /api/*`) and the launcher stay anonymous by design — they are reachable from the internet without any login, so letting them inherit the account would make everything it can see world-readable. A credential over a non-`https` repository URL is sent in the clear (Basic is base64, not encryption); the server warns about this at startup. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page), either by pasting the block back or by logging in to end every access of the account at once. The second way is the only one open to OAuth users, who never see their block. Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
@@ -171,6 +173,14 @@ else has sensible defaults.
 | `WLO_INBOX_ID` | _(unset)_ | all | nodeId of the shared inbox new records are filed in when the server writes under the **service account**. A personal login files to `-userhome-` instead and needs nothing here. Deliberately without a default: node ids are repository-bound, so a hardcoded one would point at a different collection on staging than on production, and at nothing elsewhere. Unset means service-account creation is refused with a message naming this variable — better than a record filed somewhere nobody looks. |
 | `AUTH_CREDENTIAL_LIMIT` | `10` | HTTP mode | How many **distinct** logins one client address may present within 10 minutes; over the limit returns 429. The server forwards a client-supplied `Authorization` header upstream, so it could be used to guess WLO logins from *our* address. A requests-per-minute cap is the wrong instrument here — a per-user client sends its header on **every** call — so the signal is the number of different logins: a real person has exactly one. `0` disables the check. |
 | `TICKET_CREDENTIAL_LIMIT` | `200` | HTTP mode | The same cap for `POST /auth/ticket`, where an embedded widget exchanges the ticket of whoever is signed in on the host page — on its **own** budget and its own buckets, so a visitor's page reloads cannot spend the same address's `/auth/issue` budget. Twenty times the row above, and for the reason that endpoint's CORS carve-out already rests on: a ticket is machine-issued and unguessable, so the number of *different* ones an address presents says nothing about an attack — while the address is routinely shared, because an embedded widget on a portal page puts a whole class behind one NAT. At `10` the eleventh signed-in person of the day was refused. Not unlimited either: the bucket retains one digest per distinct ticket for the window, and this is what bounds that. It is the looser of the two bounds anyway — `API_RATE_LIMIT_RPM` already caps an address at ~300 attempts in the same window. `0` disables the check. |
+| `TICKET_ALLOWED_ORIGINS` | _(unset)_ | HTTP mode | Browser origins that may exchange a ticket at `POST /auth/ticket` (comma-separated). Others get `403 origin_not_allowed` and no CORS header; a call without `Origin` (server to server) is never refused. A list with no usable entry admits none. Unset: any origin, as before. |
+| `WIDGET_OAUTH_ORIGINS` | _(unset)_ | HTTP mode | Origins of an embedded widget's redirect targets (comma-separated). An OAuth login whose verified `redirect_uri` lies there expires after 12 h. Unset: no OAuth block expires — AI hosts are never affected. |
+| `WLO_ALLOW_PREPARED_WRITES` | _(unset)_ | all | Lets a signed-in caller have a write PREPARED instead of executed: the answer describes the request for an embedding page to send with the visitor's own session. Grants no rights, only another answer shape. |
+| `WLO_DISABLE_SKILL_SEARCH` | _(unset)_ | all | Removes the repository-wide `search_skill` for an installation that reaches skills through collection registries. `get_skill` and `get_skill_registry` stay. |
+| `WLO_READY_PROBE_MS` | `30000` | HTTP mode | How often the readiness probe behind `GET /ready` asks the repository. `0` = only on request. |
+| `UPLOAD_MAX_BYTES` | 50 MB | HTTP mode | Largest single file of an upload slot (at most 100 MB). Only with `WLO_BATCH_UPLOAD_ENABLED`. |
+| `UPLOAD_MAX_TOTAL_BYTES` | 128 MB | HTTP mode | All open upload slots together, in memory (at most 384 MB); one login holds at most half of it. Only with `WLO_BATCH_UPLOAD_ENABLED`. |
+| `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` | HTTP mode | Deadline for receiving one upload body (at most 28 000). Only with `WLO_BATCH_UPLOAD_ENABLED`. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | *(unset — nothing disabled; shipped as `all`)* | all | Switches off tools that declare themselves **unsafe**. A comma/space-separated list of tool names, or `all` (also `1`/`true`/`yes`/`on`). Unset means unsafe tools ARE registered, and the server logs a warning naming each one at startup — a risk that only appears in a changelog is one nobody inheriting a deployment will read. `.env.example` and `docker-compose.yml` ship `all`, i.e. **off by default in a real deployment**; set the variable to an empty value to switch them on. Currently exactly one tool is affected: `get_url_text`. Note that `get_wlo_content_text` is **not** — see [Tools declared unsafe](#tools-declared-unsafe). |
 | `WLO_TEXT_EXTRACTION_URL` | *(none — unset disables)* | all | Base URL of the text-extraction service `get_wlo_content_text` falls back to for externally linked material (`ccm:wwwurl`) whose text the repository has not stored. Each instance normally runs its own, so there is **no default**: unset (or empty) disables the external path and logs why, and the repository's own `/textContent` remains the only source. A value that cannot serve as a base (no scheme, not http(s), or carrying a query/fragment) disables it and warns too, so a typo cannot redirect material URLs to a host you did not choose. Point it at the extraction service belonging to *your* repository — a default pointing at the staging service used to send production material URLs into another environment. |
 | `WLO_TEXT_TIMEOUT_MS` | `25000` | all | Timeout (ms) for full-text reads — both `/textContent` and the extraction service. Deliberately larger than `WLO_FETCH_TIMEOUT_MS`: `/textContent` was measured at a 4.6 s median and a 9.2 s maximum. Full text is the one call allowed to take longer than everything else. |
@@ -181,7 +191,7 @@ else has sensible defaults.
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | all | MIME type for the inlined Apps-SDK widget resources. Default is the MCP-Apps standard (portable). Set to `text/html+skybridge` if a legacy ChatGPT runtime does not render the widgets with the standard value. |
 | `WLO_WIDGET_DOMAIN` | unset | all | App identity domain for the ChatGPT plugin submission (required + unique per app there; widgets render under `<domain>.web-sandbox.oaiusercontent.com`). When set, it is emitted on `_meta.ui.domain` **and** its `openai/widgetDomain` alias; **when unset, on neither** — a host validates the domain against its own sandbox format and rejects the whole widget (aborting the bound tool call) for a foreign value: Claude expects `{hash}.claudemcpcontent.com` and normalises the vendor alias onto the standard key, so dropping only one is not enough. Leave unset for Claude and every non-ChatGPT host. The widget CSP's *connect* allowlist stays the edu-sharing origin regardless — for the image list see the next row. |
 | `WLO_WIDGET_IMAGE_DOMAINS` | `https://img.youtube.com` | all | Extra origins the widget CSP may load **preview images** from, comma separated. Widens `resource_domains` only; `connect_domains` stays the repository alone, because the widget issues no requests of its own. The default is measured, not guessed: the repository does not always serve the preview itself — for YouTube-sourced records `/preview` answers `302` to the publisher's thumbnail host (2026-08-21: 3 of 78 resolvable previews), and a browser re-checks the CSP host on every redirect hop, so without the entry those cards showed a broken image while the repository's own web UI showed the thumbnail. **Privacy:** an allowed host receives the viewer's IP when such a card renders — set the value to `none` to forbid it entirely (those cards then show their document icon). It has to be that word rather than an empty value: `docker-compose.yml` passes every setting as `"${VAR:-}"`, so an unconfigured container always presents an empty string. |
-| `MAX_BODY_BYTES` | `4194304` (4 MB) | HTTP mode | Max request-body size **in bytes**; larger POSTs get `413`. Caps a memory-exhaustion vector. Plain digits only — `1MB` is refused with a warning and the default is kept, rather than read as `1` byte (which would answer every request with `413`). |
+| `MAX_BODY_BYTES` | `4194304` (4 MB) | HTTP mode | Max request-body size **in bytes**; larger POSTs get `413`. Caps a memory-exhaustion vector. The login and OAuth routes (`/auth*`, `/oauth/*`) take at most 64 KiB of it. Plain digits only — `1MB` is refused with a warning and the default is kept, rather than read as `1` byte (which would answer every request with `413`). |
 | `RATE_LIMIT_RPM` | `120` | HTTP mode | **Tool calls**/minute **per client IP** on the MCP endpoint (only `tools/call` counts; all POSTs together may use 3×); over the limit returns `429` with the rest of the window as `Retry-After`. `/health` is exempt. Set `0` to disable (e.g. behind a WAF/platform limiter). |
 | `TRUSTED_CLIENT_KEYS` | — | HTTP mode | Trusted clients with their own budget instead of their address: `name:rpm:key`, comma-separated, sent as `X-WLO-Client-Key` (key ≥ 32 characters, held only as a hash). |
 | `API_RATE_LIMIT_RPM` | `30` | HTTP mode | Requests/minute **per client IP** on the public REST endpoints (`GET /api/*`); over the limit returns `429`. Tighter than `RATE_LIMIT_RPM` because it is an anonymous public surface. Set `0` to disable. |
@@ -380,8 +390,9 @@ tree traversal from the root/parent.
 **2. `search_wlo_content`** — `query` (required), `educationalContext?`,
 `discipline?`, `userRole?`, `learningResourceType?`, `publisher?`, `maxResults?`
 (1–50, default 8), `excludeNodeIds?` (≤200), `includeTextContent?` (default
-false — also fetch each result's stored full text, capped; one round-trip per
-result), `includeFacets?` (default false — facet counts in `_queryMeta.facets`,
+false — also fetch each result's stored full text, capped; for the first 20
+results only — the rest are named in `textContentSkipped`, a failed read in
+`textContentUnreadable`), `includeFacets?` (default false — facet counts in `_queryMeta.facets`,
 run in parallel), `outputFormat?`. Multi-query expansion + quality reranking.
 
 **3. `get_collection_contents`** — `nodeId` (required), `query?`, `contentFilter?`
@@ -552,8 +563,10 @@ so a scoped query cannot be expressed — measured 2026-08-08).
 
 **23. `get_skill`** — `nodeId`, `includeFiles?`, `outputFormat?`. The second
 step: returns the instruction Markdown attached to that node, verbatim from its
-anonymous `downloadUrl` (byte-capped), falling back to the repository's extracted
-`/textContent` when the file itself is not downloadable. It also lists the OTHER
+anonymous `downloadUrl`, falling back to the repository's extracted
+`/textContent` when the file itself is not downloadable. An instruction is never
+cut: a file that is certainly binary or larger than 2 MiB is not loaded at all,
+and the answer says so (`contentRefused`: `not_text` / `too_large`). It also lists the OTHER
 files of the skill's workspace folder — name, nodeId, MIME type, size — without
 loading them, so the model can fetch just the one it needs by calling `get_skill`
 again with that nodeId. A folder holding more than 25 files is reported as a
@@ -1206,7 +1219,7 @@ the code), grouped by module.
 | Function | What it does |
 |---|---|
 | `ngsearch` | Full-text search for **file** nodes (FILES) |
-| `searchCollectionsByKeyword` | **Collection search** — returns real `ccm:map` collections |
+| `searchCollectionsByKeywordResult` | **Collection search** — returns real `ccm:map` collections |
 | `getCollectionContents` | Children (items / sub-collections) of a node |
 | `getChildCollections` | Direct sub-collections (`filter=folders`) |
 | `getNodeMetadata` / `getNodesMetadata` | Metadata for one / many nodes |
@@ -1254,6 +1267,7 @@ the code), grouped by module.
 | `clientKey` | `rate-limit.ts` | Resolve client IP (honors `X-Forwarded-For` when `TRUST_PROXY`) |
 | `readBodyWithLimit` | `read-body.ts` | Read the request body bounded by `MAX_BODY_BYTES` |
 | `parseRequestUrl` | `request-url.ts` | Parse a request target once; `null` when node:http accepted what `new URL()` refuses |
+| `installGracefulShutdown` | `shutdown.ts` | On SIGTERM/SIGINT: stop accepting, let the work in hand finish, exit; cut after 70 s |
 | `log` | `logger.ts` | Structured JSON logger (stderr) |
 | `buildFilterCriteria` | `filter-criteria.ts` | German labels/filters → search criteria |
 | `queryMetaContent` | `tools/shared.ts` | Build the `_queryMeta` block |
@@ -1267,7 +1281,9 @@ the code), grouped by module.
 - `npm run build` — TypeScript compile (strict).
 - `npm test` — offline test suite (`node:test`), no network required.
 - CI (`.github/workflows/ci.yml`) runs build + test on Node 22 with a production
-  `npm audit` gate.
+  `npm audit` gate, then builds the Docker image and smoke-tests it
+  (`npm run smoke:image`: starts under the compose restrictions, `/health`,
+  `tools/list`, a clean `docker stop`).
 - See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for how the server is put
   together: the layer model and its dependency rule, the registration seam every
   tool passes through, the write pipeline, the tests that enforce the

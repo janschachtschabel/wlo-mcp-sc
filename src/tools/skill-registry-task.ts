@@ -87,8 +87,13 @@ export async function answerTask(
   if (!skill?.content) {
     return {
       head: [oneLine(`Zu „${shown}“ passt der freigegebene Skill „${confident.title}“ (nodeId: ${confident.nodeId}), `
-        + 'er ist aber nicht abrufbar.'), ...listLine('Ebenfalls in Frage, weniger eindeutig', others), ...unmatchedLine],
+        + (skill?.contentRefused === 'too_large'
+          ? 'seine Datei ist aber zu groß für eine Anleitung und wurde nicht geladen (eine Anleitung wird nie gekürzt).'
+          : skill?.contentRefused === 'not_text'
+            ? 'der Datensatz ist aber keine Textdatei und wurde nicht geladen.'
+            : 'er ist aber nicht abrufbar.')), ...listLine('Ebenfalls in Frage, weniger eindeutig', others), ...unmatchedLine],
       json: { query: task, match: 'unreadable', chosen: { nodeId: confident.nodeId, title: confident.title },
+        ...(skill?.contentRefused ? { refused: skill.contentRefused } : {}),
         candidates: others.map(ref), unmatched, instructions: [...instructions] },
     };
   }

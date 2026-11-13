@@ -133,23 +133,9 @@ export async function getChildCollectionsResult(
   return data ? { nodes: data.nodes ?? [], reachable: true } : { nodes: [], reachable: false };
 }
 
-/**
- * The same listing as {@link getChildCollectionsResult}, reduced to the nodes.
- *
- * Most callers only navigate and genuinely do not care why a branch is empty.
- * The two that DO care — the "no collections found" message and the per-portal
- * sub-collection count — use the result form, because an empty list from a 503
- * would otherwise be presented as a fact about the catalogue ("this portal has
- * 0 sub-collections", "try a broader term") when it is a fact about the server.
- */
-export async function getChildCollections(
-  nodeId: string,
-  maxItems = 100,
-  skipCount = 0,
-  props: string[] | undefined = DISPLAY_PROPS,
-): Promise<WloNode[]> {
-  return (await getChildCollectionsResult(nodeId, maxItems, skipCount, props)).nodes;
-}
+// There is deliberately no form of this listing that drops `reachable`: every
+// caller that "only navigated" turned an unanswered listing into a branch
+// without children (chatbot feedback 2026-11-13).
 
 /**
  * GET /node/v1/nodes/-home-/{nodeId}/metadata

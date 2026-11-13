@@ -19,6 +19,7 @@
  * with 0 entries, the original with 2.
  */
 
+import { nodeTitle } from '../node-match.js';
 import { BASE_URL } from '../wlo-config.js';
 import { wloFetch } from '../wlo-fetch.js';
 import { readJson } from '../read-json.js';
@@ -176,7 +177,7 @@ export async function getParentCollections(
       status: 'ok',
       collections: parents.map(p => ({
         nodeId: p.ref?.id ?? '',
-        title: p.properties?.['cclom:title']?.[0] ?? p.properties?.['cm:name']?.[0] ?? p.name ?? '',
+        title: nodeTitle(p),
       })),
     };
   }

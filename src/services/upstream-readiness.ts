@@ -17,6 +17,7 @@
  * every test (same rule as the skill-registry cache).
  */
 
+import { outsideUpstreamGate } from '../upstream-gate.js';
 import { runAnonymous } from '../auth/credential.js';
 import { ngsearch } from '../wlo-api.js';
 import { log } from '../logger.js';
@@ -43,7 +44,9 @@ async function probe(startedAt: number): Promise<Readiness> {
     // credential chain would fall back to the service account, so a wrong
     // service password read as "repository unreachable" — and `/ready` asks
     // about the repository, not about one account's login.
-    await runAnonymous(() => ngsearch([{ property: 'ngsearchword', values: ['*'] }], 'FILES', 1, 0));
+    // Past the upstream gate: this call MEASURES the repository. Through the
+    // gate a full queue of our own would be reported as "unreachable".
+    await outsideUpstreamGate(() => runAnonymous(() => ngsearch([{ property: 'ngsearchword', values: ['*'] }], 'FILES', 1, 0)));
     const latencyMs = Date.now() - startedAt;
     const slow = latencyMs > SLOW_MS;
     return { ok: !slow, upstream: slow ? 'slow' : 'ok', checkedAt: new Date(startedAt).toISOString(), latencyMs };

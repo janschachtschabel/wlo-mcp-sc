@@ -69,7 +69,7 @@ function repository(opts: Options = {}) {
     if (method === 'GET' && url.includes(`/${COLL}/metadata`)) {
       return opts.collectionReadable === false
         ? { status: 404, json: {} }
-        : { json: { node: { ref: { id: COLL, repo: '-home-' }, type: 'ccm:map', properties: { 'cclom:title': ['Optik'] } } } };
+        : { json: { node: { ref: { id: COLL, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: { 'cclom:title': ['Optik'] } } } };
     }
     if (method === 'GET') {
       const id = /nodes\/-home-\/([^/]+)\/metadata/.exec(url)?.[1] ?? NODE;

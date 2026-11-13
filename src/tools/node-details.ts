@@ -7,17 +7,15 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { buildRenderUrl, readNodeMetadata } from '../wlo-api.js';
-import { NOT_EXTRACTED_NOTE, isStoredText, readStoredText } from '../services/content-text.js';
+import { buildRenderUrl } from '../wlo-api.js';
+import { NOT_EXTRACTED_NOTE } from '../services/content-text.js';
 import {
-  formatNode, nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines, renderToText, type FormattedNode,
-} from '../formatter.js';
-import { codeOfStatus, loadNodeDetails, TEXT_CONTENT_CAP, TEXT_ENRICH_MAX } from '../services/node-details.js';
+  nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines, renderToText, type FormattedNode } from '../formatter.js';
+import { codeOfStatus, loadNodeDetails, loadSingleNodeDetail, TEXT_ENRICH_MAX } from '../services/node-details.js';
 import { accessInfo, accessInfoLines } from '../node-access.js';
-import { qualityInfo, qualityLines } from '../node-quality.js';
-import { getParentCollections } from '../services/node-collections.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
-import { registerWloTool } from '../apps/register.js';
+import { qualityInfo, qualityLines } from '../node-quality.js';
+import { registerWloTool, registerReadTool } from '../apps/register.js';
 import { capText } from '../text-cap.js';
 import { formattedNodeSchema, nodeListSchema } from '../apps/outputSchemas.js';
 import { nodeLookupMiss, subjectRegistryText, toolError } from './shared.js';
@@ -140,8 +138,10 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
         }
         if (many) return await manyNodeDetails(params);
 
-        const { node, status } = await readNodeMetadata(params.nodeId);
-        if (!node) {
+        const detail = await loadSingleNodeDetail(params.nodeId, {
+          includeTextContent: params.includeTextContent, includeParents: params.includeParents,
+        });
+        if (!detail.found) {
           // A miss still satisfies the schema, so the widget shows its empty
           // state instead of the host failing on a missing structuredContent.
           // WHY the status matters here: 401/403/5xx all produced "not found",
@@ -149,37 +149,16 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
           // `missing` as with `nodeIds` (feedback 2026-11-07): a deleted record
           // and a refused one must not read the same to a program either.
           return {
-            content: [{ type: 'text' as const, text: nodeLookupMiss(params.nodeId, status) }],
-            structuredContent: { total: 0, count: 0, results: [], missing: [{ part: params.nodeId, code: codeOfStatus(status) }] },
+            content: [{ type: 'text' as const, text: nodeLookupMiss(params.nodeId, detail.status) }],
+            structuredContent: { total: 0, count: 0, results: [], missing: [{ part: params.nodeId, code: codeOfStatus(detail.status) }] },
           };
         }
-
+        const { node, formatted, textRead, parentOutcome } = detail;
         const props = node.properties ?? {};
-        const formatted = formatNode(node);
-        // A collection's approved skills belong to the record being detailed, so
-        // they are attached to it rather than added beside it: both output
-        // formats and the widget then carry them without a second rule. A no-op
-        // for a material — `ensureRegistries` skips anything that is not a
-        // collection.
-        await ensureRegistries([formatted]);
-
-        // Extras that don't fit into FormattedNode. The text read reports its
-        // status: "nothing stored" and "we could not read it" are different
-        // answers, and only the first is a statement about the material.
         const renderUrl = buildRenderUrl(params.nodeId);
-        const textRead = params.includeTextContent
-          ? await readStoredText(params.nodeId)
-          : { text: null, status: 200 };
-        // Blank or binary debris is no text — the rule `get_wlo_content_text` applies.
-        const fullText = isStoredText(textRead.text) ? textRead.text : null;
-        // Not `/parents`: that endpoint carries ancestors for a collection and
-        // an empty list for a material, so it answered "in no collection" for
-        // records that were in several. See `getParentCollections`.
-        const parentOutcome = params.includeParents
-          ? await getParentCollections(node, params.nodeId)
-          : ({ status: 'ok', collections: [] } as const);
+        const fullText = textRead.text;
         const parents = parentOutcome.status === 'ok' ? parentOutcome.collections : [];
-        // Free: `readNodeMetadata` already read `-all-`, so this is a projection
+        // Free: the read already fetched `-all-`, so this is a projection
         // of properties in hand, not a second request. Behind a flag anyway —
         // the point of opt-in here is that no existing answer grows.
         const access = params.includeAccessInfo ? accessInfo(props) : {};
@@ -197,16 +176,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
           // An empty list and a failed lookup must not read the same.
           if (parentOutcome.status === 'unknown') payload['parentsError'] = parentOutcome.detail;
         }
-        if (params.includeTextContent) {
-          payload['textContent'] = fullText ? capText(fullText, TEXT_CONTENT_CAP).text : '';
-          // An empty string and a failed read must not read the same, for the
-          // same reason `parentsError` exists.
-          if (!fullText && textRead.status !== 200) {
-            payload['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${textRead.status}).`;
-          } else if (!fullText && formatted.fileSize > 0) {
-            payload['textContentNote'] = NOT_EXTRACTED_NOTE;
-          }
-        }
+        Object.assign(payload, textRead.fields);
         if (params.includeAccessInfo) payload['accessInfo'] = access;
         if (params.includeQualityInfo) payload['qualityInfo'] = quality;
         if (params.includeRaw) {
@@ -337,7 +307,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
     },
   });
 
-  server.tool(
+  registerReadTool(server,
     'get_nodes_details',
     `Bulk-fetch metadata for multiple node IDs in parallel (kept for existing callers).
 Prefer get_node_details with nodeIds: same reads, answered as a list {results, missing} in structured content.

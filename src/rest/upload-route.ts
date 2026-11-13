@@ -33,7 +33,7 @@ import { parseRequestUrl } from '../request-url.js';
 import { verifiedSlotIdentity, type UploadSlots } from '../services/write/upload-slot.js';
 import { resolvePositiveInt } from '../wlo-config.js';
 import { DRAIN_FACTOR } from '../read-body.js';
-import type { DistinctValueLimiter } from '../rate-limit.js';
+import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { BUSY_RETRY_DEFAULT_S } from '../services/failure-code.js';
 
 export const UPLOAD_PATH = '/api/uploads';
@@ -52,6 +52,13 @@ export interface UploadRouteDeps {
   authAbuseLimiter: DistinctValueLimiter;
   /** Deadline for the whole body — only this path; the server-wide 30 s still bound it. */
   timeoutMs: number;
+  /**
+   * The caller's request budget, spent BEFORE the login is looked at (audit
+   * 2026-11-12, S-4): the route had none, so anybody could make it check
+   * logins and start body reads without bound. The key is the trusted client's
+   * own or the address — the same bucket `/auth/status` uses.
+   */
+  requestBudget?: { limiter: RateLimiter; key: string };
 }
 
 const STATUS: Record<string, number> = {
@@ -99,6 +106,11 @@ export async function handleUploadRequest(
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     send(res, 405, { error: 'method_not_allowed' });
+    return true;
+  }
+  const budget = deps.requestBudget;
+  if (budget?.limiter.check(budget.key, Date.now())) {
+    refuseRetryable(req, res, 429, 'rate_limited', budget.limiter.retryAfterSeconds?.(budget.key, Date.now()) ?? 60);
     return true;
   }
   const wer = await verifiedSlotIdentity(credentialFromHeader(req.headers['authorization']),

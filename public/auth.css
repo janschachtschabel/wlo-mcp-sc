@@ -68,9 +68,8 @@ p { margin: 0 0 var(--space); }
 
 .lede { color: var(--text-muted); }
 
-/* The one English line: this is a German product, but the audience includes
-   people whose AI host speaks English. A full i18n layer for two pages would be
-   machinery without a second locale to justify it. */
+/* The one English line on the GERMAN page, pointing at the switch above it; it
+   is hidden once the page is in English (auth-i18n.js). */
 .lang-note { font-size: 0.85rem; color: var(--text-muted); margin-bottom: calc(var(--space) * 1.5); }
 
 .card {
@@ -164,3 +163,32 @@ li { margin-bottom: 0.4rem; }
 .who dt { font-weight: 600; margin-top: 0.6rem; }
 .who dt:first-child { margin-top: 0; }
 .who dd { margin: 0.15rem 0 0; overflow-wrap: anywhere; }
+
+/* The DE/EN switch — the launcher's control, so the three pages and it read as
+   one product. A real button group with aria-pressed; the visible focus ring
+   comes from the shared button rule. */
+.lang {
+  display: inline-flex;
+  margin-block-end: var(--space);
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.lang button {
+  min-inline-size: 2.75rem;
+  min-block-size: 2.25rem;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.lang button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+/* Inset (the group clips an outer ring) and in a colour that contrasts with the
+   background it sits on: the text colour on an unpressed button, the accent's
+   own foreground on the pressed one — `--accent-strong` on `--accent` was 1.5:1. */
+.lang button:focus-visible { outline: 3px solid var(--text); outline-offset: -3px; }
+.lang button[aria-pressed="true"]:focus-visible { outline-color: var(--accent-fg); }

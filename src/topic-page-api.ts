@@ -8,27 +8,30 @@
  * `wlo-api.ts`.
  */
 
+import { sharedReadScope } from './auth/credential.js';
+import { collectionTitleFromProperties } from './node-match.js';
+import { shortCache } from './short-cache.js';
 import type { SearchCriterion, WloNode } from './wlo-api.js';
 import {
   BASE_URL,
   WLO_ROOT_COLLECTION_ID,
   appendPropertyFilter,
   buildTopicPageUrl,
-  getChildCollections,
+  getChildCollectionsResult,
   getNodeMetadata,
-  stripStoreRef,
-} from './wlo-api.js';
+  readNodeMetadata,
+  stripStoreRef } from './wlo-api.js';
 import { orderVariants, parsePageConfigOrder, readPageConfigOrder } from './topic-page-config.js';
 import type { PageConfigOrder } from './topic-page-config.js';
-import { HEADERS, wloFetch, logUpstreamMiss } from './wlo-fetch.js';
+import { HEADERS, wloFetch } from './wlo-fetch.js';
+import { upstreamErrorMessage } from './upstream-error.js';
 import { readJson } from './read-json.js';
 import { nodeMatchesText } from './node-match.js';
 import {
   TOPIC_PAGE_PROPS,
   isUsableVariant,
   variantFields,
-  variantMatchesFilters,
-} from './topic-page-variant.js';
+  variantMatchesFilters } from './topic-page-variant.js';
 import type { ThemePageInfo, VariantFilters } from './topic-page-variant.js';
 
 
@@ -80,9 +83,14 @@ export async function searchPageVariants(
   const url = `${BASE_URL}/search/v1/queries/-home-/mds_oeh/page_variant?${params}`;
   const body = JSON.stringify({ criteria });
   const res = await wloFetch(url, { method: 'POST', headers: HEADERS, body });
-  if (!res.ok) { logUpstreamMiss('searchPageVariants', res); return []; }
+  // THROWS rather than degrading (audit 2026-11-12, K-3), like `ngsearch`: this
+  // is the primary read of the listing it serves, and `[]` there was reported as
+  // "es gibt keine Themenseiten" — a statement about the catalogue made from an
+  // index that did not answer.
+  if (!res.ok) throw new Error(upstreamErrorMessage('searchPageVariants', res));
   const data = await readJson<{ nodes?: WloNode[] }>(res, 'searchPageVariants');
-  return data?.nodes ?? [];
+  if (!data) throw new Error('searchPageVariants: upstream response was not valid JSON');
+  return data.nodes ?? [];
 }
 
 /**
@@ -96,12 +104,45 @@ export async function searchPageVariants(
  * call plus a local text match finds them.
  */
 export async function searchTopicPageCollections(query: string, maxItems = 10): Promise<WloNode[]> {
+  return (await searchTopicPageCollectionsResult(query, maxItems)).nodes;
+}
+
+/**
+ * The subject portals, remembered for a minute.
+ *
+ * Almost every search asked for this list again — a hundred collections with
+ * their full display projection — to match a handful of names against it
+ * (audit 2026-11-12, P-4). Which portals exist changes when an editor creates
+ * one, so a minute-old list is the same list. Only a listing that ANSWERED is
+ * kept; the projection is left as it was, because the nodes go on into search
+ * results and the local match reads more than their titles.
+ */
+const portalCache = shortCache<WloNode[]>(4);
+
+async function portalListing(): Promise<{ nodes: WloNode[]; reachable: boolean }> {
+  // Keyed by whose rights read it; a personal login's listing is not shared.
+  const scope = sharedReadScope();
+  const key = `${scope}:${WLO_ROOT_COLLECTION_ID}`;
+  const kept = scope ? portalCache.get(key) : undefined;
+  if (kept) return { nodes: kept, reachable: true };
+  const portals = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, 100);
+  if (scope && portals.reachable) portalCache.set(key, portals.nodes);
+  return portals;
+}
+
+/** `searchTopicPageCollections`, saying whether the portal listing ANSWERED. */
+export async function searchTopicPageCollectionsResult(
+  query: string, maxItems = 10,
+): Promise<{ nodes: WloNode[]; reachable: boolean }> {
   const q = query.trim();
-  if (!q) return [];
-  const portals = await getChildCollections(WLO_ROOT_COLLECTION_ID, 100);
-  return portals
-    .filter(n => n.properties?.['ccm:page_config_ref']?.[0] && nodeMatchesText(n, q))
-    .slice(0, maxItems);
+  if (!q) return { nodes: [], reachable: true };
+  const portals = await portalListing();
+  return {
+    reachable: portals.reachable,
+    nodes: portals.nodes
+      .filter(n => n.properties?.['ccm:page_config_ref']?.[0] && nodeMatchesText(n, q))
+      .slice(0, maxItems),
+  };
 }
 
 /** The collection that owns a Themenseite, as resolved from a page variant. */
@@ -127,7 +168,8 @@ const PARENT_REF_PROPS: string[] = ['virtual:primaryparent_nodeid'];
 const FOLDER_PROPS: string[] = ['virtual:primaryparent_nodeid', 'ccm:page_config'];
 
 /** The only fields read off the owning collection. */
-const OWNER_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:name'];
+// `cm:title` is the carrier a collection's title actually lives in — without it in the projection the owner was named by its technical `cm:name`.
+const OWNER_PROPS: string[] = ['ccm:page_config_ref', 'cclom:title', 'cm:title', 'cm:name'];
 
 /** One containment hop: the node's primary parent id, or '' when unavailable. */
 async function primaryParentOf(nodeId: string): Promise<string> {
@@ -167,7 +209,7 @@ export async function resolvePageFolder(folderId: string): Promise<ResolvedPageF
   return {
     owner: {
       id: ownerId,
-      name: props['cclom:title']?.[0] ?? props['cm:name']?.[0] ?? owner?.name ?? '',
+      name: collectionTitleFromProperties(props) || owner?.name || '',
       pageConfigRef: props['ccm:page_config_ref'][0] ?? '',
     },
     config,
@@ -202,8 +244,14 @@ export async function getCollectionThemePages(
 ): Promise<ThemePageInfo[]> {
   // Only the owner fields are read below, and this runs once per candidate on
   // the Mode-B hot path — no reason to pull the full `-all-` projection.
-  const node = await getNodeMetadata(collectionId, OWNER_PROPS);
-  if (!node) return [];
+  const { node, status } = await readNodeMetadata(collectionId, OWNER_PROPS);
+  if (!node) {
+    // Gone or not ours to read: a real "no page here". Anything else — a 5xx, a
+    // synthetic 503, no answer at all — is "we did not find out", and `[]` there
+    // was printed as "Keine Themenseiten gefunden." (review of audit package 9).
+    if (status === 404 || status === 403 || status === 401) return [];
+    throw new Error(`Die Sammlung ${collectionId} ließ sich nicht lesen (HTTP ${status}) — ob sie eine Themenseite hat, ist offen.`);
+  }
 
   const props = node.properties ?? {};
   const pageConfigRef = props['ccm:page_config_ref']?.[0];
@@ -217,8 +265,12 @@ export async function getCollectionThemePages(
   // instead — the previous behaviour — hit WIDGET_* nodes without variant
   // metadata (wrong variantId, targetGroup "nicht gesetzt"). Reading one
   // level also drops the per-child fan-out (one upstream call instead of N).
-  const configChildren = await getChildCollections(configId, 50, 0, TOPIC_PAGE_PROPS);
-  const collectionName = props['cclom:title']?.[0] || props['cm:name']?.[0] || node.name || '';
+  const listing = await getChildCollectionsResult(configId, 50, 0, TOPIC_PAGE_PROPS);
+  if (!listing.reachable) {
+    throw new Error(`Die Varianten der Themenseite von ${collectionId} ließen sich nicht lesen — ob sie eine hat, ist offen.`);
+  }
+  const configChildren = listing.nodes;
+  const collectionName = collectionTitleFromProperties(props) || node.name || '';
   const topicPageUrl = buildTopicPageUrl(collectionId, pageConfigRef) ?? '';
 
   const real = configChildren.filter(v => isUsableVariant(v));

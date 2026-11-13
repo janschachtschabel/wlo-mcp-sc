@@ -19,7 +19,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-import { registerCurationBatchTools } from '../src/tools/curation-batch.js';
+import { registerCurationBatchTools, resetBatchesForTest } from '../src/tools/curation-batch.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { setServiceCredentialForTest, type WloCredential } from '../src/auth/credential.js';
 import { sharedUploadSlots, slotIdentity } from '../src/services/write/upload-slot.js';
@@ -29,6 +29,7 @@ const USER: WloCredential = { header: 'Basic x', label: 'maria', source: 'user' 
 const SERVICE: WloCredential = { header: 'Basic y', label: 'dienst', source: 'service' };
 
 async function client(): Promise<Client> {
+  resetBatchesForTest();
   process.env['WLO_BATCH_UPLOAD_ENABLED'] = '1';
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   applyReadOnlyToolDefaults(server);

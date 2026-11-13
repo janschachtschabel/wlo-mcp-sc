@@ -12,10 +12,15 @@
  * this server recognised. Repeating the caller's own text back at the user
  * would make the consent screen say whatever the caller wants it to say.
  *
- * German user text on purpose: the page is shown verbatim to WLO editors.
+ * German is the page as served (WLO's editors read it); English is laid over
+ * it by `auth-i18n.js` for the visitor an AI client sent here.
  */
 
 import { encodeAccessBlock, fetchPublicKey } from './access-block.js';
+import { initI18n, msg, serverMessage } from './auth-i18n.js';
+
+// First: the page is in the visitor's language before anything is announced.
+initI18n();
 
 const form = document.getElementById('authorize-form');
 const userInput = document.getElementById('user');
@@ -48,10 +53,17 @@ async function loadRequest() {
   const res = await fetch(location.href, { headers: { Accept: 'application/json' } });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data || typeof data.redirect_uri !== 'string') {
-    throw new Error(data?.error ?? 'Diese Anfrage ist nicht mehr gültig. Bitte im Programm neu verbinden.');
+    throw new Error(data?.error ? serverMessage(data.error) : msg('consent_stale', 'Diese Anfrage ist nicht mehr gültig. Bitte im Programm neu verbinden.'));
   }
   return data;
 }
+
+// The placeholders are set from here, not marked for translation in the HTML:
+// the real values replace them, and a language switch must never put a
+// placeholder back over what the server confirmed.
+clientName.textContent = msg('consent_checking', 'wird geprüft …');
+redirectOrigin.textContent = msg('consent_checking', 'wird geprüft …');
+say(msg('consent_checking_request', 'Anfrage wird geprüft …'), null);
 
 loadRequest().then((request) => {
   approvedRedirect = request.redirect_uri;
@@ -63,9 +75,9 @@ loadRequest().then((request) => {
   say('', null);
   userInput.focus();
 }).catch((err) => {
-  clientName.textContent = 'unbekannt';
-  redirectOrigin.textContent = 'unbekannt';
-  say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+  clientName.textContent = msg('consent_unknown', 'unbekannt');
+  redirectOrigin.textContent = msg('consent_unknown', 'unbekannt');
+  say(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
 });
 
 /**
@@ -104,7 +116,7 @@ async function grant(body) {
   if (!res.ok || !data || typeof data.redirect !== 'string') {
     // The server distinguishes "WLO rejected these credentials" from everything
     // else; showing its text means a typo says so plainly.
-    throw new Error(data?.error ?? 'Die Anmeldung konnte nicht abgeschlossen werden.');
+    throw new Error(data?.error ? serverMessage(data.error) : msg('consent_failed', 'Die Anmeldung konnte nicht abgeschlossen werden.'));
   }
   return data.redirect;
 }
@@ -119,7 +131,7 @@ form.addEventListener('submit', async (event) => {
   // Checked here rather than with `required` alone so the message lands in the
   // live region, where a screen reader announces it.
   if (!user || !secret) {
-    say('Bitte Benutzername und Passwort ausfüllen.', 'error');
+    say(msg('fill_both', 'Bitte Benutzername und Passwort ausfüllen.'), 'error');
     (user ? secretInput : userInput).focus();
     return;
   }
@@ -127,7 +139,7 @@ form.addEventListener('submit', async (event) => {
   submit.disabled = true;
   deny.disabled = true;
   anonymous.disabled = true;
-  say('Verschlüsseln und anmelden …', 'busy');
+  say(msg('consent_busy', 'Verschlüsseln und anmelden …'), 'busy');
 
   try {
     const block = await encodeAccessBlock(user, secret, await fetchPublicKey());
@@ -136,10 +148,10 @@ form.addEventListener('submit', async (event) => {
     // The password is done with; it should not sit in the field while the
     // browser navigates away.
     secretInput.value = '';
-    say('Angemeldet. Zurück zum Programm …', 'ok');
+    say(msg('consent_done', 'Angemeldet. Zurück zum Programm …'), 'ok');
     location.assign(target);
   } catch (err) {
-    say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    say(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
     anonymous.disabled = false;
     submit.disabled = false;
     deny.disabled = false;
@@ -150,7 +162,7 @@ deny.addEventListener('click', () => {
   // Refusing is an answer the client is entitled to (RFC 6749 §4.1.2.1), and it
   // goes to the target the server confirmed — not to whatever the query said.
   if (!approvedRedirect) {
-    say('Abgelehnt. Du kannst dieses Fenster schließen.', 'ok');
+    say(msg('consent_denied', 'Abgelehnt. Du kannst dieses Fenster schließen.'), 'ok');
     return;
   }
   const target = new URL(approvedRedirect);
@@ -169,12 +181,12 @@ anonymous.addEventListener('click', async () => {
   submit.disabled = true;
   deny.disabled = true;
   anonymous.disabled = true;
-  say('Verbinden …', 'busy');
+  say(msg('consent_connecting', 'Verbinden …'), 'busy');
 
   try {
     location.assign(await grant(authorizeBody({ anonymous: true })));
   } catch (err) {
-    say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    say(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
     anonymous.disabled = false;
     submit.disabled = false;
     deny.disabled = false;

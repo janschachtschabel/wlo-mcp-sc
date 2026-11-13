@@ -15,7 +15,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-import { registerCurationBatchTools } from '../src/tools/curation-batch.js';
+import { registerCurationBatchTools, resetBatchesForTest } from '../src/tools/curation-batch.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { setServiceCredentialForTest, type WloCredential } from '../src/auth/credential.js';
 import { sharedUploadSlots, slotIdentity } from '../src/services/write/upload-slot.js';
@@ -27,6 +27,7 @@ const PDF = Buffer.from('%PDF-1.7\nMechanik\n%%EOF\n', 'latin1');
 const SHA = createHash('sha256').update(PDF).digest('hex');
 
 async function client(): Promise<Client> {
+  resetBatchesForTest();
   process.env['WLO_BATCH_UPLOAD_ENABLED'] = '1';
   const server = new McpServer({ name: 'test', version: '0.0.0' });
   applyReadOnlyToolDefaults(server);
@@ -167,6 +168,12 @@ test('every batch refusal carries error.code — the contract every other tool k
     arguments: { batchToken: token, index: 0, ref: 'x'.repeat(24) } })), 'slot_missing');
   assert.equal(code(await c.callTool({ name: 'wlo_store_batch_file',
     arguments: { batchToken: 'erfundenes-token', index: 0, ref: await slot() } })), 'batch_unknown');
+  // An approval this server no longer knows may have filed files before it was
+  // lost (a restart forgets approvals, not what was stored): open, not "nothing".
+  const unknown = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: 'noch-ein-erfundenes-token', index: 0, ref: await slot() } });
+  assert.equal((unknown as { structuredContent?: { error?: { outcomeOpen?: boolean } } }).structuredContent?.error?.outcomeOpen, true);
+  const missing = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref: 'y'.repeat(24) } });
+  assert.equal((missing as { structuredContent?: { error?: { outcomeOpen?: boolean } } }).structuredContent?.error?.outcomeOpen, false);
   assert.equal(code(await c.callTool({ name: 'wlo_store_batch_manifest', arguments: { batchToken: token } })),
     'nothing_stored');
 });
@@ -198,9 +205,23 @@ test('wrong bytes create nothing and leave the index redeemable (finding 10)', a
   assert.equal((richtig as { structuredContent?: Record<string, unknown> }).structuredContent?.['status'], 'stored');
 });
 
-test('a folder that fails (not 403) fails the file and is retried — no silent flat (finding 3)', async (t) => {
+test('a folder whose creation is OPEN (5xx) is not created a second time — K-13', async (t) => {
   setServiceCredentialForTest(USER);
   const { calls, mock } = repo({ folder: true, folderStatus: 500 });
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const token = String((await prepare(c)).structuredContent?.['batchToken']);
+  const store = async () => c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref: await slot() } });
+  const first = await store();
+  assert.equal((first as { structuredContent?: Record<string, unknown> }).structuredContent?.['reason'], 'folder_failed');
+  await store();
+  assert.equal(calls.filter((x) => x.includes('type=cm%3Afolder')).length, 1, 'a 500 may have created it: a retry is a second folder');
+  assert.equal(calls.filter((x) => x.includes('type=ccm%3Aio')).length, 0, 'and no file is filed flat instead');
+});
+
+test('a folder that is REFUSED (not 403) fails the file and is retried — no silent flat (finding 3)', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { calls, mock } = repo({ folder: true, folderStatus: 400 });
   t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
   const c = await client();
   const token = String((await prepare(c)).structuredContent?.['batchToken']);
@@ -277,7 +298,7 @@ test('an aborted file is recorded as open: a retry reports it, never "being file
   const token = String((await prepare(c)).structuredContent?.['batchToken']);
   const r = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref: await slot() } });
   assert.equal((r as { isError?: boolean }).isError, true);
-  assert.match(toolText(r), /nicht rechtzeitig/);
+  assert.match(toolText(r), /keine Antwort/);
   const nochmal = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref: await slot() } });
   const s = (nochmal as { structuredContent?: Record<string, unknown> }).structuredContent!;
   assert.equal(s['already'], true);
@@ -381,4 +402,48 @@ test('a structure document past the preview line cap is still named, and the pre
   const text = toolText(r);
   assert.match(text, /Teil 23.*Strukturdokument/, 'the 24th entry is past the cap of 20 and still named');
   assert.match(text, /Rolle/, 'what the manifest records includes the role');
+});
+
+test('S-5: the preview names EVERY file — the approval covers the whole list', async () => {
+  setServiceCredentialForTest(USER);
+  const { mock } = repo();
+  const c = await client();
+  try {
+    const entries = Array.from({ length: 45 }, (_, i) => ({ title: `Blatt Nummer ${i + 1}`, sha256: SHA, size: PDF.length, ext: 'pdf' }));
+    const text = toolText(await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN, entries } }));
+    for (const e of entries) assert.ok(text.includes(`${e.title} (`), `missing: ${e.title}`);
+    assert.doesNotMatch(text, /weitere/, 'twenty of them and "… und 25 weitere" was consent to lines nobody saw');
+  } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
+});
+
+test('K-13: a sixth batch is refused while five are under way — none of them is given up', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { mock } = repo();
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const tokens: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const token = String((await prepare(c)).structuredContent?.['batchToken']);
+    await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: token, index: 0, ref: await slot() } });
+    tokens.push(token);
+  }
+  const sixth = await prepare(c);
+  assert.equal(sixth.isError, true);
+  assert.equal(sixth.structuredContent?.['reason'], 'too_many_batches');
+  assert.equal((sixth.structuredContent?.['error'] as Record<string, unknown>)['outcomeOpen'], false);
+  const r = await c.callTool({ name: 'wlo_store_batch_file', arguments: { batchToken: tokens[0], index: 1, ref: await slot() } });
+  assert.equal((r as { structuredContent?: Record<string, unknown> }).structuredContent?.['status'], 'stored', 'the oldest can still be finished');
+});
+
+test('K-14: a title of up to 200 characters is filed as approved — not cut at 120', async (t) => {
+  setServiceCredentialForTest(USER);
+  const { mock } = repo();
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); });
+  const c = await client();
+  const title = `Arbeitsblatt ${'sehr '.repeat(30)}lang`;   // 167 characters
+  assert.ok(title.length > 120 && title.length <= 200);
+  const r = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN, entries: [{ title, sha256: SHA, size: PDF.length, ext: 'pdf' }] } });
+  assert.ok(toolText(r).includes(title), 'the whole title is in the preview');
+  const plan = (r as { structuredContent?: { plan?: { entries?: Array<{ title: string }> } } }).structuredContent?.plan;
+  if (plan?.entries) assert.equal(plan.entries[0]!.title, title);
 });

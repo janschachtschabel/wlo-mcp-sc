@@ -1,6 +1,7 @@
 # GitLab CI – 1:1-Port von .github/workflows/ci.yml
 #
-# Gleiche Schritte, gleiche Reihenfolge, gleiche Gates:
+# Gleiche Schritte, gleiche Reihenfolge, gleiche Gates — außer dem Image-Smoke-Test
+# (scripts/smoke-image.sh), der einen Docker-Daemon braucht und nur in GitHub läuft:
 #   npm ci → build → typecheck → lint → test → audit (prod = Gate, full = info).
 #
 # Läuft für die Ziel-Branch main und für Merge Requests. Die workflow-Regeln
@@ -44,3 +45,5 @@ build-test:
     - npm audit --omit=dev --audit-level=high
     # Voller Baum nur informativ.
     - npm audit || true
+    # The image smoke test (scripts/smoke-image.sh) runs in the GitHub pipeline only:
+    # it needs a Docker daemon, which this job's node image does not have.

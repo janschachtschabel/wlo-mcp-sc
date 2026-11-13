@@ -76,6 +76,17 @@ export function resolveIssuer(env: IssuerEnv): string | null {
   return originOf(`${proto === 'http' ? 'http' : 'https'}://${host}`);
 }
 
+/**
+ * Whether the OAuth address is taken from each request's `Host` header — the
+ * fallback above. It works behind a proxy that sets the header itself and is
+ * wrong behind one that passes the caller's through: then the caller names the
+ * address our discovery documents advertise. Not refused (deployments run on
+ * it), but the operator is TOLD at startup (audit 2026-11-12, S-11).
+ */
+export function issuerDependsOnHostHeader(env: Pick<IssuerEnv, 'configured' | 'trustProxy'>): boolean {
+  return !(env.configured ?? '').trim() && Boolean(env.trustProxy);
+}
+
 /** `URL.origin`, or null when the value is not a usable absolute URL. */
 function originOf(raw: string): string | null {
   try {

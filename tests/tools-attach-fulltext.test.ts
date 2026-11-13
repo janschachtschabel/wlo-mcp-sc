@@ -42,7 +42,7 @@ async function client(): Promise<Client> {
   return c;
 }
 
-interface Rec { size?: number; wwwurl?: string; text?: string; originalId?: string; hash?: string; mimetype?: string }
+interface Rec { size?: number; wwwurl?: string; text?: string; originalId?: string; hash?: string; mimetype?: string; type?: string; aspects?: string[] }
 
 /** Records: plain (no file, no link), withFile, link, hasText, ref (→ plain). POST textContent stores what it gets. */
 function repository(opts: {
@@ -92,7 +92,7 @@ function repository(opts: {
       const r = recs[meta[1]!];
       if (!r) return { status: 404, json: {} };
       return { json: { node: {
-        ref: { id: meta[1], repo: '-home-' }, type: 'ccm:io', ...(r.originalId ? { originalId: r.originalId } : {}),
+        ref: { id: meta[1], repo: '-home-' }, type: r.type ?? 'ccm:io', ...(r.aspects ? { aspects: r.aspects } : {}), ...(r.originalId ? { originalId: r.originalId } : {}),
         ...(r.size ? { size: String(r.size) } : {}), ...(r.mimetype ? { mimetype: r.mimetype } : {}),
         ...(r.hash ? { content: { hash: r.hash } } : {}),
         properties: { 'cclom:title': [`Titel ${meta[1]}`], ...(r.wwwurl ? { 'ccm:wwwurl': [r.wwwurl] } : {}) },
@@ -396,3 +396,21 @@ test('a text written here before is recognised with a charset in its type — th
     assert.equal(sc(same)['unchanged'], true, JSON.stringify(sc(same)));
   } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
 });
+
+// ── cross-package review of the audit follow-up, phase 1 ─────────────────────
+
+for (const [what, rec] of [
+  ['a collection', { type: 'ccm:map', aspects: ['ccm:collection'] }],
+  ['a folder', { type: 'ccm:map', aspects: ['ccm:mapdata'] }],
+] as const) {
+  test(`${what} gets no full text — it has no file and no link, so it passed every other safeguard`, async () => {
+    const { mock, posts, recs } = repository();
+    recs['container'] = { ...rec, aspects: [...rec.aspects] };
+    try {
+      const planned = await planFulltext({ nodeId: 'container', markdown: MD, source: 'manual' });
+      assert.equal(planned.ok, false);
+      assert.equal(!planned.ok && planned.code, 'not_a_record');
+      assert.equal(posts.length, 0);
+    } finally { mock.restore(); }
+  });
+}

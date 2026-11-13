@@ -49,6 +49,15 @@ export interface BodyResult {
 export const DRAIN_FACTOR = 4;
 
 /**
+ * The body bound of every route where a login, a block or an OAuth message is
+ * posted (`/auth*`, `/oauth/*`). Those bodies are a few hundred bytes — a block
+ * is at most 4 096 characters — while the MCP bound is megabytes, for tool
+ * calls that carry texts. Sharing that one made each of these cheap routes a
+ * place to park 4 MiB per slow connection (audit 2026-11-12, S-3).
+ */
+export const CREDENTIAL_BODY_MAX_BYTES = 64 * 1024;
+
+/**
  * Buffer the body up to `maxBytes`. Once the cap is exceeded we stop buffering
  * (memory stays bounded) and keep draining up to `DRAIN_FACTOR × maxBytes`, so
  * an ordinary oversize still gets its clean 413.

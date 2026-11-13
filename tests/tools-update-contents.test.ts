@@ -393,3 +393,23 @@ test('the preview names a reference by its ORIGINAL — the record that is writt
     assert.doesNotMatch(line, /Verknüpfungstitel/);
   } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
 });
+
+test('a continuation whose items carry their keys in another order still finds its plan (audit A-4)', async (t) => {
+  setServiceCredentialForTest(MARIA);
+  setPlanBudgetForTest(0);
+  t.after(() => setPlanBudgetForTest(null));
+  const { mock } = repository();
+  const c = await client();
+  try {
+    const items = Array.from({ length: 6 }, (_, i) => ({ nodeId: `n${i}`, title: `T${i}` }));
+    const first = sc((await previewAndConfirm(c, items)).done);
+    assert.equal(first.complete, false);
+    // The same items as a client would rebuild them: other key order.
+    const rebuilt = items.map(i => ({ title: i.title, nodeId: i.nodeId }));
+    const next = await c.callTool({ name: TOOL, arguments: { items: rebuilt, continuationToken: first.continuationToken } });
+    // (Holds with or without `canonicalArgs`: the input schema already orders declared keys.
+    // Pinned because a client rebuilding its items is the ordinary case, not for the helper.)
+    assert.notEqual((next as { isError?: boolean }).isError, true, 'plan_mismatch for the same items');
+    assert.equal(sc(next).progress?.total, items.length);
+  } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }
+});

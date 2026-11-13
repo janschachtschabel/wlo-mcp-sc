@@ -122,7 +122,9 @@ export function resolveWriteTarget(node: WloNode, requestedId: string): WriteTar
  * taken from somewhere else.
  */
 export type WriteBaseline =
-  | { ok: true; target: WriteTarget; before: Record<string, string[]> }
+  | { ok: true; target: WriteTarget; before: Record<string, string[]>;
+      /** The node that will be WRITTEN — the original when redirected. For checks of its kind. */
+      written: WloNode }
   | { ok: false; target: WriteTarget; reason: string };
 
 /**
@@ -151,7 +153,7 @@ export type WriteBaseline =
  */
 export async function readWriteBaseline(node: WloNode, requestedId: string): Promise<WriteBaseline> {
   const target = resolveWriteTarget(node, requestedId);
-  if (!target.redirected) return { ok: true, target, before: node.properties ?? {} };
+  if (!target.redirected) return { ok: true, target, before: node.properties ?? {}, written: node };
 
   const original = await getNodeMetadata(target.targetId);
   if (!original) {
@@ -164,7 +166,7 @@ export async function readWriteBaseline(node: WloNode, requestedId: string): Pro
         + 'ohne den aktuellen Stand des Originals wäre die Vorschau eine Aussage über den falschen Datensatz.',
     };
   }
-  return { ok: true, target, before: original.properties ?? {} };
+  return { ok: true, target, before: original.properties ?? {}, written: original };
 }
 
 export interface FieldWriteStatus {

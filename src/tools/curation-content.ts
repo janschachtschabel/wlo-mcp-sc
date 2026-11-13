@@ -21,7 +21,7 @@ import { toolError } from './shared.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
-import { createContentNode, resolveCreateParent, submitForReview } from '../services/write/nodes-lifecycle.js';
+import { createContentNode, resolveCreateParent, submitForReview, REVIEW_STATUS } from '../services/write/nodes-lifecycle.js';
 import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
 import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
 import { findByTitle, findByUrl } from '../services/write/duplicates.js';
@@ -46,7 +46,7 @@ import {
   codedError,
   prependText,
   recordTitle,
-  isUpstreamTimeout,
+  isOutcomeOpen,
   timeoutOrError,
   isPreviewCall,
 } from './curation-shared.js';
@@ -218,12 +218,20 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // token is bound to it, so anything the call will additionally DO must
         // be visible in the preview. A commit adds a permanent version entry; a
         // file replaces what the record currently carries.
+        //
+        // A version is made by the METADATA write — and only when it carries a
+        // field (`updateNodeMetadata` sends nothing for none). `commit: true`
+        // beside a change that has no such field (a file alone, a value the
+        // record already holds) therefore creates no version, and the preview
+        // promised one (audit 2026-11-12, K-14). It is said instead of promised.
+        const versions = commit && buildChangeSet(target.targetId, 'content', before, collected.desired)
+          .changes.some(c => c.route === 'mds');
         const extras = [
           file
             ? `Ersetzt den Inhalt des Datensatzes — die bisherige Fassung bleibt in der `
               + `Versionshistorie. ${describeUpload(file)}`
             : '',
-          commit
+          versions
             // Flattened at the composition site like every other foreign part of
             // an action, so the sentence it becomes is safe on its own terms
             // rather than relying on the renderer.
@@ -242,14 +250,17 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
 
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
         if (!token) {
-          return previewReply(cs, 'Zum Übernehmen bitte bestätigen.', collected.notes);
+          return previewReply(cs, 'Zum Übernehmen bitte bestätigen.', commit && !versions
+            ? [...collected.notes, 'commit=true bleibt hier ohne Wirkung: eine neue Version entsteht nur zusammen mit einer '
+              + 'Änderung an den Metadaten, und dieser Aufruf ändert keine.']
+            : collected.notes);
         }
 
         const refusal = confirmOrExplain(token, cs);
         if (refusal) return refusal;
 
         const { statuses } = await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), {
-          commit,
+          commit: versions,
           versionComment,
         });
 
@@ -391,7 +402,13 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         });
         if (result.status === 'duplicate') return existsReply(result.existing);
         if (result.status === 'failed') {
-          return errorText(`Der Datensatz konnte nicht angelegt werden: ${result.detail}`);
+          // `open`: a 5xx, or an answer without an id — the record may exist
+          // (measured 2026-11-06: a create answered 500 and had created). Said
+          // as such; "refused" there read as "start over" and made a second one.
+          return codedError(result.open ? 'unverified' : 'refused',
+            `Der Datensatz konnte nicht angelegt werden: ${result.detail}`
+              + (result.open ? ' Ob er trotzdem angelegt wurde, ist offen — bitte am Ablageort nachsehen, bevor der Aufruf wiederholt wird.' : ''),
+            { outcomeOpen: result.open === true });
         }
 
         // The metadata step ran against the new node, so the read-back has to
@@ -404,23 +421,38 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         let report;
         try {
           const verified = await verifyWrite(stored);
-          report = prependText(markWritten(reportOutcome(stored, result.statuses, verified)), head);
+          report = markWritten(reportOutcome(stored, result.statuses, verified));
         } catch (err) {
-          report = prependText(unverifiedReply(err), head);
+          // `markWritten` here too: the read-back failed, the create did not. Without
+          // it the spent-key advice was "preview again" over a record this very
+          // answer names (review of phase 3).
+          report = markWritten(unverifiedReply(err));
+        }
+        if (result.incomplete) {
+          // The record exists and a step after the create got no answer. An
+          // error whatever the read-back shows of the fields — the file's state
+          // is not in it — and one that carries the id (K-6).
+          const open = codedError('unverified',
+            `${head} — ${result.incomplete} NICHT erneut anlegen: der Datensatz existiert. `
+              + 'Was fehlt, lässt sich mit wlo_update_content nachtragen.',
+            { outcomeOpen: true, recordExists: true, nodeId: result.nodeId });
+          report = { ...open, content: [...open.content, ...report.content] };
+        } else {
+          report = prependText(report, head);
         }
         // Create first, then file: a failed filing leaves the record and is
         // reported beside it, never as a failure of the whole call.
         const filing = target ? await fileRecord(result.nodeId, target) : undefined;
         return withFiling(report, { nodeId: result.nodeId, title }, target, filing);
       } catch (err) {
-        if (isUpstreamTimeout(err) && !writing) {
-          return codedError('timeout', 'Die Antwort des Repositories kam nicht rechtzeitig — beim Vorbereiten, vor jeder '
+        if (isOutcomeOpen(err) && !writing) {
+          return codedError('timeout', 'Vom Repository kam keine Antwort (Zeitüberschreitung oder Verbindungsabbruch) — beim Vorbereiten, vor jeder '
             + 'Änderung. Es wurde nichts angelegt. Bitte den Aufruf erneut ausführen.', { outcomeOpen: false });
         }
         // After the token: the abort interrupted a write that may well have completed.
-        if (isUpstreamTimeout(err)) {
+        if (isOutcomeOpen(err)) {
           return codedError('timeout',
-            'Die Antwort des Repositories kam nicht rechtzeitig. Ob der Datensatz angelegt wurde, ist damit ' +
+            'Vom Repository kam keine Antwort (Zeitüberschreitung oder Verbindungsabbruch). Ob der Datensatz angelegt wurde, ist damit ' +
               'unklar — der Abbruch trifft die Antwort, nicht die Arbeit. Bitte den Aufruf ohne confirmToken ' +
               'erneut senden: Gibt es den Datensatz zu dieser URL bereits, nennt die neue Vorschau ihn mit seiner ID, ' +
               'statt einen zweiten anzulegen.',
@@ -450,6 +482,16 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
 
         const node = await getNodeMetadata(nodeId);
         if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+
+        // Already in the queue: the read-back after a second submission would
+        // find the status the FIRST one left, and report this call as the one
+        // that submitted (K-14 — "a receipt that is not its own"). Refused
+        // before any key; there is nothing to confirm.
+        if (node.properties?.['ccm:wf_status']?.[0] === REVIEW_STATUS) {
+          return codedError('already_submitted',
+            `„${recordTitle(node.properties)}“ (${sanitizeText(nodeId)}) liegt bereits zur redaktionellen Prüfung vor `
+              + `(Status ${REVIEW_STATUS}). Es wurde nichts geändert.`, { outcomeOpen: false });
+        }
 
         // The note is IN the action, which means it is in the preview and in the
         // token's fingerprint. Without that, an approval for "submit this

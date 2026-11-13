@@ -27,24 +27,27 @@ import { z } from 'zod';
 
 import { currentCredential } from '../auth/credential.js';
 import {
-  BATCH_TTL_MS, BatchConfirmations, batchOwner, type BatchPlan, type FolderChoice, type StoreResult,
-} from '../services/write/batch-confirm.js';
+  BATCH_TTL_MS, BatchConfirmations, batchOwner, type BatchPlan, type FolderChoice, type StoreResult, TooManyBatches } from '../services/write/batch-confirm.js';
 import { createBatchFolder, fileBatchEntry, fileManifest, folderLayout } from '../services/write/batch-filing.js';
 import { BATCH_ROLES, MANIFEST_FORMAT, type BatchRole } from '../services/write/batch-manifest.js';
 import { fileNameFrom } from '../services/write/content-source.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { batchUploadEnabled, sharedUploadSlots, slotIdentity } from '../services/write/upload-slot.js';
-import { flattenText, sanitizeText } from '../text-sanitize.js';
+import { flattenText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
-import { registerCurationTool, codedError, timeoutOrError, type WriteAuthChallenge } from './curation-shared.js';
+import { registerCurationTool, codedError, isOutcomeOpen, timeoutOrError, type WriteAuthChallenge } from './curation-shared.js';
 import { registerMyBatchesTool } from './curation-batch-list.js';
 
 const EXT = ['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'ods', 'odp', 'png', 'jpg', 'gif', 'webp', 'mp3', 'mp4',
   'txt', 'md'] as const;
 const MAX_ENTRIES = 200;
-const PREVIEW_LINES = 20;
 
 const batches = new BatchConfirmations();
+
+/** Test seam: the approvals live for the process, the tests of one file must not inherit each other's. */
+export function resetBatchesForTest(): void {
+  batches.resetForTest();
+}
 
 /**
  * A refusal keeps its established fields (`status`, `reason`) AND carries the
@@ -52,11 +55,25 @@ const batches = new BatchConfirmations();
  * a second error shape for four tools. The code is the `reason`; a failed file
  * without one is an upstream failure.
  */
-function result(text: string, structured: Record<string, unknown>, isError = false): WloToolResult {
+function result(text: string, structured: Record<string, unknown>, isError = false, outcomeOpen?: boolean): WloToolResult {
   const code = typeof structured['reason'] === 'string' ? structured['reason'] : 'upstream_error';
+  // `outcomeOpen` like every other curation error (audit 2026-11-12, K-7). The
+  // SERVICE says when a failed step may have created something all the same
+  // (`open`: a 5xx, an answer without an id) — an id in the answer does not
+  // tell, a failed step never carries one. `open` itself is not part of the
+  // answer; it becomes `error.outcomeOpen`.
+  const { open: serviceSaysOpen, ...shown } = structured;
+  const open = outcomeOpen ?? serviceSaysOpen === true;
   return { content: [{ type: 'text' as const, text }],
-    structuredContent: isError ? { ...structured, error: { code, message: text } } : structured,
+    structuredContent: isError ? { ...shown, error: { code, message: text, outcomeOpen: open } } : shown,
     ...(isError ? { isError: true } : {}) };
+}
+
+/** Every error of the batch tools carries `outcomeOpen` — also one that came through `timeoutOrError`'s plain branch. */
+function withOpen(reply: WloToolResult, open: boolean): WloToolResult {
+  const sc = reply.structuredContent as { error?: Record<string, unknown> } | undefined;
+  if (!sc?.error || typeof sc.error['outcomeOpen'] === 'boolean' && sc.error['outcomeOpen'] === open) return reply;
+  return { ...reply, structuredContent: { ...sc, error: { ...sc.error, outcomeOpen: sc.error['outcomeOpen'] === true || open } } };
 }
 
 interface Person { owner: string; slotIdentity: string }
@@ -91,13 +108,19 @@ function chooseFolder(token: string, plan: BatchPlan): Promise<FolderChoice> {
     if (f.status === 'created') return { ok: true, parent: f.nodeId, denied: false };
     // Only a refusal of the permission is the sanctioned fall-back to flat (plan E-3a).
     if (f.status === 'denied') return { ok: true, parent: '-userhome-', denied: true };
-    return { ok: false, detail: f.detail };
+    return { ok: false, detail: f.detail, ...(f.open ? { open: true as const } : {}) };
   });
 }
 
 function refusedToken(outcome: 'unknown' | 'expired' | 'mismatch'): WloToolResult {
   const warum = { unknown: 'unbekannt', expired: 'abgelaufen', mismatch: 'gehört zu einer anderen Anmeldung' }[outcome];
-  return result(`Die Freigabe ist ${warum}. Bitte den Stapel neu vorbereiten.`, { status: 'failed', reason: `batch_${outcome}` }, true);
+  // An unknown or expired approval may have filed files BEFORE it was lost — a
+  // restart forgets every approval, not what was stored under it. Only a
+  // mismatch (another login) says nothing about this caller's batch.
+  const mayHaveFiled = outcome !== 'mismatch';
+  return result(`Die Freigabe ist ${warum}. Dieser Aufruf hat nichts abgelegt`
+    + (mayHaveFiled ? '; unter dieser Freigabe früher abgelegte Dateien bleiben bestehen — wlo_list_my_batches zeigt sie' : '')
+    + '. Bitte den Stapel neu vorbereiten.', { status: 'failed', reason: `batch_${outcome}` }, true, mayHaveFiled);
 }
 
 export function registerCurationBatchTools(server: McpServer, challenge: WriteAuthChallenge): void {
@@ -132,28 +155,39 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       const wer = personal(challenge);
       if ('refusal' in wer) return wer.refusal;
       const entries = (params['entries'] as Array<Record<string, unknown>>).map((e, index) => {
-        const title = flattenText(sanitizeText(String(e['title']))).slice(0, 200);
+        // Flattened, NOT capped: `sanitizeText` cuts at 120 characters, the schema
+        // allows 200, and this string becomes the record's title — a title
+        // silently shortened on the way from the list to the record (K-14).
+        const title = flattenText(String(e['title'])).slice(0, 200).trim();
         const ext = String(e['ext']);
         const role: BatchRole = e['role'] === 'structure' ? 'structure' : 'content';
         return { index, title, sha256: String(e['sha256']), size: Number(e['size']), ext,
           fileName: fileNameFrom(title, ext), role };
       });
       const layout = await folderLayout();
-      const plan: BatchPlan = { target: 'home', folderName: flattenText(sanitizeText(String(params['folderName'])))
-        .slice(0, 120), layout, entries };
+      const plan: BatchPlan = { target: 'home', folderName: flattenText(String(params['folderName']))
+        .slice(0, 120).trim(), layout, entries };
       // Read BEFORE minting, so the stated expiry is never later than the real one.
       const mintedAt = Date.now();
-      const token = batches.mint(wer.owner, plan);
+      let token: string;
+      try {
+        token = batches.mint(wer.owner, plan);
+      } catch (err) {
+        if (!(err instanceof TooManyBatches)) throw err;
+        // Nothing was prepared and nothing touched: a running batch is not given up for a new one.
+        return result(err.scope === 'owner'
+          ? 'Es sind bereits mehrere Stapel dieser Anmeldung in Arbeit. Bitte erst einen davon abschließen '
+            + '(wlo_store_batch_manifest) oder auslaufen lassen (30 Minuten) — sonst ginge dessen Freigabe verloren.'
+          : 'Der Server hält gerade zu viele laufende Stapel. Bitte in einigen Minuten erneut versuchen.',
+          { status: 'failed', reason: 'too_many_batches' }, true, false);
+      }
       const total = entries.reduce((n, e) => n + e.size, 0);
       const zeile = (e: typeof entries[number]) =>
         `- ${e.title} (${e.ext}, ${megabytes(e.size)}, als „${e.fileName}“)${e.role === 'structure' ? ' — Strukturdokument' : ''}`;
-      const zeilen = entries.slice(0, PREVIEW_LINES).map(zeile);
-      if (entries.length > PREVIEW_LINES) {
-        // A structure document is named whatever its position: the role is part of
-        // the approval, and an approval must not cover what the preview cut off.
-        zeilen.push(...entries.slice(PREVIEW_LINES).filter(e => e.role === 'structure').map(zeile));
-        zeilen.push(`- … und ${entries.slice(PREVIEW_LINES).filter(e => e.role !== 'structure').length} weitere`);
-      }
+      // EVERY file: the approval covers the whole list, so the preview shows the
+      // whole list — twenty of two hundred was consent to 180 lines nobody saw
+      // (audit 2026-11-12, S-5). Bounded by MAX_ENTRIES and the title cap.
+      const zeilen = entries.map(zeile);
       const ziel = layout === 'folder'
         ? `in einen neuen Ordner „${plan.folderName}“ in deinem persönlichen Bereich`
         : 'direkt in deinen persönlichen Bereich (ein eigener Ordner ist für dein Konto nicht freigeschaltet)';
@@ -221,12 +255,20 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
         choice = await chooseFolder(token, r.plan);
       } catch (err) {
         batches.abandon(token, index);
-        return timeoutOrError('Der Ordner konnte nicht angelegt werden', err, 'Ein Ordner kann angelegt sein');
+        return withOpen(timeoutOrError('Der Ordner konnte nicht angelegt werden', err, 'Ein Ordner kann angelegt sein'), isOutcomeOpen(err));
       }
       if (!choice.ok) {
         batches.abandon(token, index);
-        return result('Der Ordner konnte nicht angelegt werden — die Datei bitte erneut senden.',
-          { status: 'failed', reason: 'folder_failed', detail: choice.detail }, true);
+        // "Erneut senden" only where nothing can exist: with `renameIfExists` a
+        // second try after a create that DID land makes a second folder.
+        return result(choice.open
+          // Not "send the file again": the open choice is kept, so every further
+          // file of THIS batch gets the same answer. The way on is a new batch.
+          ? 'Der Ordner wurde möglicherweise angelegt, die Antwort war aber nicht verwertbar. Für diesen Stapel wird '
+            + 'kein zweiter Ordner angelegt und keine weitere Datei abgelegt — bitte im persönlichen Bereich nachsehen '
+            + 'und den Stapel NEU vorbereiten (wlo_prepare_file_batch).'
+          : 'Der Ordner konnte nicht angelegt werden — die Datei bitte erneut senden.',
+          { status: 'failed', reason: 'folder_failed', detail: choice.detail }, true, choice.open === true);
       }
       let stored: StoreResult;
       try {
@@ -236,7 +278,8 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
         // reports it instead of filing a second one — and the index never stays "in flight".
         batches.record(token, index, { status: 'unverified',
           detail: 'Beim Ablegen kam keine Antwort — bitte im persönlichen Bereich nachsehen.' });
-        return timeoutOrError('Die Datei konnte nicht abgelegt werden', err, `Ob Datei ${index} angelegt wurde, ist offen`);
+        // Recorded as `unverified` above — the answer must not say less than the record does.
+        return withOpen(timeoutOrError('Die Datei konnte nicht abgelegt werden', err, `Ob Datei ${index} angelegt wurde, ist offen`), true);
       }
       batches.record(token, index, stored);
       const text = { stored: 'abgelegt', dropped: 'angelegt, aber ohne Inhalt', unverified: 'unklar (nicht bestätigt)',
@@ -276,13 +319,13 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       } catch (err) {
         // Nothing of the manifest was sent yet: it may be claimed again.
         batches.releaseManifest(token);
-        return timeoutOrError('Der Ordner für den Vorgang war nicht erreichbar', err, 'Ein Ordner kann angelegt sein');
+        return withOpen(timeoutOrError('Der Ordner für den Vorgang war nicht erreichbar', err, 'Ein Ordner kann angelegt sein'), isOutcomeOpen(err));
       }
       try {
         if (!choice.ok) {
           batches.releaseManifest(token);
           return result('Der Ordner ist nicht erreichbar — der Vorgang wurde nicht abgelegt.',
-            { status: 'failed', reason: 'folder_failed' }, true);
+            { status: 'failed', reason: 'folder_failed' }, true, choice.open === true);
         }
         const manifest = {
           format: MANIFEST_FORMAT, ordner: plan.folderName, layout: choice.denied ? 'flat' : plan.layout,
@@ -299,7 +342,7 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
         // Possibly created: recorded as open, never filed a second time and never reported as filed.
         batches.recordManifest(token, { status: 'unverified',
           detail: 'Beim Ablegen von vorgang.json kam keine Antwort — bitte im persönlichen Bereich nachsehen.' });
-        return timeoutOrError('Der Vorgang konnte nicht abgelegt werden', err, 'Ob vorgang.json angelegt wurde, ist offen');
+        return withOpen(timeoutOrError('Der Vorgang konnte nicht abgelegt werden', err, 'Ob vorgang.json angelegt wurde, ist offen'), true);
       }
     },
   });

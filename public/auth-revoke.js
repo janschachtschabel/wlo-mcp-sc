@@ -15,6 +15,10 @@
  */
 
 import { encodeAccessBlock, fetchPublicKey } from './access-block.js';
+import { initI18n, msg, serverMessage } from './auth-i18n.js';
+
+// First: the page is in the visitor's language before anything is announced.
+initI18n();
 
 const form = document.getElementById('revoke-form');
 const blockInput = document.getElementById('block');
@@ -45,13 +49,13 @@ form.addEventListener('submit', async (event) => {
   const token = blockInput.value.trim().replace(/^Bearer\s+/i, '');
 
   if (!token) {
-    say('Bitte den Zugangsblock einfügen.', 'error');
+    say(msg('revoke_need_block', 'Bitte den Zugangsblock einfügen.'), 'error');
     blockInput.focus();
     return;
   }
 
   submit.disabled = true;
-  say('Wird gesperrt …', 'busy');
+  say(msg('revoke_busy', 'Wird gesperrt …'), 'busy');
 
   try {
     const res = await fetch('/auth/revoke', {
@@ -62,7 +66,7 @@ form.addEventListener('submit', async (event) => {
 
     if (!res.ok) {
       const detail = await res.json().catch(() => null);
-      throw new Error(detail?.error ?? 'Der Block konnte nicht gesperrt werden.');
+      throw new Error(detail?.error ? serverMessage(detail.error) : msg('revoke_failed', 'Der Block konnte nicht gesperrt werden.'));
     }
 
     const data = await res.json();
@@ -70,13 +74,13 @@ form.addEventListener('submit', async (event) => {
     // and "it was already gone", and both end with the block being useless.
     say(
       data?.revoked
-        ? 'Gesperrt. Dieser Zugang funktioniert ab sofort nicht mehr.'
-        : 'Dieser Block war bereits gesperrt oder nie aktiv. Er funktioniert nicht.',
+        ? msg('revoke_done', 'Gesperrt. Dieser Zugang funktioniert ab sofort nicht mehr.')
+        : msg('revoke_was_gone', 'Dieser Block war bereits gesperrt oder nie aktiv. Er funktioniert nicht.'),
       'ok',
     );
     blockInput.value = '';
   } catch (err) {
-    say(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    say(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
   } finally {
     submit.disabled = false;
   }
@@ -90,13 +94,13 @@ accountForm.addEventListener('submit', async (event) => {
   // Checked here rather than with `required` alone so the message lands in the
   // live region, where a screen reader announces it.
   if (!user || !secret) {
-    sayAccount('Bitte Benutzername und Passwort ausfüllen.', 'error');
+    sayAccount(msg('fill_both', 'Bitte Benutzername und Passwort ausfüllen.'), 'error');
     (user ? secretInput : userInput).focus();
     return;
   }
 
   accountSubmit.disabled = true;
-  sayAccount('Anmeldung prüfen und sperren …', 'busy');
+  sayAccount(msg('revoke_all_busy', 'Anmeldung prüfen und sperren …'), 'busy');
 
   try {
     const token = await encodeAccessBlock(user, secret, await fetchPublicKey());
@@ -112,21 +116,22 @@ accountForm.addEventListener('submit', async (event) => {
       // The server distinguishes "WLO rejected these credentials" from
       // everything else, and that distinction matters more here than on the
       // issuance page: a typo would otherwise read as "you had no accesses".
-      throw new Error(detail?.error ?? 'Die Zugänge konnten nicht gesperrt werden.');
+      throw new Error(detail?.error ? serverMessage(detail.error) : msg('revoke_all_failed', 'Die Zugänge konnten nicht gesperrt werden.'));
     }
 
     const data = await res.json();
     const count = Number(data?.revoked ?? 0);
     sayAccount(
-      count > 0
-        ? `${count} ${count === 1 ? 'Zugang wurde' : 'Zugänge wurden'} gesperrt. ` +
-          'Betroffene KI-Programme müssen neu verbunden werden.'
-        : 'Für dieses Konto war kein Zugang aktiv. Es ist nichts offen.',
+      count === 1
+        ? msg('revoke_all_one', '1 Zugang wurde gesperrt. Betroffene KI-Programme müssen neu verbunden werden.')
+        : count > 1
+          ? msg('revoke_all_many', '{n} Zugänge wurden gesperrt. Betroffene KI-Programme müssen neu verbunden werden.', { n: count })
+          : msg('revoke_all_none', 'Für dieses Konto war kein Zugang aktiv. Es ist nichts offen.'),
       'ok',
     );
     secretInput.value = '';
   } catch (err) {
-    sayAccount(err instanceof Error ? err.message : 'Unbekannter Fehler.', 'error');
+    sayAccount(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
   } finally {
     accountSubmit.disabled = false;
   }

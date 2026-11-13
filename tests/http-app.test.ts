@@ -831,3 +831,57 @@ test('http dispatch: discovery is cross-origin readable, the authorize path is n
     }
   } finally { await close(server); }
 });
+
+// ── audit 2026-11-12, S-3: a credential route never needs megabytes ───────────
+
+test('the login and OAuth routes cap their body far below the MCP limit (audit S-3)', async (t) => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setAccessSupport } = await import('../src/auth/credential.js');
+  const { loadAuthKeys } = await import('../src/auth/access-token.js');
+  const { openRegistry } = await import('../src/auth/access-registry.js');
+  const { CREDENTIAL_BODY_MAX_BYTES } = await import('../src/read-body.js');
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-s3-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(registry && keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+
+  // The MCP limit stays 4 MiB-ish for tool calls; a login body is a few hundred bytes.
+  const { server, base } = await startServer({ maxBodyBytes: 4 * 1024 * 1024, publicBaseUrl: 'https://mcp.example.org' });
+  try {
+    const big = JSON.stringify({ token: 'abc', ticket: 'abc', pad: 'x'.repeat(CREDENTIAL_BODY_MAX_BYTES + 1) });
+    const send = (path: string, body: string) =>
+      fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    // Registration owes RFC 7591 a 413.
+    assert.equal((await send('/oauth/register', big)).status, 413, `a body of ${big.length} bytes`);
+    // The other routes answer an unusable body 400 — and an oversized one must
+    // read exactly like a body without the field, i.e. its `token` was never parsed.
+    // (`/oauth/token` reads a form, so its "small" body is a form with a grant type.)
+    const small: Record<string, string> = { '/oauth/token': 'grant_type=authorization_code&code=abc' };
+    for (const path of ['/auth/issue', '/auth/revoke-all', '/auth/ticket', '/oauth/token']) {
+      const [tooBig, empty, parsed] = await Promise.all([send(path, big), send(path, path === '/oauth/token' ? '' : '{}'), send(path, small[path] ?? JSON.stringify({ token: 'abc' }))]);
+      assert.equal(tooBig.status, 400, path);
+      const [a, b, c] = await Promise.all([tooBig.text(), empty.text(), parsed.text()]);
+      assert.equal(a, b, `${path}: an oversized body is not read`);
+      // (`/auth/ticket` reads `ticket`, and a parsed one would be sent to the repository — so for it
+      // only the first half is asserted; an oversized body that WAS parsed would fail on the network guard.)
+      if (path !== '/auth/ticket') assert.notEqual(b, c, `${path}: the comparison means something — a parsed token answers differently`);
+    }
+    // And a tool call of the same size is still accepted by the body reader (not 413).
+    const mcp = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: big });
+    assert.notEqual(mcp.status, 413);
+  } finally { await close(server); }
+
+  // An operator bound BELOW 64 KiB wins: the credential bound is a ceiling, not a floor.
+  const tight = await startServer({ maxBodyBytes: 1024, publicBaseUrl: 'https://mcp.example.org' });
+  try {
+    const body = JSON.stringify({ redirect_uris: ['https://client.example.org/cb'], client_name: 'x'.repeat(2000) });
+    const r = await fetch(`${tight.base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    assert.equal(r.status, 413, 'a 2-KB registration against a 1-KB operator bound');
+  } finally { await close(tight.server); }
+});

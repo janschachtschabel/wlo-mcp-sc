@@ -15,7 +15,7 @@
  */
 
 import type { WloNode } from '../wlo-api.js';
-import { getChildCollections, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
+import { getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
 import { rerankNodes, sortByTitle } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode, formatNodes } from '../formatter.js';
@@ -31,7 +31,7 @@ import { log } from '../logger.js';
  * stop the fallback from turning into a 100+-parallel-call avalanche; direct
  * level-1 matches are always preserved.
  */
-export async function findCollectionsByTreeTraversal(level1: WloNode[], query: string): Promise<WloNode[]> {
+export async function findCollectionsByTreeTraversal(level1: WloNode[], query: string): Promise<{ matches: WloNode[]; unread: number }> {
   // De-dup by nodeId at insertion (audit Q-2): the same node can be reached more
   // than once across levels, and duplicates would make rows and `total` lie.
   const seen = new Set<string>();
@@ -54,14 +54,19 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
   if (level1.length > LEVEL2_PARENT_CAP) {
     log.warn('collection search: level2 expansion capped', { from: level1.length, to: LEVEL2_PARENT_CAP, query });
   }
+  // Listings that did not answer are COUNTED: "no collections found" over
+  // twenty-five unread sub-lists is not a statement about the catalogue.
+  let unread = 0;
   const level2Results = await Promise.allSettled(
-    level2Parents.map(parent => getChildCollections(parent.ref?.id ?? '', 50))
+    level2Parents.map(parent => getChildCollectionsResult(parent.ref?.id ?? '', 50))
   );
   const allLevel2Nodes: WloNode[] = [];
   for (const r of level2Results) {
-    if (r.status === 'fulfilled') {
-      allLevel2Nodes.push(...r.value);
-      addMatches(r.value);
+    if (r.status === 'fulfilled' && r.value.reachable) {
+      allLevel2Nodes.push(...r.value.nodes);
+      addMatches(r.value.nodes);
+    } else {
+      unread++;
     }
   }
 
@@ -82,14 +87,15 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
       : allLevel2Nodes.slice(0, LEVEL3_PARENT_CAP);
 
     const level3Results = await Promise.allSettled(
-      level2Candidates.map(parent => getChildCollections(parent.ref?.id ?? '', 30))
+      level2Candidates.map(parent => getChildCollectionsResult(parent.ref?.id ?? '', 30))
     );
     for (const r of level3Results) {
-      if (r.status === 'fulfilled') addMatches(r.value);
+      if (r.status === 'fulfilled' && r.value.reachable) addMatches(r.value.nodes);
+      else unread++;
     }
   }
 
-  return matches;
+  return { matches, unread };
 }
 
 /**
@@ -117,6 +123,8 @@ export const RECURSIVE_SKIP_MAX = 400;
  * that is not.
  */
 const RECURSIVE_VISIT_MAX = 50;
+/** Collections of one level read at the same time. Small: each is two requests, and the upstream gate is shared. */
+const RECURSIVE_POOL = 6;
 
 /**
  * BFS over a collection and its sub-collections, collecting file children
@@ -133,45 +141,82 @@ export async function collectRecursiveContents(
   maxResults: number,
   excluded: Set<string>,
   query: string | undefined,
-): Promise<{ nodes: FormattedNode[]; totalHits: number }> {
-  const collectionQueue = [rootId];
+): Promise<{ nodes: FormattedNode[]; totalHits: number; incomplete?: true }> {
   const visited = new Set<string>();
   const seenNodes = new Set<string>(); // de-dup result rows across sub-collections
   const nodes: FormattedNode[] = [];
   let totalHits = 0;
+  let level = [rootId];
+  let unread = 0;
+  let unreadSubs = 0;
 
-  while (collectionQueue.length > 0 && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
-    const cid = collectionQueue.shift()!;
-    if (visited.has(cid)) continue;
-    visited.add(cid);
+  // Level by level, a few collections at a time. The walk used to read one
+  // collection after the other — two requests each, up to a hundred in series
+  // (audit 2026-11-12, P-3). The collections of one level do not depend on each
+  // other, so a group is read together; the results are taken in the order of
+  // the TREE, so the answer is what the serial walk produced.
+  //
+  // In groups rather than the whole level at once: the walk stops as soon as it
+  // has its rows, and a level of fifty read for three rows would be the waste
+  // the visit cap exists to prevent. Nobody waiting any more ends it too —
+  // `wloFetch` throws on the request's own signal, and that throw is not caught.
+  while (level.length > 0 && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
+    const next: string[] = [];
+    let at = 0;
+    while (at < level.length && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
+      const group: string[] = [];
+      while (at < level.length && group.length < RECURSIVE_POOL && visited.size + group.length < RECURSIVE_VISIT_MAX) {
+        const cid = level[at++]!;
+        if (!visited.has(cid) && !group.includes(cid)) group.push(cid);
+      }
+      // Settled, not all-or-nothing: a member's failure counts only when the
+      // loop below REACHES it. The serial walk never asked for a collection
+      // past the one that filled the page, so its failing must not fail the call.
+      const read = await Promise.allSettled(group.map(cid => Promise.all([
+        getCollectionContents(cid, 'files', 50),
+        getChildCollectionsResult(cid),
+      ])));
+      for (let g = 0; g < group.length; g++) {
+        // Enough rows already: what the rest of the group answered is dropped,
+        // exactly as the serial walk never asked for it.
+        if (nodes.length >= maxResults) break;
+        visited.add(group[g]!);
+        const settled = read[g]!;
+        if (settled.status === 'rejected') throw settled.reason;
+        const [filesResp, subs] = settled.value;
+        totalHits += filesResp.pagination.total;
+        let fileNodes = filesResp.nodes;
+        if (excluded.size) fileNodes = fileNodes.filter(n => !excluded.has(n.ref?.id ?? ''));
+        // Drop a node already emitted from an earlier sub-collection.
+        fileNodes = fileNodes.filter(n => {
+          const id = n.ref?.id;
+          if (!id) return true;          // no id → cannot de-dup, keep
+          if (seenNodes.has(id)) return false;
+          seenNodes.add(id);
+          return true;
+        });
+        if (query?.trim()) fileNodes = rerankNodes(fileNodes, query);
+        nodes.push(...formatNodes(fileNodes));
 
-    const filesResp = await getCollectionContents(cid, 'files', 50);
-    totalHits += filesResp.pagination.total;
-    let fileNodes = filesResp.nodes;
-    if (excluded.size) fileNodes = fileNodes.filter(n => !excluded.has(n.ref?.id ?? ''));
-    // Drop a node already emitted from an earlier sub-collection.
-    fileNodes = fileNodes.filter(n => {
-      const id = n.ref?.id;
-      if (!id) return true;          // no id → cannot de-dup, keep
-      if (seenNodes.has(id)) return false;
-      seenNodes.add(id);
-      return true;
-    });
-    if (query?.trim()) fileNodes = rerankNodes(fileNodes, query);
-    nodes.push(...formatNodes(fileNodes));
-
-    const subs = await getChildCollections(cid);
-    for (const sub of subs) {
-      const subId = sub.ref?.id ?? sub.properties?.['sys:node-uuid']?.[0];
-      if (subId && !visited.has(subId)) collectionQueue.push(subId);
+        // The branch below a listing that did not answer (a 5xx, our own full
+        // gate) is not walked — and that is said, not passed off as "no
+        // sub-collections" (chatbot feedback 2026-11-13).
+        if (!subs.reachable) unreadSubs += 1;
+        for (const sub of subs.nodes) {
+          const subId = sub.ref?.id ?? sub.properties?.['sys:node-uuid']?.[0];
+          if (subId && !visited.has(subId) && !next.includes(subId)) next.push(subId);
+        }
+      }
     }
+    unread = (level.length - at) + next.length;
+    level = next;
   }
-  if (visited.size >= RECURSIVE_VISIT_MAX && collectionQueue.length > 0) {
+  if (visited.size >= RECURSIVE_VISIT_MAX && unread > 0) {
     log.warn('recursive contents: visit cap reached, subtree not fully walked', {
-      rootId, visited: visited.size, queued: collectionQueue.length,
+      rootId, visited: visited.size, queued: unread,
     });
   }
-  return { nodes: nodes.slice(0, maxResults), totalHits };
+  return { nodes: nodes.slice(0, maxResults), totalHits, ...(unreadSubs > 0 ? { incomplete: true as const } : {}) };
 }
 
 /** One node of the browse tree: a formatted collection plus what the walk learned about it. */
@@ -182,6 +227,8 @@ export type CollectionTreeNode = FormattedNode & {
   contentPreview?: FormattedNode[];
   /** Upstream holds more sub-collections than this listing shows. */
   hasMoreChildren?: boolean;
+  /** The listing of this node's sub-collections did not answer — they are unknown, not absent. */
+  childrenUnread?: boolean;
 };
 
 export interface CollectionTreeOptions {
@@ -295,7 +342,10 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
     if (level < depth && id) {
       // Fetch one more than shown: the extra hit proves there IS more
       // without spending a second round-trip on a count.
-      const fetched = await getChildCollections(id, childSlice + 1);
+      const listing = await getChildCollectionsResult(id, childSlice + 1);
+      const fetched = listing.nodes;
+      // Not read is not empty: the branch may have children this tree does not show.
+      if (!listing.reachable) f.childrenUnread = true;
       if (fetched.length > childSlice) f.hasMoreChildren = true;
       // Claim each child in `visited` at SCHEDULING time (synchronously in
       // this filter), not when its own enrichOne starts — otherwise two

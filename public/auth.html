@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-i18n-title="issue_doc_title">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,37 +9,41 @@
 </head>
 <body>
 <main>
-  <h1>MCP-Zugang mit deinem WLO-Konto</h1>
-  <p class="lede">
+  <div class="lang" role="group" aria-label="Sprache / Language">
+    <button type="button" data-lang="de" aria-pressed="true" lang="de" aria-label="Deutsch">DE</button>
+    <button type="button" data-lang="en" aria-pressed="false" lang="en" aria-label="English">EN</button>
+  </div>
+  <h1 data-i18n="issue_title">MCP-Zugang mit deinem WLO-Konto</h1>
+  <p class="lede" data-i18n="issue_lede">
     Damit du im KI-Programm mit deinen eigenen Rechten arbeiten kannst — und
     Änderungen unter deinem Namen in der WLO-Historie stehen.
   </p>
   <p class="lang-note" lang="en">English: this page issues an encrypted access block for the WLO MCP server.</p>
 
   <div class="card">
-    <h2 id="form-heading">Zugang erzeugen</h2>
+    <h2 id="form-heading" data-i18n="issue_form">Zugang erzeugen</h2>
     <!-- No native submit: the form is handled in JS so the password is
          encrypted before anything leaves the page. The CSP forbids form-action
          entirely, so a scripting failure cannot fall back to a plain POST. -->
     <form id="issue-form" novalidate aria-labelledby="form-heading">
       <div class="field">
-        <label for="user">WLO-Benutzername</label>
+        <label for="user" data-i18n="user_label">WLO-Benutzername</label>
         <input id="user" name="user" type="text" autocomplete="username"
                required aria-describedby="user-hint" />
-        <p class="hint" id="user-hint">Derselbe Name, mit dem du dich auf WirLernenOnline anmeldest.</p>
+        <p class="hint" id="user-hint" data-i18n="user_hint">Derselbe Name, mit dem du dich auf WirLernenOnline anmeldest.</p>
       </div>
       <div class="field">
-        <label for="secret">WLO-Passwort</label>
+        <label for="secret" data-i18n="secret_label">WLO-Passwort</label>
         <input id="secret" name="secret" type="password" autocomplete="current-password"
                required aria-describedby="secret-hint" />
-        <p class="hint" id="secret-hint">
+        <p class="hint" id="secret-hint" data-i18n="secret_hint">
           Wird <strong>in deinem Browser verschlüsselt</strong> und verlässt dieses Gerät nur als
           unlesbarer Block. Wir speichern es nicht.
         </p>
       </div>
       <div class="actions">
-        <button type="submit" id="submit">Zugang erzeugen</button>
-        <a href="/auth-revoke.html">Zugang sperren</a>
+        <button type="submit" id="submit" data-i18n="issue_submit">Zugang erzeugen</button>
+        <a href="/auth-revoke.html" data-i18n="issue_revoke_link">Zugang sperren</a>
       </div>
     </form>
 
@@ -48,11 +52,11 @@
     <p class="status" id="status" role="status" aria-live="polite"></p>
 
     <div class="block-out" id="result" hidden>
-      <h2>Dein Zugangsblock</h2>
+      <h2 data-i18n="issue_result">Dein Zugangsblock</h2>
       <div class="field">
-        <label for="block">Wert für das Feld „Authorization" deines KI-Programms</label>
+        <label for="block" data-i18n="issue_block_label">Wert für das Feld „Authorization" deines KI-Programms</label>
         <textarea id="block" readonly spellcheck="false" aria-describedby="block-hint"></textarea>
-        <p class="hint" id="block-hint">
+        <p class="hint" id="block-hint" data-i18n="issue_block_hint">
           Für ein Kopfzeilen-Feld (Header) vollständig kopieren, inklusive
           <code class="mono">Bearer</code> am Anfang. Fragt ein Feld dagegen nur nach dem
           Block selbst, nimm den zweiten Knopf — <code class="mono">Bearer</code> zweimal
@@ -60,32 +64,32 @@
         </p>
       </div>
       <div class="actions">
-        <button type="button" id="copy" class="secondary">Mit „Bearer" kopieren</button>
-        <button type="button" id="copy-plain" class="secondary">Nur den Block kopieren</button>
+        <button type="button" id="copy" class="secondary" data-i18n="issue_copy">Mit „Bearer" kopieren</button>
+        <button type="button" id="copy-plain" class="secondary" data-i18n="issue_copy_plain">Nur den Block kopieren</button>
         <span class="status" id="copy-status" role="status" aria-live="polite"></span>
       </div>
 
-      <h2>So trägst du ihn ein</h2>
+      <h2 data-i18n="issue_howto">So trägst du ihn ein</h2>
       <ol>
-        <li>Öffne im KI-Programm die Einstellungen der WLO-Verbindung.</li>
-        <li>Trage den Block dort ein, wo zusätzliche Kopfzeilen (Header) hinterlegt werden.</li>
-        <li>Verbindung neu aufbauen und im Chat <code class="mono">wlo_auth_status</code> aufrufen —
+        <li data-i18n="issue_step1">Öffne im KI-Programm die Einstellungen der WLO-Verbindung.</li>
+        <li data-i18n="issue_step2">Trage den Block dort ein, wo zusätzliche Kopfzeilen (Header) hinterlegt werden.</li>
+        <li data-i18n="issue_step3">Verbindung neu aufbauen und im Chat <code class="mono">wlo_auth_status</code> aufrufen —
           steht dort <code class="mono">mode: user</code>, greift dein Zugang.</li>
       </ol>
     </div>
   </div>
 
   <div class="warn">
-    <p><strong>Behandle den Block wie ein Passwort.</strong> Wer ihn hat, kann über diesen
+    <p data-i18n="issue_warn1"><strong>Behandle den Block wie ein Passwort.</strong> Wer ihn hat, kann über diesen
       Server mit deinen WLO-Rechten arbeiten. Er gilt, bis du ihn sperrst.</p>
-    <p>
+    <p data-i18n="issue_warn2">
       Block verloren? Ein Wechsel deines WLO-Passworts macht <em>alle</em> deine Blöcke sofort
       ungültig.
     </p>
   </div>
 
   <footer>
-    <p>WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
+    <p data-i18n="footer">WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
   </footer>
 </main>
 <script type="module" src="/auth.js"></script>

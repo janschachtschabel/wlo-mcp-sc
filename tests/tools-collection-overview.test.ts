@@ -22,7 +22,7 @@ function collectionNode(props: Record<string, string[]> = {}) {
     'cclom:title': ['Optik'],
     'ccm:oeh_collection_compendium_text': [COMPENDIUM],
     ...props,
-  }), type: 'ccm:map' };
+  }), type: 'ccm:map', aspects: ['ccm:collection'] };
 }
 
 function children(nodes: unknown[], total = nodes.length): MockResult {
@@ -138,6 +138,11 @@ test('error codes instead of repository text', async () => {
   const material = await overview({ collectionId: 'ein-material' }, url =>
     url.includes('/ein-material/metadata') ? { json: { node: { ...makeNode('ein-material', 'Arbeitsblatt'), type: 'ccm:io' } } } : undefined);
   assert.equal(material.sc.error?.code, 'not_a_collection');
+
+  // A folder reports `ccm:map` too; only the aspect makes a collection (measured 2026-11-12).
+  const folder = await overview({ collectionId: 'ein-ordner' }, url =>
+    url.includes('/ein-ordner/metadata') ? { json: { node: { ...makeNode('ein-ordner', 'Ablage'), type: 'ccm:map', aspects: ['ccm:mapdata'] } } } : undefined);
+  assert.equal(folder.sc.error?.code, 'not_a_collection');
 });
 
 test('a skill lookup that could not answer says "not checked", not "none approved"', async () => {

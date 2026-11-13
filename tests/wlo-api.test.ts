@@ -7,27 +7,53 @@ import {
   buildRenderUrl,
   wloFetch,
   getNodeBreadcrumb,
-  getNodeDownloadText,
+  readNodeDownload,
   WLO_REPOSITORY_URL,
 } from '../src/wlo-api.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
-test('getNodeDownloadText caps an oversized download and marks it truncated', async () => {
-  const big = 'x'.repeat(200_000); // 200 KB — well over the cap
+test('readNodeDownload stops at the bound and says that it cut — no marker in the text', async () => {
+  const big = 'x'.repeat(200_000);
   const mock = installFetchMock(() => ({ text: big }));
   try {
-    const out = await getNodeDownloadText('node-1');
-    assert.ok(out !== null, 'download returned');
-    assert.ok(out!.length <= 64 * 1024 + 32, `capped length was ${out!.length}`);
-    assert.match(out!, /gekürzt/, 'truncation marker present');
+    const out = await readNodeDownload('node-1', 64 * 1024);
+    assert.ok(out, 'download returned');
+    assert.equal(out.truncated, true);
+    assert.equal(out.text.length, 64 * 1024);
+    assert.doesNotMatch(out.text, /gekürzt/);
   } finally { mock.restore(); }
 });
 
-test('getNodeDownloadText returns a small download unchanged', async () => {
-  const mock = installFetchMock(() => ({ text: '# Skill\n\nDo the thing.' }));
+test('readNodeDownload returns a download of exactly the bound unchanged', async () => {
+  const body = '# Skill\n' + 'y'.repeat(1000 - 8);
+  const mock = installFetchMock(() => ({ text: body }));
   try {
-    assert.equal(await getNodeDownloadText('node-1'), '# Skill\n\nDo the thing.');
+    assert.deepEqual(await readNodeDownload('node-1', 1000), { text: body, truncated: false });
+    assert.equal((await readNodeDownload('node-1', 999))!.truncated, true, 'one byte less cuts');
   } finally { mock.restore(); }
+});
+
+test('readNodeDownload stops READING at the bound — the rest of the stream is never pulled', async () => {
+  // Many chunks, far more than the bound. The mock hands the body over in one
+  // piece, so this installs its own fetch: what matters is how much was pulled.
+  const real = globalThis.fetch;
+  let pulled = 0;
+  let cancelled = false;
+  globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled++;
+      if (pulled > 1000) { controller.close(); return; }
+      controller.enqueue(new Uint8Array(1024).fill(120));
+    },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 }), { status: 200 })) as typeof fetch;
+  try {
+    const out = await readNodeDownload('node-1', 10 * 1024);
+    assert.equal(out?.truncated, true);
+    assert.equal(out?.text.length, 10 * 1024);
+    assert.ok(cancelled, 'the stream is cancelled');
+    assert.ok(pulled <= 13, `pulled ${pulled} chunks of 1 KiB for a 10-KiB bound`);
+  } finally { globalThis.fetch = real; }
 });
 
 test('sanitizeRepositoryUrl: trims, strips slashes and trailing /rest', () => {

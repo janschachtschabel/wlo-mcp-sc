@@ -28,10 +28,15 @@ import {
   createSuggestions,
   createSuggestionsRequest,
   listSuggestions,
+  suggestionsFor,
+  newProposals,
+  valuesAfterAccept,
+  STATUS_LABEL,
   type Suggestion,
   type SuggestionDraft,
   type SuggestionStatus,
 } from '../services/write/suggestions.js';
+import { readWriteBaseline } from '../services/write/nodes.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import {
@@ -59,12 +64,6 @@ const FIELD_NAMES = Object.keys(CONTENT_FIELDS) as [string, ...string[]];
  * so this is far above what a single record can need.
  */
 export const MAX_SUGGESTIONS = 50;
-
-const STATUS_LABEL: Record<string, string> = {
-  PENDING: 'offen',
-  ACCEPTED: 'angenommen',
-  DECLINED: 'abgelehnt',
-};
 
 export function registerCurationSuggestionTools(server: McpServer, challenge: WriteAuthChallenge): void {
   registerCurationTool(server, challenge, {
@@ -123,7 +122,10 @@ export function registerCurationSuggestionTools(server: McpServer, challenge: Wr
         requireWrite();
         const nodeId = String(params['nodeId'] ?? '');
         const status = params['status'] as SuggestionStatus | undefined;
-        const found = await listSuggestions(nodeId, status);
+        // Through a reference id the proposals of the ORIGINAL are listed too —
+        // that is where they are filed. A node we cannot read is asked directly.
+        const node = await getNodeMetadata(nodeId);
+        const found = node ? await suggestionsFor(node, nodeId, status) : await listSuggestions(nodeId, status);
         if (found.length === 0) {
           return plainText(status
             ? `Zu diesem Datensatz gibt es keine Vorschläge mit dem Status ${STATUS_LABEL[status]}.`
@@ -186,7 +188,6 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   // Validated before anything is stored: a proposal whose value could never be
   // written is not a proposal, it is a task that fails later, for someone else.
   const drafts: SuggestionDraft[] = [];
-  const desired: Record<string, string[]> = {};
   const reasons: string[] = [];
 
   for (const entry of raw) {
@@ -204,7 +205,6 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
     // written, and re-validating it on accept yields the same thing.
     const value = checked.values[0];
     if (value === undefined) continue;
-    desired[property] = [...(desired[property] ?? []), ...checked.values];
     drafts.push({
       propertyId: property,
       value,
@@ -216,14 +216,35 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
 
   const node = await getNodeMetadata(nodeId);
   if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
-  const before = node.properties ?? {};
 
-  const planned = buildChangeSet(nodeId, 'content', before, desired);
-  // buildChangeSet drops values the record already carries — proposing those
+  // A proposal is about the RECORD, so it is compared against and filed at the
+  // original — as the batch tool does (audit 2026-11-12, K-9). Through a
+  // reference that was once written directly, the reference already shows the
+  // wanted value and the original does not: "nothing to propose" was then said
+  // about the wrong node.
+  const baseline = await readWriteBaseline(node, nodeId);
+  if (!baseline.ok) return errorText(baseline.reason);
+  const { target, before } = baseline;
+  const home = target.targetId;
+
+  // Values the record already carries are dropped, per value — proposing those
   // would put a decision in front of someone that has nothing to decide.
-  const open = new Set(planned.changes.map(c => c.property));
-  const kept = drafts.filter(d => open.has(d.propertyId));
-  if (kept.length === 0) {
+  const kept = newProposals(before, drafts);
+  // What the record would hold if every proposal were accepted. For a field
+  // holding several values that is the list WITH the proposed one, which is
+  // what the change line has to show — not the proposed value in place of it.
+  const desired: Record<string, string[]> = {};
+  for (const d of kept) {
+    desired[d.propertyId] = valuesAfterAccept(d.propertyId, desired[d.propertyId] ?? before[d.propertyId] ?? [], [d.value]);
+  }
+  for (const property of Object.keys(desired)) {
+    // A single-valued field proposed twice: both proposals stand side by side.
+    const mine = kept.filter(d => d.propertyId === property).map(d => d.value);
+    if (desired[property]!.length < mine.length) desired[property] = mine;
+  }
+  const planned = buildChangeSet(home, 'content', before, desired,
+    target.redirected ? { redirectedFrom: target.requestedId } : {});
+  if (kept.length === 0 || planned.changes.length === 0) {
     return errorText('Die vorgeschlagenen Werte stehen bereits so im Datensatz — es gibt nichts vorzuschlagen.');
   }
 
@@ -236,7 +257,7 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
   // rationale for a value the record already holds is not part of what happens.
   const cs: ChangeSet = {
     ...planned,
-    action: `Schlägt für „${recordTitle(before)}“ (${nodeId}) die folgenden Werte zur Prüfung vor. `
+    action: `Schlägt für „${recordTitle(before)}“ (${home}) die folgenden Werte zur Prüfung vor. `
       + 'Der Datensatz selbst wird dabei NICHT verändert. '
       + `Begründungen: ${kept.map(reasonLine).join('; ')}`,
   };
@@ -250,18 +271,39 @@ async function handleSuggest(params: Record<string, unknown>, route: WriteRoute)
     // Deliberately no id list in the sentence: the repository assigns the ids in
     // its answer to the POST, and in this direction nobody here reads it. Naming
     // ids we never saw would be the one thing worse than not naming them.
-    return preparedReply(createSuggestionsRequest(nodeId, kept), [
-      `Als Vorschlag hinterlegt (Status: offen) — „${recordTitle(before)}“ ist unverändert.`,
+    return preparedReply(createSuggestionsRequest(home, kept), [
+      `Als Vorschlag ${target.redirected ? `am Original ${home} ` : ''}hinterlegt (Status: offen) — „${recordTitle(before)}“ ist unverändert.`,
       'Mit wlo_list_suggestions lassen sich die Vorschläge samt ID ansehen.',
     ].join(' '));
   }
 
-  const result = await createSuggestions(nodeId, kept);
-  if (!result.ok) return errorText(`Die Vorschläge konnten nicht gespeichert werden: ${result.detail}`);
+  const result = await createSuggestions(home, kept);
+  if (!result.ok) {
+    // `open`: a 5xx, or a 2xx that named nothing stored — proposals may exist,
+    // and a caller starting over would file them twice.
+    return codedError(result.open ? 'unverified' : 'refused',
+      `Die Vorschläge konnten nicht gespeichert werden: ${result.detail}`
+        + (result.open ? ' Ob welche hinterlegt wurden, ist offen — bitte mit wlo_list_suggestions nachsehen, bevor der Aufruf wiederholt wird.' : ''),
+      { outcomeOpen: result.open === true });
+  }
+
+  const lines = result.suggestions.map(x => `- ${sanitizeText(x.id)} · ${fieldLabel(x.propertyId)}`);
+  if (result.suggestions.length < kept.length) {
+    // Fewer named than sent: what became of the rest is not known, and "hinterlegt"
+    // over the shorter list would pass them off as stored.
+    return codedError('unverified', [
+      `Das Repository nennt nur ${result.suggestions.length} von ${kept.length} Vorschlägen als hinterlegt`
+        + `${target.redirected ? ` (am Original ${home})` : ''}:`,
+      ...lines,
+      'Ob die übrigen gespeichert wurden, ist offen — bitte mit wlo_list_suggestions nachsehen, bevor der Aufruf wiederholt wird.',
+    ].join('\n'), { outcomeOpen: true });
+  }
 
   return plainText([
-    'Als Vorschlag hinterlegt (Status: offen) — der Datensatz ist unverändert:',
-    ...result.suggestions.map(s => `- ${s.id} · ${fieldLabel(s.propertyId)}`),
+    target.redirected
+      ? `Als Vorschlag am Original ${home} hinterlegt (Status: offen) — der Datensatz ist unverändert:`
+      : 'Als Vorschlag hinterlegt (Status: offen) — der Datensatz ist unverändert:',
+    ...lines,
     'Zum Übernehmen wlo_decide_suggestion mit der jeweiligen ID aufrufen.',
   ].join('\n'));
 }

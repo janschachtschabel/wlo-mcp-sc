@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-13
+
+The first cut version: everything since the server was taken over, up to and including the audit follow-up
+(packages 1–14) and the chatbot team's feedback of 2026-11-13. `/health` and the MCP `serverInfo` report it.
+
 ### Added — full texts and metadata for uploaded content (plan 2026-11-08)
 
 - **W4 — the role of a file in a batch.** `wlo_prepare_file_batch` takes `entries[].role` (`structure` = the
@@ -88,6 +93,403 @@ to [Semantic Versioning](https://semver.org/).
   or control characters (binary debris) still does not count. `get_node_details`/`get_nodes_details` with
   `includeTextContent` say the same: `textContentNote` for a file without text, `textContentError` for a failed read
   (the many-node path used to answer an empty string for both); the reading widget names both causes.
+
+### Security — audit of 2026-11-12, package 1: an access block is bound to its account
+
+- **A block's id no longer carries another account (S-1).** `credentialFromAccessBlock` checked only that the `jti`
+  was listed. The public key is published, so the holder of ONE listed id — their own — could mint blocks carrying it
+  with a stranger's user name and a guessed password: ten guesses per id, and a new id for every `/auth/issue`. A block
+  whose name is not the one its id was listed for is now refused (401), and `/auth/issue` refuses to "issue" such a
+  block instead of answering success for an access that can never be used.
+- **Revocation and the per-account cap go by the account WLO confirmed (S-2).** edu-sharing accepts one login in
+  several spellings (measured on staging: `LEHRERIN` and `Lehrerin` sign in as `lehrerin`). The registry listed the
+  spelling that was typed, so "revoke everything" missed the others and the cap counted each apart. Entries now carry
+  the confirmed name as optional `acct` (no format bump; an old build ignores it), and `/auth/revoke-all` matches it
+  as well as the spelling typed now.
+- **The login limiter counts one address once (S-6).** `/mcp` and `/auth/status` counted under `ip:<address>`, the
+  `/auth*` paths under the bare address — two buckets in one limiter, i.e. twice the documented budget. One spelling
+  now (`addressBucket`), also where the remaining wait is looked up.
+
+### Changed — chatbot team feedback of 2026-11-13 (nothing here changes a contract)
+
+- **A sub-listing that did not answer is never "no sub-collections".** The last four callers that dropped
+  `reachable` — the recursive walk of `get_collection_contents`, `browse_collection_tree`, the skill walk and the
+  variant listing of a Themenseite — report it: `incomplete: true`, `childrenUnread: true` on a tree branch, reason
+  `source_unreachable`. That covers a 5xx and our own full upstream gate alike. The plain `getChildCollections` is
+  gone; only the form that says whether it answered remains.
+- **`search_wlo_topic_pages`, empty and in JSON mode:** block 0 is the JSON payload, the sentence its own block.
+- **`get_skill` in fields (W6):** `structuredContent {found, nodeId, title?, contentLoaded, contentRefused?}` in both
+  formats — a refused instruction no longer has to be read off the closing line.
+- **Trace context (W5):** `x-client-trace-id` and B3 (single header or `X-B3-*`) are read, taken only when
+  well-formed, logged as `client_trace_id` / `trace_id` / `span_id`, and handed on to the repository as a child span
+  — to the repository only. Nothing is invented for a request that named no trace.
+
+### Fixed — review of audit package 14
+
+- **A remembered read crossed logins (MAJOR).** The one-minute cache was keyed by node alone, so a skill description
+  read with a person's rights was served to an anonymous caller. The key carries whose rights read it
+  (`sharedReadScope`), and a personal login's reads are not kept at all. Same for the portal list.
+- **The batch summary outgrew its property (MAJOR)** once titles could be 200 characters; the summary caps a title
+  at 120, the manifest file and the record keep it whole.
+- **A collection the serial walk never asked for could fail the parallel one (MAJOR).** The group is read with
+  `allSettled`; a failure counts only when the walk reaches that member.
+- `/api/wikipedia` answers 503 for an outage (404 stays "no article"); `search_wlo_all` carries
+  `wikipediaUnreachable`; `get_skill_for_task` reports a partly read collection instead of "Keine Skills gefunden".
+- Batches: a refused preparation evicts nothing; a batch whose folder creation ended open holds no place, and its
+  reply says "prepare the batch anew" instead of "send the file again".
+- Titles: a material filed into a collection is named by the record chain; a change set names a collection by the
+  collection chain.
+- Widgets: a code span inside a link target no longer lands in the `href`; a long run of `[` is linear.
+- Access pages: the focus ring of the language switch has contrast on both states; the buttons carry full names.
+- A stopped registry cache is not refilled by a tick that was in flight; the env-variable guard matches whole names.
+- `scripts/smoke-image.sh` runs under Git Bash on Windows (it switches the path rewriting off itself).
+
+### Changed — audit of 2026-11-12, package 14 (second part): performance and structure
+
+- **Recursive collection contents are read level by level (P-3).** `get_collection_contents` with
+  `includeSubcollections` read one collection after the other — two requests each, up to a hundred in series. A
+  group of six is read together now; the result keeps the order of the tree, the visit cap is unchanged, and a walk
+  that has its rows stops asking.
+- **A minute of memory for two reads every request repeated (P-4).** The list of subject portals (asked for by
+  almost every search) and the descriptions of a collection's first three skills are kept for 60 s
+  (`src/short-cache.ts`). Only an ANSWER is kept — never "could not be read" — and never a promise in flight.
+- **One place for a title (A-7).** `node-match.ts` holds the two chains (record: `cclom:title` first; collection:
+  `cm:title` first) and why. Five hand-written chains in the write path differed, and two skipped `cm:title`, so a
+  preview could name a collection by its technical `cm:name`; a chain written out anywhere else fails a test. The
+  owner projections of the topic-page paths ask for `cm:title` now.
+- **Modules split along their jobs (A-5, in part).** `tools/curation-shared.ts` (613 → 443 lines) keeps
+  registration and the preview/confirm conversation; the reply shapes moved to `curation-reply.ts`, the outcome
+  reports to `curation-report.ts`. `services/skill-registry.ts` (641 → 458) keeps the catalogue; recognising the
+  registry document moved to `skill-registry-detect.ts`. The reads of `get_node_details` moved into
+  `services/node-details.ts` (`loadSingleNodeDetail`). Re-exports keep every importer unchanged.
+- **A live test for the suggestion tools (T-2, in part).** `tests/live/suggestions.test.ts`, green against staging
+  on 2026-11-13: proposals are named when stored, a decision reads back, accepting adds to a list. It also measured
+  that the repository itself accepts DECLINED → ACCEPTED — `already_decided` is the only guard there is.
+- No import cycles remain among value imports (A-6, measured over 238 files).
+
+### Fixed — audit of 2026-11-12, package 14 (first part): the lesser findings
+
+- **Batch approvals (K-13).** A new preparation makes room only from batches nobody has started; when five are under
+  way the sixth is refused (`too_many_batches`) instead of pushing out a half-filed one. A batch folder whose
+  creation is OPEN (5xx, no id, no answer) is not created a second time.
+- **Preview and effect agree (K-14).** `commit: true` beside a change that touches no metadata field no longer
+  promises a version it cannot make; a record already in the editorial queue is not "submitted" again on the first
+  submission's receipt (`already_submitted`); removing a compendium text binds the key to THAT text (length and
+  checksum); a batch title of up to 200 characters is filed as approved, not cut at 120.
+- **Reading (K-16).** A skill walk that read only the first page of a collection says so (`incomplete`); the
+  registry cache runs one tick at a time; `get_wikipedia_summary` tells "Wikipedia did not answer" apart from "no
+  article" (`unreachable: true` in JSON).
+- **Widgets (F-1).** The Markdown renderer keeps code spans and link targets out of the emphasis rules: a link
+  target with parentheses or asterisks is kept whole, a link inside a code span stays code.
+- **Access pages in English (F-2).** `/auth`, `/auth-revoke.html` and the OAuth consent page follow the browser's
+  language (German stays the page as served) and carry a DE/EN switch; nothing is stored. Messages the server
+  returns stay German and are labelled as such.
+- **Docs and operations (D-1, D-3, X-1).** `docs/PRIVACY.md` names what the log holds about a person (user name on
+  access events, IP address on abuse refusals, the request id); both READMEs list the eight settings they lacked
+  (a test now measures that from the source); `.github/dependabot.yml` for npm, the base image and the actions.
+
+### Changed — visible to clients (audit packages 9–13, collected)
+
+- `GET /auth/status` and `wlo_auth_status`: in **service** mode `authority` is `null` and `configuredAs` /
+  `displayName` are absent (S-7). The fields and their types are unchanged — `authority` was always nullable.
+- `wlo_create_content` with a file: the preview shows the full 64-character SHA-256 (was 12).
+- `POST /api/uploads` can answer `429 rate_limited`; one login holds at most half of the byte budget.
+- `wlo_decide_suggestion`: new refusals `already_decided` and `suggestion_not_marked`; accepting ADDS to a field
+  that holds several values.
+- `wlo_suggest_metadata` files at the original when called with a reference id.
+- `search_wlo_topic_pages` (with `collectionId`) and the lean `search` answer an outage with `isError` instead of
+  an empty result; collection and topic-page lists carry `incomplete: true` when a source did not answer.
+- Every response carries `X-Request-Id`.
+
+### Fixed — review of phase 3 (packages 12 and 13)
+
+- **A read-back that fails after a create (MAJOR)** lost `recordExists`, so the spent-key advice was "preview
+  again" over a record the same answer named.
+- **The per-login share of the upload budget (MAJOR)** is never smaller than one file of `UPLOAD_MAX_BYTES`.
+- The batch owner key is a keyed digest too (a missed site of S-10); an expired confirmation key answers `expired`
+  for its whole hour instead of once (anybody could take that answer from its owner); the shared service identity
+  has a share of its own (500) instead of no cap; `confirm_mismatch` names "another login" as a cause; an upstream
+  call our own caller abandoned counts as `cancelled`, not `error`; the allow-list's directory is synced after the
+  rename where the platform allows it.
+
+### Security — audit of 2026-11-12, package 13: the lesser findings (S-4, S-5, S-7 … S-13)
+
+- **Upload route (S-4, only with `WLO_BATCH_UPLOAD_ENABLED`).** It spends the caller's protocol budget BEFORE the
+  login is looked at (`429 rate_limited`); a login the repository refused is remembered for 60 s instead of being
+  tried against the real account on every request; one account holds at most half of the shared byte budget.
+- **Batch preview (S-5).** It names EVERY file (it showed twenty of up to two hundred), and a file whose real size
+  differs from the size the preview showed is not filed.
+- **`/auth/status` and `wlo_auth_status` (S-7)** report the shared service account as `mode: "service"` only —
+  `authority: null`, no `configuredAs`, no `displayName`. Its user name went to every anonymous caller.
+- **Anonymous OAuth connections (S-8)** are bounded per address; they shared twenty outstanding codes between
+  everybody.
+- **The allow-list is synced to disk before the rename (S-9)** — after a hard stop it could be empty, which fails
+  closed and switches every personal access off.
+- **No bare hash of a login in memory (S-10).** The distinct-login limiter and the upload route keep credentials as
+  digests keyed with a per-process secret (`src/keyed-digest.ts`), like the status cache already did.
+- **OAuth address from the `Host` header (S-11):** a startup warning when `WLO_PUBLIC_BASE_URL` is unset. Not
+  refused — deployments run on the fallback; making the variable mandatory is the operator's decision.
+- **Confirmation keys (S-12).** Somebody else presenting a key no longer uses it up for its owner; and the shared
+  service identity is not capped at fifty previews for all its visitors together.
+- **A file upload is bound by the whole SHA-256 (S-13)** — twelve characters of it were 48 bits where the
+  full-text path binds 256. The preview shows the full checksum.
+
+### Added — audit of 2026-11-12, package 12: request ids, metrics, bounded logs (B-5)
+
+- **`X-Request-Id` on every response, `req` on every log line of that request** — the upstream calls and the write
+  it starts included. A caller's own id is adopted when it is a plain token (8–64 of `A–Z a–z 0–9 . _ -`).
+- **`GET /metrics`** in the Prometheus text format, without a dependency. Off unless `METRICS_TOKEN` (16+
+  characters) is set, and answered only to that Bearer token. Requests by route class and status, tool calls by tool
+  and outcome with their duration, repository calls by outcome, gauges for the upstream queue. No label carries a
+  caller, a path or a query.
+- **The container log is bounded** (`docker-compose.yml`: json-file, 5 × 10 MB).
+- `docs/DEPLOYMENT.md` §5.0.1 describes all three and the one thing code cannot do: an OUTSIDE availability check.
+
+### Fixed — review of audit packages 10 and 11
+
+- **A created record is no longer told to "preview again" (MAJOR).** The reply for a create whose later step got no
+  answer said "NICHT erneut anlegen" and, two sentences on, the standard advice for a spent key — a new preview,
+  which for a record carrying a file makes the second one. Such an error now carries `recordExists: true`,
+  `requiresNewPreview: false` and the advice to complete the existing record.
+- An upload that gets no answer no longer costs the record its title: each step after the create has its own try,
+  and the reply names the step.
+- Accepting a proposal whose value the record already holds says so instead of "hinzugefügt"; a proposal gone from
+  the list after the decision is open, not "still pending"; fewer proposals named than sent is `unverified`, not
+  "hinterlegt" (both tools); the same value twice in one call is one proposal.
+- The guard "every tool goes through the one seam" matched only the identifier `server`; it reads the whole file
+  without comments now and catches any receiver, the bracket form and a destructured method.
+
+### Fixed — audit of 2026-11-12, package 11: proposals and the id of a created record
+
+- **A created record keeps its id when a later step gets no answer (K-6).** `createContentNode` threw when the
+  upload or the metadata step after a successful create got no answer; the reply then said the outcome was unclear
+  and named no id — and a record carrying a file has no URL a retry could find it by. It now answers `created` with
+  `incomplete`; `wlo_create_content` reports `unverified` with `error.nodeId` and "NICHT erneut anlegen". A create
+  the repository answered 5xx is `outcomeOpen: true` (it may exist), a refused one (4xx) `false`.
+- **Accepting a proposal ADDS to a field that holds several values (K-8).** One proposal carries one value; written
+  as the whole field it replaced every subject, level, content type, target group or language the record had.
+- **One reading for the single tool and the batch tool (K-9).** `wlo_suggest_metadata` now files at the ORIGINAL and
+  compares against it, as `wlo_update_contents` does; values the record already holds are dropped per value; and an
+  answer that names no stored proposal is an open failure for both (the single tool printed "Als Vorschlag
+  hinterlegt:" over an empty list). `wlo_list_suggestions` and `wlo_decide_suggestion` look at the node named AND
+  the original behind it.
+- **A decision is checked before and after (K-10).** Only a PENDING proposal can be decided (`already_decided`,
+  before any key) — a declined one was still acceptable; and the status is read back after the PATCH, so a 200 that
+  recorded nothing is `suggestion_not_marked`, not "angenommen".
+
+### Changed — audit of 2026-11-12, package 10: one registration seam for every tool
+
+- **All tools go through `registerWloTool` (A-2).** Twelve read tools (`get_skill`, `search_skill`,
+  `get_skill_for_task`, `get_skill_registry`, both vocabulary tools, `get_wikipedia_summary`, `wlo_health_check`,
+  `get_collection_stats`, `get_node_breadcrumb`, `get_nodes_details`) called the SDK's `server.tool` directly and
+  so went past the one seam the operator's switch for unsafe tools hangs on. They use `registerReadTool` now — the
+  same short form, through the seam; a direct call in `src/tools/` fails a test. `tools/list` is byte-identical
+  before and after (compared). Not part of this change: output schemas for these twelve — adding one advertises a
+  contract (`additionalProperties: false`) every answer then has to meet, which is a change per tool, not a sweep.
+
+### Fixed — review of audit package 9: the paths one step further
+
+- **`search_wlo_topic_pages` and `get_topic_page_content` with a query** printed "Keine Themenseiten für …" / reason
+  `no_match` when the portal listing — the main source of Themenseiten — did not answer. The lookup now reports
+  `incomplete`; the first tool says so (`incomplete: true`), the second answers with its own reason
+  `source_unreachable`.
+- **A collection that could not be READ is not a collection without a Themenseite.** `getCollectionThemePages`
+  answered `[]` for a 5xx like for a 404; it throws now unless the node is gone or not ours to read (404/403/401).
+- **The tree fallback of `search_wlo_collections` counts the sub-lists it could not read** — "Keine Sammlungen
+  gefunden" over twenty-five unread listings was not a statement about the catalogue.
+- **A forced registry lookup that fails no longer shows the remembered catalogue as the fresh answer.**
+  `refreshRegistries` returns `{answered, failed}`, and a failed id is not filled from the cache in the same call.
+- **JSON mode keeps its shape:** the notice is its own block, block 0 stays parseable (also for zero hits), and
+  `_queryMeta` stays last.
+- **Widget and HTML page:** the flat list form passes `more` / `incomplete` on to the bucket it describes, and the
+  page no longer prints "Keine Treffer." beside the warning that a source did not answer.
+- **A hit the name index found and the re-read lost** marks the collection list incomplete.
+- **The lean `search` tool** answers an EMPTY list over an unanswered collection search as an error — `{results}` has
+  no field to say it.
+- **Removed:** the plain forms `searchCollections`, `searchCollectionsByKeyword`, `searchCollectionsByName` and
+  `findTopicPagesByQuery`. Nothing but tests called them, and a form that drops "did it answer?" is the shape this
+  package removed. The discipline guard for "one module knows both indexes" matched no call any more (it did not
+  know the `…Result` names) and does again.
+- One wording for every renderer: "hat nicht (vollständig) geantwortet — 0 Treffer sind hier KEIN Befund".
+
+### Fixed — audit of 2026-11-12, package 9: "not reachable" is not "nothing there"
+
+- **An unreachable collection or topic-page search is said (K-3).** When a collection index or the portal listing of
+  the repository did not answer, the caller got an empty list and the tool printed "Keine Sammlungen gefunden." —
+  a statement about the catalogue made from a source that had not answered. `search_wlo_all` now carries
+  `collections.incomplete` / `topicPages.incomplete`, `search_wlo_collections` `incomplete`, with one sentence each
+  ("not reachable — NOT a finding of none" for an empty list, "may be incomplete" beside hits) in both output
+  formats, on the HTML page and in the widget; content results still come. `search_wlo_topic_pages` answers an
+  unreachable index with an error instead of "no pages", and the topic-page lookup by query does when ALL its sources
+  are down.
+- **A forced registry lookup goes through the cache (K-15).** `includeSkillRegistry` ran beside it: a registry that
+  had been removed was filled back in from the stale entry, the fresh answer was not written back, and a lookup that
+  FAILED counted as "checked, none there". The fresh answer now replaces the entry, and only collections whose lookup
+  really answered are reported as checked.
+- **Review of package 8 and of phase 2.** The end of a paged search is read off the WINDOW, not off `total` — that
+  number counts the full-query variant resp. the exact licence while the paging runs over all variants resp. the
+  licence family, so a framing query ("Unterrichtsstunde …") and a single licence still ran dry. A short page is
+  filled from the rest of the ranked window in hand before a further one is read (which also means a copy-heavy first
+  page now comes back full); the exact licence total is asked once per call. A client hang-up inside a search is a
+  hang-up, not "search failed". A WRITE is never turned away at the upstream gate — it waits for its slot — because
+  its path cannot tell the synthetic 503 from a real one. `/api/search?fields=` keeps what a bucket says about
+  itself; the search path applies the stored-text rule of the detail tools (debris is no text, a body naming none is
+  unreadable); an unread listing after a refused collection create leaves the tree step open instead of failed.
+
+### Fixed — audit of 2026-11-12, package 8: paging that ran dry, full text without a bound
+
+- **Paging with `excludeNodeIds` no longer runs dry (K-2).** The ranked search reads one fixed window per call
+  (`WLO_POOL_SIZE` per query variant) whatever is asked for. Paging the documented way read the same window every
+  time and, once its hits were excluded, answered "Keine Inhalte gefunden" over a catalogue of thousands — the chatbot
+  took the catalogue for exhausted; `maxResults: 50` returned what one window held. A page that comes up short is now
+  refilled from up to three further windows; what that bound does not reach is disclosed as `more {nextSkipCount}`
+  with a sentence that says "not the end" — in `search_wlo_content`, in the `content` bucket of `search_wlo_all`
+  (both output formats), on the HTML search page, in `/api/search` and in the widget. An ordinary first page costs one window, as before.
+- **Full text in the search paths is bounded and honest (P-5).** `includeTextContent` cost one text read per hit, up
+  to fifty; it reads for the first 20 now (the bound of the detail tools) and names the rest in `textContentSkipped`.
+  A read that FAILED left the same empty string as a record without text — it is `textContentUnreadable` now, and an
+  empty `textContent` means only "none stored".
+- **One content search (A-1).** `search_wlo_content` and the content leg of `search_wlo_all` each carried their own
+  copy of the course (licence seam, exclusion, dedupe, exact-licence pass, cap, text enrichment); it is
+  `services/content-search.ts`. The stored-text rule of the two detail paths is one function too
+  (`readStoredTextAnswer`). Not done here: the single-node handler of `get_node_details` is still its own 200 lines
+  beside the batch service — moved to the module-splitting package (A-5).
+
+### Fixed — audit of 2026-11-12, package 7: "failed" and "nothing was written" only where they are known
+
+- **A lost connection is an open outcome (K-4).** Only timeouts were recognised as "sent, no answer". A socket that
+  died after the request left (`ECONNRESET`, "other side closed") was reported as a failure — a client that creates
+  again on "failed" makes a duplicate, and in a collection tree every child of the node failed with it. One question
+  now (`isOutcomeOpen`, `services/write/timeouts.ts`) for every write path; the code stays `timeout` with
+  `outcomeOpen: true`. A request that provably never left (connection refused, name not resolvable, certificate) is
+  still a plain error.
+- **Errors of the plan and batch tools carry `outcomeOpen` (K-7).** `plan_expired` said "nothing was written" over a
+  plan that may have run half its steps before it was lost — now `outcomeOpen: true` and a sentence that says so;
+  `plan_mismatch` and `too_many_plans` are `false`. The batch-filing errors carry the field too (`batch_unknown` /
+  `batch_expired`: `true`). `confirm_unknown` is `true` as well: "unknown" also covers a key redeemed before a
+  restart, and its old sentence "nothing was written" — read as "start over" — is how duplicates were made.
+- **The read-back decides, also in the single tools (K-5).** `wlo_update_content` and `wlo_create_content` reported
+  every field whose write call was answered with an error as "not stored", even after a 5xx. The read-back is asked
+  first, as in the batch tools: a value that stands in the record is reported as stored, with the error named beside
+  it.
+- **One course for the four planned tools (A-4).** `wlo_add_to_collections`, `wlo_create_collection_tree`,
+  `wlo_update_contents` and `wlo_attach_fulltexts` each carried the same forty lines — find the plan, prepare,
+  preview, look again, capacity, redeem, start, run — and the last safety correction had to be made four times. It
+  is `runPlannedCall` (`tools/curation-plan.ts`) now; behaviour unchanged. The audit's second claim there — that a
+  continuation with another key order lost its plan — did not hold (the input schema already orders declared keys;
+  measured); the arguments are canonicalised anyway, so that this no longer rests on the validation library.
+
+- **Review of package 7.** A create answered with a 5xx or without a usable id is `failed` AND open — for the batch
+  folder and file too, where the first cut derived openness from an id a failed step never carries, and whose text
+  said "send again" over a folder that existed. A collection that was created keeps its id when a LATER request of
+  the same create is refused (in a tree every child failed with it). A field rejected with a 5xx that the read-back
+  does not show is open, not "nothing written". The batch steps answer `timeout` for a lost connection like every
+  other write tool. An open step is retried at most three times, then ended as failed-and-open — a cause that never
+  goes away kept it `pending` until the plan expired. `plan_mismatch` and a `confirm_mismatch` over an already
+  redeemed key are open as well; an unredeemed key says `false` explicitly. TLS failures count as "never sent".
+
+### Added — audit of 2026-11-12, package 6: the entry points and the image are run before they ship
+
+- **CI builds and smoke-tests the image (B-3).** `scripts/smoke-image.sh` builds it, starts it under the compose
+  file's restrictions (read-only root, no capabilities, `--init`) and checks `/health`, the `HEALTHCHECK` command
+  inside the container, `tools/list`, an error-free startup log, a clean `docker stop` (exit 0) and that an unusable
+  address stops the start. Until now the Dockerfile and `dist/http.js` ran for the first time on the server. Run by
+  the GitHub pipeline and by hand; nothing leaves the machine.
+- **Start tests (T-1).** `tests/start.test.ts` starts `src/http.ts` and `src/stdio.ts` as child processes — the two
+  files that wire the environment together and that no test could import — and checks `/health`, `tools/list`, an
+  error-free startup, and that stdout of the stdio server carries JSON-RPC frames only.
+- **An address that cannot work stops the start (B-6).** `WLO_REPOSITORY_URL` that does not parse, is not http(s),
+  carries credentials, a query, or a mistyped scheme (`htps://…`, which sanitising turns into a host named `htps`)
+  now ends the process with exit 1 and a log line naming the variable — never the value. It used to surface as the
+  failure of the first tool call. The existing WARNINGS for a suspicious but usable address are unchanged.
+- **Review of package 6.** The promise "never the value" did not hold at first: two older warnings printed the
+  address in full BEFORE the refusal — with a password in it, once per restart. Every log line now carries origin and
+  path only (`addressForLog`). The scheme rule was narrowed to what sanitising actually produces (a colon or a
+  doubled slash further down a path is a working address and starts again) and widened to `https:/host`, a bare
+  `http://` and a bare `?`/`#`. The refusal is one function for both entry points (`startup-check.ts`), tested for
+  both. The smoke script runs the image's OWN health-check command, bounds its waits, avoids `| grep -q` under
+  `pipefail`, picks a free port, and is `npm run smoke:image`; `.gitattributes` pins LF for shell scripts (the file
+  was CRLF on disk — Git Bash tolerates that, Linux bash does not). The child processes of the start tests run under
+  the suite's network guard.
+
+### Added — audit of 2026-11-12, package 5: a bound for the process, and no work for a client that left
+
+- **`WLO_UPSTREAM_CONCURRENCY` (P-1), default 24.** Every bound so far was per call (`mapPool`) or per client (the
+  rate limiter); nothing bounded their product. One search with the OER filter starts about 25 requests at once, so
+  ten people searching in the same second were 250 simultaneous requests against one repository. `wloFetch` now takes
+  a slot per repository call (`src/upstream-gate.ts`, FIFO, given back when the response headers arrive or the call
+  fails). Below the limit nothing changes — the slot is taken synchronously. A call that gets no slot within 5 s, or
+  meets a queue of four times the limit, is not sent and is answered as a 503 with `Retry-After: 5`: `upstream_busy`
+  to every caller that throws on a non-OK answer. (The read helpers that degrade a non-OK answer to "empty" — the two
+  collection searches, the topic-page search, single node reads — do so for this one as for a real 503; telling
+  "unreachable" from "empty" there is package 9.) The timeout of a call starts when it is SENT, not while it waits.
+  Only the repository host is counted. `GET /ready` probes PAST the gate: it measures the repository, and a full
+  queue of our own must not read as "unreachable". `0` switches the bound off.
+- **Work stops when its client is gone (P-1, P-3).** The inbound request's connection is carried as an abort signal
+  (`src/request-scope.ts`) through `/mcp` and `/api/*`: when the client hangs up, the upstream calls in flight are
+  aborted and the ones not yet started are never sent — a traversal of a hundred collections used to run to its end
+  for nobody. **Writes are exempt, deliberately:** every curation tool runs detached from that signal. An abort hits
+  the response, not the work, so a write that has begun — and its read-back, and the stored result a re-presented
+  key replays — runs to its end whether or not the caller is still there. A hang-up is its own error
+  (`ClientGoneError`): logged at info, never as a tool error or a timeout, and a fan-out stops instead of failing
+  item by item.
+
+### Fixed — audit of 2026-11-12, package 4: a stop signal is answered
+
+- **Graceful shutdown (B-1).** The process had no signal handler, and as PID 1 in a container Node ignores `SIGTERM`
+  without one: every `docker stop` — every deploy — waited out the grace period and ended in `SIGKILL`, cutting
+  whatever was in flight. Now (`src/shutdown.ts`) the server stops accepting, lets the work in hand finish and exits
+  `0`; work still running after 70 s is cut (exit `1`), a second signal ends the wait. Measured on the image:
+  `docker stop` returns in 1.0–1.4 s with exit code 0, also with a silent connection open. The compose file gains `init: true` and
+  `stop_grace_period: 75s` — longer than the wait, where Docker's default of 10 s would kill it mid-way.
+- **It counts work, not connections (review).** The first cut waited for `server.close`, i.e. for connections —
+  wrong in both directions, measured on node:http: a connection that never sent a request held the exit for the whole
+  grace period and ended in a "forced" exit with nothing cut, while a client that had hung up mid-request left no
+  connection, so the exit came while its write was still running. Work is a handler that has not returned, an answer
+  not yet flushed, and anything a write runs detached from its request. The wait is sized for the slowest legitimate
+  writes (60 s) and costs nothing when none is running.
+
+### Fixed — audit of 2026-11-12, package 3: two bounds that were missing
+
+- **`get_skill` loads an instruction whole or not at all (P-2).** The skill path downloaded with no bound, on the
+  reasoning that it reads curated records — but the nodeId is the caller's, and the id of any downloadable file was
+  accepted: a video was buffered in full, in the process every user shares. Nothing is cut, as before (the decision of
+  2026-08-20 stands). What changed: a record that is certainly binary (video, audio, image, PDF, archive, office) is not downloaded at
+  all, and a text past 2 MiB is refused whole — whichever read answered, download or extract. The answer says which (`skill.contentRefused`: `not_text` / `too_large`, with `content: null`).
+  Real instructions measure 3–17 KB. A registry document past the bound reads as unreadable.
+- **Login and OAuth bodies are bounded at 64 KiB (S-3).** `/auth*` and `/oauth/*` shared the MCP limit (4 MiB, sized
+  for tool calls that carry texts); a block is at most 4 096 characters. Status codes are unchanged — registration
+  answers 413, the others the 400 they answer for any unusable body.
+
+### Fixed — audit of 2026-11-12, package 2: the tool must fit the node
+
+- **The delete tools check what they delete (K-1).** `wlo_delete_content` sent the node DELETE for any readable id —
+  a collection included, under a preview that spoke of ONE record — and `wlo_delete_collection` the collection DELETE
+  for a record. Each now requires its kind — a record, or a collection (told by its aspect, see below) — and names the tool that fits
+  (`is_a_collection`, `not_a_collection`); a node whose type the repository does not name is refused, and so is an
+  alias such as `-userhome-` (`invalid_input`, before anything is read).
+- **The same target checks as the batch tool (K-11).** `wlo_add_to_collection` files the ORIGINAL when given a
+  reference id (what a collection listing hands out), as `wlo_add_to_collections` always did, and says so in the
+  preview; adding, removing, renaming and the compendium text refuse a target that is not a collection
+  (`not_a_collection`) — the repository validates none of this.
+- **Review of package 2: a collection is told by its aspect, not by `ccm:map`.** Measured on staging 2026-11-12
+  (`tests/live/node-kinds.test.ts`): the folder of a batch filing, the personal area, a page-config folder and a page
+  variant all report `ccm:map` — only a collection carries the aspect `ccm:collection`. The first cut of the checks
+  above read the type alone, so `wlo_delete_collection` would have taken a folder under a preview promising that its
+  contents survive. One rule now (`node-kind.ts`), used wherever a write needs a collection or files a record:
+  both delete tools, renaming, the compendium text, adding and removing (single and batch, both ends), the parent of
+  `wlo_create_collection`, the root of the tree tool, the filing target of `wlo_create_content`, and
+  `get_collection_overview`. A full text is refused on a container (`not_a_record`). NOT covered, deliberately: the
+  metadata tools (`wlo_update_content[s]`, suggestions, submit) still take any node — whether a collection's
+  metadata may be edited through them is a decision, not a bug fix. A folder is refused by both delete tools (`is_a_folder` / `not_a_collection`), with what to do
+  instead. Also: no curation tool takes a repository alias in any id argument (was: the delete tools only); adding
+  checks the MATERIAL side too, reads the original it files (its title is the one previewed; unreadable → refused
+  before a key) and sends nothing for a record the collection already holds; the compendium check is asked of the
+  node that is written; the collection-delete preview no longer promises that originals lying in it survive.
+- **Review of package 1.** The account key is the authority in full, not its 120-character display form (two long
+  names agreeing up to there were one account); the spelling typed at `/auth/revoke-all` matches only entries without
+  a confirmed account; a legacy entry learns its account when its block is issued again; the default limiter bucket
+  of a login proof is the address, never derived from the credential.
 
 ### Fixed — status copy and tool counts (2026-11-08, follow-ups to W1–W4)
 

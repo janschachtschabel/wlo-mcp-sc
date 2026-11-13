@@ -40,7 +40,7 @@ async function withUser<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const node = (id: string, props: Record<string, string[]>) =>
-  ({ json: { node: { ref: { id, repo: '-home-' }, type: 'ccm:map', properties: props } } });
+  ({ json: { node: { ref: { id, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: props } } });
 
 // ── wlo_create_collection ────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ test('create_collection: an aborted create is reported as OPEN, never as failed'
       const text = toolText(await c.callTool({
         name: 'wlo_create_collection', arguments: { title: 'Optik', confirmToken: tokenFrom(preview) },
       }));
-      assert.match(text, /nicht rechtzeitig/);
+      assert.match(text, /keine Antwort/);
       assert.match(text, /kann also gewirkt haben/, 'the work may have happened — the caller must check');
     } finally { await c.close(); mock.restore(); }
   });
@@ -106,7 +106,7 @@ test('rename_collection: an aborted rename is reported as open, naming the colle
       const text = toolText(await c.callTool({
         name: 'wlo_rename_collection', arguments: { nodeId: 'coll-9', title: 'Neu', confirmToken: tokenFrom(preview) },
       }));
-      assert.match(text, /nicht rechtzeitig/);
+      assert.match(text, /keine Antwort/);
       assert.match(text, /coll-9/);
     } finally { await c.close(); mock.restore(); }
   });
@@ -139,7 +139,7 @@ test('update_compendium: an aborted write is reported as open', async () => {
       const text = toolText(await c.callTool({
         name: 'wlo_update_compendium', arguments: { ...args, confirmToken: tokenFrom(preview) },
       }));
-      assert.match(text, /nicht rechtzeitig/);
+      assert.match(text, /keine Antwort/);
       assert.match(text, /kann also gewirkt haben/);
     } finally { await c.close(); mock.restore(); }
   });
@@ -222,7 +222,7 @@ test('decide_suggestion: an aborted accept is reported as open — and never mar
       const text = toolText(await c.callTool({
         name: 'wlo_decide_suggestion', arguments: { ...args, confirmToken: tokenFrom(preview) },
       }));
-      assert.match(text, /nicht rechtzeitig/);
+      assert.match(text, /keine Antwort/);
       assert.ok(
         !mock.calls.some(x => x.url.includes('/suggestions/v1/') && x.init?.method === 'PATCH'),
         'the proposal was not marked decided over a write whose outcome is unknown',

@@ -228,3 +228,25 @@ test('die Drossel zählt verschiedene Tickets und greift VOR dem Repositorium', 
   // legitime Fall (Neuladen der Seite) bleibt unter der Drossel.
   assert.ok((await exchangeTicket(`${TICKET}aa`, d, now)).ok);
 });
+
+// ── audit 2026-11-12, review of P1: the binding and the ticket path ───────────
+
+test('ein Ticket-Block kommt durch die Namensbindung — auch nach erneutem Tausch (Review P1, 6)', async (t) => {
+  const { credentialFromHeader, setAccessSupport } = await import('../src/auth/credential.js');
+  const s = await support(t);
+  setAccessSupport({ keys: s.keys, registry: s.registry });
+  t.after(() => setAccessSupport(null));
+  // Eine Authority, die die Textbereinigung verändert (über 120 Zeichen): Label
+  // und `u` müssen trotzdem DENSELBEN Wert tragen, sonst sperrt die Bindung jedes Widget aus.
+  const long = `sso-${'x'.repeat(140)}`;
+  const up = upstream(long);
+  t.after(up.restore);
+
+  for (const round of [1, 2]) {
+    const outcome = await exchangeTicket(TICKET, deps(s), Date.now());
+    assert.ok(outcome.ok, `Tausch ${round}`);
+    const cred = credentialFromHeader(`Bearer ${outcome.block}`);
+    assert.ok(cred, `Tausch ${round}: der Block meldet an`);
+    assert.equal(cred.header, `EDU-TICKET ${TICKET}`);
+  }
+});

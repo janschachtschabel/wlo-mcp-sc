@@ -15,6 +15,7 @@
  * itself stays with `get_compendium_text`.
  */
 
+import { isCollectionNode } from '../node-kind.js';
 import { getCollectionContents, readNodeBreadcrumb, readNodeMetadata, type WloNode } from '../wlo-api.js';
 import { formatNode, formatNodes } from '../formatter.js';
 import { flattenText } from '../text-sanitize.js';
@@ -121,7 +122,7 @@ export async function getCollectionOverview(collectionId: string, opts: Overview
   const head = await readHead(collectionId);
   if (!('node' in head)) return { ok: false, error: headError(head.status) };
   const { node } = head;
-  if (node.type !== 'ccm:map') {
+  if (!isCollectionNode(node)) {
     return { ok: false, error: { code: 'not_a_collection', message: 'Diese nodeId ist keine Sammlung.' } };
   }
 

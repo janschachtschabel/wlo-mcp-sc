@@ -199,6 +199,40 @@ test('acting on an access block always goes through the shared verification', ()
     'call verifyBlockLogin — decoding a block without proving its login is the whole hazard');
 });
 
+test('a title is chosen in ONE place — no module writes the fallback chain out itself', () => {
+  // `node-match.ts` holds the two chains (record: cclom:title first; collection:
+  // cm:title first) and the reason for each. Five hand-written ones in the write
+  // path differed, and two skipped `cm:title` — the carrier this repository
+  // fills on collections — so a preview named a collection by its technical
+  // `cm:name` (audit 2026-11-12, A-7).
+  // A CHAIN: one title field, the operator, and the next title field with no comma or
+  // semicolon between — over a line break too. A list of fields to search in is not one.
+  const chain = /(cclom:title|cm:title|cm:name)'\]\?\.\[0\]\s*(\?\?|\|\|)\s*[^,;]{0,60}?(cclom:title|cm:title|cm:name)'\]\?\.\[0\]/;
+  const offending = sourceFiles(srcDir)
+    .map(rel)
+    .filter(name => name !== 'node-match.ts')
+    .filter(name => chain.test(readFileSync(join(srcDir, name), 'utf8')));
+  assert.deepEqual(offending, [], 'use nodeTitle / titleFromProperties / collectionTitleFromProperties (node-match.ts)');
+});
+
+test('every tool is registered through the one seam — no tool module calls the SDK itself', () => {
+  // `registerWloTool` (apps/register.ts) is where the operator's switch for
+  // unsafe tools hangs, and where anything added for ALL tools has to go. Twelve
+  // read tools called `server.tool(` directly and went past it (audit
+  // 2026-11-12, A-2); `registerReadTool` is the same short form through the seam.
+  //
+  // ANY receiver and any spelling: `server.tool(` alone let `s.tool(`,
+  // `server['registerTool'](`, a destructured method or a call split over two
+  // lines through. Comments are removed first, so prose may name the calls.
+  const direct = /\.\s*(tool|registerTool)\s*\(|\[\s*['"`](tool|registerTool)['"`]\s*\]|\{[^}]*\b(tool|registerTool)\b[^}]*\}\s*=/;
+  const withoutComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const offending = sourceFiles(srcDir)
+    .map(rel)
+    .filter(name => name.startsWith('tools/'))
+    .filter(name => direct.test(withoutComments(readFileSync(join(srcDir, name), 'utf8'))));
+  assert.deepEqual(offending, [], 'use registerWloTool / registerReadTool / registerCurationTool');
+});
+
 /** A direct registration call — the thing a curation tool must NOT do. */
 const DIRECT_REGISTRATION = /registerWloTool\s*\(/;
 
@@ -220,11 +254,29 @@ test('every curation tool is registered through the seam that gates it', () => {
     'use registerCurationTool from tools/curation-shared.ts — it is where the write gate lives');
 });
 
+test('what a collection IS is decided in one place, never by the node type alone', () => {
+  // `ccm:map` is the repository's general container — a workspace folder, a
+  // page-config folder and the personal area report it too (measured
+  // 2026-11-12). A curation tool that reads the type as "is a collection" sends
+  // a folder to the collection endpoint under a preview promising its contents
+  // survive. `isCollectionNode` (node-kind.ts) asks the aspect; the tools go
+  // through `wrongKind` (tools/curation-shared.ts).
+  const literal = /['"]ccm:(map|io)['"]/;
+  const offending = sourceFiles(srcDir)
+    .map(rel)
+    .filter(name => /^tools\/curation-/.test(name) || /^services\/write\//.test(name) || name === 'services/collection-overview.ts')
+    // The one place that CREATES a record names its type; it compares nothing.
+    .filter(name => name !== 'services/write/nodes-lifecycle.ts')
+    .filter(name => readFileSync(join(srcDir, name), 'utf8').split('\n')
+      .some(line => literal.test(line) && !/^\s*(\/\/|\*)/.test(line)));
+  assert.deepEqual(offending, [], 'use isCollectionNode / isContentNode / wrongKind instead of comparing the node type');
+});
+
 /** Building the catalogue field by hand instead of through `toRegistrySummary`. */
 const INLINE_REGISTRY_SUMMARY = /\.skillRegistry\s*=\s*\{/;
 
 test('the catalogue a node carries is built in exactly one place', () => {
-  // Four writers produce this field — `enrichSkillRegistry`, and in the cache
+  // Four writers produce this field — `refreshRegistries`, and in the cache
   // the live fallback, the background tick and the corpus seed. Three of them
   // carried their own copy of the same eight lines until 2026-08-11, which is
   // the shape this file exists for: the copies drift on the field that is set
@@ -332,7 +384,9 @@ test('every path that renders collections attaches what the cache knows', () => 
   const found = offenders(/ensureRegistries\s*\(/, ['services/skill-registry-cache.ts']);
   const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
   assert.deepEqual(files,
-    ['services/search.ts', 'tools/collections.ts', 'tools/node-details.ts', 'tools/node-relations.ts'],
+    // `services/node-details.ts` since 2026-11-13: the single-record read moved out of the
+    // tool's handler into the service (audit A-1/A-5); the tool keeps the call for `nodeIds`.
+    ['services/node-details.ts', 'services/search.ts', 'tools/collections.ts', 'tools/node-details.ts', 'tools/node-relations.ts'],
     `collection-rendering paths must attach the cache — got ${JSON.stringify(files)}`);
 });
 
@@ -365,11 +419,13 @@ test('a collection search asks BOTH backends, and only one module knows that', (
   // Named files rather than a bare emptiness check, so that adding a fourth
   // caller has to be a deliberate edit here — the same reason the registry guard
   // above names its three.
-  const raw = /searchCollectionsBy(Keyword|Name)\s*\(/;
+  // `(Result)?`: the legs exist only in their `…Result` form since 2026-11-13,
+  // and the pattern without it matched no call at all any more.
+  const raw = /searchCollectionsBy(Keyword|Name)(Result)?\s*\(/;
   const found = offenders(raw, ['wlo-search.ts', 'services/collection-search.ts']);
   assert.deepEqual(
     found, [],
-    'use searchCollections from services/collection-search.ts — one leg alone is a '
+    'use searchCollectionsResult from services/collection-search.ts — one leg alone is a '
       + `different question: ${JSON.stringify(found)}`,
   );
 });

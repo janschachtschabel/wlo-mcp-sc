@@ -8,17 +8,22 @@
  * http-app.ts (where the testable dispatch wiring lives), and listens.
  */
 
+import { issuerDependsOnHostHeader } from './auth/oauth-metadata.js';
 import http from 'node:http';
 import { WLO_REPOSITORY_URL, resolvePositiveInt, resolveNonNegativeInt } from './wlo-api.js';
 import { log } from './logger.js';
+import { addressForLog } from './wlo-config.js';
+import { exitOnUnusableRepositoryUrl } from './startup-check.js';
 import { createDistinctValueLimiter, createRateLimiter } from './rate-limit.js';
 import { streamableHttpOptions } from './mcp-transport.js';
 import { createHttpRequestHandler } from './http-app.js';
+import { metricsTokenFrom, metricsTokenRejected } from './rest/metrics-route.js';
 import { createClientBudgets, parseTrustedClientKeys, PROTOCOL_FACTOR } from './client-budget.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
 import { resolveAccessSupport } from './auth/access-setup.js';
 import { parseAllowedOrigins, resolveTicketOrigins } from './auth/ticket-origins.js';
 import { startSkillRegistryCache } from './services/skill-registry-cache.js';
+import { installGracefulShutdown, trackRequests } from './shutdown.js';
 import { startReadinessProbe } from './services/upstream-readiness.js';
 import { setAccessSupport } from './auth/credential.js';
 
@@ -141,7 +146,14 @@ if (trustedClients.rejected.length) {
   });
 }
 
-const httpServer = http.createServer(createHttpRequestHandler({
+exitOnUnusableRepositoryUrl();
+
+const metricsToken = metricsTokenFrom(process.env['METRICS_TOKEN']);
+if (metricsTokenRejected(process.env['METRICS_TOKEN'])) {
+  log.warn('METRICS_TOKEN is too short to be a secret (needs 16 characters) — /metrics stays off');
+}
+
+const requests = trackRequests(createHttpRequestHandler({
   rateLimiter: createRateLimiter(RATE_LIMIT_RPM),
   // Every POST, before its body is read: initialize and notifications never
   // reach edu-sharing, so they do not spend the tool budget — but they are not
@@ -160,7 +172,9 @@ const httpServer = http.createServer(createHttpRequestHandler({
   // passed in, like every other environment value: `auth/oauth-metadata.ts` is
   // pure so the decision it makes is testable, which this file is not.
   publicBaseUrl: process.env['WLO_PUBLIC_BASE_URL'],
+  ...(metricsToken ? { metricsToken } : {}),
 }));
+const httpServer = http.createServer(requests.listener);
 
 // Bound how long a client may take to SEND a request (slow-body / slow-header
 // protection) — tiny MCP JSON-RPC bodies need only a fraction of this. These
@@ -168,6 +182,11 @@ const httpServer = http.createServer(createHttpRequestHandler({
 // RESPONSE stream.
 httpServer.requestTimeout = 30_000;
 httpServer.headersTimeout = 15_000;
+
+// A stop signal finishes the requests in hand instead of cutting them — and is
+// answered at all: as PID 1 in the container Node ignores SIGTERM without a
+// handler (audit 2026-11-12, B-1).
+installGracefulShutdown({ server: httpServer, requests });
 
 // Resolved BEFORE listening, not fire-and-forget like the credential probe
 // below: the tool list and the /auth pages both depend on it, so a request
@@ -181,10 +200,17 @@ setAccessSupport(await resolveAccessSupport({
   registryPath: process.env['WLO_AUTH_REGISTRY_PATH'] ?? '/data/access-registry.json',
 }));
 
+// OAuth is on exactly when access blocks are. Then say where its address comes from.
+if (process.env['WLO_AUTH_PRIVATE_KEY']?.trim()
+  && issuerDependsOnHostHeader({ configured: process.env['WLO_PUBLIC_BASE_URL'], trustProxy: TRUST_PROXY })) {
+  log.warn('WLO_PUBLIC_BASE_URL is not set: the OAuth address is taken from the Host header of each request. '
+    + 'That is only right behind a proxy that sets the header itself — set WLO_PUBLIC_BASE_URL to pin it.');
+}
+
 httpServer.listen(PORT, () => {
   log.info('WLO MCP Server listening', {
     url: `http://localhost:${PORT}/mcp`,
-    repository: WLO_REPOSITORY_URL,
+    repository: addressForLog(WLO_REPOSITORY_URL),
     rateLimitRpm: RATE_LIMIT_RPM,
     trustedClients: [...trustedClients.clients.values()].map(c => `${c.name}:${c.rpm}`),
     apiRateLimitRpm: API_RATE_LIMIT_RPM,

@@ -5,10 +5,11 @@
  * connector. Read-only, open-world.
  */
 
+import { registerReadTool } from '../apps/register.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { fetchWikipediaArticle, fetchWikipediaSummary } from '../wikipedia-api.js';
+import { fetchWikipediaArticle, fetchWikipediaSummaryResult } from '../wikipedia-api.js';
 import { oneLine } from '../formatter.js';
 import { capText } from '../text-cap.js';
 import { toolError, wikiResolutionNotice } from './shared.js';
@@ -22,7 +23,7 @@ import { toolError, wikiResolutionNotice } from './shared.js';
 const DEFAULT_MAX_CHARS = 200000;
 
 export function registerWikipediaTool(server: McpServer): void {
-  server.tool(
+  registerReadTool(server,
     'get_wikipedia_summary',
     `Wikipedia zu einem Begriff — Anriss (Vorgabe) oder der GANZE Artikeltext.
 Für Hintergrundwissen neben WLO-Material, z.B. "was ist Photosynthese?".
@@ -53,7 +54,7 @@ NICHT zum Suchen von Unterrichtsmaterial: dafür search_wlo_all.`,
         // from the raw query would skip that, and a caller writes "Quelle:
         // Wikipedia-Artikel „X"" underneath — a wrong article is a false
         // attribution, not just an odd answer.
-        const summary = await fetchWikipediaSummary(
+        const { summary, unreachable } = await fetchWikipediaSummaryResult(
           params.query,
           params.language ?? 'de',
           (params.sections ?? 1) as 1 | 2 | 3,
@@ -71,12 +72,17 @@ NICHT zum Suchen von Unterrichtsmaterial: dafür search_wlo_all.`,
           return { content: [{ type: 'text' as const, text: JSON.stringify({
             query: params.query,
             found: summary !== null,
+            // Not found because Wikipedia did not answer — no statement about the article.
+            ...(unreachable ? { unreachable: true } : {}),
             summary: summary ? { ...summary, extract: body } : null,
           }) }] };
         }
 
         if (!summary) {
-          return { content: [{ type: 'text' as const, text: `Kein Wikipedia-Artikel gefunden für "${params.query}".` }] };
+          return { content: [{ type: 'text' as const, text: unreachable
+            ? `Wikipedia hat gerade nicht geantwortet — ob es einen Artikel zu "${params.query}" gibt, ist damit offen. `
+              + 'Das ist KEIN Befund „kein Artikel“. Bitte später erneut versuchen.'
+            : `Kein Wikipedia-Artikel gefunden für "${params.query}".` }] };
         }
         // oneLine on the heading for the same reason as every other record
         // renderer: this text is line-oriented and the value is foreign.

@@ -25,7 +25,7 @@ import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
 import { verifyWrite } from '../services/write/verify.js';
 import { validateField } from '../services/write/fields.js';
-import { listSuggestions, setSuggestionStatus } from '../services/write/suggestions.js';
+import { suggestionsFor, setSuggestionStatus, valuesAfterAccept, STATUS_LABEL } from '../services/write/suggestions.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
@@ -54,8 +54,9 @@ export function registerCurationDecisionTool(server: McpServer, challenge: Write
     description:
       'Entscheide über einen hinterlegten Metadaten-Vorschlag. "accept" schreibt den Wert in den Datensatz, ' +
       'liest ihn zurück und vermerkt den Vorschlag erst dann als angenommen — kommt der Wert nicht an, bleibt ' +
-      'der Vorschlag offen und das wird berichtet. "decline" vermerkt nur die Ablehnung und lässt den ' +
-      'Datensatz unberührt. Die ID kommt aus wlo_list_suggestions. ZWEISTUFIG: ohne confirmToken nur ' +
+      'der Vorschlag offen und das wird berichtet. Bei Feldern mit mehreren Werten (Fach, Bildungsstufe, ' +
+      'Inhaltstyp, Zielgruppe, Sprache, Schlagwörter) wird der Wert HINZUGEFÜGT. "decline" vermerkt nur die ' +
+      'Ablehnung und lässt den Datensatz unberührt. Nur OFFENE Vorschläge sind entscheidbar. Die ID kommt aus wlo_list_suggestions. ZWEISTUFIG: ohne confirmToken nur ' +
       'Vorschau. Erfordert eine Anmeldung.',
     inputSchema: {
       nodeId: z.string().describe('nodeId des Datensatzes.'),
@@ -81,22 +82,37 @@ async function handleDecide(params: Record<string, unknown>) {
   const suggestionId = String(params['suggestionId'] ?? '');
   const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
 
-  const found = (await listSuggestions(nodeId)).find(s => s.id === suggestionId);
+  const node = await getNodeMetadata(nodeId);
+  if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+  // Looked up at the node named AND at the original behind it: proposals are
+  // filed at the original, the caller often holds a reference id.
+  const found = (await suggestionsFor(node, nodeId)).find(s => s.id === suggestionId);
   if (!found) {
     return errorText(
       `Zu diesem Datensatz gibt es keinen Vorschlag mit der ID „${sanitizeText(suggestionId)}“. ` +
         'Die gültigen IDs liefert wlo_list_suggestions.',
     );
   }
-
-  const node = await getNodeMetadata(nodeId);
-  if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
   const before = node.properties ?? {};
   const label = fieldLabel(found.propertyId);
   const title = recordTitle(before);
   // Everything about a stored proposal is foreign text, its id included. The
   // raw `found.id` still goes upstream; only what a person reads is flattened.
   const id = sanitizeText(found.id);
+
+  // A decision taken stays taken (audit 2026-11-12, K-10). Without this a
+  // DECLINED proposal was one call away from the record — the refusal somebody
+  // gave was worth nothing — and an ACCEPTED one could be marked declined over
+  // a record that carries its value. Before any key: there is nothing to confirm.
+  // This check is the ONLY one: measured against staging on 2026-11-13
+  // (`tests/live/suggestions.test.ts`), the repository itself accepts
+  // DECLINED → ACCEPTED without complaint.
+  if (found.status !== 'PENDING') {
+    return codedError('already_decided',
+      `Über den Vorschlag ${id} ist bereits entschieden (Status: ${STATUS_LABEL[found.status] ?? sanitizeText(found.status)}). ` +
+        'Eine getroffene Entscheidung wird nicht überschrieben. Es wurde nichts geändert. ' +
+        'Soll der Wert doch in den Datensatz oder wieder heraus, ist wlo_update_content das Werkzeug.');
+  }
 
   if (params['decision'] === 'decline') {
     const cs = buildChangeSet(nodeId, 'content', before, {}, {
@@ -107,8 +123,12 @@ async function handleDecide(params: Record<string, unknown>) {
     const refusal = confirmOrExplain(token, cs);
     if (refusal) return refusal;
 
-    const failure = await setSuggestionStatus(nodeId, found.id, 'DECLINED');
-    if (failure) return errorText(`Die Ablehnung konnte nicht vermerkt werden: ${failure}`);
+    const marked = await setSuggestionStatus(found.at, found.id, 'DECLINED');
+    if (!marked.ok) {
+      return codedError('suggestion_not_marked',
+        `Die Ablehnung konnte nicht vermerkt werden: ${marked.detail} Der Datensatz ist unverändert.`,
+        { outcomeOpen: marked.open });
+    }
     return plainText(`Vorschlag ${id} abgelehnt. Der Datensatz ist unverändert.`);
   }
 
@@ -126,7 +146,7 @@ async function handleDecide(params: Record<string, unknown>) {
 
   // Two nodes, deliberately. The VALUE belongs on the record, so it follows the
   // write target; the PROPOSAL is filed on the node it was found on
-  // (`listSuggestions(nodeId)` above), so its status stays there. Marking it
+  // (`found.at`), so its status stays there. Marking it
   // accepted on a node that never carried it would lose the proposal.
   //
   // The comparison state follows the VALUE, not the proposal: diffing against an
@@ -140,9 +160,19 @@ async function handleDecide(params: Record<string, unknown>) {
   // the id is the target's, so the title has to come from the target too, or a
   // person confirms a sentence naming a title that record does not carry.
   const targetTitle = recordTitle(writeBefore);
-  const cs = buildChangeSet(target.targetId, 'content', writeBefore, { [found.propertyId]: checked.values }, {
-    action: `Nimmt den Vorschlag ${id} für „${label}“ an: der Wert wird in „${targetTitle}“ (${target.targetId}) ` +
-      'geschrieben und der Vorschlag anschließend als angenommen vermerkt.',
+  // One proposal is one value. For a field that holds several it is ADDED to
+  // what the record has — written as the whole field it replaced the rest (K-8).
+  const current = writeBefore[found.propertyId] ?? [];
+  const after = valuesAfterAccept(found.propertyId, current, checked.values);
+  // Three sentences for three things that happen. "Hinzugefügt" over a value the
+  // record already holds was a claim about a write that does not take place.
+  const alreadyThere = after.length === current.length && after.every((v, i) => v === current[i]);
+  const added = current.length > 0 && after.length > current.length;
+  const what = alreadyThere ? 'steht bereits im Datensatz — nur der Vorschlag wird als angenommen vermerkt'
+    : `wird in „${targetTitle}“ (${target.targetId}) ${added ? 'zu den vorhandenen Werten hinzugefügt' : 'geschrieben'} `
+      + 'und der Vorschlag anschließend als angenommen vermerkt';
+  const cs = buildChangeSet(target.targetId, 'content', writeBefore, { [found.propertyId]: after }, {
+    action: `Nimmt den Vorschlag ${id} für „${label}“ an: der Wert ${what}.`,
     ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
   });
   if (!token) return previewReply(cs, 'Zum Annehmen bitte bestätigen.');
@@ -150,11 +180,11 @@ async function handleDecide(params: Record<string, unknown>) {
   if (refusal) return refusal;
 
   if (cs.changes.length === 0) {
-    const failure = await setSuggestionStatus(nodeId, found.id, 'ACCEPTED');
-    if (failure) {
-      return errorText(
-        `Der Wert stand bereits im Datensatz, der Vorschlag konnte aber nicht als angenommen vermerkt werden: ${failure}`,
-      );
+    const marked = await setSuggestionStatus(found.at, found.id, 'ACCEPTED');
+    if (!marked.ok) {
+      return codedError('suggestion_not_marked',
+        `Der Wert stand bereits im Datensatz, der Vorschlag konnte aber nicht als angenommen vermerkt werden: ${marked.detail}`,
+        { outcomeOpen: marked.open });
     }
     return plainText(`Der Wert stand bereits so im Datensatz. Vorschlag ${id} ist jetzt als angenommen vermerkt.`);
   }
@@ -178,13 +208,15 @@ async function handleDecide(params: Record<string, unknown>) {
     );
   }
 
-  const failure = await setSuggestionStatus(nodeId, found.id, 'ACCEPTED');
-  if (failure) {
-    return prependText(
-      report,
+  const marked = await setSuggestionStatus(found.at, found.id, 'ACCEPTED');
+  if (!marked.ok) {
+    // An error a program can read — the record WAS changed, so never "nothing
+    // written" — with the field report beside it.
+    const notMarked = codedError('suggestion_not_marked',
       `Der Wert wurde übernommen, der Vorschlag konnte aber nicht als angenommen markiert werden ` +
-        `(${failure}) — er steht weiterhin offen.`,
-    );
+        `(${marked.detail}) — er steht weiterhin offen. Nicht erneut annehmen: der Wert steht im Datensatz.`,
+      { outcomeOpen: true });
+    return { ...notMarked, content: [...notMarked.content, ...report.content] };
   }
   return prependText(report, `Vorschlag ${id} angenommen.`);
 }

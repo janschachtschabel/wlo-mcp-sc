@@ -23,7 +23,7 @@ import { nodeTitle } from '../../node-match.js';
 import { mapPool } from '../../concurrency.js';
 import { log } from '../../logger.js';
 import { createCollection } from './collections.js';
-import { isUpstreamTimeout } from './timeouts.js';
+import { isOutcomeOpen } from './timeouts.js';
 import { failureCode } from '../failure-code.js';
 import type { ItemState, PlanItem, Step, StoredPlan } from './plan-runner.js';
 
@@ -190,7 +190,12 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
         // A refused create is not proof that nothing exists: the lock above
         // covers OUR creates, not someone else's under the same parent, and that
         // collision answers 500 while creating. So look before saying "failed".
-        const landed = (await listChildCollections(parentId))?.get(normTitle(item.title));
+        const listing = await listChildCollections(parentId);
+        // A listing that did not answer is no proof either way — and "failed"
+        // over a collection that exists is how a second one gets created. The
+        // step stays open; the next call looks again (bounded by `MAX_OPEN_TRIES`).
+        if (!listing) return { status: 'pending', code: 'not_checked' };
+        const landed = listing.get(normTitle(item.title));
         if (landed) return { status: 'unverified', nodeId: landed, code: 'upstream_error' };
         return { status: 'failed', code: failureCode(result.detail) };
       }
@@ -199,7 +204,7 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
         : { status: 'unverified', nodeId: result.nodeId, code: result.check.status };
     } catch (err) {
       // Open, not failed: the next call looks before it creates again.
-      if (isUpstreamTimeout(err)) return { status: 'pending', code: 'timeout' } satisfies ItemState;
+      if (isOutcomeOpen(err)) return { status: 'pending', code: 'timeout' } satisfies ItemState;
       log.warn('collection tree step failed', { path: item.key, error: err instanceof Error ? err.message : String(err) });
       return { status: 'failed', code: failureCode(err) };
     }

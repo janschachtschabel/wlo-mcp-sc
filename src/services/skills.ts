@@ -27,7 +27,8 @@
  */
 
 import type { WloNode } from '../wlo-api.js';
-import { getNodeDownloadText, getNodeMetadata, getNodeTextContent, ngsearch, stripStoreRef } from '../wlo-api.js';
+import { getNodeMetadata, getNodeTextContent, ngsearch, readNodeDownload, stripStoreRef } from '../wlo-api.js';
+import { log } from '../logger.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode } from '../formatter.js';
 import { nodeMatchesCriteria, queryTerms, termMatches } from '../node-match.js';
@@ -60,6 +61,11 @@ export interface SkillSummary {
 /** One skill including its instruction Markdown (null when no text could be read). */
 export interface SkillDocument extends SkillSummary {
   content: string | null;
+  /**
+   * Set when there IS a file but it was not loaded: it is not a text file, or
+   * it is larger than `SKILL_TEXT_MAX_BYTES`. A skill is never loaded in part.
+   */
+  contentRefused?: 'too_large' | 'not_text';
   /**
    * The line announcing that this skill is now in effect, or `null` when the
    * record is not marked as a skill (see `skill-activation.ts`). Carried as its
@@ -175,7 +181,7 @@ function rankSkills(skills: SkillSummary[], query: string | undefined): SkillSum
  */
 export async function searchSkillsDetailed(
   opts: SearchSkillsOptions,
-): Promise<{ skills: SkillSummary[]; unresolved: UnresolvedFilter[] }> {
+): Promise<{ skills: SkillSummary[]; unresolved: UnresolvedFilter[]; incomplete?: true }> {
   const query = (opts.query ?? '').trim();
   const maxResults = opts.maxResults ?? 10;
   const collectionId = (opts.collectionId ?? '').trim();
@@ -184,8 +190,9 @@ export async function searchSkillsDetailed(
   // More hits than asked for: the ranking below decides the order, and it reads
   // keywords, which the backend's relevance score does not. A pool of one page
   // costs the same request and gives that ranking something to work with.
-  const found = collectionId
-    ? await collectSkillNodes(collectionId, opts.includeSubcollections !== false)
+  const walk = collectionId ? await collectSkillNodes(collectionId, opts.includeSubcollections !== false) : null;
+  const found = walk
+    ? walk.nodes
     : (await ngsearch(
         [
           { property: 'ngsearchword', values: [query || '*'] },
@@ -206,7 +213,12 @@ export async function searchSkillsDetailed(
     : found;
 
   const summaries = nodes.map(n => toSummary(formatNode(n), n));
-  return { skills: rankSkills(dedupeByOriginal(summaries), query).slice(0, maxResults), unresolved };
+  return {
+    skills: rankSkills(dedupeByOriginal(summaries), query).slice(0, maxResults), unresolved,
+    // The walk hit one of its bounds (a page, the depth, the visit cap, a read
+    // that failed): the list may lack skills, and an empty one is no finding.
+    ...(walk?.incomplete ? { incomplete: true as const } : {}),
+  };
 }
 
 /** The skills alone — for callers that do not surface the filter diagnostics. */
@@ -229,17 +241,78 @@ export async function searchSkills(opts: SearchSkillsOptions): Promise<SkillSumm
  * does NOT resolve `ccm:original` first; `readSkillBundle` has to, because the
  * folder hangs off the original, and the text does not.
  */
-export async function readSkillText(nodeId: string): Promise<string | null> {
-  // UNBOUNDED, and that is the user's decision (2026-08-20), not an oversight:
-  // an instruction must arrive whole — a model follows the half it got, and
-  // the cut half is where the guardrails tend to live. The ordinary anonymous
-  // download keeps its 64-KiB cap for every other file; a first fix raised
-  // this path to 1 MiB and was replaced the same day, because any bound is a
-  // size at which a skill silently stops being followed. The residual risk is
-  // deliberate and rests on what this path reads: curated records from the
-  // operator's own repository, not caller-supplied URLs. The /textContent
-  // fallback below carries no cap of its own.
-  return (await getNodeDownloadText(nodeId, Number.POSITIVE_INFINITY)) ?? (await getNodeTextContent(nodeId));
+export async function readSkillText(nodeId: string): Promise<SkillTextRead> {
+  // WHOLE OR NOT AT ALL. The first half is the user's decision (2026-08-20): an
+  // instruction must arrive whole — a model follows the half it got, and the cut
+  // half is where the guardrails tend to live; any bound that CUTS is a size at
+  // which a skill silently stops being followed. So nothing is ever cut here.
+  //
+  // The second half is the audit of 2026-11-12 (P-2). This path ran with no
+  // bound at all, on the reasoning that it reads "curated records, not
+  // caller-supplied URLs" — but the nodeId IS the caller's, and `get_skill`
+  // accepted the id of any downloadable file: a video was buffered in full, in
+  // the one process every user shares. A download that outgrows
+  // `SKILL_TEXT_MAX_BYTES` is therefore REFUSED and reported as such — loudly,
+  // which is the opposite of the silent cut the decision was against.
+  const read = await readNodeDownload(nodeId, SKILL_TEXT_MAX_BYTES);
+  if (read?.truncated) {
+    log.warn('skill text refused — larger than the bound', { nodeId, maxBytes: SKILL_TEXT_MAX_BYTES });
+    return { text: null, refused: 'too_large' };
+  }
+  // `||`, not `??`: a download that answers 200 with an EMPTY body is no text
+  // either, and the extract may still hold one.
+  if (read?.text) return { text: read.text };
+  // The fallback is the repository's extract, read as one JSON value — it has no
+  // stream to stop, so the bound is applied to what came back. The promise
+  // "past the bound it is refused" must not depend on which read answered
+  // (review of audit package 3).
+  const extract = await getNodeTextContent(nodeId);
+  if (extract !== null && Buffer.byteLength(extract, 'utf-8') > SKILL_TEXT_MAX_BYTES) {
+    log.warn('skill text refused — extract larger than the bound', { nodeId, maxBytes: SKILL_TEXT_MAX_BYTES });
+    return { text: null, refused: 'too_large' };
+  }
+  return { text: extract };
+}
+
+/**
+ * The largest instruction that is loaded. Real ones measure 3–17 KB (staging,
+ * 2026-08); 2 MiB is two orders of magnitude above and already far more than a
+ * model can follow. Past it the text is refused, never cut.
+ */
+export const SKILL_TEXT_MAX_BYTES = 2 * 1024 * 1024;
+
+export interface SkillTextRead {
+  text: string | null;
+  /** Set when the text exists but was not loaded — and why. */
+  refused?: 'too_large' | 'not_text';
+}
+
+/**
+ * Types that are certainly not an instruction a model can read verbatim.
+ *
+ * A DENY list on purpose, not "anything that is not `text/*`": only
+ * `text/x-web-markdown` is measured for a SKILL.md (25/25, 2026-08-10), and
+ * what the repository reports for a `.md` it could not classify
+ * (`application/octet-stream`?), for a JSON or YAML companion, or for a
+ * reference node is NOT measured. Refusing those on a guess would break a
+ * working skill; letting them through costs at most `SKILL_TEXT_MAX_BYTES`,
+ * because the stream bound in `readSkillText` holds for every type. This is a
+ * different question from `readerFor` (tools/skills.ts), which only HINTS at
+ * the better tool for a companion and may therefore be stricter.
+ */
+const BINARY_MIME = /^(video|audio|image|font)\/|^application\/(pdf|zip|gzip|x-tar|x-7z-compressed|msword|vnd\.)/;
+
+/**
+ * Whether the record's own metadata already rules the download out — a file
+ * that is certainly binary, or one the repository itself reports as larger than
+ * the bound. Anything else passes; the stream bound still holds.
+ */
+function refusalFromMetadata(node: WloNode): SkillTextRead['refused'] | undefined {
+  const mime = String(node.mimetype ?? '').toLowerCase();
+  const refused = BINARY_MIME.test(mime) ? 'not_text'
+    : Number(node.size ?? 0) > SKILL_TEXT_MAX_BYTES ? 'too_large' : undefined;
+  if (refused) log.info('skill text not downloaded — ruled out by the metadata', { nodeId: node.ref?.id, refused, mime });
+  return refused;
 }
 
 /**
@@ -257,15 +330,19 @@ export async function getSkill(
 ): Promise<SkillDocument | null> {
   const node = await getNodeMetadata(nodeId, SKILL_PROPS);
   if (!node) return null;
+  // Decided on the metadata already in hand, BEFORE anything is downloaded.
+  const ruledOut = refusalFromMetadata(node);
   // The text and the folder listing are independent reads of the same record.
-  const [content, bundle] = await Promise.all([
-    readSkillText(nodeId),
+  const [read, bundle] = await Promise.all([
+    ruledOut ? Promise.resolve<SkillTextRead>({ text: null, refused: ruledOut }) : readSkillText(nodeId),
     opts.includeFiles === false ? Promise.resolve(null) : readSkillBundle(node, nodeId),
   ]);
+  const content = read.text;
   const summary = toSummary(formatNode(node), node);
   return {
     ...summary,
     content,
+    ...(read.refused ? { contentRefused: read.refused } : {}),
     activation: skillActivationLine(summary.title, node.properties?.['ccm:oeh_extendedType'] ?? []),
     references: parseSkillReferences(content ?? ''),
     ...(bundle
@@ -288,15 +365,26 @@ export async function getSkill(
 export async function pickBestSkill(
   opts: SearchSkillsOptions,
 ): Promise<{ skill: SkillDocument; alternatives: SkillSummary[] } | null> {
-  const ranked = await searchSkills({ ...opts, maxResults: opts.maxResults ?? 5 });
+  return (await pickBestSkillResult(opts)).picked;
+}
+
+/**
+ * `pickBestSkill`, saying whether the walk behind it read everything. Nothing
+ * picked over a collection read in part is not "no skill for this task" — the
+ * one that fits may be on the part that was not read (audit K-16).
+ */
+export async function pickBestSkillResult(
+  opts: SearchSkillsOptions,
+): Promise<{ picked: { skill: SkillDocument; alternatives: SkillSummary[] } | null; incomplete: boolean }> {
+  const { skills: ranked, incomplete } = await searchSkillsDetailed({ ...opts, maxResults: opts.maxResults ?? 5 });
   const best = ranked[0];
-  if (!best) return null;
+  if (!best) return { picked: null, incomplete: incomplete === true };
   const skill = await getSkill(best.nodeId);
   // The record was listed a moment ago; if it cannot be read now, the summary
   // still answers what was found — only the instructions are missing. Nothing
   // took effect, so nothing is announced either.
   return {
-    skill: skill ?? { ...best, content: null, activation: null, references: [] },
-    alternatives: ranked.slice(1),
+    picked: { skill: skill ?? { ...best, content: null, activation: null, references: [] }, alternatives: ranked.slice(1) },
+    incomplete: incomplete === true,
   };
 }

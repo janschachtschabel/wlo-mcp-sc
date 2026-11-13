@@ -9,10 +9,11 @@
 
 import { readNodeMetadata, type WloNode } from '../wlo-api.js';
 import { NOT_EXTRACTED_NOTE, isStoredText, readStoredText } from './content-text.js';
-import { formatNode } from '../formatter.js';
+import { formatNode, type FormattedNode } from '../formatter.js';
 import { accessInfo } from '../node-access.js';
 import { qualityInfo } from '../node-quality.js';
-import { getParentCollections } from './node-collections.js';
+import { getParentCollections, type ParentCollectionsOutcome } from './node-collections.js';
+import { ensureRegistries } from './skill-registry-cache.js';
 import { capText } from '../text-cap.js';
 import { mapPool } from '../concurrency.js';
 import { failureCode } from './failure-code.js';
@@ -73,6 +74,82 @@ export interface NodeDetailBatch {
 }
 
 /**
+ * The stored full text of one node as the fields a detail answer carries — ONE
+ * rule for the single-node and the many-node path, which each had a copy of it
+ * (audit 2026-11-12, A-1). Three different answers, never one empty string:
+ * the text (capped); a read that FAILED (`textContentError`); a file the
+ * repository gained no text from (`textContentNote`); and plain `''` for
+ * nothing stored. Never throws: a timeout must not take a sibling enrichment
+ * with it.
+ */
+export async function storedTextFields(nodeId: string, fileSize: number): Promise<Record<string, string>> {
+  return (await readStoredTextAnswer(nodeId, fileSize)).fields;
+}
+
+/**
+ * The same read with its raw outcome beside the fields: the Markdown rendering
+ * of the single-node tool prints the text at its own (larger) cap and names the
+ * HTTP status in a sentence.
+ */
+export async function readStoredTextAnswer(
+  nodeId: string, fileSize: number,
+): Promise<{ text: string | null; status: number; fields: Record<string, string> }> {
+  const read = await readStoredText(nodeId);
+  // Blank or binary debris is no text — the rule `get_wlo_content_text` applies.
+  const text = isStoredText(read.text) ? read.text : null;
+  const fields: Record<string, string> = text ? { textContent: capText(text, TEXT_CONTENT_CAP).text }
+    : read.status !== 200 ? { textContent: '', textContentError: `Der Volltext konnte nicht gelesen werden (HTTP ${read.status}).` }
+      : fileSize > 0 ? { textContent: '', textContentNote: NOT_EXTRACTED_NOTE } : { textContent: '' };
+  return { text, status: read.status, fields };
+}
+
+/** One record, read, with what was asked for beside it — or the status that says why not. */
+export type SingleNodeDetail =
+  | { found: false; status: number }
+  | {
+      found: true;
+      node: WloNode;
+      formatted: FormattedNode;
+      /** The stored text and how its read ended; a neutral value when it was not asked for. */
+      textRead: { text: string | null; status: number; fields: Record<string, string> };
+      parentOutcome: ParentCollectionsOutcome;
+    };
+
+/**
+ * Read one record for `get_node_details`. The reads live here and the rendering
+ * in the tool: its handler did both in two hundred lines (audit 2026-11-12,
+ * A-1/A-5), and a tool module holds a schema and a rendering, never the loading.
+ */
+export async function loadSingleNodeDetail(
+  nodeId: string, opts: { includeTextContent?: boolean; includeParents?: boolean } = {},
+): Promise<SingleNodeDetail> {
+  const { node, status } = await readNodeMetadata(nodeId);
+  if (!node) return { found: false, status };
+
+  const formatted = formatNode(node);
+  // A collection's approved skills belong to the record being detailed, so
+  // they are attached to it rather than added beside it: both output
+  // formats and the widget then carry them without a second rule. A no-op
+  // for a material — `ensureRegistries` skips anything that is not a
+  // collection.
+  await ensureRegistries([formatted]);
+
+  // The text read reports its status: "nothing stored" and "we could not read
+  // it" are different answers, and only the first is a statement about the
+  // material.
+  const textRead = opts.includeTextContent
+    ? await readStoredTextAnswer(nodeId, formatted.fileSize)
+    : { text: null, status: 200, fields: {} };
+  // Not `/parents`: that endpoint carries ancestors for a collection and
+  // an empty list for a material, so it answered "in no collection" for
+  // records that were in several. See `getParentCollections`.
+  const parentOutcome: ParentCollectionsOutcome = opts.includeParents
+    ? await getParentCollections(node, nodeId)
+    : { status: 'ok', collections: [] };
+  return { found: true, node, formatted, textRead, parentOutcome };
+}
+
+/**
  * Read every id, enrich on request, and name what failed instead of failing the
  * call — one bad id does not ruin the batch.
  */
@@ -125,18 +202,8 @@ export async function loadNodeDetails(nodeIds: string[], opts: NodeDetailOptions
     const withText = new Set(textIds);
     await mapPool(resolvedIds, 10, async (id) => {
       if (withText.has(id)) {
-        // Never throws: a timeout must not take the parents (same callback) with it.
-        const read = await readStoredText(id);
-        const text = isStoredText(read.text) ? read.text : null;
         const result = results.get(id)!;
-        result['textContent'] = text ? capText(text, TEXT_CONTENT_CAP).text : '';
-        // The same three answers the single-node path gives: a failed read, a
-        // file the repository gained no text from, or simply nothing stored.
-        if (!text && read.status !== 200) {
-          result['textContentError'] = `Der Volltext konnte nicht gelesen werden (HTTP ${read.status}).`;
-        } else if (!text && Number(result['fileSize'] ?? 0) > 0) {
-          result['textContentNote'] = NOT_EXTRACTED_NOTE;
-        }
+        Object.assign(result, await storedTextFields(id, Number(result['fileSize'] ?? 0)));
       }
       if (opts.includeParents) {
         const node = loaded.get(id);

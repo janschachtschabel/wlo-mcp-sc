@@ -14,12 +14,11 @@ import {
   getChildCollectionsResult,
   getCollectionContents,
 } from '../wlo-api.js';
-import { searchCollections } from '../services/collection-search.js';
+import { incompleteNotice, searchCollectionsResult } from '../services/collection-search.js';
 import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
-import { formatNodes, renderToJson, renderToText } from '../formatter.js';
-import { enrichSkillRegistry } from '../services/skill-registry.js';
-import { ensureRegistries } from '../services/skill-registry-cache.js';
+import { formatNodes, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
+import { ensureRegistries, refreshRegistries } from '../services/skill-registry-cache.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, formatUnresolvedHint, licenseFilterNotice } from '../filter-criteria.js';
 import { queryMetaContent, subjectRegistryText, toolError } from './shared.js';
@@ -33,6 +32,10 @@ import { registerWloTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
 import { nodeMatchesCriteria } from '../node-match.js';
 
+
+/** Said when the recursive walk met a sub-listing that did not answer. */
+const WALK_INCOMPLETE_NOTE = 'Hinweis: Mindestens eine Unterliste dieser Sammlung ließ sich gerade nicht lesen — '
+  + 'die Inhalte darunter fehlen hier. Das ist KEIN Befund „mehr gibt es nicht“; bitte später erneut versuchen.';
 
 export function registerCollectionTools(server: McpServer, searchResultsWidgetUri?: string): void {
   registerWloTool(server, {
@@ -92,7 +95,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
       const keepNode = (n: WloNode) =>
         !(excluded.size && excluded.has(n.ref?.id ?? '')) && nodeMatchesCriteria(n, collCriteria);
 
-      const renderOut = async (nodes: WloNode[], qType: string, emptyMsg = 'Keine Sammlungen gefunden.') => {
+      const renderOut = async (nodes: WloNode[], qType: string, emptyMsg = 'Keine Sammlungen gefunden.', incomplete = false) => {
         const kept = nodes.filter(keepNode);
         // Shown-set semantics: after local exclusion + criteria filtering the
         // pre-filter backend count would overstate the result.
@@ -104,16 +107,24 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         const formatted = formatNodes(ranked.slice(0, maxResults));
         // Opt-in and after the cap, so the cost is bounded by what is shown:
         // 2 upstream calls per collection, ~1.0–1.4 s (measured 2026-08-10).
-        if (params.includeSkillRegistry) await enrichSkillRegistry(formatted);
+        // Through the cache (K-15): the fresh answer replaces the entry, and only
+        // ids that really ANSWERED count as checked.
+        const forced = params.includeSkillRegistry ? await refreshRegistries(formatted) : { answered: new Set<string>(), failed: new Set<string>() };
         // After the cap and after any live pass: free either way, and a cold
-        // collection is queued so the next call for it costs nothing.
-        await ensureRegistries(formatted);
+        // collection is queued so the next call for it costs nothing. NOT for a
+        // collection whose forced lookup just failed: the caller asked for the
+        // state NOW, and the remembered one attached in its place would read as it.
+        const remembered = await ensureRegistries(formatted.filter(n => !forced.failed.has(n.nodeId)));
+        const unchecked = formatted.filter(n => n.nodeType === 'collection' && !n.skillRegistry
+          && !forced.answered.has(n.nodeId) && !remembered.has(n.nodeId));
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(formatted, total)
-          // No pointer once the caller asked for the lookup: a collection
-          // WITHOUT a registry carries no field, so "nicht geprüft" beside a
-          // requested check is simply false, whatever the check found.
-          : (renderToText(formatted, total, { registryHint: !params.includeSkillRegistry }) || emptyMsg);
+          // The pointer covers exactly the collections whose lookup did NOT
+          // answer. Suppressing it whenever the lookup was REQUESTED reported a
+          // failed lookup as "checked, none there" (audit 2026-11-12, K-15).
+          : [renderToText(formatted, total, { registryHint: false }) || (incomplete ? '' : emptyMsg),
+            ...registryHintFor(unchecked).map(oneLine),
+            ...(incomplete ? [incompleteNotice('Sammlungen', formatted.length === 0)] : [])].filter(Boolean).join('\n\n');
         const baseCriteria: LabeledCriterion[] = params.query?.trim()
           ? [{ property: 'ngsearchword', values: [params.query] }]
           : [];
@@ -128,10 +139,16 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         });
         const content = [{ type: 'text' as const, text }];
         if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
+        // Before `_queryMeta`, which stays the LAST block everywhere.
+        if ((params.outputFormat ?? 'markdown') === 'json' && incomplete) {
+          content.push({ type: 'text' as const, text: incompleteNotice('Sammlungen', formatted.length === 0) });
+        }
         content.push(meta);
-        return { content, structuredContent: { total, count: formatted.length, results: formatted, ...unresolvedField } };
+        return { content, structuredContent: { total, count: formatted.length, results: formatted, ...(incomplete ? { incomplete: true as const } : {}), ...unresolvedField } };
       };
 
+      // A collection index did not answer (set in the direct-search branch).
+      let searchIncomplete = false;
       try {
         const query: string = params.query.trim();
         const startId: string = params.parentNodeId ?? WLO_ROOT_COLLECTION_ID;
@@ -142,12 +159,16 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           // The `+200` clamp is redundant while the schema caps excludeNodeIds
           // at 200, and kept as a second bound if that cap ever moves.
           const upstreamMax = Math.min(maxResults + excluded.size, maxResults + 200);
-          const directHits = await searchCollections(query, upstreamMax);
-          const keptDirect = directHits.filter(keepNode);
+          const direct = await searchCollectionsResult(query, upstreamMax);
+          // One index down may hide hits — neither is a superset of the other (K-3).
+          // Carried through the fall-back below too: the tree traversal reads the
+          // node store and matches by title, which is less than either index.
+          searchIncomplete = direct.unreachable.length > 0;
+          const keptDirect = direct.nodes.filter(keepNode);
           // When every direct hit was excluded or filtered out, fall through to
           // the tree traversal instead of returning an empty page (audit Q-3).
           if (keptDirect.length > 0) {
-            return await renderOut(keptDirect, 'keyword_collections');
+            return await renderOut(keptDirect, 'keyword_collections', undefined, searchIncomplete);
           }
         }
 
@@ -164,16 +185,27 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           return await renderOut(level1.nodes, 'collection_children');
         }
 
-        const matches = await findCollectionsByTreeTraversal(level1.nodes, query);
+        const traversal = await findCollectionsByTreeTraversal(level1.nodes, query);
+        const matches = traversal.matches;
+        // Sub-lists that did not answer: the traversal's "nothing" is then not a finding either.
+        searchIncomplete ||= traversal.unread > 0;
 
         if (matches.length === 0) {
-          const text = `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`;
-          const content = [{ type: 'text' as const, text }];
+          // "Keine Sammlungen gefunden" is a statement about the catalogue; with a
+          // search index that did not answer it is not ours to make (K-3).
+          const text = searchIncomplete
+            ? incompleteNotice('Sammlungen', true)
+            : `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`;
+          // JSON mode keeps a parseable first block (an empty list) and carries the
+          // sentence as its own block — prose alone broke every client that parses block 0.
+          const content = (params.outputFormat ?? 'markdown') === 'json'
+            ? [{ type: 'text' as const, text: renderToJson([], 0) }, { type: 'text' as const, text }]
+            : [{ type: 'text' as const, text }];
           if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
-          return { content, structuredContent: { total: 0, count: 0, results: [], ...unresolvedField } };
+          return { content, structuredContent: { total: 0, count: 0, results: [], ...(searchIncomplete ? { incomplete: true as const } : {}), ...unresolvedField } };
         }
 
-        return await renderOut(matches, 'collection_tree_traversal');
+        return await renderOut(matches, 'collection_tree_traversal', undefined, searchIncomplete);
       } catch (err) {
         return toolError('Fehler bei der Sammlungssuche', err);
       }
@@ -230,6 +262,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
         let allNodes: FormattedNode[] = [];
         let totalHits = 0;
         let effectiveSkip = skipCount;
+        let walkIncomplete = false;
 
         if (params.includeSubcollections && filter === 'files') {
           // The BFS has no upstream offset, so paginate locally: collect
@@ -239,6 +272,7 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
           const recursive = await collectRecursiveContents(params.nodeId, maxResults + effectiveSkip, excluded, params.query);
           allNodes = recursive.nodes.slice(effectiveSkip);
           totalHits = recursive.totalHits;
+          walkIncomplete = recursive.incomplete === true;
         } else {
           // Cap the upstream page size: excluded.size is bounded (schema max 200)
           // but we still don't want a caller to force an oversized upstream query.
@@ -261,7 +295,8 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
 
         const text = (params.outputFormat ?? 'markdown') === 'json'
           ? renderToJson(allNodes, totalHits)
-          : (renderToText(allNodes, totalHits) || 'Sammlung ist leer oder nodeId nicht gefunden.');
+          // "Sammlung ist leer" is a statement about the collection — not over a walk that could not read all of it.
+          : (renderToText(allNodes, totalHits) || (walkIncomplete ? '' : 'Sammlung ist leer oder nodeId nicht gefunden.'));
         const meta = queryMetaContent({
           toolName: 'get_collection_contents',
           queryType: params.includeSubcollections ? 'collection_children_recursive' : 'collection_children',
@@ -274,12 +309,13 @@ contentFilter="files" (Default) = Lernmaterialien, "folders" = Unter-Sammlungen 
         // Its own content block, never appended to `text`: in json mode `text`
         // IS the payload, and German prose glued to it makes JSON.parse throw
         // (the same rule the sibling tools follow for their hints).
-        const content = [{ type: 'text' as const, text }];
+        const content = [{ type: 'text' as const, text }].filter(c => c.text);
+        if (walkIncomplete) content.push({ type: 'text' as const, text: WALK_INCOMPLETE_NOTE });
         if (subjectRegistry) content.push({ type: 'text' as const, text: subjectRegistry });
         content.push(meta);
         return {
           content,
-          structuredContent: { total: totalHits, count: allNodes.length, results: allNodes },
+          structuredContent: { total: totalHits, count: allNodes.length, results: allNodes, ...(walkIncomplete ? { incomplete: true as const } : {}) },
         };
       } catch (err) {
         return toolError('Fehler beim Abruf der Sammlungsinhalte', err);

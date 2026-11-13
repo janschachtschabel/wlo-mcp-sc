@@ -9,6 +9,7 @@
  * label→URI filter builder (`../filter-criteria.ts`).
  */
 
+import { isClientGone } from '../request-scope.js';
 import { oneLine, registrySummaryLines } from '../formatter.js';
 import { ensureRegistryFor } from '../services/skill-registry-cache.js';
 import {
@@ -433,7 +434,10 @@ export function toolError(
   structuredContent: { error: { code: FailureCode; message: string; retryAfter?: number } };
 } {
   const detail = err instanceof Error ? err.message : String(err);
-  log.error('tool error', { context, error: detail });
+  // A hang-up is not a failure of the tool: nobody reads this answer, and an
+  // error line per disconnected client buries the ones an operator must read.
+  if (isClientGone(err)) log.info('tool call abandoned — its client is gone', { context });
+  else log.error('tool error', { context, error: detail });
   const text = `${context}: ${detail}`;
   // Coded like every curation refusal: a chatbot that reads only
   // `structuredContent` otherwise sees an error with no reason at all. The code

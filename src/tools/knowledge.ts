@@ -6,6 +6,7 @@
  * the existing services — no new retrieval logic.
  */
 
+import { incompleteNotice } from '../services/collection-search.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -111,6 +112,16 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
           ...envelope.collections.results,
           ...envelope.topicPages.results,
         ];
+        // Lean mode answers `{results}` and nothing else — the convention shape
+        // has no field for "a source did not answer". An EMPTY list over a search
+        // that did not (fully) answer would therefore read as "WLO holds nothing
+        // on this", and an error is the only channel left to say otherwise. With
+        // hits the list is merely shorter and stays an answer; rich mode carries
+        // `incomplete` in its buckets and needs none of this.
+        const unanswered = envelope.collections.incomplete || envelope.topicPages.incomplete;
+        if (!rich && !all.length && unanswered) {
+          return { isError: true, content: [{ type: 'text' as const, text: incompleteNotice(envelope.collections.incomplete ? 'Sammlungen' : 'Themenseiten', true) }] };
+        }
         // The ChatGPT knowledge convention requires an absolute, openable `url`;
         // fall back to the in-repo render URL when the node has no external link.
         // A topic page's own URL wins: formatNode fills `url` from content.url

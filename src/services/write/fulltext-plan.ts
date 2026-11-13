@@ -13,7 +13,7 @@
  */
 
 import { mapPool } from '../../concurrency.js';
-import { failureCode } from '../failure-code.js';
+import { writeFailureCode } from '../failure-code.js';
 import { planFulltext, writeFulltext, type FulltextInput, type FulltextPlan, type RefusalCode } from './fulltext.js';
 import { livePlans, type ItemState, type PlanItem, type Step } from './plan-runner.js';
 
@@ -110,7 +110,7 @@ export const fulltextStep: Step<FulltextItem> = async (item): Promise<ItemState>
     if (out.status === 'stored') return { status: 'stored' };
     return { status: out.status, code: out.code, outcomeOpen: out.outcomeOpen };
   } catch (err) {
-    return { status: 'failed', code: failureCode(err), outcomeOpen: true };
+    return { status: 'failed', code: writeFailureCode(err), outcomeOpen: true };
   } finally {
     item.markdown = '';
   }

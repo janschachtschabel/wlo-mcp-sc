@@ -13,9 +13,9 @@
 
 import type { SearchCriterion, WloNode } from '../wlo-api.js';
 import { WLO_TOPIC_POOL, buildTopicPageUrl, getNodesMetadata, ngsearch, stripStoreRef } from '../wlo-api.js';
-import { searchCollections } from './collection-search.js';
+import { searchCollectionsResult } from './collection-search.js';
 import type { ThemePageInfo, VariantFilters } from '../topic-page-variant.js';
-import { getCollectionThemePages, searchTopicPageCollections } from '../topic-page-api.js';
+import { getCollectionThemePages, searchTopicPageCollectionsResult } from '../topic-page-api.js';
 import type { TopicPageStructure } from '../topic-page-structure.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNodes } from '../formatter.js';
@@ -32,27 +32,41 @@ import { mapPool } from '../concurrency.js';
  * ccm:page_config_ref and never surfaces the subject portals (live-verified
  * 2026-07-17), so match the portals locally AND metadata-check every keyword
  * hit via getCollectionThemePages. Results keep the reranked (relevance) order.
+ *
+ * `incomplete` says a source it draws on did not ANSWER. The portal listing is
+ * the main source of Themenseiten; with it down an empty result is "not found
+ * out" — and both callers print "Keine Themenseite …" over an empty list
+ * (review of audit package 9). There is deliberately no form without it.
  */
-export async function findTopicPagesByQuery(
+export async function findTopicPagesByQueryResult(
   query: string,
   filters: VariantFilters = {},
   maxCandidates = 12,
-): Promise<ThemePageInfo[]> {
+): Promise<{ pages: ThemePageInfo[]; incomplete: boolean }> {
   const q = query.trim();
-  if (!q) return [];
-  const [portals, keywordHits] = await Promise.all([
-    searchTopicPageCollections(q).catch(() => [] as WloNode[]),
+  if (!q) return { pages: [], incomplete: false };
+  const [portalSearch, keywordSearch] = await Promise.all([
+    searchTopicPageCollectionsResult(q).catch(() => ({ nodes: [] as WloNode[], reachable: false })),
     // Degrade like the portal leg: the keyword hits are the SUPPLEMENT here
     // (their projection has no config ref at all), so a thrown keyword search
     // — timeout, reset — must not discard the portals, which are the only leg
     // that can surface a Themenseite. Same guard as searchAll's.
-    searchCollections(q, 10).catch((err) => {
-      log.warn('findTopicPagesByQuery: keyword collection search failed, continuing without', {
+    searchCollectionsResult(q, 10).catch((err) => {
+      log.warn('findTopicPagesByQueryResult: keyword collection search failed, continuing without', {
         error: err instanceof Error ? err.message : String(err),
       });
-      return [] as WloNode[];
+      return { nodes: [] as WloNode[], unreachable: ['keyword', 'name'] as const };
     }),
   ]);
+  // One source down still answers from the other. ALL of them down is not "no
+  // Themenseite for this query" — the callers print exactly that sentence over
+  // an empty list — so it is an error, like an unread listing everywhere else
+  // (audit 2026-11-12, K-3).
+  if (!portalSearch.reachable && keywordSearch.unreachable.length === 2) {
+    throw new Error('Die Suche nach Themenseiten ist derzeit nicht erreichbar (weder die Fachportale noch die Sammlungssuche haben geantwortet).');
+  }
+  const portals = portalSearch.nodes;
+  const keywordHits = keywordSearch.nodes;
   // Portal copies first: on an id collision they carry the config ref. Dedup,
   // rerank by relevance, cap the per-candidate metadata fan-out.
   const seen = new Set<string>();
@@ -74,7 +88,10 @@ export async function findTopicPagesByQuery(
   const pages = await mapPool(candidateIds, WLO_TOPIC_POOL, (cId) => getCollectionThemePages(cId, filters));
   const results: ThemePageInfo[] = [];
   for (const p of pages) if (p) results.push(...p);
-  return results;
+  // `mapPool` nulls a candidate whose read THREW — `getCollectionThemePages`
+  // throws exactly when it could not find out. That candidate may be the page.
+  const unread = pages.some(p => p === null);
+  return { pages: results, incomplete: !portalSearch.reachable || keywordSearch.unreachable.length > 0 || unread };
 }
 
 /** One swimlane with its resolved content cards. */

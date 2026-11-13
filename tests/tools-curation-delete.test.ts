@@ -47,7 +47,9 @@ async function client(): Promise<Client> {
  * "gelöscht" is the one reply in this server nobody can act on later. It is
  * therefore said only once the record is actually gone.
  */
-function serve(title = 'Bruchrechnung Klasse 6') {
+function serve(title = 'Bruchrechnung Klasse 6', type: 'ccm:io' | 'ccm:map' | 'folder' = 'ccm:io') {
+  // 'folder' = a `ccm:map` WITHOUT the collection aspect (a workspace or batch folder, measured 2026-11-12).
+  const kind = type === 'folder' ? { type: 'ccm:map', aspects: ['ccm:mapdata'] } : { type, aspects: type === 'ccm:map' ? ['ccm:collection'] : [] };
   let deleted = false;
   return installFetchMock((_url, init) => {
     if (init?.method === 'DELETE') {
@@ -58,7 +60,7 @@ function serve(title = 'Bruchrechnung Klasse 6') {
       if (deleted) return { status: 404, json: {} };
       return {
         json: {
-          node: { ref: { id: NODE, repo: '-home-' }, properties: { 'cclom:title': [title], 'cm:title': [title] } },
+          node: { ref: { id: NODE, repo: '-home-' }, ...kind, properties: { 'cclom:title': [title], 'cm:title': [title] } },
         },
       };
     }
@@ -160,7 +162,7 @@ test('a record still readable after the delete is not reported as deleted', asyn
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE }, properties: { 'cclom:title': ['Bruchrechnung'] } } } };
+      return { json: { node: { ref: { id: NODE }, type: 'ccm:io', properties: { 'cclom:title': ['Bruchrechnung'] } } } };
     }
     return { json: {} };
   });
@@ -202,7 +204,7 @@ test('a token for one node does not delete another', async () => {
 // inventing one would be a parameter the repository silently ignores.
 test('deleting a collection uses the collection endpoint, not the node one', async () => {
   setServiceCredentialForTest(USER);
-  const mock = serve('Bruchrechnung');
+  const mock = serve('Bruchrechnung', 'ccm:map');
   const c = await client();
   try {
     const preview = toolText(await c.callTool({
@@ -224,7 +226,7 @@ test('deleting a collection uses the collection endpoint, not the node one', asy
 
 test('deleting a collection says the material inside survives', async () => {
   setServiceCredentialForTest(USER);
-  const mock = serve('Bruchrechnung');
+  const mock = serve('Bruchrechnung', 'ccm:map');
   const c = await client();
   try {
     const text = toolText(await c.callTool({ name: 'wlo_delete_collection', arguments: { nodeId: COLLECTION } }));
@@ -241,7 +243,7 @@ test('a failed delete is reported as a failure, not as done', async () => {
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: NODE }, properties: { 'cclom:title': ['X'] } } } };
+      return { json: { node: { ref: { id: NODE }, type: 'ccm:io', properties: { 'cclom:title': ['X'] } } } };
     }
     return { status: 403, json: {} };
   });
@@ -273,7 +275,7 @@ test('a timed-out delete says the outcome is open, not that nothing was deleted'
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((_url, init) => {
     if (init?.method === 'DELETE') throw TIMEOUT();
-    return { json: { node: { ref: { id: NODE }, properties: { 'cclom:title': ['Bruchrechnung'] } } } };
+    return { json: { node: { ref: { id: NODE }, type: 'ccm:io', properties: { 'cclom:title': ['Bruchrechnung'] } } } };
   });
   const c = await client();
   try {
@@ -301,7 +303,7 @@ test('a delete whose read-back times out is not reported as failed', async () =>
   const mock = installFetchMock((_url, init) => {
     if (init?.method === 'DELETE') { deleted = true; return { json: {} }; }
     if (deleted) throw TIMEOUT();
-    return { json: { node: { ref: { id: NODE }, properties: { 'cclom:title': ['Bruchrechnung'] } } } };
+    return { json: { node: { ref: { id: NODE }, type: 'ccm:io', properties: { 'cclom:title': ['Bruchrechnung'] } } } };
   });
   const c = await client();
   try {
@@ -329,7 +331,7 @@ test('a delete whose read-back fails for any other reason is open, not failed', 
   const mock = installFetchMock((_url, init) => {
     if (init?.method === 'DELETE') { deleted = true; return { json: {} }; }
     if (deleted) throw new Error('socket hang up');
-    return { json: { node: { ref: { id: NODE }, properties: { 'cclom:title': ['Bruchrechnung'] } } } };
+    return { json: { node: { ref: { id: NODE }, type: 'ccm:io', properties: { 'cclom:title': ['Bruchrechnung'] } } } };
   });
   const c = await client();
   try {
@@ -350,7 +352,7 @@ test('a timed-out collection delete is open too', async () => {
   setServiceCredentialForTest(USER);
   const mock = installFetchMock((_url, init) => {
     if (init?.method === 'DELETE') throw TIMEOUT();
-    return { json: { node: { ref: { id: COLLECTION }, properties: { 'cclom:title': ['Mathe'] } } } };
+    return { json: { node: { ref: { id: COLLECTION }, type: 'ccm:map', aspects: ['ccm:collection'], properties: { 'cclom:title': ['Mathe'] } } } };
   });
   const c = await client();
   try {
@@ -393,7 +395,7 @@ test('over a reference id the preview says the record survives', async () => {
   const mock = installFetchMock(() => ({
     json: {
       node: {
-        ref: { id: 'reference-1', repo: '-home-' },
+        ref: { id: 'reference-1', repo: '-home-' }, type: 'ccm:io',
         originalId: 'original-1',
         properties: { 'cclom:title': ['Bruchrechnung Klasse 6'] },
       },
@@ -444,5 +446,121 @@ test('both delete tools declare themselves destructive', async () => {
     }
   } finally {
     await c.close();
+  }
+});
+
+// ── audit 2026-11-12, K-1: the tool must fit the node ───────────────────────
+
+const sc = (r: unknown) => (r as { structuredContent?: { error?: { code?: string } } }).structuredContent;
+
+test('a collection id at wlo_delete_content is refused — its preview would speak of ONE record (audit K-1)', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve('Optik', 'ccm:map');
+  const c = await client();
+  try {
+    const r = await c.callTool({ name: 'wlo_delete_content', arguments: { nodeId: COLLECTION } });
+    assert.equal(r.isError, true);
+    assert.equal(sc(r)?.error?.code, 'is_a_collection');
+    assert.match(toolText(r), /wlo_delete_collection/, 'and it names the tool that fits');
+    assert.doesNotMatch(toolText(r), /confirmToken/, 'no key for a deletion that must not happen this way');
+    assert.equal(deletes(mock).length, 0);
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('a record id at wlo_delete_collection is refused (audit K-1)', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve('Arbeitsblatt', 'ccm:io');
+  const c = await client();
+  try {
+    const r = await c.callTool({ name: 'wlo_delete_collection', arguments: { nodeId: NODE } });
+    assert.equal(r.isError, true);
+    assert.equal(sc(r)?.error?.code, 'not_a_collection');
+    assert.match(toolText(r), /wlo_delete_content/);
+    assert.equal(deletes(mock).length, 0);
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+for (const alias of ['-userhome-', '-inbox-', '-root-']) {
+  test(`the alias ${alias} is never deleted, by either tool (audit K-1)`, async () => {
+    setServiceCredentialForTest(USER);
+    const mock = serve('Mein Bereich', 'ccm:map');
+    const c = await client();
+    try {
+      for (const name of ['wlo_delete_content', 'wlo_delete_collection']) {
+        const r = await c.callTool({ name, arguments: { nodeId: alias } });
+        assert.equal(r.isError, true, name);
+        assert.equal(sc(r)?.error?.code, 'invalid_input', name);
+      }
+      assert.equal(mock.calls.length, 0, 'refused before anything is read');
+    } finally {
+      await c.close();
+      mock.restore();
+      setServiceCredentialForTest(null);
+    }
+  });
+}
+
+for (const [name, code] of [['wlo_delete_content', 'refused'], ['wlo_delete_collection', 'not_a_collection']] as const) {
+  test(`${name}: a node whose type the repository does not name is not deleted — an irreversible act needs to know what it hits`, async () => {
+    setServiceCredentialForTest(USER);
+    const mock = installFetchMock(() => ({ json: { node: { ref: { id: NODE }, properties: { 'cclom:title': ['?'] } } } }));
+    const c = await client();
+    try {
+      const r = await c.callTool({ name, arguments: { nodeId: NODE } });
+      assert.equal(r.isError, true);
+      assert.equal(sc(r)?.error?.code, code);
+      assert.doesNotMatch(toolText(r), /confirmToken/);
+      assert.equal(deletes(mock).length, 0);
+    } finally {
+      await c.close();
+      mock.restore();
+      setServiceCredentialForTest(null);
+    }
+  });
+}
+
+// Review of package 2: `ccm:map` is the repository's general container. Measured
+// 2026-11-12 (tests/live/node-kinds.test.ts): the folder of a batch filing and
+// the personal area report it too — WITHOUT the aspect `ccm:collection`.
+for (const [name, code] of [['wlo_delete_content', 'is_a_folder'], ['wlo_delete_collection', 'not_a_collection']] as const) {
+  test(`${name}: a folder is not a collection and not a record — refused, with what to do instead`, async () => {
+    setServiceCredentialForTest(USER);
+    const mock = serve('Ablage 2026-11-12', 'folder');
+    const c = await client();
+    try {
+      const r = await c.callTool({ name, arguments: { nodeId: NODE } });
+      assert.equal(r.isError, true);
+      assert.equal(sc(r)?.error?.code, code);
+      assert.match(toolText(r), /Ordner/);
+      assert.match(toolText(r), /einzeln löschen/, 'it says what works instead');
+      assert.doesNotMatch(toolText(r), /confirmToken/, 'under the collection preview its originals would go with it');
+      assert.equal(deletes(mock).length, 0);
+    } finally {
+      await c.close();
+      mock.restore();
+      setServiceCredentialForTest(null);
+    }
+  });
+}
+
+test('the collection preview no longer promises that everything inside survives', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve('Optik', 'ccm:map');
+  const c = await client();
+  try {
+    const preview = toolText(await c.callTool({ name: 'wlo_delete_collection', arguments: { nodeId: COLLECTION } }));
+    assert.match(preview, /Original direkt in der Sammlung angelegt wurden, werden\s+dagegen mitgelöscht/);
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
   }
 });

@@ -50,10 +50,17 @@ const CREATE_BODY_FIELDS = [
 const CREATE_VERSION_COMMENT = 'Angelegt über den WLO-MCP-Server';
 
 export type CreateOutcome =
-  /** `upload` is present only on the file-carrying path. */
-  | { status: 'created'; nodeId: string; statuses: FieldWriteStatus[]; upload?: UploadOutcome }
+  /**
+   * `upload` is present only on the file-carrying path. `incomplete`: the record
+   * exists, and a step after the create got no answer — what of the file and the
+   * fields landed is not known. Always reported WITH the id (audit 2026-11-12,
+   * K-6): thrown instead, the id was lost, and a record carrying a file has no
+   * URL a retry could find it by.
+   */
+  | { status: 'created'; nodeId: string; statuses: FieldWriteStatus[]; upload?: UploadOutcome; incomplete?: string }
   | { status: 'duplicate'; existing: ExistingRecord }
-  | { status: 'failed'; detail: string };
+  /** `open`: the record MAY exist although the create is reported as failed (a 5xx, or an answer without an id). */
+  | { status: 'failed'; detail: string; open?: true };
 
 /**
  * Where a new record is filed.
@@ -97,9 +104,6 @@ export async function createContentNode(
   desired: Record<string, string[]>,
   opts: {
     mode: WriteMode; inboxId?: string; file?: UploadFile; parent?: string;
-    /** MA-4: an error AFTER the node exists returns it as created with `upload: unverified`, so its id
-     *  is not lost (the batch reports it; the single create keeps throwing as before). */
-    keepIdOnError?: boolean;
     /** MA-4: deadline for the content upload (default: the shared fetch timeout). */
     uploadTimeoutMs?: number;
   },
@@ -160,7 +164,9 @@ export async function createContentNode(
       signal: AbortSignal.timeout(writeTimeoutMs(body)),
     },
   );
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  // A 5xx is no proof that nothing was created (measured 2026-11-06: a create
+  // answered 500 while the collection existed) — said to the caller as `open`.
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), ...(res.status >= 500 ? { open: true as const } : {}) };
 
   // An unparseable body takes the same route as one carrying no id: the POST was
   // accepted, so a record may exist — and with `renameIfExists` a retry would
@@ -170,18 +176,30 @@ export async function createContentNode(
   if (!nodeId) {
     return {
       status: 'failed',
+      open: true,
       detail: 'Das Repository hat den Datensatz angelegt, aber keine verwertbare Antwort mit ID zurückgegeben. ' +
         'Bitte im Repository nachsehen, bevor der Vorgang wiederholt wird.',
     };
   }
 
-  // Before the metadata step: a record that ends up without its bytes should at
-  // least carry its title, so the person can find and finish it.
+  // The record exists from here on, so nothing below may throw its id away
+  // (K-6). Each step has its OWN try: an upload that got no answer must not
+  // cost the record its title too — a record without bytes should at least be
+  // findable by name, so the person can finish it.
   let upload: UploadOutcome | undefined;
   let statuses: FieldWriteStatus[] = [];
-  try {
-    upload = opts.file ? await uploadContent(nodeId, opts.file, opts.uploadTimeoutMs) : undefined;
-
+  const unanswered: string[] = [];
+  const step = async (name: string, run: () => Promise<void>): Promise<void> => {
+    try { await run(); } catch (err) {
+      unanswered.push(name);
+      log.warn('content node created, a later step got no answer', { nodeId, step: name, error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  if (opts.file) {
+    const file = opts.file;
+    await step('das Hochladen der Datei', async () => { upload = await uploadContent(nodeId, file, opts.uploadTimeoutMs); });
+  }
+  await step('das Schreiben der Metadaten', async () => {
     // Everything the create body could not carry — the title above all.
     const rest: Record<string, string[]> = {};
     for (const [property, values] of Object.entries(desired)) {
@@ -189,11 +207,10 @@ export async function createContentNode(
       rest[property] = values;
     }
     ({ statuses } = await updateNodeMetadata(nodeId, rest, { commit: false }));
-  } catch (err) {
-    if (!opts.keepIdOnError) throw err;
-    log.warn('content node created, a later step got no answer', { nodeId });
-    return { status: 'created', nodeId, statuses,
-      upload: { status: 'unverified', detail: 'Nach dem Anlegen kam keine Antwort mehr — bitte im Repository nachsehen.' } };
+  });
+  if (unanswered.length) {
+    return { status: 'created', nodeId, statuses, ...(upload ? { upload } : {}),
+      incomplete: `Nach dem Anlegen kam keine Antwort mehr auf ${unanswered.join(' und ')} — bitte im Repository nachsehen.` };
   }
 
   log.info('content node created', { nodeId, parent, mode: opts.mode, carriesFile: !!opts.file });
@@ -209,7 +226,7 @@ export async function createContentNode(
  * nobody sees.
  */
 const REVIEW_RECEIVER = 'GROUP_ORG_WLO-Uploadmanager';
-const REVIEW_STATUS = '200_tocheck';
+export const REVIEW_STATUS = '200_tocheck';
 
 /**
  * What the record shows after a submission was sent.

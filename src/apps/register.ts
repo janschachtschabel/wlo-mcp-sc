@@ -9,11 +9,13 @@
  * (read by the model and by the widget).
  */
 
+import { count, observe } from '../metrics.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
 import { log } from '../logger.js';
 import { isUnsafeToolDisabled } from '../unsafe-tools.js';
+import { TOOL_TITLES } from './tool-defaults.js';
 
 /** Result shape a WLO tool handler returns (a CallToolResult subset). */
 export interface WloToolResult {
@@ -162,6 +164,49 @@ export function registerWloTool(
   server.registerTool(
     def.name,
     config as never,
-    (async (args: unknown, extra: unknown) => def.handler(args, extra)) as never,
+    (async (args: unknown, extra: unknown) => {
+      // Counted here because this is the one seam every tool passes through.
+      const startedAt = Date.now();
+      let outcome = 'thrown';
+      try {
+        const result = await def.handler(args, extra);
+        outcome = (result as { isError?: boolean } | undefined)?.isError ? 'error' : 'ok';
+        return result;
+      } finally {
+        count('wlo_tool_calls_total', { tool: def.name, outcome });
+        observe('wlo_tool_duration_seconds', { tool: def.name }, (Date.now() - startedAt) / 1000);
+      }
+    }) as never,
   );
+}
+
+/**
+ * The short form for a plain read tool: name, description, input schema,
+ * annotations, handler — the argument order of the SDK's `server.tool`, which
+ * twelve tools used directly. They went past `registerWloTool`, and with it past
+ * the ONE seam every tool is supposed to share: the operator's switch for unsafe
+ * tools hangs there, and so does everything added to that seam later (audit
+ * 2026-11-12, A-2). A direct `server.tool(` / `server.registerTool(` in
+ * `src/tools/` is a test failure now.
+ *
+ * The handler keeps its typed arguments (inferred from the schema), which is
+ * the one thing `WloToolDef` deliberately does not offer.
+ */
+export function registerReadTool<S extends z.ZodRawShape>(
+  server: McpServer,
+  name: string,
+  description: string,
+  inputSchema: S,
+  annotations: WloToolAnnotations,
+  handler: (args: z.infer<z.ZodObject<S>>, extra: unknown) => Promise<WloToolResult> | WloToolResult,
+): void {
+  registerWloTool(server, {
+    name,
+    // Undefined for a tool the table does not name — exactly what the SDK's short form left it at.
+    title: TOOL_TITLES[name] as string,
+    description,
+    inputSchema,
+    annotations,
+    handler: async (args, extra) => handler(args as z.infer<z.ZodObject<S>>, extra),
+  });
 }

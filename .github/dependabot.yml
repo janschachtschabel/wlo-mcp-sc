@@ -1,0 +1,26 @@
+# Dependency and base-image updates (audit 2026-11-12, X-1).
+#
+# Weekly, grouped, so a quiet repository gets one pull request per ecosystem
+# rather than one per package. CI runs on each — the image build and its smoke
+# test included — so an update that breaks the start is caught there.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      production:
+        dependency-type: production
+      development:
+        dependency-type: development
+  # The Dockerfile pins the base image by digest; this is what moves the pin.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

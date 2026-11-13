@@ -55,8 +55,13 @@ export type ItemStatus = 'pending' | 'created' | 'existing' | 'added' | 'already
   // Metadata and full texts (plan 2026-11-08, W2/W3).
   | 'stored' | 'suggested' | 'partly' | 'not_stored';
 
+/** How often a step may come back open (`pending`) before it is ended as failed-and-open. */
+export const MAX_OPEN_TRIES = 3;
+
 export interface ItemState {
   status: ItemStatus;
+  /** Internal: how often this step came back open. Not part of an answer (`planReply` drops it). */
+  tries?: number;
   nodeId?: string;
   code?: string;
   /** Set where the outcome is not known to be "nothing written" (W2/W3, same reading as after a confirmation). */
@@ -245,7 +250,17 @@ export async function runPlan<I extends PlanItem>(
       await mapPool(ready, PLAN_POOL, async item => {
         tried.add(item.key);
         const before = item.after ? plan.state.get(item.after) : undefined;
-        plan.state.set(item.key, await step(item, before));
+        const next = await step(item, before);
+        if (next.status !== 'pending') { plan.state.set(item.key, next); return null; }
+        // Still open. A cause that never goes away — a proxy that resets every
+        // POST, a failure `isOutcomeOpen` cannot place — would otherwise keep
+        // the step `pending` until the plan expires, and a client looping "while
+        // not complete" with it. After `MAX_OPEN_TRIES` it is ended as failed
+        // AND open: dependants stop, and the caller is told to look.
+        const tries = (plan.state.get(item.key)?.tries ?? 0) + 1;
+        plan.state.set(item.key, tries >= MAX_OPEN_TRIES
+          ? { status: 'failed', code: next.code ?? 'timeout', outcomeOpen: true }
+          : { ...next, tries });
         return null;
       });
       lastWaveMs = Date.now() - waveStart;

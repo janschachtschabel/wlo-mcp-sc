@@ -224,3 +224,18 @@ test('er funktioniert auch dann, wenn Zugangsblöcke gar nicht eingerichtet sind
   setAccessSupport(null);
   assert.equal(isUnusableBearer(`Bearer ${ANONYMOUS_ACCESS_TOKEN}`), false);
 });
+
+// ── audit 2026-11-12, S-1: a block is bound to the account its id was listed for ──
+
+test('a listed id does not carry ANOTHER account — the public key lets anyone mint such a block (audit S-1)', async (t) => {
+  const registry = await withSupport(t);
+  // The attacker's own, legitimately listed access.
+  await registry.add({ jti: 'angreifer-id', label: 'angreifer', iat: payload.iat });
+  // A block they minted themselves: their id, a stranger's name, a guessed password.
+  const forged = tokenFor({ ...payload, jti: 'angreifer-id', u: 'lehrerin', secret: 'geraten' });
+
+  assert.equal(credentialFromHeader(forged), null, 'the id is listed for "angreifer", not for "lehrerin"');
+  assert.equal(isUnusableBearer(forged), true, 'and it reads as an unusable token: 401, not an anonymous 200');
+  // The honest block under the same id still works.
+  assert.ok(credentialFromHeader(tokenFor({ ...payload, jti: 'angreifer-id', u: 'angreifer' })));
+});

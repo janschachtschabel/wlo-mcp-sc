@@ -4,6 +4,7 @@
  * pipeline and tool handlers can be exercised fully offline.
  */
 
+import { clearShortCaches } from '../src/short-cache.js';
 import assert from 'node:assert/strict';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -57,6 +58,9 @@ export function installFetchMock(
   handler: (url: string, init?: RequestInit) => MockResult,
 ): InstalledMock {
   const real = globalThis.fetch;
+  // A new mock is a new repository: what a short cache kept from the last one
+  // would answer this test's question with another test's data.
+  clearShortCaches();
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = (async (input: any, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : String(input?.url ?? input);

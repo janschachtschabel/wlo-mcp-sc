@@ -17,23 +17,38 @@ import type { ItemState, PlanReport } from '../services/write/plan-runner.js';
 export type PlanErrorCode = 'plan_expired' | 'plan_mismatch' | 'too_many_plans';
 
 const PLAN_ERROR_TEXT: Record<PlanErrorCode, string> = {
+  // NOT "nothing was written": a key that named a plan once may have run half
+  // of it before the plan was lost (audit 2026-11-12, K-7).
   plan_expired: 'Der Plan zu diesem Schlüssel ist nicht mehr bekannt — abgelaufen (30 Minuten ab der Bestätigung) '
-    + 'oder nach einem Neustart des Servers verloren. Es wurde nichts geschrieben. Weiter geht es mit demselben '
-    + 'Aufruf ohne Schlüssel: die neue Vorschau zeigt, was schon da ist, und die Person bestätigt erneut.',
+    + 'oder nach einem Neustart des Servers verloren. Dieser Aufruf hat nichts geschrieben; frühere Aufrufe '
+    + 'desselben Plans können aber schon Schritte ausgeführt haben. Weiter geht es mit demselben Aufruf ohne '
+    + 'Schlüssel: die neue Vorschau zeigt, was schon da ist (beim Aufnehmen in Sammlungen meldet erst der neue Lauf '
+    + 'schon Erledigtes als already), und die Person bestätigt erneut.',
   plan_mismatch: 'Dieser Schlüssel gehört zu einem anderen Plan — einer anderen Anmeldung oder anderen Angaben im '
-    + 'Aufruf. Es wurde nichts geschrieben. Bitte den Aufruf mit genau den bestätigten Angaben wiederholen, oder ohne '
+    + 'Aufruf. Dieser Aufruf hat nichts geschrieben; JENER Plan kann aber schon Schritte ausgeführt haben und läuft '
+    + 'mit seinen eigenen Angaben weiter. Bitte den Aufruf mit genau den bestätigten Angaben wiederholen, oder ohne '
     + 'Schlüssel für eine neue Vorschau.',
   too_many_plans: 'Diese Anmeldung hat schon fünf unfertige Pläne offen. Es wurde nichts geschrieben, und der '
     + 'Bestätigungsschlüssel gilt weiter, bis er zehn Minuten nach der Vorschau abläuft: erst einen laufenden Plan '
     + 'mit continuationToken zu Ende führen, dann denselben Aufruf mit diesem Schlüssel wiederholen.',
 };
 
-/** A key that cannot be used (yet). Never a write: every code is decided before any step runs. */
+/**
+ * Whether something may already have been written under this KEY. `true` for a
+ * plan that is gone (its earlier calls may have run steps) and for a mismatch
+ * (the key names a LIVING plan of other arguments, which may have run steps
+ * too). Only a full plan list is decided before the key did anything.
+ */
+const PLAN_OUTCOME_OPEN: Record<PlanErrorCode, boolean> = {
+  plan_expired: true, plan_mismatch: true, too_many_plans: false,
+};
+
+/** A key that cannot be used (yet). THIS call never writes: every code is decided before any step runs. */
 export function planErrorReply(code: PlanErrorCode): WloToolResult {
   const message = PLAN_ERROR_TEXT[code];
   return {
     content: [{ type: 'text' as const, text: message }],
-    structuredContent: { error: { code, message } },
+    structuredContent: { error: { code, message, outcomeOpen: PLAN_OUTCOME_OPEN[code] } },
     isError: true,
   };
 }
@@ -74,7 +89,8 @@ export function planReply(
     structuredContent: {
       complete: report.complete,
       progress: report.progress,
-      [listKey]: entries.map(e => ({ ...e.id, ...e.state })),
+      // `tries` is the runner's own counter, not something a caller acts on.
+      [listKey]: entries.map(e => { const { tries: _tries, ...state } = e.state; return { ...e.id, ...state }; }),
       ...(open ? { continuationToken: report.planId, expiresAt: new Date(expiresAt).toISOString() } : {}),
       ...(report.inProgress ? { inProgress: true } : {}),
     },

@@ -18,21 +18,57 @@
 import { escapeHtml } from './escape.js';
 import { safeHref } from './safe-url.js';
 
-/** Inline formatting, applied to ALREADY-ESCAPED text. */
+const emphasis = (escaped: string): string => escaped
+  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+
+/** A link target: no whitespace, and ONE level of balanced parentheses — `…/Optik_(Physik)`. */
+// The label holds no bracket (a run of `[` otherwise made the match quadratic),
+// and the target no placeholder mark: a code span inside a target was restored
+// INTO the `href`.
+const LINK = new RegExp('\\[([^\\[\\]]*)\\]\\(((?:[^()\\s' + '\u0000' + ']|\\([^()\\s' + '\u0000' + ']*\\))+)\\)', 'g');
+
+/**
+ * Inline formatting, applied to ALREADY-ESCAPED text.
+ *
+ * Code spans and links are taken OUT first and put back last, so the emphasis
+ * rules never see them. Applied in sequence on one string — as this was — a
+ * `*` in a link target became `<em>` inside the `href`, a target with a
+ * parenthesis was cut at it, and a link written inside a code span was made
+ * clickable (audit 2026-11-12, F-1). None of that was unsafe — everything is
+ * escaped before it gets here — it was wrong.
+ *
+ * The placeholder is NUL-delimited, and NUL is removed from the input first:
+ * what is put back can only be what this function took out.
+ */
+const MARK = '\u0000';
+// Built from the constant, not written as a literal: a control character inside
+// a regex literal is a lint error, and rightly so.
+const PLACEHOLDER = new RegExp(`${MARK}(\\d+)${MARK}`, 'g');
+
 function inline(escaped: string): string {
-  return escaped
-    // Code first: its content must not be reinterpreted by the rules below.
-    .replace(/`([^`]+)`/g, (_m, code: string) => `<code>${code}</code>`)
+  const kept: string[] = [];
+  const keep = (html: string): string => `${MARK}${kept.push(html) - 1}${MARK}`;
+
+  const text = escaped
+    .split(MARK).join('')
+    // Code first: its content is not reinterpreted by anything below.
+    .replace(/`([^`]+)`/g, (_m, code: string) => keep(`<code>${code}</code>`))
     // Links: the target goes through the shared scheme guard, so a
-    // `javascript:` or `data:` URL is dropped while the label survives.
-    .replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, label: string, href: string) => {
+    // `javascript:` or `data:` URL is dropped while the label survives. The
+    // LABEL may carry emphasis; the target may not.
+    .replace(LINK, (_m, label: string, href: string) => {
       const safe = safeHref(href.replace(/&amp;/g, '&'));
       return safe
-        ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+        ? keep(`<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${emphasis(label)}</a>`)
         : label;
-    })
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+    });
+
+  // A label can hold a code span, so a restored piece may itself hold a
+  // placeholder — restored until none is left (each pass removes at least one).
+  let out = emphasis(text);
+  while (out.includes(MARK)) out = out.replace(PLACEHOLDER, (_m, n: string) => kept[Number(n)] ?? '');
+  return out;
 }
 
 /** One list item's text, with the marker already stripped. */

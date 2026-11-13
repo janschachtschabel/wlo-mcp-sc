@@ -51,8 +51,8 @@ const SKILLS: Record<string, { title: string; description: string; keywords: str
     keywords: ['Experiment', 'Schülerversuch'], text: '# Versuch planen\n\nANLEITUNG-VERSUCH: Lege Ziel und Aufbau fest …' },
 };
 
-function repository(opts: { unreadable?: string } = {}) {
-  return installFetchMock((url): MockResult => {
+function serveRepository(opts: { unreadable?: string } = {}) {
+  return (url: string): MockResult => {
     if (url.includes('/children')) {
       return { json: { nodes: [{
         ...makeNode('reg-1', 'Skillkatalog Optik', { 'cm:name': ['SKILL_REGISTRY.md'], 'ccm:oeh_extendedType': [REGISTRY_CONTENT_TYPE_URI] }),
@@ -73,8 +73,11 @@ function repository(opts: { unreadable?: string } = {}) {
       }), mimetype: 'text/x-web-markdown' } } };
     }
     return { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
-  });
+  };
 }
+
+const SERVE = serveRepository();
+const repository = (opts: { unreadable?: string } = {}) => installFetchMock(serveRepository(opts));
 
 async function ask(args: Record<string, unknown>, opts: { unreadable?: string } = {}) {
   const mock = repository(opts);
@@ -176,4 +179,23 @@ test('the answer is in structuredContent in BOTH formats — the chatbot reads n
   assert.equal(sc?.task?.chosen?.nodeId, VERSUCH);
   const plain = await ask({});
   assert.ok((plain.structuredContent as { registry?: unknown } | undefined)?.registry, 'the catalogue too, without task');
+});
+
+test('a fitting skill whose file was REFUSED says why — not merely "nicht abrufbar" (review of audit package 3)', async () => {
+  const { SKILL_TEXT_MAX_BYTES } = await import('../src/services/skills.js');
+  const mock = installFetchMock((url): MockResult => {
+    if (url.includes(VERSUCH) && url.includes('/eduservlet/download')) return { text: 'x'.repeat(SKILL_TEXT_MAX_BYTES + 3) };
+    return SERVE(url);
+  });
+  const c = await registryClient();
+  try {
+    const args = { collectionId: 'coll-optik', task: 'ein Experiment zur Brechung planen' };
+    const text = toolText(await c.callTool({ name: 'get_skill_registry', arguments: args }));
+    assert.match(text, /zu groß/);
+    assert.doesNotMatch(text, /xxxx/, 'nothing of the refused file is shown');
+    const payload = JSON.parse(toolText(await c.callTool({ name: 'get_skill_registry', arguments: { ...args, outputFormat: 'json' } }))) as
+      { task: { match: string; refused?: string } };
+    assert.equal(payload.task.match, 'unreadable');
+    assert.equal(payload.task.refused, 'too_large');
+  } finally { await c.close(); mock.restore(); }
 });

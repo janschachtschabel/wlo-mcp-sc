@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ngsearch, searchCollectionsByKeyword, searchCollectionsByName } from '../src/wlo-search.js';
+import { ngsearch, searchCollectionsByKeywordResult, searchCollectionsByNameResult } from '../src/wlo-search.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
 
 test('ngsearch: posts the criteria and maps nodes + pagination', async () => {
@@ -61,26 +61,26 @@ test('ngsearch: a 200 that is not JSON throws a named error, not a raw SyntaxErr
 test('searchCollectionsByKeyword: returns the collection nodes', async () => {
   const mock = installFetchMock(() => ({ json: { nodes: [makeNode('c-1', 'Mathematik')] } }));
   try {
-    const out = await searchCollectionsByKeyword('mathe');
+    const out = (await searchCollectionsByKeywordResult('mathe')).nodes;
     assert.equal(out[0]?.ref?.id, 'c-1');
     const body = JSON.parse(String(mock.calls[0].init?.body));
     assert.deepEqual(body.criteria, [{ property: 'ngsearchword', values: ['mathe'] }]);
   } finally { mock.restore(); }
 });
 
-test('searchCollectionsByKeyword: degrades to [] on a non-OK response', async () => {
+test('searchCollectionsByKeyword: a non-OK response is no nodes AND not reachable', async () => {
   const mock = installFetchMock(() => ({ status: 500, json: {} }));
   try {
-    assert.deepEqual(await searchCollectionsByKeyword('mathe'), []);
+    assert.deepEqual(await searchCollectionsByKeywordResult('mathe'), { nodes: [], reachable: false });
   } finally { mock.restore(); }
 });
 
-test('searchCollectionsByKeyword: degrades to [] when the 200 body is not JSON', async () => {
+test('searchCollectionsByKeyword: a 200 body that is not JSON is no nodes AND not reachable', async () => {
   // This function documents itself as degrading; a parse failure must take the
   // same route as an HTTP failure instead of throwing past the caller.
   const mock = installFetchMock(() => ({ text: '<html>maintenance</html>' }));
   try {
-    assert.deepEqual(await searchCollectionsByKeyword('mathe'), []);
+    assert.deepEqual(await searchCollectionsByKeywordResult('mathe'), { nodes: [], reachable: false });
   } finally { mock.restore(); }
 });
 
@@ -92,7 +92,7 @@ test('searchCollectionsByName: reads the `collections` key, not `nodes`', async 
     json: { collections: [makeNode('c-1', 'Optik')], nodes: [] },
   }));
   try {
-    const out = await searchCollectionsByName('Optik');
+    const out = (await searchCollectionsByNameResult('Optik')).nodes;
     assert.equal(out[0]?.ref?.id, 'c-1');
     const url = new URL(mock.calls[0].url);
     assert.equal(url.pathname.endsWith('/collection/v1/collections/-home-/search'), true);
@@ -107,21 +107,21 @@ test('searchCollectionsByName: reads the `collections` key, not `nodes`', async 
 test('searchCollectionsByName: an empty query asks the repository nothing', async () => {
   const mock = installFetchMock(url => { throw new Error(`unexpected upstream call: ${url}`); });
   try {
-    assert.deepEqual(await searchCollectionsByName('   '), []);
+    assert.deepEqual(await searchCollectionsByNameResult('   '), { nodes: [], reachable: true });
     assert.equal(mock.calls.length, 0);
   } finally { mock.restore(); }
 });
 
-test('searchCollectionsByName: degrades to [] on a non-OK response', async () => {
+test('searchCollectionsByName: a non-OK response is no nodes AND not reachable', async () => {
   const mock = installFetchMock(() => ({ status: 500, json: {} }));
   try {
-    assert.deepEqual(await searchCollectionsByName('Optik'), []);
+    assert.deepEqual(await searchCollectionsByNameResult('Optik'), { nodes: [], reachable: false });
   } finally { mock.restore(); }
 });
 
-test('searchCollectionsByName: degrades to [] when the 200 body is not JSON', async () => {
+test('searchCollectionsByName: a 200 body that is not JSON is no nodes AND not reachable', async () => {
   const mock = installFetchMock(() => ({ text: '<html>maintenance</html>' }));
   try {
-    assert.deepEqual(await searchCollectionsByName('Optik'), []);
+    assert.deepEqual(await searchCollectionsByNameResult('Optik'), { nodes: [], reachable: false });
   } finally { mock.restore(); }
 });

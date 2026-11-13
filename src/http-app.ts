@@ -19,10 +19,14 @@ import {
   runWithCredential,
 } from './auth/credential.js';
 import { resolveWriteMode, ALLOW_SERVICE_WRITES } from './services/write/credential-gate.js';
+import { ClientGoneError, runWithRequestSignal } from './request-scope.js';
+import { requestIdFrom, runWithRequestId, traceFrom } from './request-id.js';
+import { count } from './metrics.js';
+import { METRICS_PATH, handleMetrics } from './rest/metrics-route.js';
 import { log } from './logger.js';
 import type { DistinctValueLimiter, RateLimiter } from './rate-limit.js';
 import { clientKey } from './rate-limit.js';
-import { readBodyWithLimit } from './read-body.js';
+import { CREDENTIAL_BODY_MAX_BYTES, readBodyWithLimit } from './read-body.js';
 import { parseRequestUrl } from './request-url.js';
 import type { streamableHttpOptions } from './mcp-transport.js';
 import { createCodeStore } from './auth/oauth-codes.js';
@@ -76,6 +80,8 @@ export interface HttpAppOptions {
    * Absent: the wildcard, as before.
    */
   ticketAllowedOrigins?: ReadonlySet<string>;
+  /** `METRICS_TOKEN`. Present: `GET /metrics` answers to this Bearer token. Absent: the path does not exist. */
+  metricsToken?: string;
   /** `WIDGET_OAUTH_ORIGINS` (R1): OAuth logins redirecting there expire after 12 h — see `OAuthEndpointDeps`. */
   widgetOAuthOrigins?: ReadonlySet<string>;
   /** Max buffered request-body size in bytes (MAX_BODY_BYTES). */
@@ -137,12 +143,43 @@ function listedOrigin(raw: string | string[] | undefined, allowed: ReadonlySet<s
 }
 
 /** Build the request handler `http.ts` mounts on its node:http server. */
+/**
+ * A signal that aborts when the response's connection closes BEFORE the answer
+ * was finished — the client hung up, or a proxy gave up on it. `close` also
+ * fires after an ordinary answer; that is not an abort.
+ */
+export function clientGone(res: Pick<ServerResponse, 'once' | 'writableEnded' | 'destroyed'>): AbortSignal {
+  const controller = new AbortController();
+  // The listener is attached when the WORK begins — after the body was read and
+  // the server connected. A client that hung up before that has already had its
+  // `close`; `once` would then wait for an event that will not come again.
+  if (res.destroyed && !res.writableEnded) controller.abort(new ClientGoneError());
+  else res.once('close', () => { if (!res.writableEnded) controller.abort(new ClientGoneError()); });
+  return controller.signal;
+}
+
+/**
+ * The route a request counts under. A fixed, small set — the PATH itself is the
+ * caller's text and would make the label set unbounded.
+ */
+export function routeClass(method: string | undefined, path: string | undefined): string {
+  if (!path) return 'other';
+  if (path === '/mcp' || (path === '/' && method === 'POST')) return 'mcp';
+  if (path === '/health') return 'health';
+  if (path === READY_PATH) return 'ready';
+  if (path === METRICS_PATH) return 'metrics';
+  if (path.startsWith('/api/')) return 'api';
+  if (path === '/auth' || path.startsWith('/auth/') || path.startsWith('/auth-')) return 'auth';
+  if (path.startsWith('/oauth/') || path.startsWith('/.well-known/')) return 'oauth';
+  return 'other';
+}
+
 export function createHttpRequestHandler(
   opts: HttpAppOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const {
     rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter, ticketAllowedOrigins, widgetOAuthOrigins,
-    maxBodyBytes, trustProxy, streamOptions, publicBaseUrl, protocolLimiter, clientBudgets,
+    maxBodyBytes, trustProxy, streamOptions, publicBaseUrl, protocolLimiter, clientBudgets, metricsToken,
   } = opts;
 
   // One store per process, held here rather than passed in: it takes no
@@ -156,7 +193,19 @@ export function createHttpRequestHandler(
   // is how the public REST layer silently inherited the service account: the
   // defect was in the default, not in the branch that forgot to opt out. With
   // this wrapper a surface added later is safe without anyone remembering.
-  return async (req, res) => runAnonymous(() => handle(req, res));
+  return async (req, res) => {
+    // One id per request: answered as a header and carried by every log line
+    // the request causes — the write it starts included (`request-id.ts`).
+    const id = requestIdFrom(req.headers['x-request-id']);
+    res.setHeader('X-Request-Id', id);
+    // Counted when the response is over, by what it ended as. `close` without a
+    // finished response is the client hanging up first.
+    res.once('close', () => count('wlo_http_requests_total', {
+      route: routeClass(req.method, parseRequestUrl(req.url)?.pathname),
+      status: res.writableFinished ? String(res.statusCode) : 'aborted',
+    }));
+    return runWithRequestId(id, () => runAnonymous(() => handle(req, res)), traceFrom(req.headers));
+  };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Dispatch on the PATH, never on the raw request target: `req.url` carries
@@ -220,6 +269,7 @@ export function createHttpRequestHandler(
         res.setHeader('Access-Control-Allow-Origin', corsOrigin);
         res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+        res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id');
       }
     }
 
@@ -235,6 +285,12 @@ export function createHttpRequestHandler(
     if (req.method === 'GET' && path === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', server: 'wlo-mcp', version: SERVER_VERSION, widgets: widgetBuildIds() }));
+      return;
+    }
+
+    // The operator's counters — only when a token is configured, only to it.
+    if (req.method === 'GET' && path === METRICS_PATH && metricsToken) {
+      handleMetrics(req, res, metricsToken);
       return;
     }
 
@@ -264,11 +320,14 @@ export function createHttpRequestHandler(
     // MA-2: one file of a batch into an upload slot (POST, personal credential, in memory). Off
     // unless WLO_BATCH_UPLOAD_ENABLED; then a 404 like any unknown path. Not on the per-IP REST
     // bucket: the caller is the chatbot backend, one address for all its users — the slot table
-    // caps per identity and in total instead.
+    // caps per identity and in total instead. It DOES spend the protocol budget, before the login
+    // is looked at: a trusted client's own (`X-WLO-Client-Key`), else the address's (S-4).
     if (path === UPLOAD_PATH && batchUploadEnabled()) {
       const ip = clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy);
+      const bucket = budgetBucket(req.headers[CLIENT_KEY_HEADER], ip, clientBudgets?.clients ?? NO_CLIENTS);
+      const limiter = bucket.kind === 'client' ? clientBudgets?.protocol(bucket.key) : protocolLimiter;
       if (await handleUploadRequest(req, res, { slots: sharedUploadSlots(), timeoutMs: uploadTimeoutMs(),
-        ip, authAbuseLimiter })) {
+        ip, authAbuseLimiter, ...(limiter ? { requestBudget: { limiter, key: bucket.key } } : {}) })) {
         return;
       }
     }
@@ -287,7 +346,7 @@ export function createHttpRequestHandler(
       }
       // Anonymous by construction — the handler-wide scope above covers this
       // surface, which has no authentication of its own.
-      if (await handleRestRequest(req, res)) return;
+      if (await runWithRequestSignal(clientGone(res), () => handleRestRequest(req, res))) return;
     }
 
     // MCP endpoint – stateless: new server + transport per request
@@ -477,9 +536,10 @@ export function createHttpRequestHandler(
         });
         const transport = new StreamableHTTPServerTransport({ ...streamOptions });
         await server.connect(transport);
-        await (effective
-          ? runWithCredential(effective, () => transport.handleRequest(req, res, body))
-          : transport.handleRequest(req, res, body));
+        // Work for a client that hung up is stopped (request-scope.ts); writes
+        // detach themselves from this scope in `registerCurationTool`.
+        const handle = () => runWithRequestSignal(clientGone(res), () => transport.handleRequest(req, res, body));
+        await (effective ? runWithCredential(effective, handle) : handle());
       } catch (err) {
         log.error('MCP request handling failed', {
           error: err instanceof Error ? err.message : String(err),
@@ -513,7 +573,7 @@ export function createHttpRequestHandler(
     // single call that verifies the user's login, and nothing else.
     if (await handleAuthEndpoint(req, res, {
       ip: clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy),
-      maxBodyBytes,
+      maxBodyBytes: Math.min(maxBodyBytes, CREDENTIAL_BODY_MAX_BYTES),
       rateLimiter: apiRateLimiter,
       authAbuseLimiter,
       ...(ticketAbuseLimiter ? { ticketAbuseLimiter } : {}),
@@ -529,7 +589,7 @@ export function createHttpRequestHandler(
     // makes that a constant anyway.
     if (await handleOAuthEndpoint(req, res, {
       ip: clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy),
-      maxBodyBytes,
+      maxBodyBytes: Math.min(maxBodyBytes, CREDENTIAL_BODY_MAX_BYTES),
       // The consent surface shares the tight `/auth*` bucket — a password is
       // typed there. The connector's own steps get the same budget the MCP
       // endpoint gives that same client; see `OAuthEndpointDeps`.

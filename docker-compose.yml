@@ -99,7 +99,7 @@ services:
       WLO_SERVICE_PASSWORD: "${WLO_SERVICE_PASSWORD:-}"
       # Only for the SERVICE account: with a personal login, writing is always on.
       #   WLO_ALLOW_SERVICE_WRITES – lets the shared account write. Without it the
-      #     14 curation tools are still LISTED (deliberately, since 2026-08-05: a
+      #     curation tools are still LISTED (deliberately, since 2026-08-05: a
       #     model that never sees a write tool never asks the host to sign anyone
       #     in) but every call is refused in service mode.
       #   WLO_ALLOW_PREPARED_WRITES – lets a signed-in caller PREPARE a write for
@@ -206,6 +206,8 @@ services:
       WIDGET_OAUTH_ORIGINS: "${WIDGET_OAUTH_ORIGINS:-}"
       MAX_BODY_BYTES: "${MAX_BODY_BYTES:-}"
       WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-}"
+      WLO_UPSTREAM_CONCURRENCY: "${WLO_UPSTREAM_CONCURRENCY:-}"
+      METRICS_TOKEN: "${METRICS_TOKEN:-}"
       WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"
       WLO_POOL_SIZE: "${WLO_POOL_SIZE:-}"
       WLO_TOPIC_POOL: "${WLO_TOPIC_POOL:-}"
@@ -219,6 +221,23 @@ services:
       # Extra CSP image hosts. Empty here means "keep the built-in default" —
       # `none` is the word that switches them off (see .env.example).
       WLO_WIDGET_IMAGE_DOMAINS: "${WLO_WIDGET_IMAGE_DOMAINS:-}"
+    # Stopping: on SIGTERM the server lets the work in hand finish and then exits
+    # (src/shutdown.ts) — at once when nothing runs, after at most 70 s when a
+    # long write does. The grace period must be LONGER than that, or Docker kills
+    # the process while it is still waiting; the default of 10 s would. `init`
+    # puts a minimal init process at PID 1: it forwards signals and reaps
+    # zombies, so the stop does not depend on Node being PID 1.
+    init: true
+    stop_grace_period: 75s
+    # The log is bounded. Docker's json-file driver keeps everything by default,
+    # and this server writes a line per request — on a small host that is how
+    # the disk fills up months later (audit 2026-11-12, B-5). 5 × 10 MB is
+    # several days at ordinary load; ship the log elsewhere to keep more.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     # Resource + privilege hardening. The server is a DoS/amplification surface,
     # so cap memory/CPU (a spike can't OOM the host, only the container), drop all
     # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege

@@ -34,12 +34,12 @@ async function client(): Promise<Client> {
 }
 
 /** A collection whose stored properties follow whatever the tool writes. */
-function serve(initial: string | null = null) {
+function serve(initial: string | null = null, type = 'ccm:map', aspects = ['ccm:collection']) {
   const stored: Record<string, string[]> = { 'cm:title': ['Bruchrechnung'] };
   if (initial !== null) stored[PROPERTY] = [initial];
   return installFetchMock((url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, properties: stored } } };
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type, aspects, properties: stored } } };
     }
     if (url.includes('/property')) {
       const value = JSON.parse(String(init?.body ?? 'null')) as string[] | null;
@@ -147,7 +147,7 @@ test('a read-back mismatch is reported as not saved', async () => {
   const stored: Record<string, string[]> = { 'cm:title': ['Bruchrechnung'], [PROPERTY]: ['# Alt'] };
   const mock = installFetchMock((_url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
-      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, properties: stored } } };
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: stored } } };
     }
     return { json: {} };
   });
@@ -182,7 +182,7 @@ test('a removal whose check could not run is reported as open, not as removed', 
     return {
       json: {
         node: {
-          ref: { id: COLLECTION, repo: '-home-' },
+          ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'],
           properties: { 'cm:title': ['Bruchrechnung'], [PROPERTY]: ['# Überblick'] },
         },
       },
@@ -252,10 +252,10 @@ test('eine Verknüpfung wird aufs Original umgeleitet, und die Vorschau sagt es'
   const mock = installFetchMock((url, init) => {
     if ((init?.method ?? 'GET') === 'GET') {
       return url.includes('original-1')
-        ? { json: { node: { ref: { id: 'original-1' }, properties: {
+        ? { json: { node: { ref: { id: 'original-1' }, type: 'ccm:map', aspects: ['ccm:collection'], properties: {
             'cm:title': ['Bruchrechnung (Original)'], [PROPERTY]: ['Alter Text vom Original'],
           } } } }
-        : { json: { node: { ref: { id: 'ref-1' }, originalId: 'original-1', properties: {
+        : { json: { node: { ref: { id: 'ref-1' }, type: 'ccm:map', aspects: ['ccm:collection'], originalId: 'original-1', properties: {
             'cm:title': ['Bruchrechnung (Verknüpfung)'], [PROPERTY]: ['Alter Text der Verknüpfung'],
           } } } };
     }
@@ -270,6 +270,75 @@ test('eine Verknüpfung wird aufs Original umgeleitet, und die Vorschau sagt es'
     assert.match(preview, /original-1/, 'und welche id geändert wird');
     assert.match(preview, /Alter Text vom Original/, 'der Vorher-Wert stammt vom Original');
     assert.ok(!preview.includes('Alter Text der Verknüpfung'), 'nicht der Stand der Verknüpfung');
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('a compendium text is not written to a record — the property endpoint would take it (audit K-11)', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = serve(null, 'ccm:io');
+  const c = await client();
+  try {
+    const r = await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, text: 'Ein Text.' } });
+    assert.equal(r.isError, true);
+    assert.equal((r as { structuredContent?: { error?: { code?: string } } }).structuredContent?.error?.code, 'not_a_collection');
+    assert.equal(writes(mock).length, 0);
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('the kind is asked of the node that would be WRITTEN — an original that is no collection refuses', async () => {
+  setServiceCredentialForTest(USER);
+  const mock = installFetchMock((url, init) => {
+    if ((init?.method ?? 'GET') === 'GET') {
+      return url.includes('original-1')
+        ? { json: { node: { ref: { id: 'original-1' }, type: 'ccm:map', aspects: ['ccm:mapdata'], properties: { 'cm:title': ['Ein Ordner'] } } } }
+        : { json: { node: { ref: { id: 'ref-1' }, type: 'ccm:map', aspects: ['ccm:collection'], originalId: 'original-1', properties: { 'cm:title': ['Verknüpfung'] } } } };
+    }
+    return { json: {} };
+  });
+  const c = await client();
+  try {
+    const r = await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: 'ref-1', text: 'Neuer Text' } });
+    assert.equal(r.isError, true);
+    assert.equal((r as { structuredContent?: { error?: { code?: string } } }).structuredContent?.error?.code, 'not_a_collection');
+    assert.match(toolText(r), /original-1/, 'it names the node it refused, which is the one that would be written');
+    assert.doesNotMatch(toolText(r), /confirmToken/);
+    assert.equal(mock.calls.filter(x => (x.init?.method ?? 'GET') !== 'GET').length, 0);
+  } finally {
+    await c.close();
+    mock.restore();
+    setServiceCredentialForTest(null);
+  }
+});
+
+test('K-14: the key approves the removal of THE text shown — not of whatever is there later', async () => {
+  setServiceCredentialForTest(USER);
+  let text = '# Alter Text';
+  const mock = installFetchMock((_url, init) => {
+    if ((init?.method ?? 'GET') === 'GET') {
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'],
+        properties: { 'cm:title': ['Bruchrechnung'], [PROPERTY]: [text] } } } };
+    }
+    return { json: {} };
+  });
+  const c = await client();
+  try {
+    const preview = toolText(await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, remove: true } }));
+    assert.match(preview, /12 Zeichen, SHA-256 [0-9a-f]{64}/, preview);
+    text = '# Von jemand anderem neu geschrieben';
+    const r = await c.callTool({
+      name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, remove: true, confirmToken: tokenFrom(preview) },
+    });
+    const error = (r as { structuredContent?: { error?: Record<string, unknown> } }).structuredContent?.error;
+    assert.equal(error?.['code'], 'confirm_mismatch', toolText(r));
+    assert.equal(writes(mock).length, 0);
   } finally {
     await c.close();
     mock.restore();

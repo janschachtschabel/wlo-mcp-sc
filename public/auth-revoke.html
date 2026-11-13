@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-i18n-title="revoke_doc_title">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,28 +9,32 @@
 </head>
 <body>
 <main>
-  <h1>MCP-Zugang sperren</h1>
-  <p class="lede">
+  <div class="lang" role="group" aria-label="Sprache / Language">
+    <button type="button" data-lang="de" aria-pressed="true" lang="de" aria-label="Deutsch">DE</button>
+    <button type="button" data-lang="en" aria-pressed="false" lang="en" aria-label="English">EN</button>
+  </div>
+  <h1 data-i18n="revoke_title">MCP-Zugang sperren</h1>
+  <p class="lede" data-i18n="revoke_lede">
     Ein gesperrter Block funktioniert sofort nicht mehr — auch dann nicht, wenn ihn
     jemand anderes hat.
   </p>
   <p class="lang-note" lang="en">English: this page revokes a previously issued access block.</p>
 
   <div class="card">
-    <h2 id="form-heading">Block sperren</h2>
+    <h2 id="form-heading" data-i18n="revoke_form">Block sperren</h2>
     <form id="revoke-form" novalidate aria-labelledby="form-heading">
       <div class="field">
-        <label for="block">Zugangsblock</label>
+        <label for="block" data-i18n="revoke_block_label">Zugangsblock</label>
         <textarea id="block" name="block" spellcheck="false" required
                   aria-describedby="block-hint"></textarea>
-        <p class="hint" id="block-hint">
+        <p class="hint" id="block-hint" data-i18n="revoke_block_hint">
           Der Wert aus den Einstellungen deines KI-Programms. Mit oder ohne
           <code class="mono">Bearer</code> am Anfang — beides geht.
         </p>
       </div>
       <div class="actions">
-        <button type="submit" id="submit">Diesen Zugang sperren</button>
-        <a href="/auth.html">Neuen Zugang holen</a>
+        <button type="submit" id="submit" data-i18n="revoke_submit">Diesen Zugang sperren</button>
+        <a href="/auth.html" data-i18n="revoke_new_link">Neuen Zugang holen</a>
       </div>
     </form>
 
@@ -38,29 +42,29 @@
   </div>
 
   <div class="card">
-    <h2 id="account-heading">Block nicht zur Hand? Alle Zugänge sperren</h2>
-    <p>
+    <h2 id="account-heading" data-i18n="revoke_all_heading">Block nicht zur Hand? Alle Zugänge sperren</h2>
+    <p data-i18n="revoke_all_text">
       Wenn du dich über <strong>„Mit WLO verbinden"</strong> angemeldet hast, hast du den
       Block nie gesehen — er ging direkt an dein KI-Programm. Melde dich hier an, dann
       werden <em>alle</em> Zugänge deines Kontos gesperrt.
     </p>
     <form id="account-form" novalidate aria-labelledby="account-heading">
       <div class="field">
-        <label for="user">WLO-Benutzername</label>
+        <label for="user" data-i18n="user_label">WLO-Benutzername</label>
         <input type="text" id="user" name="user" autocomplete="username"
                spellcheck="false" required />
       </div>
       <div class="field">
-        <label for="secret">WLO-Passwort</label>
+        <label for="secret" data-i18n="secret_label">WLO-Passwort</label>
         <input type="password" id="secret" name="secret" autocomplete="current-password"
                required aria-describedby="secret-hint" />
-        <p class="hint" id="secret-hint">
+        <p class="hint" id="secret-hint" data-i18n="revoke_all_secret_hint">
           Wird im Browser verschlüsselt und nur zur Prüfung an WLO weitergereicht —
           genau wie beim Holen eines Zugangs.
         </p>
       </div>
       <div class="actions">
-        <button type="submit" id="account-submit">Alle meine Zugänge sperren</button>
+        <button type="submit" id="account-submit" data-i18n="revoke_all_submit">Alle meine Zugänge sperren</button>
       </div>
     </form>
 
@@ -68,8 +72,8 @@
   </div>
 
   <div class="warn">
-    <h2>Passwort gewechselt?</h2>
-    <p>
+    <h2 data-i18n="revoke_pw_heading">Passwort gewechselt?</h2>
+    <p data-i18n="revoke_pw_text">
       Ein <strong>Wechsel deines WLO-Passworts</strong> macht ebenfalls sofort
       <em>alle</em> deine Zugangsblöcke unbrauchbar, weil jeder von ihnen das alte
       Passwort enthält. Die Einträge bleiben dabei aber gelistet — wer ganz aufräumen
@@ -78,7 +82,7 @@
   </div>
 
   <footer>
-    <p>WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
+    <p data-i18n="footer">WirLernenOnline · <a href="/">Zur Launcher-Seite</a></p>
   </footer>
 </main>
 <script type="module" src="/auth-revoke.js"></script>

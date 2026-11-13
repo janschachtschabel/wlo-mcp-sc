@@ -144,7 +144,12 @@ export async function exchangeTicket(
   // as not listed here, so the next exchange of a still-valid ticket writes it
   // again with a fresh expiry — the renewal the widget gets for free.
   if (!deps.support.registry.has(jti, now)) {
-    await deps.support.registry.add({ jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'ticket' });
+    await deps.support.registry.add({
+      jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'ticket',
+      // The full name as the account key (see `WloIdentity.account`): label and
+      // `u` both carry the display form, which the binding compares.
+      ...(identity.account ? { acct: identity.account } : {}),
+    });
   }
   log.info('ticket exchanged for an access block', { label: sanitizeText(identity.authority) });
 

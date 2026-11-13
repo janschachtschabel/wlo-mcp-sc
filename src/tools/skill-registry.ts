@@ -14,6 +14,7 @@
  * that carries the nodeIds a model will act on.
  */
 
+import { registerReadTool } from '../apps/register.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -327,7 +328,7 @@ den passendsten freigegebenen Skill und liefert dessen Anleitung gleich mit, ode
 }
 
 export function registerSkillRegistryTool(server: McpServer): void {
-  server.tool(
+  registerReadTool(server,
     'get_skill_registry',
     registryToolDescription(FINDER),
     {
