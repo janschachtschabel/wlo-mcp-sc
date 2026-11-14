@@ -591,6 +591,7 @@ const TOOLS: Array<{ name: string; id: string; formats: Array<string | undefined
   { name: 'get_compendium_text', id: 'nodeId', formats: ['markdown', 'json'] },
   { name: 'search_wlo_within_collection', id: 'nodeId', formats: ['markdown', 'json'] },
   { name: 'browse_collection_tree', id: 'nodeId', formats: ['markdown', 'json'] },
+  { name: 'list_collection_tree', id: 'nodeId', formats: ['markdown', 'json'] },
 ];
 
 for (const tool of TOOLS) {

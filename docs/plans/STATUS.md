@@ -5155,3 +5155,32 @@ Sie bestätigen beide Korrekturen an der Titel-Auflösung (24 Titel mit Fach: 13
   festgeschrieben, nicht als Teilstring, den auch ein Kommentar erfüllt.
   Nicht geändert: `<Titel> (nodeId: …)` in `get_skill_registry`/`get_skill` (daran hängt der Chatbot) und die
   Auswahl-Nachricht des Such-Widgets (eigene Bereinigung, eigener Vertrag).
+
+**Sammlungsstrukturen (Wünsche S1–S10 des Chatbot-Teams, 2026-11-14)** — Plan:
+`docs/plans/2026-11-14-sammlungsstrukturen.md`. Vier Pakete, alles additiv.
+- **P1 lesen (S1 Lesen, S2) — umgesetzt (2026-11-14).** `order: "title" | "stored"` an `browse_collection_tree` und
+  `get_collection_overview` (Vorgabe unverändert `title`); neues Lesewerkzeug `list_collection_tree` (Teilbaum als
+  flache Liste mit Pfad, Tiefe 4, Seiten zu 250). Eigene Messung `npm run measure:order`: beide Kinder-Listen
+  ignorieren eine gesetzte Reihenfolge, solange man nicht mit `sortProperties=ccm:collection_ordered_position` fragt;
+  mit dem Parameter steht ein Kind ohne Position hinter denen mit Position, in Anlege-Reihenfolge.
+  Live (Staging, anonym, Fachportal Physik): gespeicherte Reihenfolge kommt an, Seiten zu 7 ergeben exakt die ganze
+  Liste, 144 Sammlungen über vier Ebenen in 6,4 s, 20 Inhaltszahlen in 1,8 s. 34 Lesewerkzeuge, 53 insgesamt.
+- **Review zu P1 (0 kritisch, 1 groß, 6 klein, 4 Randnotizen) — behoben.** Groß: ein anonymer Aufruf konnte mit
+  `skipCount` 2000 rund 2 000 Abfragen auslösen, und jede Seite begann den Lauf neu. Jetzt höchstens 400 Abfragen je
+  Aufruf (`FLAT_TREE_LISTINGS_MAX`, per Test gezählt), `skipCount` bis 500, und ein Lauf, der dort endet, sagt
+  `walkCapped` — er endet GANZ, statt eine Ebene tiefer weiterzugehen, weil sonst ein Loch in der Liste entstünde.
+  Klein: Startknoten, der keine Sammlung ist, wird als `not_a_collection` abgelehnt (vorher „keine
+  Untersammlungen" über einem Datensatz); die Beschreibung von `browse_collection_tree` behauptete weiter
+  „alphabetisch"; README nannte Tiefe 1–2; fehlende Inhaltszahlen stehen nur am Eintrag, und das steht jetzt in der
+  Beschreibung; das Blätter-Versprechen gilt nicht, solange `incomplete` gesetzt ist. Neun Tests ergänzt (spätere
+  Seite eines Elternknotens fällt aus, Zyklus, Schnitt in gespeicherter Reihenfolge, Abfragezahl …).
+- **P2 vom Upload bis zum Einreichen (S4, S3) — umgesetzt (2026-11-14).** `wlo_submit_contents` (Plan wie
+  `wlo_add_to_collections`; schon Eingereichtes ist `already`, geprüft für die Vorschau UND unmittelbar vor dem
+  Schreiben; eine abgebrochene Einreichung, die ankam, ist `submitted` und nicht „already"). Eigener Befund beim
+  Schreiben der Tests: ein Test „ohne Anmeldung wird abgelehnt" war leer grün (falsche Signatur des Helfers, vom
+  Typprüfer gemeldet). `wlo_create_collection_tree` nimmt je Knoten `discipline`, `educationalContext`, `keywords`
+  und `shared` für den Baum. Live (Staging, Wegwerf-Sammlungen, `tests/live/collection-structure.test.ts`): eine
+  neue Sammlung behält alle drei Felder; die gesetzte Reihenfolge wird nur mit dem Sortierparameter geliefert.
+  Das Einreichen selbst ist NICHT neu live gemessen: der Stapel nutzt denselben Aufruf wie das Einzelwerkzeug
+  (gemessen, Forschungsdokument §10), und ein Testlauf legte Wegwerf-Datensätze in die Warteschlange der Redaktion.
+  34 Lesewerkzeuge, 20 Kuratier-Werkzeuge, 54 insgesamt (58 mit Stapel-Ablage).

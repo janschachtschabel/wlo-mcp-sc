@@ -3,7 +3,7 @@
 Für das Team und für Entwicklerinnen und Entwickler, die einen Chatbot oder eine
 andere Anwendung anbinden. Ein Dokument, drei Fragen:
 
-1. **[Welche Werkzeuge gibt es?](#1-die-52-mcp-werkzeuge)** — alle 52, gruppiert.
+1. **[Welche Werkzeuge gibt es?](#1-die-54-mcp-werkzeuge)** — alle 54, gruppiert.
 2. **[Welche Adressen kann ich von außen aufrufen?](#2-alle-adressen-von-außen)** — MCP, REST, Seiten, OAuth.
 3. **[Was muss ich über das Verhalten wissen?](#3-verhalten-das-die-integration-betrifft)** — die Regeln, an denen Integrationen sonst scheitern.
 
@@ -22,7 +22,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 52 — 33 lesend, 19 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 56 (vier für die Stapel-Ablage) |
+| **Werkzeuge** | 54 — 34 lesend, 20 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 58 (vier für die Stapel-Ablage) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -32,7 +32,7 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 
 ---
 
-## 1. Die 52 MCP-Werkzeuge
+## 1. Die 54 MCP-Werkzeuge
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -43,7 +43,7 @@ trägt dann die Aufforderung, mit der der Client die Anmeldung startet.
 auf — also fordert nichts jemals eine Anmeldung an, und ein Connector bleibt für
 immer anonym.
 
-### 1.1 Lesen — 33 Werkzeuge (`noauth`)
+### 1.1 Lesen — 34 Werkzeuge (`noauth`)
 
 **Suchen (6)**
 
@@ -78,12 +78,13 @@ immer anonym.
 | `get_wikipedia_summary` | Wikipedia-Anriss oder Volltext (Ergänzung, kein OER) |
 | `get_url_text` ⚠️ | Text hinter einer **beliebigen** Web-Adresse. Als **unsicher** deklariert, im Docker-Deployment ab Werk aus |
 
-**Struktur & Navigation (5)**
+**Struktur & Navigation (6)**
 
 | Werkzeug | Zweck |
 |---|---|
 | `get_collection_contents` | Inhalte einer Sammlung |
 | `browse_collection_tree` | Sammlungsbaum als Textbaum, bis Tiefe 3 |
+| `list_collection_tree` | Teilbaum als flache Liste mit Pfad, Tiefe und parentId, bis Tiefe 4, in gespeicherter Reihenfolge, in Seiten |
 | `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium-Gliederung, Statistik, freigegebene Skills, Untersammlungen, erste Inhalte |
 | `get_subject_portals` | Die Fachportale (oberste Ebene) |
 | `get_topic_page_content` | Eine Themenseite als Schwimmlinien, fertig zum Rendern |
@@ -109,11 +110,11 @@ immer anonym.
 > für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
 >
 > `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **nur die Suche** durch
-> `get_skill_for_task` (die Zahl bleibt bei 52). `get_skill` und
+> `get_skill_for_task` (die Zahl bleibt bei 54). `get_skill` und
 > `get_skill_registry` bleiben — die Freigabeliste besteht aus nodeIds, und
 > `get_skill` ist das einzige Werkzeug, das eine annimmt.
 >
-> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 51), wenn
+> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 53), wenn
 > Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.
 >
 > **Der Katalog kommt bei Sammlungs-Ergebnissen mit — ohne Zusatzabruf.** Ein
@@ -151,7 +152,7 @@ immer anonym.
 | `wlo_health_check` | Erreichbarkeit des Repositorys |
 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf |
 
-### 1.2 Kuratieren — 19 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
+### 1.2 Kuratieren — 20 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
 
 Alle verlangen eine Anmeldung, alle laufen **zweistufig**: erst Vorschau mit
 Änderungsmenge und Einmal-Token, dann Bestätigung. Jeder Schreibvorgang wird
@@ -171,6 +172,7 @@ aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 | `wlo_remove_from_collection` | Material aus einer Sammlung nehmen |
 | `wlo_create_collection_tree` | Einen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4) mit **einer** Bestätigung anlegen |
 | `wlo_add_to_collections` | Bis zu 200 Materialien mit **einer** Bestätigung in Sammlungen aufnehmen |
+| `wlo_submit_contents` | Bis zu 200 Datensätze mit **einer** Bestätigung zur redaktionellen Prüfung einreichen |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit **einer** Bestätigung: beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt |
 | `wlo_attach_fulltext` | Einen Volltext (Markdown) im `textContent` eines Datensatzes ablegen; Datensätze mit Datei werden abgelehnt (`would_replace_file`): der Text würde die Datei ersetzen (gemessen 2026-11-13) |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit **einer** Bestätigung (≤ 3 MB je Aufruf, sonst mehrere Aufrufe) |
@@ -317,7 +319,7 @@ Nur mit `WLO_BATCH_UPLOAD_ENABLED`; sonst gibt es die Adresse nicht.
 
 ### 3.1 Ausgabeformat
 
-23 der 52 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+23 der 54 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).
@@ -396,7 +398,7 @@ Fassung für das Modell.
   und denselben Argumenten liefert 30 Minuten lang die erste Antwort erneut
   (`replayed: true`), ohne erneut zu schreiben; läuft sie noch, `inProgress: true`.
   War die erste Antwort ein offener `timeout`, bleibt auch die Wiederholung offen.
-- **Pläne** (`wlo_create_collection_tree`, `wlo_add_to_collections`): eine
+- **Pläne** (`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_submit_contents`): eine
   Bestätigung für alles; der Server arbeitet in Abschnitten von ~40 s. Die
   Antwort trägt `complete`, `progress {done, total}`, die Schritte (`nodes` bzw.
   `pairs`, je `status`/`code`/`nodeId`) und, solange etwas offen ist,

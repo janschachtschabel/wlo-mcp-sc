@@ -2,7 +2,7 @@
 
 Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 
-## Lesend (33)
+## Lesend (34)
 
 ### Suchen
 
@@ -20,6 +20,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 |---|---|
 | `get_collection_contents` | Listet auf, was eine Sammlung enthält — Materialien und Unter-Sammlungen. |
 | `browse_collection_tree` | Navigiert durch die Unterthemen einer Sammlung oder eines Fachportals. |
+| `list_collection_tree` | Liefert den Teilbaum einer Sammlung als flache Liste mit Pfaden, bis vier Ebenen tief, in gespeicherter Reihenfolge. |
 | `get_subject_portals` | Zeigt, welche Fächer es gibt — die obersten Fach-Hubs. |
 | `get_collection_stats` | Fasst zusammen, woraus eine Sammlung besteht, nach Typ, Fach und Stufe. |
 | `get_collection_overview` | Zeigt eine Sammlung auf einen Blick: Pfad, Gliederung, Statistik, Skills, Untersammlungen und erste Inhalte. |
@@ -87,7 +88,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `search` | Leichte Belegstellen-Treffer für belegte Antworten. |
 | `fetch` | Der Volltext zu einem Treffer per id. |
 
-## Kuratierend (23)
+## Kuratierend (24)
 
 ### Inhalte
 
@@ -108,6 +109,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_remove_from_collection` | Nimmt ein Material wieder aus einer Sammlung heraus. |
 | `wlo_create_collection_tree` | Legt einen ganzen Sammlungsbaum mit einer Bestätigung an. |
 | `wlo_add_to_collections` | Nimmt viele Materialien mit einer Bestätigung in Sammlungen auf. |
+| `wlo_submit_contents` | Reicht viele Datensätze mit einer Bestätigung zur redaktionellen Prüfung ein. |
 | `wlo_update_contents` | Ändert Metadaten vieler Datensätze mit einer Bestätigung (schreibt bzw. schlägt vor). |
 | `wlo_attach_fulltext` | Legt einen Volltext im textContent eines Datensatzes ab. |
 | `wlo_attach_fulltexts` | Legt Volltexte für viele Datensätze mit einer Bestätigung ab. |

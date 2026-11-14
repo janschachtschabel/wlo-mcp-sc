@@ -17,8 +17,11 @@ import { buildChangeSet } from '../services/write/change-set.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { readFilingTarget } from '../services/write/create-filing.js';
 import {
-  findExisting, flattenTree, treeStep, type OnExisting, type TreeInput, type TreeItem,
+  findExisting, flattenTree, treeStep, type OnExisting, type TreeInput, type TreeItem, type TreeMetadata,
 } from '../services/write/collection-tree.js';
+import { displayValue } from '../services/write/change-set.js';
+import { WRITABLE_FIELDS } from '../services/write/fields.js';
+import { MAX_KEYWORDS } from './curation-fields.js';
 import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
@@ -26,7 +29,7 @@ import {
   codedError, previewReply, rejectionReply, type WriteAuthChallenge, registerCurationTool,
 } from './curation-shared.js';
 import { planReply } from './curation-plan-reply.js';
-import { runPlannedCall } from './curation-plan.js';
+import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const KIND = 'collection-tree';
 const MAX_CHILDREN = 15;
@@ -34,7 +37,15 @@ const MAX_CHILDREN = 15;
 // Depth 4 spelled out level by level: a recursive schema has no depth bound a
 // client can see. `strict` on the innermost level makes a fifth level an error
 // instead of being stripped in silence.
-const node = { title: z.string().min(1).max(200), description: z.string().max(2000).optional() };
+// Subject, level and keywords per node (S3, 2026-11-14): one approval instead
+// of a second call once the ids are back. Lists are bounded in the schema.
+const labels = z.union([z.string().min(1).max(200), z.array(z.string().min(1).max(200)).max(20)]).optional();
+const metadata = {
+  discipline: labels.describe('Fach als Label oder Liste, z. B. "Physik" — nur Name, Alias oder URI, kein Teilwort.'),
+  educationalContext: labels.describe('Bildungsstufe als Label oder Liste, z. B. "Sekundarstufe I".'),
+  keywords: z.array(z.string().min(1).max(200)).max(MAX_KEYWORDS).optional().describe('Schlagwörter.'),
+};
+const node = { title: z.string().min(1).max(200), description: z.string().max(2000).optional(), ...metadata };
 const level4 = z.object(node).strict();
 const level3 = z.object({ ...node, children: z.array(level4).max(MAX_CHILDREN).optional() }).strict();
 const level2 = z.object({ ...node, children: z.array(level3).max(MAX_CHILDREN).optional() }).strict();
@@ -65,10 +76,21 @@ function answer(plan: StoredPlan<TreeItem>, report: Awaited<ReturnType<typeof ru
  */
 function stepLine(item: TreeItem, existingId: string | undefined): string {
   if (existingId) {
+    // An existing collection is taken as it is: nothing of this node is written there.
+    const unset = [...(item.description ? ['Beschreibung'] : []), ...Object.keys(item.extra ?? {}).map(labelOf)];
     return `${item.key}: vorhanden (${existingId}), wird übernommen`
-      + (item.description ? ' — die angegebene Beschreibung wird dort nicht gesetzt' : '');
+      + (unset.length ? ` — bleibt unverändert, dort NICHT gesetzt: ${unset.join(', ')}` : '');
   }
-  return `${item.key}: anlegen${item.description ? ` — Beschreibung: „${flattenText(item.description)}“` : ''}`;
+  return `${item.key}: anlegen${item.description ? ` — Beschreibung: „${flattenText(item.description)}“` : ''}${extraText(item)}`;
+}
+
+const labelOf = (property: string) => WRITABLE_FIELDS[property]?.label ?? property;
+
+/** The metadata of one node as a person can check it: labels, not URIs — and all of it, because it is what is sent. */
+function extraText(item: TreeItem): string {
+  return Object.entries(item.extra ?? {})
+    .map(([property, values]) => ` — ${labelOf(property)}: ${values.map(v => `„${flattenText(displayValue(property, v))}“`).join(', ')}`)
+    .join('');
 }
 
 export function registerCurationTreeTools(server: McpServer, challenge: WriteAuthChallenge): void {
@@ -80,10 +102,13 @@ export function registerCurationTreeTools(server: McpServer, challenge: WriteAut
 Ohne Schlüssel: Vorschau, die jeden Knoten mit Aktion nennt (anlegen / vorhanden). Mit confirmToken: der Plan läuft, bis zu ~40 s je Aufruf. Ist er nicht fertig, kommt complete: false mit continuationToken — derselbe Aufruf mit diesem Schlüssel setzt fort, ohne neue Bestätigung (30 min ab Bestätigung).
 Ein Schlüssel darf erneut vorgelegt werden (z. B. nach einem Abbruch): er setzt fort oder liefert dasselbe Ergebnis, legt nie doppelt an.
 onExisting: merge (Vorgabe) übernimmt eine vorhandene Untersammlung gleichen Titels (Groß/Klein und Leerzeichen egal); fail verweigert.
+Je Knoten optional discipline, educationalContext, keywords; \`shared\` setzt sie für den ganzen Baum, ein eigener Wert des Knotens ERSETZT ihn. Eine übernommene Sammlung bleibt unverändert.
 Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwort: nodes [{path, nodeId, status, code}], Pfad = Titel mit „/“.`,
     inputSchema: {
       parentCollectionId: z.string().min(1).max(200).describe('Bestehende Sammlung, unter der der Baum entsteht.'),
-      tree: z.array(level1).min(1).max(MAX_CHILDREN).describe('Knoten {title, description?, children?}, bis Tiefe 4.'),
+      tree: z.array(level1).min(1).max(MAX_CHILDREN).describe('Knoten {title, description?, discipline?, educationalContext?, keywords?, children?}, bis Tiefe 4.'),
+      shared: z.object(metadata).strict().optional().describe(
+        'Gemeinsame Werte für JEDEN neuen Knoten des Baums. Ein Knoten, der dasselbe Feld selbst nennt, ersetzt den gemeinsamen Wert (eine leere Liste schaltet ihn dort ab).'),
       onExisting: z.enum(['merge', 'fail']).optional().default('merge'),
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
@@ -93,14 +118,14 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
       requireWrite();
       const parentId = String(params['parentCollectionId']).trim();
       const onExisting = (params['onExisting'] ?? 'merge') as OnExisting;
-      const flat = flattenTree(params['tree'] as TreeInput[]);
-      if (!flat.ok) return rejectionReply(flat.reasons);
+      const flat = flattenTree(params['tree'] as TreeInput[], (params['shared'] ?? {}) as TreeMetadata);
+      if (!flat.ok) return rejectionReply(flat.reasons, flat.candidates.length ? { candidates: flat.candidates } : {});
       const items = flat.items;
       return runPlannedCall<TreeItem>({
         kind: KIND, params,
         // Everything the plan was built from — a key presented with other
         // arguments is not this plan.
-        args: JSON.stringify([parentId, onExisting, items.map(i => [i.key, i.description ?? ''])]),
+        args: canonicalArgs([parentId, onExisting, items.map(i => [i.key, i.description ?? '', i.extra ?? {}])]),
         step: (plan) => treeStep(parentId, plan, onExisting),
         answer: (plan, report) => answer(plan, report, parentId),
         prepare: async () => {

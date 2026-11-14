@@ -6,6 +6,47 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — collection structures, package 1: reading (chatbot team's wishes S1 and S2, 2026-11-14)
+
+Plan: `docs/plans/2026-11-14-sammlungsstrukturen.md`. Everything is additive; no default changed.
+
+- **`order: "title" | "stored"` on `browse_collection_tree` and `get_collection_overview`.** A curriculum has a
+  sequence, and every tree read sorted it away by title. `stored` returns the sub-collections in the order the
+  repository holds: the position an editor set, else the order of creation — on every level. The default stays
+  `title` and sends the request it always sent. Measured on staging (`npm run measure:order`): the children listing
+  ignores a set order unless asked with `sortProperties=ccm:collection_ordered_position`; asked that way, a child
+  without a position stands behind those that have one.
+- **New read tool `list_collection_tree`** (34 read tools, 53 in all): the sub-tree below one collection as a flat
+  list — `nodeId`, `title`, `path`, `depth`, `parentId` per sub-collection — up to 4 levels deep (as deep as
+  `wlo_create_collection_tree` creates), in stored order, level by level, in pages of up to 250
+  (`more.nextSkipCount`). Not cut per parent. A branch whose listing did not answer or was refused is marked
+  (`childrenUnread` / `childrenRefused`) and the answer says so (`incomplete` / `restricted`);
+  `includeContentCounts` reads each count from the listing, not from the repository's counter, which lags.
+  Live on staging: the Physik portal, 144 collections over four levels in 6.4 s; pages of 7 add up to the whole list.
+  One call sends at most 400 listings; a walk that stops there says `walkCapped`. A start node that is no
+  collection is refused as `not_a_collection`.
+
+### Added — collection structures, package 2: from upload to review (wishes S4 and S3, 2026-11-14)
+
+- **New curation tool `wlo_submit_contents`** (20 curation tools, 54 in all; 58 with the batch upload): up to 200
+  records to the editorial queue under ONE approval, on the plan runner of `wlo_add_to_collections`. A record
+  already in the queue is `already` and is never submitted twice — decided for the preview and again right before
+  the write, because a plan writes up to thirty minutes after its approval. An aborted submission that landed is
+  reported as `submitted`, not as "already"; `not_stored` (`dropped`) is a submission answered with success that
+  left no workflow status. The note applies to every record and is part of the approval — flattened once, so what
+  is shown is what is sent. An unusable id (not found, a collection, a folder) refuses the whole call before any
+  key, each named with the single tool's code; a record that did not ANSWER is `not_checked`, not "not found".
+  After a 5xx on the submission the record is read before anything is said: in the queue it is `submitted`, else
+  `failed` with `outcomeOpen: true` — and the text then says "offen", never "nicht eingereicht".
+- **`wlo_create_collection_tree` takes subject, level and keywords per node** (`discipline`, `educationalContext`,
+  `keywords`), and `shared` for the whole tree; a node that names a field itself REPLACES the shared value there.
+  Vocabulary values resolve by name, alias or URI only; a refusal carries `candidates`. The preview shows every
+  value as a label, per node, and the key binds to it. A collection that is taken over (`merge`) stays untouched,
+  and the preview names what is NOT set there. A value the repository did not keep leaves the step `unverified`
+  (`not_visible`) with its id. Live on staging: a new collection keeps all three, and the read-back finds them.
+  Fixed with it: a create whose answer never came was found by title on the next call and reported `existing` —
+  its description (and now its metadata) never written. The step finishes it and reports what landed.
+
 ### Fixed — chatbot team's answer of 2026-11-15
 
 - **`search_wlo_content_many` no longer says "more" over no hit at all** — and a search whose query variants did

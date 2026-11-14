@@ -16,7 +16,7 @@ Heute läuft der Dienst mit Docker Compose auf einem Host. Der Helm-Chart ist ei
 | | |
 |---|---|
 | **Service-ID** | `wlo-mcp` (so auch das Feld `service` in jeder Logzeile) |
-| **Ist** | Der Zugang zu **einem** edu-sharing-Repository für MCP-Clients (KI-Programme, Chatbots): Suche, Sammlungen, Themenseiten, Detaildaten, Volltext, Skills — 33 Lesewerkzeuge — und 19 Kuratier-Werkzeuge, die schreiben. Dazu eine kleine öffentliche REST-Fläche (`/api/*`) und die Anmeldeseiten. |
+| **Ist** | Der Zugang zu **einem** edu-sharing-Repository für MCP-Clients (KI-Programme, Chatbots): Suche, Sammlungen, Themenseiten, Detaildaten, Volltext, Skills — 34 Lesewerkzeuge — und 20 Kuratier-Werkzeuge, die schreiben. Dazu eine kleine öffentliche REST-Fläche (`/api/*`) und die Anmeldeseiten. |
 | **Ist nicht** | Kein LLM und kein LLM-Gateway: der Dienst ruft kein Sprachmodell auf. Kein eigener Datenbestand: alle Inhalte liegen im Repository. Kein Ersatz für das Repository-Rechtesystem — was jemand sieht und ändern darf, entscheidet edu-sharing. |
 | **Technik** | TypeScript, Node 22, ein langlebiger Prozess. Laufzeit-Abhängigkeiten: `@modelcontextprotocol/sdk`, `zod`. Kein Web-Framework, keine Datenbank. |
 | **Abhängig von** | dem Repository (zwingend); Wikipedia (`*.wikipedia.org`, nur für das Wikipedia-Werkzeug); einem Textextraktionsdienst (optional, `WLO_TEXT_EXTRACTION_URL`). |

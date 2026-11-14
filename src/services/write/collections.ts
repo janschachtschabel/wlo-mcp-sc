@@ -27,6 +27,7 @@ import { sanitizeText } from '../../text-sanitize.js';
 import { getNodeMetadata, getCollectionContents } from '../../wlo-node.js';
 import { getNodeCollections } from '../node-collections.js';
 import { failureDetail, updateNodeMetadata } from './nodes.js';
+import { WRITABLE_FIELDS } from './fields.js';
 import { confirmDeleted, type MutationOutcome } from './verify.js';
 import { toRepositoryPath, type PreparedRequest, type PrepareOutcome } from './prepared-request.js';
 
@@ -43,6 +44,12 @@ const COLLECTION_TYPE = 'EDITORIAL';
 export interface CollectionFields {
   title: string;
   description?: string;
+  /**
+   * Further properties for a NEW collection, validated by the caller (subject,
+   * level, keywords — S3, 2026-11-14). Written on the node route beside the
+   * description and read back with it.
+   */
+  extra?: Record<string, string[]>;
 }
 
 export type CreateCollectionOutcome =
@@ -92,11 +99,17 @@ function collectionBody(fields: CollectionFields, collection?: string): string {
  * 200 — one more instance of the silent drop this whole pipeline exists for.
  * The node metadata endpoint stores it.
  */
-async function writeDescription(collection: string, description: string | undefined): Promise<string | null> {
-  if (!description) return null;
-  const { statuses } = await updateNodeMetadata(collection, { 'cm:description': [description] }, { commit: false });
-  const failed = statuses.find(s => !s.ok);
-  return failed ? (failed.detail ?? 'unbekannter Fehler') : null;
+async function writeDescription(collection: string, fields: CollectionFields): Promise<string | null> {
+  const desired: Record<string, string[]> = {
+    ...(fields.description ? { 'cm:description': [fields.description] } : {}),
+    ...(fields.extra ?? {}),
+  };
+  if (Object.keys(desired).length === 0) return null;
+  const { statuses } = await updateNodeMetadata(collection, desired, { commit: false });
+  const failed = statuses.filter(s => !s.ok);
+  return failed.length
+    ? failed.map(s => `${WRITABLE_FIELDS[s.property]?.label ?? s.property}: ${s.detail ?? 'unbekannter Fehler'}`).join('; ')
+    : null;
 }
 
 /**
@@ -123,6 +136,11 @@ async function confirmCollection(collection: string, fields: CollectionFields): 
     const storedDescription = node.properties?.['cm:description']?.[0]?.trim() ?? '';
     if (storedDescription !== fields.description.trim()) missing.push('Beschreibung');
   }
+  // Every value asked for must be there; what else the field holds is not ours to judge.
+  for (const [property, values] of Object.entries(fields.extra ?? {})) {
+    const stored = new Set(node.properties?.[property] ?? []);
+    if (!values.every(v => stored.has(v))) missing.push(WRITABLE_FIELDS[property]?.label ?? property);
+  }
   if (missing.length === 0) return { status: 'ok' };
   return { status: 'not_visible', detail: `Nicht im Datensatz angekommen: ${missing.join(', ')}.` };
 }
@@ -135,12 +153,12 @@ async function confirmCollection(collection: string, fields: CollectionFields): 
  * drift between them.
  */
 async function finishCollection(collection: string, fields: CollectionFields): Promise<MutationOutcome> {
-  const failure = await writeDescription(collection, fields.description);
+  const failure = await writeDescription(collection, fields);
   const check = await confirmCollection(collection, fields);
   if (check.status === 'ok' || !failure) return check;
   // The read-back says something is missing and the description write already
   // said why — carrying the upstream reason spares a second round of guessing.
-  const detail = `${check.detail} Die Beschreibung wurde dabei abgelehnt: ${failure}`;
+  const detail = `${check.detail} Dabei abgelehnt — ${failure}`;
   return check.status === 'not_visible'
     ? { status: 'not_visible', detail }
     : { status: 'unverified', detail };
@@ -223,6 +241,20 @@ export async function createCollection(
     check = { status: 'unverified', detail: `Die Sammlung ist angelegt; Beschreibung und Rücklesen ließen sich nicht abschließen (${err instanceof Error ? err.message : String(err)}).` };
   }
   return { status: 'created', nodeId, check };
+}
+
+/**
+ * Finish a collection whose CREATE landed without its answer: write what
+ * travels beside the title and read everything back. For the tree, whose step
+ * finds such a collection by title on its next call — `createCollection` never
+ * got to this part, and "existing" would hide that nothing of it was written.
+ */
+export async function completeCollection(collection: string, fields: CollectionFields): Promise<MutationOutcome> {
+  try {
+    return await finishCollection(collection, fields);
+  } catch (err) {
+    return { status: 'unverified', detail: `Beschreibung und Rücklesen ließen sich nicht abschließen (${err instanceof Error ? err.message : String(err)}).` };
+  }
 }
 
 /** Change a collection's title and description. */

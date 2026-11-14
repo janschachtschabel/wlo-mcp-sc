@@ -53,7 +53,13 @@ export function setPlanBudgetForTest(ms: number | null): void { budgetOverride =
 
 export type ItemStatus = 'pending' | 'created' | 'existing' | 'added' | 'already' | 'unverified' | 'failed'
   // Metadata and full texts (plan 2026-11-08, W2/W3).
-  | 'stored' | 'suggested' | 'partly' | 'not_stored';
+  | 'stored' | 'suggested' | 'partly' | 'not_stored'
+  // Editorial queue (S4, 2026-11-14).
+  | 'submitted'
+  // Maintaining collections (S6/S7, 2026-11-14): `absent` = was not in the
+  // collection, `moved` = filed in the target AND taken out of the source,
+  // `not_empty` = a collection that is kept because it holds something.
+  | 'removed' | 'absent' | 'moved' | 'deleted' | 'not_empty';
 
 /** How often a step may come back open (`pending`) before it is ended as failed-and-open. */
 export const MAX_OPEN_TRIES = 3;
@@ -258,9 +264,12 @@ export async function runPlan<I extends PlanItem>(
         // not complete" with it. After `MAX_OPEN_TRIES` it is ended as failed
         // AND open: dependants stop, and the caller is told to look.
         const tries = (plan.state.get(item.key)?.tries ?? 0) + 1;
+        // Open by default — but a step that KNOWS nothing left for the
+        // repository (it could not even read before writing) may say so.
+        const { outcomeOpen, ...open } = next;
         plan.state.set(item.key, tries >= MAX_OPEN_TRIES
-          ? { status: 'failed', code: next.code ?? 'timeout', outcomeOpen: true }
-          : { ...next, tries });
+          ? { status: 'failed', code: next.code ?? 'timeout', outcomeOpen: outcomeOpen ?? true }
+          : { ...open, tries });
         return null;
       });
       lastWaveMs = Date.now() - waveStart;

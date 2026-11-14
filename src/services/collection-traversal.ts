@@ -285,7 +285,9 @@ export type CollectionTreeNode = FormattedNode & {
  * out — vanished from a tree that then looked complete (review 2026-11-14).
  * Only "nobody waits any more" still ends the walk.
  */
-async function readNodeContents<T>(node: CollectionTreeNode, read: () => Promise<T>): Promise<T | null> {
+export async function readNodeContents<T>(
+  node: { nodeId: string; contentsRefused?: boolean; contentsUnread?: boolean }, read: () => Promise<T>,
+): Promise<T | null> {
   try {
     const out = await read();
     // The contents WERE read: an "unread" mark an earlier read left behind
@@ -320,7 +322,15 @@ export interface CollectionTreeOptions {
   includeContentCounts: boolean;
   /** When set (1–5), attach the first N content items of every node in the tree. */
   contentPreview?: number;
+  /**
+   * `title` (default): every level alphabetical. `stored`: the repository's own
+   * order — the position where one was set, else the order of creation. A
+   * curriculum has a sequence, and alphabetical order loses it.
+   */
+  order?: CollectionOrder;
 }
+
+export type CollectionOrder = 'title' | 'stored';
 
 export interface CollectionTree {
   nodes: CollectionTreeNode[];
@@ -389,11 +399,16 @@ export function notReadable(id: string, status: number): string {
 
 export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<CollectionTree> {
   const { parentId, depth, maxResults, includeContentCounts, contentPreview } = opts;
+  // ONE switch for both halves of the rule: what the repository is asked for,
+  // and whether its answer is re-sorted. `title` keeps the request it always sent.
+  const stored = opts.order === 'stored';
+  const listingOpts = { stored };
+  const arrange = (nodes: WloNode[]): WloNode[] => (stored ? nodes : sortByTitle(nodes));
 
   // One more than shown, like every level below: without it a first level
   // longer than `maxResults` was cut SILENTLY — the overview's
   // `subcollectionsTruncated` could never be set (review R-C, 2026-11-06).
-  const level1Listing = await getChildCollectionsResult(parentId, maxResults + 1);
+  const level1Listing = await getChildCollectionsResult(parentId, maxResults + 1, 0, undefined, listingOpts);
   if (level1Listing.refused) throw new Error(notReadable(parentId, level1Listing.refused));
   if (!level1Listing.reachable) {
     throw new Error(`Die Unter-Sammlungen von ${parentId} sind derzeit nicht abrufbar.`);
@@ -401,7 +416,7 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
   // Cut in the repository's order, before sorting: what was cut is the tail of
   // ITS listing, not the alphabetical last.
   const level1Cut = level1Listing.nodes.length > maxResults;
-  const sorted1 = sortByTitle(level1Listing.nodes.slice(0, maxResults));
+  const sorted1 = arrange(level1Listing.nodes.slice(0, maxResults));
 
   const childSlice = depth > 2
     ? depth3Slice(Math.max(1, sorted1.length))
@@ -430,7 +445,7 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
     if (level < depth && id) {
       // Fetch one more than shown: the extra hit proves there IS more
       // without spending a second round-trip on a count.
-      const listing = await getChildCollectionsResult(id, childSlice + 1);
+      const listing = await getChildCollectionsResult(id, childSlice + 1, 0, undefined, listingOpts);
       const fetched = listing.nodes;
       // Not read is not empty: the branch may have children this tree does not show.
       if (didNotAnswer(listing)) f.childrenUnread = true;
@@ -442,7 +457,7 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
       // parents sharing a child could both pass the check before either
       // marks it, emitting the same subtree twice. Claiming here makes the
       // placement deterministic (first parent in traversal order wins).
-      const sortedChildren = sortByTitle(fetched).slice(0, childSlice).filter(c => {
+      const sortedChildren = arrange(fetched).slice(0, childSlice).filter(c => {
         const cid = c.ref?.id;
         if (!cid) return true;
         if (visited.has(cid)) return false;

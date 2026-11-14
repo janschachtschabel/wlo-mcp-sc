@@ -11,7 +11,7 @@
 
 /** Every curation tool. A new one belongs here, or the checks skip it. */
 export const CURATION_TOOLS = [
-  'wlo_update_content', 'wlo_update_contents', 'wlo_attach_fulltext', 'wlo_attach_fulltexts', 'wlo_create_content', 'wlo_submit_content',
+  'wlo_update_content', 'wlo_update_contents', 'wlo_attach_fulltext', 'wlo_attach_fulltexts', 'wlo_create_content', 'wlo_submit_content', 'wlo_submit_contents',
   'wlo_create_collection', 'wlo_rename_collection',
   'wlo_add_to_collection', 'wlo_remove_from_collection',
   'wlo_create_collection_tree', 'wlo_add_to_collections',

@@ -24,7 +24,7 @@ import { codedErrorResult, toolError } from './shared.js';
 import { registerWloTool } from '../apps/register.js';
 import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas.js';
 import { logTerm } from '../log-privacy.js';
-import { collectionDisciplineParam, collectionNameParam, withCollectionByName } from './collection-arg.js';
+import { collectionDisciplineParam, collectionNameParam, collectionOrderParam, withCollectionByName } from './collection-arg.js';
 
 /**
  * Resolve a subject/Fachportal NAME (e.g. "Mathematik" or the abbreviation
@@ -199,7 +199,7 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
     // The browse widget calls this tool from inside the iframe for drill-down.
     widgetAccessible: true,
     description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig. Statt der nodeId geht auch der Titel einer Sammlung als \`collection\` (gleichnamige: \`discipline\`); mehrdeutig → Kandidaten statt Ergebnis.
-Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Deterministisch (alphabetisch, nodeId als Tie-Breaker).
+Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Alphabetisch; mit \`order: "stored"\` wie im Repository.
 Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
     inputSchema: {
       nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
@@ -218,6 +218,7 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
         'a "contentPreview" array — a peek at what is inside without a second call. Bounded extra fetches.'
       ),
       maxResults: z.number().int().min(1).max(100).optional().default(50),
+      order: collectionOrderParam,
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
     outputSchema: browseTreeSchema,
@@ -268,6 +269,7 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
           maxResults: params.maxResults ?? 50,
           includeContentCounts: params.includeContentCounts ?? false,
           contentPreview: params.includeContentPreview,
+          order: params.order,
         });
         // Before the format branches, and attached to the nodes — see
         // `get_subject_portals` above for both reasons. `CollectionTreeNode` is

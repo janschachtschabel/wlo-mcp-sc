@@ -21,6 +21,16 @@ import { incompleteNotice } from '../services/collection-search.js';
 import { codedErrorResult, toolError } from './shared.js';
 
 /** The input field every one of the five tools declares as `collection`. */
+/**
+ * In which order sub-collections come back — shared by every tool that lists
+ * them, so the two values mean one thing. The default stays `title`: what
+ * these tools always answered.
+ */
+export const collectionOrderParam = z.enum(['title', 'stored']).optional().default('title').describe(
+  'Order of the sub-collections on every level. "title" (default): alphabetical. "stored": the order the '
+  + 'repository holds — the position an editor set, else the order of creation. Use "stored" where the sequence '
+  + 'means something (a curriculum).');
+
 export const collectionNameParam = z.string().max(200).optional().describe(
   'Titel der Sammlung STATT ihrer nodeId, z. B. "Optik". Er muss genau stimmen (Groß-/Kleinschreibung egal, '
   + 'Leerzeichen und Bindestrich gelten als derselbe Trenner; ä/ae, ß/ss und ein fehlender Trenner nur, wenn sonst '

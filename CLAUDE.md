@@ -1657,7 +1657,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   nobody starts.) Two thin entry points connect a
   transport to it: `stdio.ts` (local/Docker) and `http.ts` (self-hosted
   Streamable HTTP + rate limit + body cap — the production path).
-- `src/tools/*` — the 33 read tools (all unconditional, of which `get_url_text`
+- `src/tools/*` — the 34 read tools (all unconditional, of which `get_url_text`
   is declared `unsafe` and removable via `WLO_DISABLE_UNSAFE_TOOLS`;
   `search_wlo_content_many` runs up to eight content searches in one call;
   `search` gains the `search_wlo_all` buckets + widget and `fetch` the full
@@ -1670,7 +1670,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   convention shape therefore stays first and untouched in both modes, pinned by
   `tests/tools-knowledge-rich.test.ts`;
   `search_skill` becomes `get_skill_for_task` under
-  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 19 curation tools (`curation-*.ts`,
+  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 20 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm conversation they share — split 2026-11-13: the
@@ -1777,6 +1777,41 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   variants this login may not read reports "no variant" — for that login there
   is no page to show. The four notice wordings a client recognises are pinned in
   `tests/refused-is-not-unreachable.test.ts` — change them only with notice.
+- **The order of sub-collections (S1, 2026-11-14).** The children listing answers
+  in the order of CREATION and ignores a set order — unless it is asked with
+  `sortProperties=ccm:collection_ordered_position` (`ORDER_POSITION_PROPERTY`,
+  `wlo-node.ts`; measured on both the node and the collection listing,
+  `npm run measure:order`). Asked that way, a child without a position stands
+  behind those that have one. `getChildCollectionsResult(…, { stored: true })`
+  is the one place that sends it; `order: "stored"` on `browse_collection_tree`
+  / `get_collection_overview` and all of `list_collection_tree`
+  (`services/collection-tree-flat.ts`) go through it. The default of the two
+  older tools stays `title` and sends the request it always sent. The flat list
+  walks level by level and stops at a full page, so what it has read is a
+  PREFIX — that is what makes `skipCount` mean the same on every call; it reads
+  every child of a parent (never cut per parent) and answers the three cases
+  per branch (`childrenUnread`, `childrenRefused`, listed). Counts come from a
+  listing, never from `childReferencesCount` / `childCollectionsCount`: those
+  lag by seconds and count the sub-tree at the root (chatbot team, B2). One
+  call sends at most `FLAT_TREE_LISTINGS_MAX` (400) listings — the page size
+  alone does not bound a walk that restarts on every page — and a walk that
+  hits the bound ENDS (never one level further: that leaves a hole in the
+  list) and says `walkCapped`. Plan
+  for the whole wish list: `docs/plans/2026-11-14-sammlungsstrukturen.md`.
+- **Batch submission and tree metadata (S4/S3, 2026-11-14).**
+  `wlo_submit_contents` (`services/write/submit-plan.ts`) is a plan like the
+  other batch tools. Its step reads the record RIGHT BEFORE the write: the
+  confirming call reads again anyway (a change before it changes the preview,
+  and the key no longer fits), so the look in the step is for the plan's later
+  calls. A status found there after OUR request left (`item.sent`) is our
+  submission (`submitted`), otherwise `already` — a second submission would
+  leave a receipt that is not its own. A record that cannot be read right then
+  is not submitted blind (`pending`/`not_checked`). `wlo_create_collection_tree`
+  carries `discipline` / `educationalContext` / `keywords` per node and
+  `shared` for the tree (`flattenTree`); a node's own value REPLACES the shared
+  one. They travel as `CollectionFields.extra` beside the description — one
+  metadata write, one read-back — and a collection taken over by `merge` gets
+  none of it, which the preview line says.
 - **A collection by NAME (Z3, 2026-11-13)** — `services/collection-by-name.ts`,
   wrapped around five read tools by `tools/collection-arg.ts`. EXACTLY ONE
   collection with the same title is taken; never a prefix or substring guess

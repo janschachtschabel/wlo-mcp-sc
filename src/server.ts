@@ -27,6 +27,7 @@ import { registerKnowledgeTools } from './tools/knowledge.js';
 import { registerNodeRelationTools } from './tools/node-relations.js';
 import { registerCollectionStatsTool } from './tools/collection-stats.js';
 import { registerCollectionOverviewTool } from './tools/collection-overview.js';
+import { registerCollectionTreeListTool } from './tools/collection-tree-list.js';
 import { registerContentCountTool } from './tools/content-count.js';
 import { registerContentSearchManyTool } from './tools/content-search-many.js';
 import { registerSkillTools } from './tools/skills.js';
@@ -48,6 +49,7 @@ import { registerCurationDecisionTool } from './tools/curation-decide.js';
 import { registerCurationBatchTools } from './tools/curation-batch.js';
 import { registerCurationTreeTools } from './tools/curation-tree.js';
 import { registerCurationAddManyTool } from './tools/curation-add-many.js';
+import { registerCurationSubmitManyTool } from './tools/curation-submit-many.js';
 import { registerCurationUpdateManyTool } from './tools/curation-update-many.js';
 import { registerCurationFulltextTools } from './tools/curation-fulltext.js';
 import { writeAuthChallenge } from './auth/oauth-metadata.js';
@@ -134,6 +136,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerNodeRelationTools(server, widgets['search-results']); // get_related_content (W1), get_node_breadcrumb
   registerCollectionStatsTool(server);  // get_collection_stats
   registerCollectionOverviewTool(server); // get_collection_overview
+  registerCollectionTreeListTool(server); // list_collection_tree
   registerContentCountTool(server);     // count_wlo_content_matches
   // Beside its sibling: both take MANY queries in one call — that one counts, this one returns hits.
   registerContentSearchManyTool(server); // search_wlo_content_many
@@ -170,6 +173,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // The planned pair (E4 = B): one approval, run in time-budgeted calls.
   registerCurationTreeTools(server, challenge);       // wlo_create_collection_tree
   registerCurationAddManyTool(server, challenge);     // wlo_add_to_collections
+  registerCurationSubmitManyTool(server, challenge);  // wlo_submit_contents
   registerCurationCompendiumTool(server, challenge);  // wlo_update_compendium
   registerCurationTopicPageTool(server, challenge);   // wlo_set_topic_page — the one whose result is immediately public
   registerCurationSuggestionTools(server, challenge); // wlo_suggest_metadata, wlo_list_suggestions — proposals only

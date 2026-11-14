@@ -13,7 +13,7 @@ import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine, quotedTitle } from '../for
 import { getCollectionOverview, OVERVIEW_PARTS, type CollectionOverview } from '../services/collection-overview.js';
 import { toolError } from './shared.js';
 import { resolvedCollectionSchema } from '../apps/outputSchemas.js';
-import { collectionDisciplineParam, collectionNameParam, withCollectionByName } from './collection-arg.js';
+import { collectionDisciplineParam, collectionNameParam, collectionOrderParam, withCollectionByName } from './collection-arg.js';
 
 const MAX_CONTENTS = 50;
 const MAX_SUBCOLLECTIONS = 100;
@@ -75,6 +75,7 @@ Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch 
         .describe(`Wie viele Inhalte (0–${MAX_CONTENTS}, Vorgabe 10).`),
       maxSubcollections: z.number().int().min(0).max(MAX_SUBCOLLECTIONS).optional().default(30)
         .describe(`Wie viele Untersammlungen (0–${MAX_SUBCOLLECTIONS}, Vorgabe 30). Jede kostet einen Zählabruf für ihre Inhaltszahl — höher heißt langsamer.`),
+      order: collectionOrderParam,
     },
     outputSchema: collectionOverviewSchema,
     annotations: { readOnlyHint: true },
@@ -86,6 +87,7 @@ Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch 
           include: params.include ?? OVERVIEW_PARTS,
           maxContents: params.maxContents ?? 10,
           maxSubcollections: params.maxSubcollections ?? 30,
+          order: params.order,
         });
         if (!result.ok) {
           // A code, never the repository's text — and not schema-checked (isError).

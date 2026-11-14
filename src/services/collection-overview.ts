@@ -21,7 +21,7 @@ import { formatNode, formatNodes } from '../formatter.js';
 import { flattenText } from '../text-sanitize.js';
 import { buildCompendiumView } from './compendium-view.js';
 import { getCollectionStats } from './stats.js';
-import { buildCollectionTree } from './collection-traversal.js';
+import { buildCollectionTree, type CollectionOrder } from './collection-traversal.js';
 import { ensureRegistryFor } from './skill-registry-cache.js';
 import { DESCRIBED_MAX, describeEntries } from './skill-registry.js';
 import { BUSY_RETRY_DEFAULT_S, failureCode, type FailureCode } from './failure-code.js';
@@ -50,6 +50,8 @@ export interface OverviewOptions {
   include: readonly OverviewPart[];
   maxContents: number;
   maxSubcollections: number;
+  /** Order of the sub-collections (`buildCollectionTree`); default `title`. */
+  order?: CollectionOrder;
 }
 
 export interface CollectionOverview {
@@ -188,7 +190,7 @@ export async function getCollectionOverview(collectionId: string, opts: Overview
     subcollections: async () => {
       if (opts.maxSubcollections === 0) { overview.subcollections = []; return; }
       const tree = await buildCollectionTree({
-        parentId: id, depth: 1, maxResults: opts.maxSubcollections, includeContentCounts: true,
+        parentId: id, depth: 1, maxResults: opts.maxSubcollections, includeContentCounts: true, order: opts.order,
       });
       overview.subcollections = tree.nodes.map(n => ({
         nodeId: n.nodeId, title: n.title, ...(n.fileCount !== undefined ? { contentCount: n.fileCount } : {}),

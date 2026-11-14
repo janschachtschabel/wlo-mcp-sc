@@ -25,6 +25,8 @@
     "sync:vocabs": "node --import tsx --env-file-if-exists=.env scripts/sync-vocabs.mjs",
     "survey:metadata": "node --import tsx --env-file-if-exists=.env scripts/survey-metadata.mjs",
     "measure:resources": "node --env-file-if-exists=.env scripts/measure-resources.mjs",
+    "measure:moves": "node --env-file-if-exists=.env --import tsx scripts/measure-collection-moves.ts",
+    "measure:order": "node --env-file-if-exists=.env --import tsx scripts/measure-collection-order.ts",
     "measure:uploads": "node --env-file-if-exists=.env --import tsx scripts/measure-uploads.ts",
     "dump:tools": "node --import tsx scripts/dump-tools.ts"
   },

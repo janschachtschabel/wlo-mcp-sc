@@ -115,6 +115,16 @@ export function didNotAnswer(listing: { reachable: boolean; refused?: number }):
 }
 
 /**
+ * The property `POST /collection/v1/…/order` writes on every child it names.
+ * Sorting a children listing by it answers "position where one is set, else
+ * the order of creation" — a child without a position stands BEHIND those that
+ * have one (measured 2026-11-14 on both the node and the collection listing,
+ * `npm run measure:order`). Without the parameter the repository lists in the
+ * order of creation and ignores a set order.
+ */
+export const ORDER_POSITION_PROPERTY = 'ccm:collection_ordered_position';
+
+/**
  * GET /node/v1/nodes/-home-/{nodeId}/children?filter=folders
  * Returns direct sub-collections of a collection node, and whether the listing
  * was readable at all. Same endpoint as getCollectionContents but with
@@ -125,12 +135,17 @@ export async function getChildCollectionsResult(
   maxItems = 100,
   skipCount = 0,
   props: string[] | undefined = DISPLAY_PROPS,
+  opts: { /** In the STORED order (see `ORDER_POSITION_PROPERTY`) instead of the order of creation. */ stored?: boolean } = {},
 ): Promise<ChildCollectionsResult> {
   const params = new URLSearchParams({
     filter: 'folders',
     maxItems: String(maxItems),
     skipCount: String(skipCount),
   });
+  if (opts.stored) {
+    params.set('sortProperties', ORDER_POSITION_PROPERTY);
+    params.set('sortAscending', 'true');
+  }
   appendPropertyFilter(params, props);
 
   const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/children?${params}`;
