@@ -15,11 +15,24 @@ updates:
         dependency-type: production
       development:
         dependency-type: development
+    # Major versions are a decision, not a routine update: TypeScript 7 broke the
+    # build (2026-11-14), and the Node typings must match the runtime we ship
+    # (Node 22, see the Docker image and `engines`). Minor and patch still come.
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   # The Dockerfile pins the base image by digest; this is what moves the pin.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    # The runtime stays on the LTS line (22): a new major is moved by hand,
+    # together with `engines` and the CI's node-version. The digest still moves.
+    ignore:
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:
