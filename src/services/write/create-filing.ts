@@ -71,7 +71,10 @@ export async function fileRecord(nodeId: string, target: FilingTarget): Promise<
       case 'ok': return { ...base, status: 'added' };
       case 'not_visible': return { ...base, status: 'unverified', code: 'not_visible' };
       case 'unverified': return { ...base, status: 'unverified', code: 'upstream_error' };
-      case 'failed': return {
+      case 'failed': return outcome.httpStatus === 409
+        // Measured 2026-11-14: the same filing again answers 409 and makes no second reference.
+        ? { ...base, status: 'already' }
+        : {
         ...base,
         status: 'failed',
         code: outcome.httpStatus === 403 || outcome.httpStatus === 401 ? 'forbidden'

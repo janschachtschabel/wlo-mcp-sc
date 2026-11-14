@@ -58,6 +58,7 @@ const STATUS_LABEL: Record<string, string> = {
 const CODE_LABEL: Record<string, string> = {
   parent_failed: 'Elternsammlung fehlt', exists: 'gibt es schon', timeout: 'Antwort kam nicht rechtzeitig',
   not_checked: 'Unterordner nicht lesbar', forbidden: 'keine Berechtigung',
+  order_not_set: 'die Reihenfolge dieser Ebene ließ sich nicht setzen',
 };
 const label = (s: ItemState) =>
   `${STATUS_LABEL[s.status] ?? s.status}${s.code ? ` — ${CODE_LABEL[s.code] ?? s.code}` : ''}`;
@@ -147,7 +148,8 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
           const created = items.filter(i => !walk.existing.has(i.key)).length;
           const cs = buildChangeSet(parentId, 'collection', {}, {}, {
             action: `Legt unter „${sanitizeText(target.target.title)}“ (${parentId}) ${created} Sammlungen an; `
-              + `${items.length - created} vorhandene werden übernommen:`,
+              + `${items.length - created} vorhandene werden übernommen. Neue Untersammlungen stehen danach in der hier genannten `
+              + 'Reihenfolge hinter den schon vorhandenen ihrer Elternsammlung:',
             items: items.map(i => stepLine(i, walk.existing.get(i.key))),
           });
           const initial = new Map<string, ItemState>(

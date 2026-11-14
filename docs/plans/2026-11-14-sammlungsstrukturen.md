@@ -79,9 +79,17 @@ und Doppelungen zur anderen Art stören keine der beiden Listen.
 | Status am Vorschlags-Knoten auf `ACCEPTED` bzw. `DECLINED` setzen | 200; die Listen nach Status stimmen danach |
 | nach `DECLINED` erneut vorschlagen | 409 — ein abgelehnter Vorschlag sperrt das Paar |
 
-Nicht gemessen: ob jemand mit Schreibrecht an der Sammlung, der KEIN Admin ist, den Status am
-Vorschlags-Knoten setzen darf (das Dienstkonto ist Admin), und ob die WLO-Oberfläche die
-Vorschläge zeigt.
+### Dritte Messung für P4 (2026-11-14, zwei Konten, Wegwerf-Knoten)
+
+| Frage | Ergebnis |
+|---|---|
+| Woran sieht man, ob die angemeldete Person an einer Sammlung schreiben darf? | Am Datensatz selbst: das Feld `access` der Metadaten-Antwort. Mit Leserecht (Consumer) `["Read","ReadAll","Comment","Embed","Feedback","DownloadContent"]`, mit Schreibrecht (Collaborator) zusätzlich `"AddChildren","Write"`. Ohne jedes Recht antwortet schon das Lesen 403 |
+| Darf jemand mit Schreibrecht, der KEIN Admin ist, Vorschläge sehen und entscheiden? | Ja: Liste 200, Status am Vorschlags-Knoten setzen 200 (Testkonto als Collaborator) |
+| Was sagt `isPublic`? | `false` am eigenen, nie geteilten Material — verlässlich „nur für mich". `true` ist KEIN Versprechen des Gegenteils: eine mit EINEM Konto geteilte Sammlung meldet diesem Konto `true`. Gesagt wird deshalb nur das Negative |
+| Ein Verweis, der schon besteht, noch einmal einsortieren | 409, kein zweiter Verweis |
+| Rückwärtssuche nach dem Entfernen eines Verweises | 2 bis 5 s lang 500 für dieses Material, dann wieder richtig |
+
+Nicht gemessen: ob die WLO-Oberfläche die Vorschläge zeigt.
 
 Vom Team gemessen und übernommen: unvollständige Liste an `/order` → doppelte Positionen;
 `…/copy`; die Zähler hinken nach.
@@ -160,5 +168,5 @@ umsetzen → Review → Befunde beheben → STATUS, CHANGELOG, Doku → Commit u
 |---|---|
 | P1 | umgesetzt 2026-11-14 (Live-Probe gegen Staging: Physik, 144 Sammlungen über vier Ebenen in 6,4 s) |
 | P2 | umgesetzt 2026-11-14 (S3 live gegen Staging bestätigt) |
-| P3 | offen |
+| P3 | umgesetzt 2026-11-14 (live gegen Staging: Reihenfolge der Inhalte, Umsortieren, Entfernen, nur Leere löschen) |
 | P4 | offen |

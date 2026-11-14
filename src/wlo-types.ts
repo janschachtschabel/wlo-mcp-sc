@@ -22,6 +22,12 @@ export interface WloNode {
    * metadata read — gets 403 resp. the repository's permission-shield image.
    */
   isPublic?: boolean;
+  /**
+   * What the CALLER may do with the node (`Read`, `Write`, `Delete`, …) —
+   * top-level in a metadata DTO (measured 2026-11-14 with two accounts: a
+   * reader of a collection gets no `Write`, a writer does).
+   */
+  access?: string[];
   /** edu-sharing object type — `ccm:io` (a record) or `ccm:map` (a CONTAINER: a collection, but also a page-config or crawler folder — see `node-kind.ts`). */
   type?: string;
   /** The node's aspects — top-level in every DTO, whatever the `propertyFilter` (measured 2026-11-12). `ccm:collection` marks a collection. */

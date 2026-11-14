@@ -24,7 +24,8 @@ import { wloFetch, HEADERS } from '../../wlo-fetch.js';
 import { readJson } from '../../read-json.js';
 import { log } from '../../logger.js';
 import { sanitizeText } from '../../text-sanitize.js';
-import { getNodeMetadata, getCollectionContents } from '../../wlo-node.js';
+import { ORDER_POSITION_PROPERTY, getNodeMetadata, getCollectionContents } from '../../wlo-node.js';
+import { titleFromProperties } from '../../node-match.js';
 import { getNodeCollections } from '../node-collections.js';
 import { failureDetail, updateNodeMetadata } from './nodes.js';
 import { WRITABLE_FIELDS } from './fields.js';
@@ -318,8 +319,15 @@ const REFERENCE_PAGE = 100;
  */
 const REFERENCE_SCAN_MAX = 500;
 
-type ReferenceLookup =
-  | { status: 'found'; referenceId: string }
+export type ReferenceLookup =
+  /**
+   * `direct`: the node in the collection is no reference but the RECORD itself,
+   * filed there as an original. Measured 2026-11-14: `DELETE …/references/{id}`
+   * on it answers 200 and deletes the MATERIAL — the record answers 404
+   * afterwards. So a removal refuses it (`IS_ORIGINAL`): every preview of a
+   * removal promises that the material stays.
+   */
+  | { status: 'found'; referenceId: string; direct?: true }
   /** The listing was read in full and holds no reference for this material. */
   | { status: 'absent' }
   | { status: 'unknown'; detail: string };
@@ -342,7 +350,7 @@ type ReferenceLookup =
  * Accepts either id from the caller: search hands out originals, a collection
  * listing hands out references, and both reach a curator.
  */
-async function findReference(collection: string, nodeId: string): Promise<ReferenceLookup> {
+export async function findReference(collection: string, nodeId: string): Promise<ReferenceLookup> {
   let scanned = 0;
   for (;;) {
     let page;
@@ -360,7 +368,10 @@ async function findReference(collection: string, nodeId: string): Promise<Refere
       const referenceId = node.ref?.id ?? '';
       const originalId = node.originalId ?? node.properties?.['ccm:original']?.[0] ?? '';
       if (!referenceId) continue;
-      if (referenceId === nodeId || originalId === nodeId) return { status: 'found', referenceId };
+      if (referenceId === nodeId || originalId === nodeId) {
+        // No original of its own, or one that points at itself: this IS the record.
+        return { status: 'found', referenceId, ...(!originalId || originalId === referenceId ? { direct: true as const } : {}) };
+      }
     }
 
     scanned += page.nodes.length;
@@ -375,6 +386,53 @@ async function findReference(collection: string, nodeId: string): Promise<Refere
   }
 }
 
+/** One entry of a collection, by both ids a caller may hold. */
+export interface CollectionMember {
+  /** The node IN the collection — what `/order` and a removal take. */
+  referenceId: string;
+  /** The record it stands for: the original's id, or its own where an original is filed directly. */
+  materialId: string;
+  title: string;
+  /** An explicit position is set on it (`ORDER_POSITION_PROPERTY`). */
+  hasPosition: boolean;
+}
+
+/**
+ * A collection's contents, each with both of its ids — whole, or why not.
+ *
+ * The second place (beside {@link findReference}) that reads a reference's
+ * original, and the last: the batch tools that remove and order contents ask
+ * here instead of reading `originalId` themselves. `stored` asks for the order
+ * the repository holds.
+ */
+export async function listMembers(
+  collection: string, opts: { max: number; stored?: boolean },
+): Promise<CollectionMember[] | 'unread' | 'too_many'> {
+  const out: CollectionMember[] = [];
+  const props = ['ccm:original', 'cclom:title', 'cm:title', 'cm:name', ORDER_POSITION_PROPERTY];
+  for (let skip = 0; skip <= opts.max; skip += REFERENCE_PAGE) {
+    let nodes;
+    try {
+      nodes = (await getCollectionContents(collection, 'files', REFERENCE_PAGE, skip, props, { stored: opts.stored === true })).nodes;
+    } catch { return 'unread'; }
+    for (const node of nodes) {
+      const referenceId = node.ref?.id;
+      if (!referenceId) continue;
+      const original = node.originalId ?? node.properties?.['ccm:original']?.[0];
+      out.push({
+        referenceId,
+        // The property points at the record ITSELF on an original — compared, not trusted.
+        materialId: original && original !== referenceId ? original : referenceId,
+        title: sanitizeText(titleFromProperties(node.properties) || node.name || node.title || referenceId),
+        hasPosition: node.properties?.[ORDER_POSITION_PROPERTY]?.[0] !== undefined,
+      });
+    }
+    if (out.length > opts.max) return 'too_many';
+    if (nodes.length < REFERENCE_PAGE) return out;
+  }
+  return 'too_many';
+}
+
 /**
  * Why a removal cannot name a reference — worded once, for both routes.
  *
@@ -382,6 +440,11 @@ async function findReference(collection: string, nodeId: string): Promise<Refere
  * answers to the same question about the same collection. Two wordings would
  * read as two different findings.
  */
+/** Said wherever a removal meets a record filed directly in the collection — one wording, three tools. */
+export const IS_ORIGINAL = 'Dieses Material liegt nicht als Verweis, sondern als Original direkt in der Sammlung. Es dort '
+  + 'herauszunehmen würde das Material selbst löschen — das tut dieses Werkzeug nicht. Es wurde nichts geändert. '
+  + '(Zum wirklichen Löschen: wlo_delete_content.)';
+
 function noReference(found: { status: 'absent' } | { status: 'unknown'; detail: string }, nodeId: string): string {
   return found.status === 'unknown'
     ? found.detail
@@ -405,6 +468,7 @@ export async function removeFromCollectionRequest(
 ): Promise<PrepareOutcome> {
   const found = await findReference(collection, nodeId);
   if (found.status !== 'found') return { status: 'refused', detail: noReference(found, nodeId) };
+  if (found.direct) return { status: 'refused', detail: IS_ORIGINAL };
   return {
     status: 'ready',
     request: {
@@ -431,13 +495,23 @@ export async function removeFromCollection(collection: string, nodeId: string): 
       detail: noReference(found, nodeId),
     };
   }
+  if (found.direct) return { status: 'failed', detail: IS_ORIGINAL, code: 'is_original' };
 
+  return await removeReference(collection, found.referenceId);
+}
+
+/**
+ * Delete ONE reference node from a collection and read back that it is gone.
+ * The second half of a removal, for callers that looked the reference up
+ * themselves (the batch plans decide between "absent" and "found" on their own).
+ */
+export async function removeReference(collection: string, referenceId: string): Promise<MutationOutcome> {
   const res = await wloFetch(
-    referencePath(collection, found.referenceId),
+    referencePath(collection, referenceId),
     { method: 'DELETE', headers: { Accept: 'application/json' } },
   );
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
-  log.info('content removed from collection', { collection, nodeId, referenceId: found.referenceId });
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
+  log.info('content removed from collection', { collection, referenceId });
 
   // Checked on the REFERENCE node, not through `/usage/v1` like the add above.
   // Measured against staging 2026-08-03: once a reference is deleted, the usage
@@ -447,7 +521,7 @@ export async function removeFromCollection(collection: string, nodeId: string): 
   // moment the material is filed again, so the failure is specific to the one
   // state this check exists to observe. Every successful removal would report
   // `unverified`. The reference's own 404 is the direct evidence anyway.
-  const gone = await confirmDeleted(found.referenceId);
+  const gone = await confirmDeleted(referenceId);
   if (gone.status === 'not_visible') {
     return { status: 'not_visible', detail: 'Das Material wird weiterhin als Teil der Sammlung geführt.' };
   }
@@ -465,7 +539,7 @@ export async function deleteCollection(collection: string): Promise<MutationOutc
     method: 'DELETE',
     headers: { Accept: 'application/json' },
   });
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
   log.warn('collection deleted', { collection });
   return await confirmDeleted(collection);
 }

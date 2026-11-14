@@ -29,9 +29,18 @@ const KIND = 'add-to-collections';
 
 const STATUS_LABEL: Record<string, string> = {
   added: 'aufgenommen', already: 'war schon enthalten', unverified: 'offen — nicht bestätigt',
-  failed: 'nicht aufgenommen', pending: 'offen',
+  failed: 'nicht aufgenommen', pending: 'offen', moved: 'umsortiert — aufgenommen und aus der Quelle genommen',
 };
-const label = (s: ItemState) => `${STATUS_LABEL[s.status] ?? s.status}${s.code ? ` (${s.code})` : ''}`;
+/** What a code says about the SOURCE of a move — the status alone names only the filing. */
+const CODE_NOTE: Record<string, string> = {
+  not_removed: 'NICHT aus der Quelle genommen — liegt jetzt in BEIDEN Sammlungen',
+  not_in_source: 'war in der Quelle nicht enthalten',
+  source_is_original: 'liegt in der Quelle als Original, nicht als Verweis — dort NICHT herausgenommen (das würde das Material löschen); liegt jetzt in BEIDEN',
+};
+// "Not filed" over an outcome nobody knows sends a model to file again.
+const label = (s: ItemState) => (s.status === 'failed' && s.outcomeOpen
+  ? 'offen — Ausgang unbekannt, bitte in der Sammlung prüfen'
+  : STATUS_LABEL[s.status] ?? s.status) + (s.code ? ` (${CODE_NOTE[s.code] ?? s.code})` : '');
 
 function answer(plan: StoredPlan<FilingItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Aufnahme in Sammlungen:', report, plan.expiresAt, plan.items.map(i => ({
@@ -39,8 +48,9 @@ function answer(plan: StoredPlan<FilingItem>, report: Awaited<ReturnType<typeof 
       nodeId: i.requestedId,
       collectionId: i.collection.nodeId,
       ...(i.requestedId !== i.filedId ? { filedId: i.filedId } : {}),
+      ...(i.source ? { removeFrom: i.source.nodeId } : {}),
     },
-    text: `„${i.materialTitle}“ → „${i.collection.title}“`,
+    text: `„${i.materialTitle}“ → „${i.collection.title}“${i.source ? ` (aus „${i.source.title}“)` : ''}`,
     state: plan.state.get(i.key)!,
   })), label, 'pairs');
 }
@@ -50,14 +60,16 @@ export function registerCurationAddManyTool(server: McpServer, challenge: WriteA
     replay: false, // the key continues a stored plan (plan-runner.ts)
     name: 'wlo_add_to_collections',
     title: 'WLO Materialien in Sammlungen aufnehmen',
-    description: `Nimm viele vorhandene Materialien in Sammlungen auf — bis zu ${FILING_MAX_PAIRS} Paare {nodeId, collectionId} mit EINER Bestätigung. Nichts wird verschoben oder kopiert; eine Sammlung enthält Verweise.
+    description: `Nimm viele vorhandene Materialien in Sammlungen auf — bis zu ${FILING_MAX_PAIRS} Paare {nodeId, collectionId} mit EINER Bestätigung. Eine Sammlung enthält Verweise; das Material selbst bleibt, wo es ist.
 Ohne Schlüssel: Vorschau mit jedem Paar. Mit confirmToken: läuft bis zu ~40 s je Aufruf; ist es nicht fertig, kommt complete: false mit continuationToken (fortsetzen ohne neue Bestätigung, 30 min ab Bestätigung). Ein Schlüssel darf erneut vorgelegt werden — er setzt fort oder liefert dasselbe Ergebnis.
 Eine Verknüpfungs-id wird als ihr Original aufgenommen; schon enthaltene Paare kommen als already zurück; ein gescheitertes Paar hält die übrigen nicht auf. Antwort: pairs [{nodeId, collectionId, filedId?, status, code?}].
+UMSORTIEREN: je Paar optional removeFrom (Sammlung, aus der das Material danach herausgenommen wird) — erst aufnehmen und zurücklesen, dann entfernen; Status moved. Scheitert das Entfernen: added/already mit Code not_removed — es liegt dann in BEIDEN.
 Für ein einzelnes Material: wlo_add_to_collection.`,
     inputSchema: {
       pairs: z.array(z.object({
         nodeId: z.string().min(1).max(200),
         collectionId: z.string().min(1).max(200),
+        removeFrom: z.string().min(1).max(200).optional().describe('Quell-Sammlung, aus der das Material NACH dem Aufnehmen herausgenommen wird (Umsortieren).'),
       })).min(1).max(FILING_MAX_PAIRS),
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
@@ -70,7 +82,7 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
         kind: KIND, params,
         // The plan is bound to the pairs as NAMED — resolving them again for a
         // continuation would cost the reads the plan exists to save.
-        args: JSON.stringify(pairs.map(p => [p.nodeId.trim(), p.collectionId.trim()])),
+        args: JSON.stringify(pairs.map(p => [p.nodeId.trim(), p.collectionId.trim(), p.removeFrom?.trim() ?? ''])),
         step: () => filingStep,
         answer,
         prepare: async () => {
@@ -82,7 +94,9 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
           const items = resolved.items;
           const cs = buildChangeSet('add-to-collections', 'collection', {}, {}, {
             action: `Führt ${items.length} Aufnahmen aus (${new Set(items.map(i => i.filedId)).size} Materialien, `
-              + `${new Set(items.map(i => i.collection.nodeId)).size} Sammlungen). Die Materialien selbst werden nicht verändert:`,
+              + `${new Set(items.map(i => i.collection.nodeId)).size} Sammlungen)`
+              + (items.some(i => i.source) ? `; ${items.filter(i => i.source).length} davon werden danach aus ihrer bisherigen Sammlung herausgenommen` : '')
+              + '. Die Materialien selbst werden nicht verändert:',
             items: items.map(filingLine),
           });
           return { draft: { cs, items, preview: () => previewReply(cs, 'Zum Aufnehmen bitte bestätigen.') } };

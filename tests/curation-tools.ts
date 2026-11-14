@@ -14,12 +14,12 @@ export const CURATION_TOOLS = [
   'wlo_update_content', 'wlo_update_contents', 'wlo_attach_fulltext', 'wlo_attach_fulltexts', 'wlo_create_content', 'wlo_submit_content', 'wlo_submit_contents',
   'wlo_create_collection', 'wlo_rename_collection',
   'wlo_add_to_collection', 'wlo_remove_from_collection',
-  'wlo_create_collection_tree', 'wlo_add_to_collections',
+  'wlo_create_collection_tree', 'wlo_add_to_collections', 'wlo_remove_from_collections', 'wlo_order_collection',
   'wlo_update_compendium',
   'wlo_set_topic_page',
   // Reading proposals is gated too: they are curation workflow, not public data.
   'wlo_suggest_metadata', 'wlo_list_suggestions', 'wlo_decide_suggestion',
-  'wlo_delete_content', 'wlo_delete_collection',
+  'wlo_delete_content', 'wlo_delete_collection', 'wlo_delete_collections',
 ];
 
 /**

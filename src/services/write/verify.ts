@@ -36,7 +36,7 @@ export type FieldOutcome = 'stored' | 'dropped' | 'changed';
 export type MutationOutcome =
   | { status: 'ok' }
   /** `httpStatus` where the repository refused: a caller turning it into a code needs more than prose. */
-  | { status: 'failed'; detail: string; httpStatus?: number }
+  | { status: 'failed'; detail: string; httpStatus?: number; /** Set where WE refused, before any request: the code a caller acts on. */ code?: string }
   | { status: 'not_visible'; detail: string }
   | { status: 'unverified'; detail: string };
 

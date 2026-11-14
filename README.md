@@ -11,7 +11,7 @@ It exposes **34 read tools** (all unconditional; `get_url_text` is removable via
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 34 sit **20 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
+On top of those 34 sit **23 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
 submitting, collections, compendium texts, metadata proposals, which variant a
 topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
@@ -156,7 +156,7 @@ else has sensible defaults.
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | all | edu-sharing instance the server talks to. **The default is STAGING; production must be named explicitly** (changed 2026-08-06 — a deployment whose `.env` lacked this line wrote into the live catalogue while everything around it said staging). Paths are identical across instances, so this base URL is the only switch between prod / staging / a custom repository. Input is forgiving: whitespace, trailing slash(es), and a trailing `/rest` are stripped; a missing protocol defaults to `https://`; a bare host gets `/edu-sharing` appended. Suspicious values (deep `/components/...` links, double `/edu-sharing`) log a startup warning. A value no request can be sent to — unparseable, not http(s), with credentials or a query, or with a mistyped scheme such as `htps://` — **stops the start** with exit code 1 and a log line naming the variable. |
 | `WLO_ROOT_COLLECTION_ID` | per host | all | Root node of the collection hierarchy — **repository-bound**. The known WLO hosts (prod `redaktion.openeduhub.net`, staging `repository.staging.openeduhub.net`) get a per-host default automatically (the same id on both today, live-verified 2026-07-17, but maintained per host). Any **other** edu-sharing instance must set this explicitly — otherwise the server logs a startup warning and falls back to the WLO id, which will not exist there. |
 | `WLO_SKILLS_COLLECTION_ID` | _(unset)_ | all | nodeId of the WLO collection holding the launcher **skills** (uploaded Markdown files). When set, `GET /api/collection` with no `nodeId` defaults to it, and `search_skill` narrows to that subtree. Unset → callers pass an explicit `?nodeId=`. |
-| `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` with `get_skill_for_task`, which ranks and loads in one call — the count stays 54, and `get_skill` stays in every mode: the registry and every collection result hand out nodeIds only it can load. Fewer round-trips, less control over the choice. Anything else leaves the search in place. |
+| `WLO_SKILL_TOOL_MODE` | _(unset)_ | all | `one-tool` replaces `search_skill` with `get_skill_for_task`, which ranks and loads in one call — the count stays 57, and `get_skill` stays in every mode: the registry and every collection result hand out nodeIds only it can load. Fewer round-trips, less control over the choice. Anything else leaves the search in place. |
 | `WLO_SKILL_CACHE` | _on_ | all | Keeps each collection's approved-skill catalogue warm in the background, so a collection result carries it for **0** extra requests. Set to `off` (or `0`/`false`/`no`) to switch off the background work **and** the per-request live fallback — the collection output then carries the free pointer to `get_skill_registry` again. See [the skill-registry cache](#skill-registry-cache). |
 | `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | all | How often the background tick drains its queue and renews entries past the TTL. Clamped to 60 000 – 3 600 000. |
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | all | How long a remembered answer stands before it is checked again. Never below the refresh interval. A registry created two minutes ago therefore appears with a delay — `get_skill_registry` and `includeSkillRegistry: true` read live and see it at once. |
@@ -812,7 +812,7 @@ pasted block and the OAuth connection. No `refresh_token`, no expiry: the access
 ends when it is revoked or the WLO password changes.
 
 **A request with no credential still reads anonymously.** It gets the full list —
-all 54 tools, the 20 curation tools included (58 and 24 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
+all 57 tools, the 23 curation tools included (61 and 27 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
 everyone and refuse at call time with an OAuth challenge, which is what makes a
 host offer the login: a model that never sees a write tool never asks for one.
 The `401` fires only for a token that was presented and cannot be used, and it
@@ -888,6 +888,9 @@ names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_create_collection_tree` | Create a whole tree of sub-collections (≤ 250 nodes, depth 4, ≤ 15 children) under ONE approval. Runs in ~40 s slices; an unfinished plan returns a `continuationToken`, and a key presented again by the same identity continues or replays — never creates twice. `onExisting: merge` reuses a same-titled sub-collection. Each node may carry `discipline`, `educationalContext`, `keywords`; `shared` sets them for the whole tree and a node's own value replaces the shared one. A collection that is taken over stays untouched. |
 | `wlo_add_to_collections` | File up to 200 `{nodeId, collectionId}` pairs under ONE approval, same plan mechanics. A reference id is filed as its original; a pair already in place is `already`; one failed pair does not stop the rest. Not yet live-verified (staging filing regression, 2026-11-06). |
 | `wlo_submit_contents` | Submit up to 200 records `{nodeId}` to the editorial queue under ONE approval, same plan mechanics. A record already in the queue comes back as `already` and is never submitted twice (checked for the preview and again right before the write); `not_stored` = answered with success but no workflow status on the record; one failed entry does not stop the rest. The note applies to all and is part of the approval |
+| `wlo_remove_from_collections` | Take up to 200 `{nodeId, collectionId}` pairs out of collections under ONE approval, same plan mechanics. Only the reference goes; the material stays. Either id is accepted (the material's or the reference's). A pair that is not in its collection comes back as `absent` |
+| `wlo_order_collection` | Set the order of a collection's sub-collections OR of its contents. The list must name ALL entries of that kind (an incomplete one is refused and names what is missing); for contents the reference ids are sent, whichever id was named. Read back from the sorted listing |
+| `wlo_delete_collections` | Delete up to 200 collections under ONE approval — but only EMPTY ones (no sub-collection, no reference, no material of its own). A collection whose only contents are empty sub-collections that are also named counts as empty; children go first. Everything else stays and comes back as `not_empty`. "Empty" is read from the listings, for the preview and again right before each delete |
 | `wlo_update_contents` | Metadata for up to 200 records under ONE approval, same plan mechanics. The server decides per field: title, description, keywords, subject, educational level and content type are WRITTEN and read back; licence, author, publisher, source URL, language, target group and quality become SUGGESTIONS for an editor. A reference is changed on its original. |
 | `wlo_attach_fulltext` | Put a Markdown full text into a record's own `textContent` — where `get_wlo_content_text` reads it — two-step, read back. Refused in the preview: a record carrying a file (`would_replace_file` — the text would replace the file, measured 2026-11-13; it works for a record without one), a linked record (`link_record`), an existing text without `replace` (`exists`), the same text (`nothing_to_change`), more than 2 MB (`too_large`). A reference is changed on its original. |
 | `wlo_attach_fulltexts` | Full texts for up to 200 records under ONE approval (3 000 000 bytes per call), same plan mechanics and the same per-record rules as `wlo_attach_fulltext`; the preview counts new / replaced / unchanged / refused. |
@@ -1066,7 +1069,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   signature, OAuth only) — including what the design does **not** protect.
   German.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
-  chatbot developer**: all 54 tools grouped, every externally callable URL (MCP,
+  chatbot developer**: all 57 tools grouped, every externally callable URL (MCP,
   REST, pages, OAuth), and the behaviour an integration has to know — licence
   filtering, the disclosure fields, the two-step write, the limits, and what
   deliberately does not exist. German.
@@ -1137,7 +1140,7 @@ must not cost the other one its fallback.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 54 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 57 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

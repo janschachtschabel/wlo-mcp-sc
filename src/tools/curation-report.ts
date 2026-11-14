@@ -113,7 +113,10 @@ export function reportMutation(
     case 'ok':
       return plainText(done);
     case 'failed':
-      return codedError('upstream_error', `${context}: ${outcome.detail}`);
+      // Our own refusal (nothing was sent) says so; everything else is the repository's.
+      return outcome.code
+        ? codedError(outcome.code, `${context}: ${outcome.detail}`, { outcomeOpen: false })
+        : codedError('upstream_error', `${context}: ${outcome.detail}`);
     case 'not_visible':
       return codedError('not_visible',
         `Die Anfrage wurde angenommen, im Datensatz ist die Änderung aber nicht zu sehen. ${outcome.detail} ` +

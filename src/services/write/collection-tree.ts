@@ -24,6 +24,7 @@ import { mapPool } from '../../concurrency.js';
 import { log } from '../../logger.js';
 import { completeCollection, createCollection, type CollectionFields } from './collections.js';
 import { validateField } from './fields.js';
+import { listOrderChildren, setCollectionOrder } from './collection-order.js';
 import { isOutcomeOpen } from './timeouts.js';
 import { failureCode } from '../failure-code.js';
 import type { ItemState, PlanItem, Step, StoredPlan } from './plan-runner.js';
@@ -225,7 +226,43 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
     lanes.set(parentId, run.catch(() => undefined));
     return run;
   };
-  return async (item, before) => {
+  /**
+   * The sequence of the tree is the sequence of its input (S1, 2026-11-14) —
+   * said explicitly, not left to the moment each create happened to land: a
+   * retried step is created late. Run by the LAST step of a parent's children:
+   * the collections this plan created go behind those that were there, in the
+   * order of the plan. `/order` takes ALL children, or two end on one position.
+   * A failure never undoes a create: the step keeps its status and says
+   * `order_not_set`.
+   */
+  const withOrder = async (item: TreeItem, parentId: string, state: ItemState): Promise<ItemState> => {
+    // Whatever THIS step came to: the level is ordered once no sibling is open.
+    // (A step that failed last used to leave its finished siblings unordered.)
+    if (state.status === 'pending') return state;
+    const siblings = plan.items.filter(i => i.after === item.after);
+    if (siblings.length < 2) return state;
+    const states = siblings.map(s => (s.key === item.key ? state : plan.state.get(s.key)));
+    if (states.some(s => !s || s.status === 'pending')) return state;
+    const created = states.filter(s => s && (s.status === 'created' || s.status === 'unverified') && s.nodeId).map(s => s!.nodeId!);
+    if (!created.length) return state;
+    try {
+      const outcome = await lane(parentId, async () => {
+        const now = await listOrderChildren(parentId, 'collections');
+        if (typeof now === 'string') return { status: 'unverified' as const, detail: now };
+        const mine = new Set(created);
+        const wanted = [...now.filter(c => !mine.has(c.id)).map(c => c.id), ...created.filter(id => now.some(c => c.id === id))];
+        if (now.every((c, i) => c.id === wanted[i]) && now.every(c => c.hasPosition)) return { status: 'ok' as const };
+        return setCollectionOrder(parentId, 'collections', wanted);
+      });
+      if (outcome.status === 'ok') return state;
+      log.warn('collection tree: the order of a level could not be set', { parentId, detail: 'detail' in outcome ? outcome.detail : undefined });
+    } catch (err) {
+      log.warn('collection tree: the order of a level could not be set', { parentId, error: err instanceof Error ? err.message : String(err) });
+    }
+    // Said on a step whose collection is there; a failed step keeps its own code.
+    return ORDERED.has(state.status) ? { ...state, code: state.code ?? 'order_not_set' } : state;
+  };
+  const run: Step<TreeItem> = async (item, before) => {
     const parentId = item.after ? before?.nodeId : rootId;
     if (!parentId) return { status: 'failed', code: 'parent_failed' };
     const own = plan.state.get(item.key);
@@ -276,4 +313,12 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
       return { status: 'failed', code: failureCode(err) };
     }
   };
+  return async (item, before) => {
+    const state = await run(item, before);
+    const parentId = item.after ? before?.nodeId : rootId;
+    return parentId ? withOrder(item, parentId, state) : state;
+  };
 }
+
+/** Statuses of a step whose collection is there — the ones a level's order waits for. */
+const ORDERED: ReadonlySet<string> = new Set(['created', 'existing', 'unverified']);

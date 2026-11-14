@@ -66,12 +66,17 @@ export async function getCollectionContents(
   maxItems = 30,
   skipCount = 0,
   props: string[] | undefined = DISPLAY_PROPS,
+  opts: { /** In the STORED order (see `ORDER_POSITION_PROPERTY`) — measured for contents 2026-11-14. */ stored?: boolean } = {},
 ): Promise<SearchResponse> {
   const params = new URLSearchParams({
     maxItems: String(maxItems),
     skipCount: String(skipCount),
   });
   if (filter !== 'both') params.set('filter', filter);
+  if (opts.stored) {
+    params.set('sortProperties', ORDER_POSITION_PROPERTY);
+    params.set('sortAscending', 'true');
+  }
   appendPropertyFilter(params, props);
 
   const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/children?${params}`;

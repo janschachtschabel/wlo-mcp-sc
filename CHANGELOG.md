@@ -6,6 +6,39 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — collection structures, package 3: maintaining a tree (wishes S1 set, S6, S7, 2026-11-14)
+
+Three more curation tools (23, 57 in all; 61 with the batch upload). Measured first, with two accounts
+(`npm run measure:moves`, recorded in the plan), and run live against staging afterwards
+(`tests/live/collection-structure.test.ts`).
+
+- **`wlo_order_collection`** sets the order of a collection's sub-collections OR of its contents. The repository
+  positions only the ids it is given, so a list must name ALL entries of its kind — an incomplete one is refused
+  before any key and names what is missing. For contents the endpoint takes the REFERENCE's id (the original's
+  answers 400); either is accepted here and resolved. Read back from the sorted listing.
+- **`wlo_create_collection_tree` sets the order it creates:** new sub-collections stand in the order of the input,
+  behind those that were there. A level whose order could not be set says `order_not_set`; nothing is undone.
+- **`wlo_remove_from_collections`**: up to 200 pairs out of collections under one approval. Not in the collection is
+  `absent` — read from one listing per collection for the preview, and again in the step.
+- **`removeFrom` on `wlo_add_to_collections`** moves a material: filed and read back FIRST, taken out of the source
+  THEN (`moved`). A removal that fails leaves it in both and says so (`not_removed`); a filing that is not
+  confirmed removes nothing.
+- **`wlo_delete_collections`** deletes many collections but only EMPTY ones — read from the listings, never from the
+  repository's counters, for the preview and again right before each delete. Children that are named go first;
+  everything else stays as `not_empty`.
+- Measured beside it: after a reference is removed, the usage lookup for that material answers 500 for two to five
+  seconds and then recovers — a filing of the same material in that window is reported `unverified`.
+
+### Fixed — taking a material out of a collection could delete the material (2026-11-14)
+
+- **A record filed DIRECTLY in a collection is no longer "taken out".** A collection normally holds references, but
+  a record can lie in it as the original itself. Measured on staging: `DELETE …/references/{id}` on such a record
+  answers 200 and deletes the MATERIAL — while the preview of `wlo_remove_from_collection` promised "das Material
+  selbst bleibt bestehen". All three ways out refuse it now, before anything is sent, with code `is_original`: the
+  single tool, `wlo_remove_from_collections`, and the removal half of a move (`source_is_original`: filed in the
+  target, kept in the source). Found by measuring a point the review of package 3 marked as unmeasured.
+- A filing the repository answers 409 — the reference is there — is `already`, not a failure.
+
 ### Added — collection structures, package 1: reading (chatbot team's wishes S1 and S2, 2026-11-14)
 
 Plan: `docs/plans/2026-11-14-sammlungsstrukturen.md`. Everything is additive; no default changed.

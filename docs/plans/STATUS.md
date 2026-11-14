@@ -5184,3 +5184,38 @@ Sie bestätigen beide Korrekturen an der Titel-Auflösung (24 Titel mit Fach: 13
   Das Einreichen selbst ist NICHT neu live gemessen: der Stapel nutzt denselben Aufruf wie das Einzelwerkzeug
   (gemessen, Forschungsdokument §10), und ein Testlauf legte Wegwerf-Datensätze in die Warteschlange der Redaktion.
   34 Lesewerkzeuge, 20 Kuratier-Werkzeuge, 54 insgesamt (58 mit Stapel-Ablage).
+- **Review zu P2 (0 kritisch, 3 groß, 8 klein, 5 Randnotizen) — behoben; Commit `49708b9` (P1 + P2), CI angestoßen.**
+  Groß, alle drei über „offen" gegen „fehlgeschlagen": ein 5xx auf das Einreichen endete als `failed` ohne
+  `outcomeOpen` (jetzt wird der Datensatz gelesen: in der Warteschlange → `submitted`, sonst offen; 503 bleibt
+  `pending`); der Text sagte „nicht eingereicht" über einem offenen Ausgang; ein Anlegen, dessen Antwort ausblieb,
+  kam beim nächsten Aufruf als `existing` zurück, ohne dass Beschreibung und Metadaten je geschrieben wurden (jetzt
+  `completeCollection`). Ferner: ein Ausfall beim Lesen für die Vorschau hieß „nicht gefunden"; die Grenze von 400
+  Abfragen ließ sich durch das Blättern innerhalb EINES Elternknotens überschreiten (jetzt bekommt jeder seinen
+  Anteil); die Notiz wird einmal geglättet und so gesendet, wie sie gezeigt wird. Elf Mutationsproben, alle rot.
+- **P3 Baum pflegen (S1 Setzen, S6, S7) — umgesetzt (2026-11-14).** `wlo_order_collection`,
+  `wlo_remove_from_collections`, `wlo_delete_collections`, `removeFrom` an `wlo_add_to_collections`, und das
+  Baum-Werkzeug setzt die Reihenfolge, die es anlegt. Zweite Messung vorab (`npm run measure:moves`, zwei Konten,
+  im Plan festgehalten): `/order` lehnt die Kennung des Originals ab (400) und nimmt die des Verweises; `_move`
+  behält Kennung, Unterbaum UND lokal gesetzte Rechte, prüft aber keinen Namensvetter am Ziel; **wer an einer
+  Sammlung lesen, aber nicht schreiben darf, darf vorschlagen** (ohne Leserecht 403) — die Frage, die das Team
+  offen lassen musste. Live gegen Staging grün (4 Tests): Reihenfolge der Inhalte über Verweis-Kennungen,
+  Umsortieren, Entfernen, nur Leere löschen, Reihenfolge eines angelegten Baums.
+  Nebenbefund: nach dem Entfernen eines Verweises antwortet die Rückwärtssuche (`/usage`) für dieses Material zwei
+  bis fünf Sekunden mit 500 und erholt sich dann — keine Dauerstörung, wie die Notiz vom 03.08. vermuten ließ; ein
+  erneutes PUT auf einen vorhandenen Verweis antwortet 409 und legt nichts doppelt an.
+  34 Lesewerkzeuge, 23 Kuratier-Werkzeuge, 57 insgesamt (61 mit Stapel-Ablage).
+- **Review zu P3 (0 kritisch, 3 groß, 10 klein, 4 Randnotizen) — behoben.** Groß: ein Umsortieren, dessen Aufnahme
+  stand, konnte als `failed` / „nicht aufgenommen" enden (Quelle nicht lesbar → der Läufer beendete den offenen
+  Schritt); ein Folgeaufruf nahm ein schon aufgenommenes Material erneut auf (409 → „fehlgeschlagen"); ein 5xx
+  beim Löschen einer Sammlung war endgültig „nicht gelöscht". Jetzt merkt sich der Schritt die bestätigte Aufnahme,
+  409 heißt `already`, und ein 5xx bleibt offen und wird neu angesehen.
+  **Der wichtigste Fund kam aus einer Nachmessung** (das Review hatte den Punkt als ungemessen markiert): liegt ein
+  Material nicht als Verweis, sondern als ORIGINAL direkt in einer Sammlung, dann löscht `DELETE …/references/{id}`
+  das Material selbst (200, danach 404). Das betraf auch das bestehende `wlo_remove_from_collection`, dessen
+  Vorschau zusagt, das Material bleibe. Alle drei Wege lehnen jetzt vorher ab (`is_original`).
+  Ferner: Eltern warten auf ein mitgenanntes Kind, dessen Löschen noch offen ist; `too_many` schon ab 501 (vorher
+  erst ab 600, mit einer unerfüllbaren Aufforderung dazwischen); mehrfach abgelegtes Material muss über die
+  Verweis-Kennung geordnet werden, und die Vorschau zeigt die gesendete Kennung; die Ebene eines Baums wird auch
+  geordnet, wenn ihr letzter Schritt scheiterte. Das Test-Repository war an vier Stellen freundlicher als das
+  echte (zweites PUT 200 statt 409, Rückwärtssuche nach dem Entfernen ohne Ausfall, kein direkt abgelegtes
+  Original) — angeglichen. 13 Mutationsproben, 12 rot (die 13. ist die Zwillingsstelle einer geprüften).

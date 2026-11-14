@@ -1,11 +1,11 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **54 MCP-Tools**
-(58 mit `WLO_BATCH_UPLOAD_ENABLED`: 34 lesende, 24 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **57 MCP-Tools**
+(61 mit `WLO_BATCH_UPLOAD_ENABLED`: 34 lesende, 27 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
-**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 20
+**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 23
 Kurations-Tools stehen immer in `tools/list` (die vier Stapel-Werkzeuge nur mit ihrem Schalter), deklarieren `oauth2` und
 **verweigern beim Aufruf**, solange keine schreibberechtigte Anmeldung vorliegt;
 die Antwort trägt dann die Aufforderung, mit der der Client die Anmeldung
@@ -17,10 +17,10 @@ Was die Liste tatsächlich verändert, sind diese Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 54 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 54 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
+| **Standard** | 57 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 57 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
 | **`WLO_DISABLE_SKILL_SEARCH=1`** | 51 Tools — ohne `search_skill` (nur der Registry-Weg) |
-| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 58) |
+| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 61) |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -527,7 +527,7 @@ gleich `get_skill_registry` — das liest immer live.
 
 ---
 
-## 1b. Kuratierende MCP-Tools (24) — mit Chat-Trigger
+## 1b. Kuratierende MCP-Tools (27) — mit Chat-Trigger
 
 **Für alle gelistet, beim Aufruf geschützt.** Seit dem 2026-08-05 stehen diese
 Tools für jeden in `tools/list`, auch ohne Anmeldung — ein Modell, das ein
@@ -565,7 +565,7 @@ Vier Regeln gelten für **jedes** davon:
 Für ein Programm stehen Vorschau und Ergebnis zusätzlich in `structuredContent`:
 die Bestätigung als `confirm`, jede Ablehnung als `error = {code, message}`
 (Codetabelle in [MCP-REFERENZ.md](MCP-REFERENZ.md) §2). Die beiden Plan-Werkzeuge
-(`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_submit_contents`) laufen mit **einer**
+(`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_remove_from_collections`, `wlo_submit_contents`, `wlo_delete_collections`) laufen mit **einer**
 Bestätigung in Abschnitten und geben bis zum Ende einen `continuationToken`
 zurück.
 
@@ -587,6 +587,9 @@ zurück.
 | `wlo_create_collection_tree` | Ganzen Baum von Untersammlungen mit EINER Bestätigung anlegen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder). Abschnitte von ~40 s, `continuationToken` bis fertig; ein erneut vorgelegter Schlüssel setzt fort, legt nie doppelt an. Je Knoten optional Fach, Bildungsstufe, Schlagworte (`shared` für den ganzen Baum). Antwort `nodes [{path, nodeId, status, code}]` | *„Lege unter Optik diese Gliederung als Sammlungen an“* |
 | `wlo_add_to_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aufnehmen; Verknüpfung → Original (`filedId`), schon Enthaltenes `already`, Einzelfehler halten den Rest nicht auf. Noch nicht live geprüft | *„Nimm diese zwölf Materialien in die passenden Sammlungen auf“* |
 | `wlo_submit_contents` | Bis zu 200 Datensätze `{nodeId}` mit EINER Bestätigung zur redaktionellen Prüfung einreichen, gleiche Planmechanik; schon Eingereichtes kommt als `already` zurück, ein gescheiterter Eintrag hält die übrigen nicht auf | *„Reiche alle Dateien aus dem Upload zur Prüfung ein“* |
+| `wlo_remove_from_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung herausnehmen; nicht Enthaltenes kommt als `absent` zurück, das Material selbst bleibt | *„Nimm diese Arbeitsblätter aus der Sammlung Optik“* |
+| `wlo_order_collection` | Reihenfolge der Untersammlungen oder der Inhalte einer Sammlung setzen; die Liste muss alle Einträge einer Art nennen | *„Ordne die Unterthemen von Optik nach dem Lehrplan“* |
+| `wlo_delete_collections` | Bis zu 200 Sammlungen mit EINER Bestätigung löschen — nur leere; alles andere bleibt und kommt als `not_empty` zurück | *„Nimm den falsch angelegten Baum wieder weg“* |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung; beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt (der Server entscheidet je Feld); `add…`-Parameter je Eintrag wie bei `wlo_update_content` | — (Chatbot-Ablauf, viele Datensätze) |
 | `wlo_attach_fulltext` | Volltext (Markdown) im `textContent` eines Datensatzes ablegen, zweistufig und zurückgelesen; Datensätze mit Datei abgelehnt (`would_replace_file` — der Text würde die Datei ersetzen) | — (Chatbot-Ablauf, Volltexte) |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit EINER Bestätigung (≤ 3 MB je Aufruf), je Datensatz die Regeln von `wlo_attach_fulltext` | — (Chatbot-Ablauf, Volltexte) |

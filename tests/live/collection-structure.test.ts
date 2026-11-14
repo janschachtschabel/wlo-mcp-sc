@@ -21,6 +21,14 @@ import { getChildCollectionsResult, getNodeMetadata } from '../../src/wlo-node.j
 import { createCollection, deleteCollection } from '../../src/services/write/collections.js';
 import { listCollectionTree } from '../../src/services/collection-tree-flat.js';
 import { resolveVocab } from '../../src/vocabs.js';
+import { isAlreadyFiled } from '../../src/services/write/create-filing.js';
+import { filingStep, resolvePairs } from '../../src/services/write/filing-plan.js';
+import { removeStep, resolveRemovals } from '../../src/services/write/remove-plan.js';
+import { deleteEmptyStep, resolveDeletions } from '../../src/services/write/delete-empty-plan.js';
+import { planOrder, readOrderable, setCollectionOrder } from '../../src/services/write/collection-order.js';
+import { flattenTree, treeStep } from '../../src/services/write/collection-tree.js';
+import { deleteContentNode } from '../../src/services/write/nodes-lifecycle.js';
+import type { ItemState } from '../../src/services/write/plan-runner.js';
 import { requireLiveTarget, runStamp } from './guard.js';
 
 async function make(parent: string | null, title: string, extra?: Record<string, string[]>): Promise<string> {
@@ -72,6 +80,109 @@ test('S1: a set order is returned only when asked for; a child without a positio
     assert.deepEqual(flat.items.map(i => i.nodeId), [b, c, a, d]);
     assert.deepEqual(flat.items.map(i => i.contentCount), [0, 0, 0, 0]);
     assert.equal(flat.items[0]!.path.length, 2);
+  } finally {
+    assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
+  }
+});
+
+// ── package 3: order of contents, removing, moving, deleting empty ones ─────
+
+/** A bare record in the caller's home — enough to be filed; deleted by the test. */
+async function record(label: string): Promise<string> {
+  const res = await wloFetch(`${BASE_URL}/node/v1/nodes/-home-/-userhome-/children?type=ccm%3Aio&renameIfExists=true`, {
+    method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'cm:name': [`mcp-${label}-${runStamp.replace(/[:.]/g, '-')}.txt`], 'cclom:title': [`MCP ${label} ${runStamp}`] }),
+  });
+  const id = ((await res.json()) as { node?: { ref?: { id?: string } } }).node?.ref?.id;
+  assert.ok(id, `Datensatz ${label} nicht angelegt (HTTP ${res.status})`);
+  return id;
+}
+
+test('P3: contents are ordered by their REFERENCE ids, a move files first and removes then, and only empty collections are deleted', async () => {
+  requireLiveTarget();
+  const root = await make(null, `MCP-Struktur P3 ${runStamp}`);
+  const records: string[] = [];
+  try {
+    const optik = await make(root, 'Optik');
+    const mechanik = await make(root, 'Mechanik');
+    const leer = await make(root, 'Leer');
+    const leerKind = await make(leer, 'Leer darunter');
+    for (const label of ['m1', 'm2', 'm3']) records.push(await record(label));
+    const [m1, m2, m3] = records as [string, string, string];
+
+    // Filing in a batch: the step of wlo_add_to_collections.
+    const filing = await resolvePairs(records.map(nodeId => ({ nodeId, collectionId: optik })));
+    assert.ok(filing.ok, JSON.stringify(filing));
+    for (const item of filing.items) assert.equal((await filingStep(item, undefined)).status, 'added');
+
+    // Order of the contents: originals are named, the references are sent.
+    const have = await readOrderable(optik);
+    assert.ok(have.ok);
+    assert.equal(have.contents.length, 3);
+    assert.ok(have.contents.every(c => c.materialId && c.materialId !== c.id), 'eine Sammlung hält Verweise mit eigener Kennung');
+    const ordered = planOrder(have, [m3, m1, m2]);
+    assert.ok(ordered.ok, JSON.stringify(ordered));
+    assert.equal((await setCollectionOrder(optik, ordered.kind, ordered.children.map(c => c.id))).status, 'ok');
+    const after = await readOrderable(optik);
+    assert.ok(after.ok);
+    assert.deepEqual(after.contents.map(c => c.materialId), [m3, m1, m2]);
+    assert.equal(planOrder(after, [m3, m1, m2]).ok, false, 'dieselbe gesetzte Reihenfolge ist keine Änderung');
+
+    // MOVE m1 from Optik to Mechanik.
+    const move = await resolvePairs([{ nodeId: m1, collectionId: mechanik, removeFrom: optik }]);
+    assert.ok(move.ok, JSON.stringify(move));
+    assert.equal((await filingStep(move.items[0]!, undefined)).status, 'moved');
+    const inOptik = await readOrderable(optik);
+    const inMechanik = await readOrderable(mechanik);
+    assert.ok(inOptik.ok && inMechanik.ok);
+    assert.deepEqual(inOptik.contents.map(c => c.materialId), [m3, m2]);
+    assert.deepEqual(inMechanik.contents.map(c => c.materialId), [m1]);
+    // What the repository says about m1 afterwards — the usage endpoint was measured to answer 500
+    // for a material after one of its references was deleted (2026-08-03).
+    console.log('usage of the moved record after the move:', JSON.stringify(await isAlreadyFiled(m1, mechanik)));
+
+    // Removing in a batch: one in, one not in.
+    const removal = await resolveRemovals([{ nodeId: m2, collectionId: optik }, { nodeId: m2, collectionId: mechanik }]);
+    assert.ok(removal.ok, JSON.stringify(removal));
+    assert.deepEqual([...removal.absent], [`${m2}>${mechanik}`]);
+    assert.equal((await removeStep(removal.items[0]!, undefined)).status, 'removed');
+    assert.equal((await removeStep(removal.items[1]!, undefined)).status, 'absent');
+
+    // Deleting: the empty chain goes, the two that hold a reference stay.
+    const deletion = await resolveDeletions([leer, optik, leerKind, mechanik]);
+    assert.ok(deletion.ok, JSON.stringify(deletion));
+    assert.deepEqual([...deletion.notEmpty.keys()].sort(), [optik, mechanik].sort());
+    const step = deleteEmptyStep();
+    const outcome: Record<string, string> = {};
+    for (const item of deletion.items) outcome[item.nodeId] = (await step(item, undefined)).status;
+    assert.deepEqual(outcome, { [leerKind]: 'deleted', [leer]: 'deleted', [optik]: 'not_empty', [mechanik]: 'not_empty' });
+    assert.equal(await getNodeMetadata(leer), null);
+    assert.ok(await getNodeMetadata(optik));
+  } finally {
+    assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
+    for (const id of records) {
+      const gone = await deleteContentNode(id);
+      assert.equal(gone.status, 'ok', `NICHT GELÖSCHT: ${id} ${JSON.stringify(gone)}`);
+    }
+  }
+});
+
+test('P3: a tree created in one plan stands in the order of its input', async () => {
+  requireLiveTarget();
+  const root = await make(null, `MCP-Struktur Baum ${runStamp}`);
+  try {
+    const flat = flattenTree([{ title: 'Zeta' }, { title: 'Alpha', children: [{ title: 'Zwei' }, { title: 'Eins' }] }, { title: 'Mitte' }]);
+    assert.ok(flat.ok);
+    const stored = { items: flat.items, state: new Map<string, ItemState>(flat.items.map(i => [i.key, { status: 'pending' }])) };
+    const step = treeStep(root, stored as never, 'merge');
+    for (const item of flat.items) {
+      stored.state.set(item.key, await step(item, item.after ? stored.state.get(item.after) : undefined));
+    }
+    assert.deepEqual([...stored.state.values()].map(s => [s.status, s.code]), flat.items.map(() => ['created', undefined]));
+    const tree = await listCollectionTree({ rootId: root, depth: 2, maxItems: 250, skipCount: 0, includeContentCounts: false });
+    assert.deepEqual(tree.items.map(i => i.title), ['Zeta', 'Alpha', 'Mitte', 'Zwei', 'Eins']);
+    const level1 = await readOrderable(root);
+    assert.ok(level1.ok && level1.collections.every(c => c.hasPosition), 'die Reihenfolge ist ausdrücklich gesetzt');
   } finally {
     assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
   }

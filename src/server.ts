@@ -50,6 +50,9 @@ import { registerCurationBatchTools } from './tools/curation-batch.js';
 import { registerCurationTreeTools } from './tools/curation-tree.js';
 import { registerCurationAddManyTool } from './tools/curation-add-many.js';
 import { registerCurationSubmitManyTool } from './tools/curation-submit-many.js';
+import { registerCurationDeleteEmptyTool } from './tools/curation-delete-empty.js';
+import { registerCurationRemoveManyTool } from './tools/curation-remove-many.js';
+import { registerCurationOrderTool } from './tools/curation-order.js';
 import { registerCurationUpdateManyTool } from './tools/curation-update-many.js';
 import { registerCurationFulltextTools } from './tools/curation-fulltext.js';
 import { writeAuthChallenge } from './auth/oauth-metadata.js';
@@ -173,6 +176,8 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // The planned pair (E4 = B): one approval, run in time-budgeted calls.
   registerCurationTreeTools(server, challenge);       // wlo_create_collection_tree
   registerCurationAddManyTool(server, challenge);     // wlo_add_to_collections
+  registerCurationRemoveManyTool(server, challenge);  // wlo_remove_from_collections
+  registerCurationOrderTool(server, challenge);       // wlo_order_collection
   registerCurationSubmitManyTool(server, challenge);  // wlo_submit_contents
   registerCurationCompendiumTool(server, challenge);  // wlo_update_compendium
   registerCurationTopicPageTool(server, challenge);   // wlo_set_topic_page — the one whose result is immediately public
@@ -181,6 +186,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // Deleting comes last, so the destructive pair sits at the end of the list
   // rather than next to the tools that merely change a field.
   registerCurationDeleteTools(server, challenge);     // wlo_delete_content, wlo_delete_collection
+  registerCurationDeleteEmptyTool(server, challenge);  // wlo_delete_collections — empty ones only
   // Off unless WLO_BATCH_UPLOAD_ENABLED — the function checks it and registers
   // nothing otherwise, so the default tool list is unchanged.
   registerCurationBatchTools(server, challenge);      // wlo_prepare_file_batch, wlo_store_batch_file, wlo_store_batch_manifest

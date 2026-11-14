@@ -1670,7 +1670,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   convention shape therefore stays first and untouched in both modes, pinned by
   `tests/tools-knowledge-rich.test.ts`;
   `search_skill` becomes `get_skill_for_task` under
-  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 20 curation tools (`curation-*.ts`,
+  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 23 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm conversation they share — split 2026-11-13: the
@@ -1812,6 +1812,36 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   one. They travel as `CollectionFields.extra` beside the description — one
   metadata write, one read-back — and a collection taken over by `merge` gets
   none of it, which the preview line says.
+- **Maintaining a tree (S1 set / S6 / S7, 2026-11-14).** Four measurements
+  bind it (`npm run measure:moves`, re-measure before contradicting): `POST
+  …/order` positions ONLY the ids it is given (an incomplete list leaves two
+  children on one position) and takes a content's REFERENCE id — the
+  original's answers 400; `DELETE …/references/{originalId}` answers 200 and
+  removes nothing (again); sub-collections and contents share one position
+  space but are listed apart; and after a reference is removed the usage
+  lookup for that material answers 500 for 2–5 s, then recovers. So
+  `planOrder` (`services/write/collection-order.ts`) refuses a list that does
+  not name every child of ONE kind, and resolves originals to references;
+  `removalOf` (`remove-plan.ts`) is the one place a plan turns "this material,
+  this collection" into the reference's DELETE and into a state; a MOVE
+  (`removeFrom`, `filing-plan.ts`) files and reads back FIRST and removes
+  THEN — a failed removal is `not_removed` (in both), never a lost material;
+  `wlo_delete_collections` reads "empty" from the two listings (never the
+  counters), in the preview AND right before each delete, children first and
+  one at a time. The tree tool sets the order it creates, from the LAST step
+  of a parent's children; a failure there is `order_not_set` on a step that
+  keeps its status. **A record can lie in a collection DIRECTLY, as the
+  original (no reference), and `DELETE …/references/{its id}` deletes the
+  MATERIAL (measured 2026-11-14).** `findReference` says `direct` for it, and
+  every removal refuses (`IS_ORIGINAL` / `is_original`) — the single tool, the
+  batch, the removal half of a move. The single tool had promised "the
+  material stays" over that DELETE since it was written; no test could see it,
+  because every fixture filed references. A filed move never ends as `failed`:
+  `item.filed` is remembered (a second PUT answers 409, and right after a
+  removal "is it there?" is unknown), and a removal that stays open is ended by
+  the step itself as `not_removed`. Every one of these steps follows one reading of a failed
+  write: a 4xx wrote nothing (`outcomeOpen: false`), anything else stays
+  `pending` and is LOOKED AT again by the next call before it sends again.
 - **A collection by NAME (Z3, 2026-11-13)** — `services/collection-by-name.ts`,
   wrapped around five read tools by `tools/collection-arg.ts`. EXACTLY ONE
   collection with the same title is taken; never a prefix or substring guess
