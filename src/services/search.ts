@@ -204,6 +204,8 @@ export interface SearchAllEnvelope {
     total: number; count: number; results: FormattedNode[]; licenseFilter?: LicenseFilterCounts;
     /** The page came back short although the catalogue holds more (`services/content-search.ts`). */
     more?: { nextSkipCount: number };
+    /** A query variant of the content search did not answer. */
+    incomplete?: true;
     /** Hits whose full text was not read (bound) resp. could not be read. */
     textContentSkipped?: string[];
     textContentUnreadable?: string[];
@@ -412,6 +414,7 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
       count: contentFmt.length,
       results: contentFmt,
       ...(contentResp?.more ? { more: contentResp.more } : {}),
+      ...(contentResp?.incomplete ? { incomplete: true as const } : {}),
       ...(textReport?.skipped.length ? { textContentSkipped: textReport.skipped } : {}),
       ...(textReport?.unreadable.length ? { textContentUnreadable: textReport.unreadable } : {}),
       // Only when the content leg actually ran: with `include: ['collections']`

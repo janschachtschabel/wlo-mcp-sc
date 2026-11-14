@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 import { registerWloTool } from '../apps/register.js';
 import { mapPool } from '../concurrency.js';
-import { oneLine } from '../formatter.js';
+import { nodeIdLine, oneLine, quotedTitle } from '../formatter.js';
 import { log } from '../logger.js';
 import { getNodeCollections } from '../services/node-collections.js';
 import { findUrlMatches, normalizeSourceUrl, type UrlMatch } from '../services/url-matches.js';
@@ -120,8 +120,10 @@ Nicht für die thematische Suche — dafür search_wlo_content.`,
         if (r.error) return oneLine(`${r.url}: ${r.error.code} — ${r.error.message}`);
         if (!r.matches.length) return oneLine(`${r.url}: kein Datensatz`);
         return [oneLine(`${r.url}:`), ...r.matches.map(m => oneLine(
-          `  - [${m.match}] ${m.title || '(ohne Titel)'} — nodeId: ${m.nodeId} — ${m.wwwurl}`
-          + (m.inCollections === undefined ? '' : ` — Sammlungen: ${m.inCollections ?? 'nicht ermittelbar'}`),
+          `  - [${m.match}] ${nodeIdLine(m.nodeId)}`
+          + (m.inCollections === undefined ? '' : ` — Sammlungen: ${m.inCollections ?? 'nicht ermittelbar'}`)
+          // Title and address are the repository's: after everything the server says.
+          + ` — ${quotedTitle(m.title)} — ${m.wwwurl}`,
         ))].join('\n');
       });
       return {

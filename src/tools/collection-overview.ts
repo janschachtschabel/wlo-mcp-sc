@@ -9,7 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { registerWloTool } from '../apps/register.js';
-import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine } from '../formatter.js';
+import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine, quotedTitle } from '../formatter.js';
 import { getCollectionOverview, OVERVIEW_PARTS, type CollectionOverview } from '../services/collection-overview.js';
 import { toolError } from './shared.js';
 import { resolvedCollectionSchema } from '../apps/outputSchemas.js';
@@ -116,7 +116,7 @@ function render(o: CollectionOverview): string {
   if (o.stats) lines.push(`Statistik: ${o.stats.contents} Inhalte, ${o.stats.subcollections} Untersammlungen`);
   if (o.skills) {
     if (o.skills.length) {
-      lines.push(`Freigegebene Skills: ${o.skills.map(s => `${s.title} (${s.nodeId})`).join(', ')}`);
+      lines.push(`Freigegebene Skills: ${o.skills.map(s => `${s.nodeId} ${quotedTitle(s.title)}`).join(', ')}`);
       // Every surface that prints skill nodeIds says it is not the instruction
       // (CLAUDE.md, 2026-08-16) — indented with the entries it closes.
       lines.push(`  ${DESCRIPTIONS_ONLY_NOTE}`);
@@ -126,7 +126,7 @@ function render(o: CollectionOverview): string {
   }
   if (o.subcollections?.length) {
     lines.push(`Untersammlungen: ${o.subcollections
-      .map(s => `${s.title} (${s.contentsRefused ? 'mit dieser Anmeldung nicht lesbar' : s.contentsUnread ? 'Anzahl gerade nicht lesbar' : s.contentCount ?? '?'}) — ${s.nodeId}`).join('; ')}${o.subcollectionsTruncated ? ' …' : ''}`);
+      .map(s => `${s.nodeId} (${s.contentsRefused ? 'mit dieser Anmeldung nicht lesbar' : s.contentsUnread ? 'Anzahl gerade nicht lesbar' : s.contentCount ?? '?'}) ${quotedTitle(s.title)}`).join('; ')}${o.subcollectionsTruncated ? ' …' : ''}`);
   }
   if (o.contents) {
     lines.push(`Inhalte (${o.contents.items.length} von ${o.contents.total}):`);

@@ -69,7 +69,7 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
       const text = toolText(result);
 
       assert.notEqual(result.isError, true, `tool must not fail: ${text}`);
-      assert.match(text, /Skill-Registry: Skill Registry Optik/, 'the registry is named');
+      assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'the registry is named');
       assert.match(text, /Fragen generieren/, 'and the skills it declares');
       assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
       assert.equal(counts.children, 1, 'exactly one lookup for the one collection');
@@ -78,7 +78,7 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
       // The fresh answer is WRITTEN BACK (audit 2026-11-12, K-15): the next call
       // without the parameter is served from memory and costs nothing.
       const again = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
-      assert.match(again, /Skill-Registry: Skill Registry Optik/);
+      assert.match(again, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/);
       assert.equal(counts.children, 1, 'no second listing — the forced lookup fed the cache');
     } finally {
       await client.close();
@@ -100,7 +100,7 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
       const result = await client.callTool({ name: tool, arguments: { query: 'optik', includeSkillRegistry: true } });
       const text = toolText(result);
       assert.match(text, /nicht geprüft/, `the pointer line stays — nothing was learned:\n${text}`);
-      assert.doesNotMatch(text, /Skill-Registry: Skill Registry Optik/);
+      assert.doesNotMatch(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/);
       if (tool === 'search_wlo_all') {
         const sc = (result as unknown as { structuredContent: { collections: Record<string, unknown>; topicPages: Record<string, unknown> } }).structuredContent;
         assert.notEqual(sc.collections['registryChecked'], true);
@@ -124,10 +124,10 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
     const client = await connectedClient();
     try {
       const warm = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
-      assert.match(warm, /Skill-Registry: Skill Registry Optik/, 'remembered');
+      assert.match(warm, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'remembered');
       down = true;
       const forced = toolText(await client.callTool({ name: tool, arguments: { query: 'optik', includeSkillRegistry: true } }));
-      assert.doesNotMatch(forced, /Skill-Registry: Skill Registry Optik/,
+      assert.doesNotMatch(forced, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/,
         'the caller asked for the state NOW; a catalogue up to its TTL old must not stand in for it');
       assert.match(forced, /nicht geprüft/);
     } finally {
@@ -150,7 +150,7 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
     const client = await connectedClient();
     try {
       const first = toolText(await client.callTool({ name: tool, arguments: { query: 'optik' } }));
-      assert.match(first, /Skill-Registry: Skill Registry Optik/, 'remembered');
+      assert.match(first, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'remembered');
       registryThere = false;   // the editors removed the registry document
       const forced = toolText(await client.callTool({ name: tool, arguments: { query: 'optik', includeSkillRegistry: true } }));
       assert.doesNotMatch(forced, /Skill Registry Optik/, 'the stale catalogue is not filled back in');
@@ -173,7 +173,7 @@ for (const tool of ['search_wlo_all', 'search_wlo_collections']) {
       // fetched without the parameter. The decision now is that the answer
       // carries the catalogue either way — the parameter only decides whether a
       // FRESH lookup is forced over a remembered one.
-      assert.match(text, /Skill-Registry: Skill Registry Optik/, 'the catalogue is there');
+      assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'the catalogue is there');
       assert.equal(counts.children, 1, 'resolved through the fallback, once');
     } finally {
       await client.close();

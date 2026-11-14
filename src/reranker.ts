@@ -288,6 +288,9 @@ export async function enhancedSearchScored(
       // The last window: every variant came back short of a full pool. A variant
       // that FAILED tells nothing, so with one of those the end is not claimed.
       exhausted: successful.length === settled.length && successful.every(r => r.response.nodes.length < poolSize),
+      // Said, not only withheld from `exhausted`: a caller that reads an empty
+      // window as the end would otherwise report "no hits" over a variant nobody read.
+      ...(successful.length < settled.length ? { incomplete: true } : {}),
     },
     scores: new Map(top.map(r => [r.nodeId, r.finalScore])),
   };

@@ -12,7 +12,7 @@ import { z } from 'zod';
 
 import type { WloToolResult } from '../apps/register.js';
 import { formatUnresolvedHint } from '../filter-criteria.js';
-import { nodeIdLine, oneLine } from '../formatter.js';
+import { nodeIdLine, oneLine, quotedTitle } from '../formatter.js';
 import {
   resolveCollectionByName,
   type CollectionByName, type CollectionCandidate, type ResolvedCollection,
@@ -57,9 +57,8 @@ const disciplineHint = (r: CollectionByName, param: string): string => (r.unreso
  * Their quote marks are replaced so neither can close the quotes it stands in;
  * the DATA (`candidates`, `resolvedCollection`) keeps the title as it is.
  */
-const unquoted = (value: string): string => value.replace(/[„“”"«»]/g, '\'');
-const under = (path: string[] | undefined): string => (path?.length ? ` · unter ${path.map(unquoted).join(' › ')}` : '');
-const titled = (c: { nodeId: string; title: string }): string => ` — „${unquoted(c.title || c.nodeId)}“`;
+const under = (path: string[] | undefined): string => (path?.length ? ` · unter ${path.map(p => quotedTitle(p, '„?“').slice(1, -1)).join(' › ')}` : '');
+const titled = (c: { nodeId: string; title: string }): string => ` — ${quotedTitle(c.title, `„${c.nodeId}“`)}`;
 
 function candidateLine(c: CollectionCandidate): string {
   const count = c.contentsCount === undefined ? '' : ` · ${c.contentsCount} Inhalte`;

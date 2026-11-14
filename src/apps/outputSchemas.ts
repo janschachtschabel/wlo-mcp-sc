@@ -126,7 +126,7 @@ export const nodeListSchema = z.object({
   count: z.number(),
   results: z.array(formattedNodeSchema),
   ...contentSearchDisclosures,
-  /** search_wlo_collections: a collection index did not answer — the list may lack hits (K-3). */
+  /** A source did not answer — a collection index (search_wlo_collections, K-3) or a query variant (search_wlo_content): the list may lack hits. */
   incomplete: z.literal(true).optional(),
   /** A walk met a branch the repository refused to open (401/403/404): it is missing here, and no retry changes that. */
   restricted: z.literal(true).optional(),
@@ -246,6 +246,8 @@ export const searchAllEnvelopeSchema = z.object({
      *  in the content bucket. See `nodeListSchema.derivedResourceType`. */
     derivedResourceType: z.string().optional(),
     ...contentSearchDisclosures,
+    /** A query variant of the content search did not answer: the list may lack hits. */
+    incomplete: z.literal(true).optional(),
   }),
   // `registryChecked` declared for the same reason as `skillRegistry` above:
   // an undeclared field breaks the advertised schema (see the header).

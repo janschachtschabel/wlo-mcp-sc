@@ -102,7 +102,7 @@ export function renderSearchPage(data: SearchPageData): string {
     section('Themenseiten', data.topicPages);
   // "Keine Treffer." is a statement about the catalogue: not beside a warning
   // that a source did not answer or that the page is merely exhausted.
-  const notAFinding = Boolean(data.collections?.incomplete || data.topicPages?.incomplete || data.content?.more);
+  const notAFinding = Boolean(data.collections?.incomplete || data.topicPages?.incomplete || data.content?.more || data.content?.incomplete);
   const empty = body || notAFinding
     ? ''
     : `<p>Keine Treffer.${q ? '' : ' Suchbegriff in den Pfad setzen: /api/search/&lt;Begriff&gt;?format=html'}</p>`;

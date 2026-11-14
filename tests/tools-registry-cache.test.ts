@@ -109,7 +109,7 @@ for (const { tool, args } of CASES) {
 
       const text = toolText(await client.callTool({ name: tool, arguments: args }));
 
-      assert.match(text, /Skill-Registry: Skill Registry Optik/, `${tool} must carry the catalogue`);
+      assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, `${tool} must carry the catalogue`);
       assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
       assert.ok(text.includes(DESCRIPTIONS_ONLY_NOTE),
         `${tool} lists skill titles, so it must say the instructions are not among them`);
@@ -172,7 +172,7 @@ for (const { tool, args } of SUBJECT_CASES) {
       await warm();
       const text = toolText(await client.callTool({ name: tool, arguments: args }));
 
-      assert.match(text, /Skill-Registry: Skill Registry Optik/,
+      assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/,
         `${tool} must report the registry of the collection it was called on`);
       assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
       // WHICH collection, in words. The block lands under the last listed
@@ -200,7 +200,7 @@ test('get_node_details: a collection carries its registry on the record itself',
   try {
     await warm();
     const result = await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'coll-1' } });
-    assert.match(toolText(result), /Skill-Registry: Skill Registry Optik/);
+    assert.match(toolText(result), /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/);
     const structured = result.structuredContent as { results: { skillRegistry?: { title: string } }[] };
     assert.equal(structured.results[0]?.skillRegistry?.title, 'Skill Registry Optik',
       'and the widget reads it from structuredContent');
@@ -226,7 +226,7 @@ test('a subject collection without a registry is not announced as having one', a
     const text = toolText(await client.callTool({
       name: 'get_collection_contents', arguments: { nodeId: 'other-1', contentFilter: 'files' },
     }));
-    const own = text.split('\n').filter(l => l.startsWith('Skill-Registry:'));
+    const own = text.split('\n').filter(l => l.startsWith('Skill-Registry ('));
     assert.equal(own.length, 0, `no registry for the subject collection, so no line:\n${text}`);
   } finally {
     await client.close();
@@ -259,7 +259,7 @@ for (const { tool, args } of BROWSE_CASES) {
 
       const text = toolText(await client.callTool({ name: tool, arguments: args }));
 
-      assert.match(text, /Skill-Registry: Skill Registry Optik/, `${tool} must mark the collection`);
+      assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, `${tool} must mark the collection`);
       assert.match(text, /get_skill_registry/, 'and say how to read the catalogue');
       assert.ok(!text.includes(SKILL_A),
         'the entries stay out — one node is one line here');
@@ -326,7 +326,7 @@ test('get_topic_page_content: the page reports the registry of its collection', 
     const text = toolText(await client.callTool({
       name: 'get_topic_page_content', arguments: { collectionId: 'coll-1' },
     }));
-    assert.match(text, /Skill-Registry: Skill Registry Optik/, 'the page names its collection\'s registry');
+    assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'the page names its collection\'s registry');
     assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
   } finally {
     await client.close();
@@ -363,7 +363,7 @@ test('search_wlo_topic_pages: each page is marked through its COLLECTION id', as
     const text = toolText(await client.callTool({
       name: 'search_wlo_topic_pages', arguments: { collectionId: 'coll-1' },
     }));
-    assert.match(text, /Skill-Registry: Skill Registry Optik/,
+    assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/,
       'a Themenseite carries the registry of the collection that owns it');
     assert.ok(!text.includes(SKILL_A), 'head line only — this listing is one block per page');
   } finally {
@@ -485,7 +485,7 @@ test('get_related_content: the sibling collection reports its registry', async (
     const text = toolText(await client.callTool({
       name: 'get_related_content', arguments: { nodeId: 'c-1', includeSiblings: true },
     }));
-    assert.match(text, /Skill-Registry: Skill Registry Optik/,
+    assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/,
       'the collection the siblings came from carries approved skills');
     assert.match(text, new RegExp(SKILL_A), 'with the nodeId get_skill needs');
 
@@ -496,7 +496,7 @@ test('get_related_content: the sibling collection reports its registry', async (
       name: 'get_related_content', arguments: { nodeId: 'c-1', includeSiblings: true, outputFormat: 'json' },
     });
     const blocks = (json.content as { text: string }[]).map(b => b.text).join('\n');
-    assert.match(blocks, /Skill-Registry: Skill Registry Optik/, 'json carries it as its own block');
+    assert.match(blocks, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'json carries it as its own block');
     JSON.parse((json.content as { text: string }[])[0].text);   // the payload block stays parseable
   } finally {
     await client.close();
@@ -582,7 +582,7 @@ test('search_wlo_collections: only the collections actually shown are looked up'
     // The lookup follows what is SHOWN, not what the backend returned: the
     // enrichment runs after the maxResults cap, so a caller asking for one
     // collection pays for one.
-    assert.match(text, /Skill-Registry: Skill Registry Optik/, 'the one shown collection is resolved');
+    assert.match(text, /Skill-Registry \(nodeId: [^)]*\)[^\n]*„Skill Registry Optik“/, 'the one shown collection is resolved');
   } finally {
     await client.close();
     mock.restore();

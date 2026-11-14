@@ -31,6 +31,24 @@ export function oneLine(value: string): string {
 }
 
 /**
+ * A repository-supplied title for the END of a line that also carries an id.
+ *
+ * Titles are data, and ahead of the id a title could spell out an id of its own:
+ * a collection called `Mechanik (nodeId: …)` read as the real line. So every
+ * line that names a record puts what the SERVER knows first — id, counts, path
+ * — and the title last, in quotes whose marks the title cannot contain (they
+ * are replaced; the data fields keep the title as it is). Found on the
+ * candidate lines of `collection-arg.ts` (chatbot team, 2026-11-14) and applied
+ * to the other title-before-id lines on 2026-11-15.
+ */
+export function quotedTitle(title: string | undefined, fallback = '(ohne Titel)'): string {
+  // Zero-width characters are no title: `„“` would look like an empty pair of quotes (the quotes around nothing visible).
+  const t = (title ?? '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim();
+  // Every mark a reader takes for a double quote, in any script.
+  return t ? `„${t.replace(/[„“”‟"«»＂❝❞〝〞]/g, '\'')}“` : fallback;
+}
+
+/**
  * The `nodeId:` line, saying when the id names a REFERENCE rather than a record.
  *
  * Both ids are stated, because both are needed and for different things: either

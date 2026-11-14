@@ -1712,6 +1712,14 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   HTML page, `/api/search` with `fields` (`projectEnvelope` keeps what a bucket
   says about itself) and the search widget's empty state. An envelope field the
   renderer drops is no disclosure.
+  The end rule is ONE function (`windowWasLast`: no variant returned a full
+  pool, OR the window is empty). A variant that FAILED is a third thing and is
+  SAID (`SearchResponse.incomplete` → `incomplete` on both tools, the content
+  bucket of `searchAll`, the HTML page, the widget; `contentIncompleteNotice`,
+  which carries the outage phrase clients recognise): the ranked search
+  tolerates one failed variant and then claims no end, so over an empty window
+  the many search answered "there is more" — and the first fix "no hits", over
+  a variant nobody read (review 2026-11-15).
   (3) `enrichStoredText` reads for the first `TEXT_ENRICH_MAX` hits only and
   keeps `textContent` UNSET for a text it did not read or could not read
   (`textContentSkipped` / `textContentUnreadable`) — an empty string means "the
@@ -1787,7 +1795,14 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   could not rule out (a full window) stays unruled. The line puts everything
   the server knows first and the title LAST, quoted, its quote marks replaced:
   title and path are repository-supplied, and ahead of the id a title spelled
-  out an id and a path of its own.
+  out an id and a path of its own. Since 2026-11-15 that is the rule for
+  EVERY line that names a record with its id (`quotedTitle`, `text-line.ts`:
+  registry head and entries, the browse tree, `find_content_by_url`, the
+  overview, parent collections) — except the forms the chatbot reads word for
+  word, which are pinned in `tests/line-forms.test.ts` and change only with
+  notice: `get_skill_registry`'s `### Titel` / `nodeId:` entries, `get_skill`,
+  `lookup_wlo_vocabulary`, the write preview `Datensatz: „Titel“ (id)` and
+  `confirmToken:`, the outage and refusal wordings, the overview's markers.
 - **Coded errors and output schemas (2026-11-13).** A spec-following client
   validates `structuredContent` against `outputSchema` even on `isError`. So
   every tool with an output schema publishes `anyOf: [success, { error }]`

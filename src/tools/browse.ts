@@ -13,7 +13,7 @@ import {
   getChildCollectionsResult,
 } from '../wlo-api.js';
 import { sortByTitle } from '../reranker.js';
-import { formatNode, nodeIdLine, oneLine, registrySummaryLines } from '../formatter.js';
+import { formatNode, nodeIdLine, oneLine, quotedTitle, registrySummaryLines } from '../formatter.js';
 import { cachedRegistriesFor } from '../services/skill-registry-cache.js';
 import type { CollectionTreeNode } from '../services/collection-traversal.js';
 import { buildCollectionTree, notReadable } from '../services/collection-traversal.js';
@@ -303,7 +303,8 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
             // oneLine per rendered value: this listing is line-oriented, so a
             // title carrying a newline would add a branch with a nodeId that
             // exists nowhere in the tree (same rule as renderToText).
-            lines.push(oneLine(`${pad}- **${n.title}** (${n.nodeId})${cnt}`));
+            // The id first, the title last and quoted: ahead of the id a title could spell out one.
+            lines.push(oneLine(`${pad}- ${nodeIdLine(n.nodeId, n.originalId)}${cnt} — ${quotedTitle(n.title)}`));
             for (const line of n.skillRegistry
               ? registrySummaryLines(n.skillRegistry, { entries: false }) : []) {
               lines.push(oneLine(`${pad}    ${line}`));
@@ -316,13 +317,13 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
               lines.push(`${pad}  … die Unterthemen ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt. Später erneut: browse_collection_tree mit nodeId=${n.nodeId}`);
             }
             if (n.contentsRefused) {
-              lines.push(oneLine(`${pad}  … die Inhalte von „${n.title}“ sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
+              lines.push(oneLine(`${pad}  … die Inhalte von ${quotedTitle(n.title)} sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
             } else if (n.contentsUnread) {
-              lines.push(oneLine(`${pad}  … die Inhalte von „${n.title}“ ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt.`));
+              lines.push(oneLine(`${pad}  … die Inhalte von ${quotedTitle(n.title)} ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt.`));
             }
             if (n.childrenRefused) {
               // The title is repository-supplied: one line, like every other value here.
-              lines.push(oneLine(`${pad}  … die Unterthemen von „${n.title}“ sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
+              lines.push(oneLine(`${pad}  … die Unterthemen von ${quotedTitle(n.title)} sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
             }
             if (n.hasMoreChildren) {
               lines.push(`${pad}  … weitere Unterthemen vorhanden — zum Öffnen: browse_collection_tree mit nodeId=${n.nodeId}`);

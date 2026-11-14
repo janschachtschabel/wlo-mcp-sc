@@ -81,10 +81,16 @@ export interface ContentSearchResult {
   /** The criteria of the first window, for `_queryMeta`. */
   criteria: SearchCriterion[];
   /**
+   * A query variant of a window read here did not answer: the list may lack
+   * hits, and an empty one is no finding.
+   */
+  incomplete?: true;
+  /**
    * Set when fewer than `max` came back ALTHOUGH the catalogue holds more: the
    * bounded refill ended first. Absent when the page is full, and when the
    * windows themselves said they were the last (`SearchResponse.exhausted`).
    */
+  // (see `incomplete` below for a window whose variants did not all answer)
   more?: { nextSkipCount: number };
 }
 
@@ -127,10 +133,12 @@ export async function searchContent(opts: ContentSearchOptions): Promise<Content
   let total = 0;
   let skip = opts.skipCount;
   let reachedEnd: boolean;
+  let partial = false;
   for (let round = 0; ; round++) {
     // The exact total (one facet request for a licence) is asked ONCE.
     const response = await readWindow(skip, round === 0);
     if (round === 0) total = response.pagination.total;
+    partial ||= response.incomplete === true;
     const fresh = response.nodes.filter(n => {
       const id = n.ref?.id ?? '';
       // A node without an id cannot be excluded or recognised again; it is kept, as before.
@@ -150,7 +158,7 @@ export async function searchContent(opts: ContentSearchOptions): Promise<Content
     // variants (resp. the licence family). Measured on the two cases it broke:
     // a framing query whose full variant matches nothing while its topic
     // variant holds 480, and a single licence whose family is 343 for 42 exact.
-    reachedEnd = response.exhausted === true || response.nodes.length === 0;
+    reachedEnd = windowWasLast(response);
     if (licensed.length >= max || reachedEnd || round >= REFILL_ROUNDS) break;
   }
 
@@ -160,7 +168,21 @@ export async function searchContent(opts: ContentSearchOptions): Promise<Content
     queryType: ranked ? 'ngsearch_enhanced' : 'ngsearch',
     criteria,
     ...(results.length < max && !reachedEnd ? { more: { nextSkipCount: skip } } : {}),
+    ...(partial ? { incomplete: true as const } : {}),
   };
+}
+
+/**
+ * Whether a ranked window was the LAST one: every variant came back short of
+ * its pool — or the window is simply empty. The second half is not redundant:
+ * the ranked search does not claim the end when one variant FAILED (a failure
+ * tells nothing), so an empty window with one failed variant would read as
+ * "there is more" for good. ONE rule for the single and the many search — the
+ * many search had only the first half and answered `count: 0, more: true`
+ * (chatbot team, 2026-11-15).
+ */
+export function windowWasLast(response: { exhausted?: boolean; nodes: unknown[] }): boolean {
+  return response.exhausted === true || response.nodes.length === 0;
 }
 
 /** What `enrichStoredText` could not attach, and why. Both lists are empty in the ordinary case. */
@@ -201,16 +223,30 @@ export async function enrichStoredText(nodes: FormattedNode[]): Promise<StoredTe
  * renderer drops is not a disclosure.
  */
 export function contentBucketNotices(bucket: {
-  count: number; total: number; more?: { nextSkipCount: number };
+  count: number; total: number; more?: { nextSkipCount: number }; incomplete?: true;
   textContentSkipped?: string[]; textContentUnreadable?: string[];
 }): string[] {
   return contentSearchNotices(bucket.more, bucket.count, bucket.total,
-    { skipped: bucket.textContentSkipped ?? [], unreadable: bucket.textContentUnreadable ?? [] });
+    { skipped: bucket.textContentSkipped ?? [], unreadable: bucket.textContentUnreadable ?? [] }, bucket.incomplete);
 }
 
-/** The German sentences for a `more` and a text report — one wording for both tools. */
-export function contentSearchNotices(more: ContentSearchResult['more'], shown: number, total: number, text?: StoredTextReport): string[] {
+/**
+ * A content search whose query variants did not all answer. The wording carries
+ * the phrase clients recognise an outage by („hat nicht (vollständig)
+ * geantwortet“, pinned in `tests/refused-is-not-unreachable.test.ts`).
+ */
+export function contentIncompleteNotice(empty: boolean): string {
+  return empty
+    ? 'Hinweis: Die Inhaltssuche hat nicht (vollständig) geantwortet — „keine Treffer“ ist hier kein Befund. Ein erneuter Aufruf kann sie vervollständigen.'
+    : 'Hinweis: Die Inhaltssuche hat nicht (vollständig) geantwortet — die Liste kann Treffer auslassen. Ein erneuter Aufruf kann sie vervollständigen.';
+}
+
+/** The German sentences for a `more`, an incomplete search and a text report — one wording for both tools. */
+export function contentSearchNotices(
+  more: ContentSearchResult['more'], shown: number, total: number, text?: StoredTextReport, incomplete?: boolean,
+): string[] {
   const lines: string[] = [];
+  if (incomplete) lines.push(contentIncompleteNotice(shown === 0));
   if (more) {
     lines.push(shown === 0
       ? `Auf dieser Seite keine weiteren Treffer — das ist nicht das Ende des Katalogs. Weiter mit skipCount=${more.nextSkipCount}; schon gesehene IDs dabei weiter über excludeNodeIds mitgeben.`

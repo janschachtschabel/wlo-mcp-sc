@@ -152,7 +152,7 @@ export function renderSearchResults(
       : '';
     // "No results" is a statement about the catalogue. Not made over a page that
     // is merely exhausted, nor over a source that did not answer.
-    const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete;
+    const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete || payload?.content?.incomplete;
     const headline = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable'
       : payload?.collections?.restricted ? 'restricted' : 'noResults';
     return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, headline))}</p>${reason}</div>`;

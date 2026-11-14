@@ -470,3 +470,30 @@ test('a caller that hung up stops the work: the call ends as a hang-up, queued r
     assert.equal(mock.searches.length, batchCeiling(), 'only what was already open');
   } finally { repository.open(); mock.restore(); }
 });
+
+// Chatbot team, 2026-11-15: a query with no hit at all answered `count: 0,
+// more: true` and "Es gibt weitere Treffer". The ranked search does not claim
+// the end when one of its variants FAILED (it tells nothing) — the single
+// search therefore also reads an empty window as the end, and this one did not.
+test('no hit at all is the END — never "more", also when one query variant failed', async () => {
+  let calls = 0;
+  const mock = installFetchMock(url => {
+    if (!url.includes('/ngsearch')) return { json: {} };
+    calls += 1;
+    return calls === 1 ? { status: 500, json: {} } : { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } };
+  });
+  try {
+    const answer = await searchContentMany({ queries: [{ id: 'none', query: 'xyzzyqwertz gibtesnicht material' }], maxResults: 3 });
+    assert.ok(calls > 1, 'the premise: several variants, the first of them failed');
+    // Not "there is more" — and not "no hits" either: a variant nobody read may hold them.
+    assert.deepEqual([answer.results['none']!.count, answer.results['none']!.more, answer.results['none']!.incomplete], [0, undefined, true]);
+  } finally { mock.restore(); }
+});
+
+test('no hit at all with EVERY variant answered is the plain end: no more, no incomplete', async () => {
+  const mock = installFetchMock(url => (url.includes('/ngsearch') ? { json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } } : { json: {} }));
+  try {
+    const answer = await searchContentMany({ queries: [{ id: 'none', query: 'xyzzyqwertz gibtesnicht material' }], maxResults: 3 });
+    assert.deepEqual(answer.results['none'], { count: 0, results: [] });
+  } finally { mock.restore(); }
+});

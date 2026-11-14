@@ -5129,3 +5129,29 @@ ohne Fach wird durch ein Fach nicht ausgeschlossen"):
   steht (`Skill: <Titel> (nodeId: …)` in `registry-render.ts`, `find-by-url.ts`, `browse.ts`, `collection-overview.ts`,
   `node-details.ts`) und die Vorschauzeile `Datensatz: „Titel“ (id)`, deren schließendes Anführungszeichen ein Titel
   setzen kann. Das sind Formate, an denen Clients hängen — Entscheidung des Nutzers.
+
+**Antwort des Chatbot-Teams vom 15.11. (§9) — umgesetzt (2026-11-15).**
+Sie bestätigen beide Korrekturen an der Titel-Auflösung (24 Titel mit Fach: 13 aufgelöst, alle im genannten Fach).
+- **Neuer Befund, behoben:** `search_wlo_content_many` meldete bei null Treffern `more: true`. Ursache genauer als von
+  ihnen vermutet: die Rangsuche erklärt das Ende nicht, wenn EINE Abfragevariante fehlschlug; die Einzelsuche las
+  deshalb zusätzlich ein leeres Fenster als Ende, die Mehrfachsuche nicht. Jetzt eine Regel (`windowWasLast`).
+- **Zeilen mit Titel vor der Kennung umgestellt**, nachdem das Team genannt hat, welche Zeilen es wörtlich auswertet
+  (diese nicht): Skill-Registry-Kopf und -Einträge, Baumzeile, `find_content_by_url`, Übersicht, Eltern-Sammlungen.
+  Eine Hilfsfunktion (`quotedTitle`, `text-line.ts`).
+- **Festgeschrieben** (`tests/line-forms.test.ts`): die Formen, an denen der Chatbot hängt. NICHT geändert: die
+  Vorschauzeile `Datensatz: „Titel“ (id)` (daran erkennt ihr Client, dass wir das Ziel schon nennen).
+- **Für das Team:** ihr Rückfall-Muster für Suchantworten („Gesamt:" / „Treffer:" / „Gefunden:") trifft keine unserer
+  Zeilen — sie lautet „Gefundene Treffer gesamt: N, zeige M".
+- **Offen beim Nutzer (aus ihrer Liste):** Termin für das Deploy auf Staging; Versionsnummer; Image-Registry.
+- **Review dazu (0 kritisch, 1 groß, 6 klein, 6 Randnotizen) — behoben.** Der große Befund betraf MEINE Korrektur:
+  ein leeres Fenster mit einer FEHLGESCHLAGENEN Variante galt danach als Ende, also „keine Treffer" über einer
+  Variante, die niemand gelesen hat — so falsch wie vorher „es gibt weitere", nur andersherum (und die Einzelsuche
+  sagte dort schon immer „Keine Inhalte gefunden"). Jetzt meldet die Rangsuche `incomplete`, und das steht auf jeder
+  Oberfläche einer Inhaltssuche: beide Werkzeuge in beiden Formaten, `search_wlo_all`, HTML-Seite, Widget; der Satz
+  trägt die Wendung „hat nicht (vollständig) geantwortet". Ferner: `quotedTitle` ersetzt weitere Anführungszeichen
+  und nimmt unsichtbare Titel als keinen; die „Nicht abrufbar"-Zeile der Skill-Beschreibungen und die Hinweiszeilen
+  im Baum folgen derselben Regel; `nodeIdLine` statt handgebauter Zeile; ein Test, der seit der Umstellung leer
+  grün war (`startsWith('Skill-Registry:')`), prüft wieder etwas; die Wort-für-Wort-Formen sind als CODE
+  festgeschrieben, nicht als Teilstring, den auch ein Kommentar erfüllt.
+  Nicht geändert: `<Titel> (nodeId: …)` in `get_skill_registry`/`get_skill` (daran hängt der Chatbot) und die
+  Auswahl-Nachricht des Such-Widgets (eigene Bereinigung, eigener Vertrag).

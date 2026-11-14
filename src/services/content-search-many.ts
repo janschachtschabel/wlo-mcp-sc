@@ -34,6 +34,7 @@ import { createLimiter } from '../concurrency.js';
 import { cutAtWordBoundary } from '../text-cap.js';
 import { currentRequestSignal, isClientGone, runWithRequestSignal } from '../request-scope.js';
 import { FIELD_OF } from './content-count.js';
+import { windowWasLast } from './content-search.js';
 import { failureFields, type FailureCode } from './failure-code.js';
 
 /**
@@ -159,6 +160,8 @@ export interface ManyQueryResult {
   results: ShortHit[];
   /** The ranked window held more, or was not the last one. Never a total. */
   more?: true;
+  /** A query variant did not answer: the list may lack hits, and an empty one is no finding. */
+  incomplete?: true;
   /** Candidates before and after the exact-licence pass; set when a licence was filtered. */
   licenseFilter?: { checked: number; kept: number };
   /** `distinct`: hits of this query that are shown under another one instead. */
@@ -215,6 +218,8 @@ interface Ranked {
   hits: FormattedNode[];
   score: Map<string, number>;
   exhausted: boolean;
+  /** A query variant did not answer. */
+  incomplete: boolean;
   licenseFilter?: { checked: number; kept: number };
   fuzzyFilters?: string[];
 }
@@ -277,7 +282,8 @@ async function searchOne(q: ManyQuery, resolved: Resolved, license: string | und
     return { ranked: {
       id: q.id, hits, score: scores,
       // Read off the WINDOW, never off a total (`content-search.ts`).
-      exhausted: response.exhausted === true,
+      exhausted: windowWasLast(response),
+      incomplete: response.incomplete === true,
       ...(license ? { licenseFilter: { checked: candidates.length, kept: hits.length } } : {}),
       ...(fuzzy.length ? { fuzzyFilters: fuzzy } : {}),
     } };
@@ -383,6 +389,7 @@ export async function searchContentMany(opts: ManyOptions): Promise<ManyAnswer> 
       count: shown.length,
       results: shown.map(shortHit),
       ...(r.hits.length > shown.length || !r.exhausted ? { more: true as const } : {}),
+      ...(r.incomplete ? { incomplete: true as const } : {}),
       ...(r.licenseFilter ? { licenseFilter: r.licenseFilter } : {}),
       ...(moved.get(r.id) ? { movedToOtherQueries: moved.get(r.id)! } : {}),
       ...(r.fuzzyFilters ? { fuzzyFilters: r.fuzzyFilters } : {}),

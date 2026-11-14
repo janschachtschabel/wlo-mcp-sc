@@ -45,9 +45,9 @@ wie bei den Skills eines Hosts.
 Trägt die Sammlung eine Registry, steht der Katalog direkt am Ergebnis:
 
 ```
-Skill-Registry: Skills für die Sammlung Optik (nodeId: 9d3f…) — 2 freigegebene Skills, alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry
-  Skill: Fragen generieren (nodeId: 12c04f9c-…) — laden mit get_skill
-  Skill: Kompendialtext schreiben (nodeId: ccdcae49-…) — laden mit get_skill
+Skill-Registry (nodeId: 9d3f…) — 2 freigegebene Skills, alle hier gelistet; Beschreibungen und Redaktionshinweise mit get_skill_registry — „Skills für die Sammlung Optik“
+  Skill (nodeId: 12c04f9c-…), laden mit get_skill — „Fragen generieren“
+  Skill (nodeId: ccdcae49-…), laden mit get_skill — „Kompendialtext schreiben“
   Das ist nur die Übersicht — die Anleitungen selbst stehen nicht darin. Die Anleitung (SKILL.md) lädt `get_skill` mit der nodeId des gewünschten Skills, nicht mit der einer Registry oder Sammlung.
 ```
 
@@ -122,7 +122,7 @@ Ein Katalog darf **12 Zeilen** je Sammlung belegen, unabhängig davon, wie groß
 die Registry ist. Passt er nicht mehr hinein, wechselt er die Form:
 
 ```
-Skill-Registry: Skillkatalog Physik Optik (nodeId: d84d…) — 28 freigegebene Skills in 7 Kontexten, Skills und Anleitung je Kontext mit get_skill_registry und context:"<Name>"
+Skill-Registry (nodeId: d84d…) — 28 freigegebene Skills in 7 Kontexten, Skills und Anleitung je Kontext mit get_skill_registry und context:"<Name>" — „Skillkatalog Physik Optik“
   Kontexte: Vorgabe & Planung (5) · Diagnostik & Bewertung (4) · Material (4) · Kommunikation & Organisation (5)
   Kontexte: Erschließen & Beschreiben (4) · Kontext & Zugang (3) · Fragen & Qualität (3)
 ```

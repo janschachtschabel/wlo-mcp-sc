@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { buildRenderUrl } from '../wlo-api.js';
 import { NOT_EXTRACTED_NOTE } from '../services/content-text.js';
 import {
-  nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines, renderToText, type FormattedNode } from '../formatter.js';
+  nodeIdLine, NOT_PUBLIC_LINE, oneLine, registrySummaryLines, renderToText, type FormattedNode, quotedTitle } from '../formatter.js';
 import { codeOfStatus, loadNodeDetails, loadSingleNodeDetail, TEXT_ENRICH_MAX } from '../services/node-details.js';
 import { accessInfo, accessInfoLines } from '../node-access.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
@@ -278,7 +278,7 @@ Liefert dieselben Felder wie die Suchwerkzeuge, als lesbare Labels. Optional: te
           } else if (parents.length > 0) {
             lines.push('', `### Eltern-Sammlungen (${parents.length})`);
             for (const p of parents) {
-              lines.push(`- ${p.title || p.nodeId || '?'} (nodeId: ${p.nodeId || '?'})`);
+              lines.push(oneLine(`- ${nodeIdLine(p.nodeId || '?')} — ${quotedTitle(p.title)}`));
             }
           } else {
             lines.push('', 'Keine Eltern-Sammlungen gefunden.');

@@ -8,7 +8,7 @@
  */
 
 import type { FormattedNode } from './formatter.js';
-import { oneLine } from './text-line.js';
+import { oneLine, quotedTitle } from './text-line.js';
 
 /**
  * What a skill catalogue is NOT: the instructions.
@@ -187,12 +187,14 @@ export function registrySummaryLines(
     ? ''
     : ` in ${contexts.length} ${contexts.length === 1 ? 'Kontext' : 'Kontexten'}`;
   const lines = [
-    `Skill-Registry: ${r.title || '(ohne Titel)'} (nodeId: ${r.nodeId}) — `
-    + `${declared} freigegebene Skills${outline}, ${reach}`,
+    // The id first and the title last, quoted (`quotedTitle`): a registry is a
+    // record anybody with write access names.
+    `Skill-Registry (nodeId: ${r.nodeId}) — ${declared} freigegebene Skills${outline}, ${reach}`
+    + ` — ${quotedTitle(r.title)}`,
   ];
 
   const entryLine = (e: { nodeId: string; title: string }, indent: string) =>
-    `${indent}Skill: ${e.title} (nodeId: ${e.nodeId}) — laden mit get_skill`;
+    `${indent}Skill (nodeId: ${e.nodeId}), laden mit get_skill — ${quotedTitle(e.title)}`;
 
   if (form === 'index') {
     for (const line of packed) lines.push(`  Kontexte: ${line}`);

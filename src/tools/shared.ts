@@ -10,7 +10,7 @@
  */
 
 import { isClientGone } from '../request-scope.js';
-import { oneLine, registrySummaryLines } from '../formatter.js';
+import { oneLine, registrySummaryLines, quotedTitle, nodeIdLine } from '../formatter.js';
 import { ensureRegistryFor } from '../services/skill-registry-cache.js';
 import {
   contextInstructions, describeEntries, loadSkillRegistry, narrowRegistry, toRegistrySummary,
@@ -85,7 +85,8 @@ async function skillDescriptionLines(
     // „nicht abrufbar“ about three of ten says nothing about the other seven, and
     // a reader who is not told the bound will read it as a complete verdict.
     lines.push(oneLine(`Nicht abrufbar (geprüft für die ersten ${head.length}): `
-      + unreadable.map(e => `${oneLine(e.title)} (nodeId: ${e.nodeId})`).join(' · ')));
+      // The id first, the title last and quoted — as on every line that names a record.
+      + unreadable.map(e => `${nodeIdLine(e.nodeId)} ${quotedTitle(e.title)}`).join(' · ')));
   }
   return { lines, described: described.length > 0 };
 }

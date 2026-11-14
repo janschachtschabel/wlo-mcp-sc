@@ -6,6 +6,37 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — chatbot team's answer of 2026-11-15
+
+- **`search_wlo_content_many` no longer says "more" over no hit at all** — and a search whose query variants did
+  not all answer now says THAT. A query without any hit answered `count: 0, more: true` and "Es gibt weitere
+  Treffer". Cause: the ranked search runs several variants of a query, tolerates one that fails, and then does not
+  claim the end. Now an empty window is the end (`windowWasLast`, one rule for the single and the many search), and
+  a failed variant is reported as `incomplete: true` with the sentence "Die Inhaltssuche hat nicht (vollständig)
+  geantwortet …" — on `search_wlo_content`, the content bucket of `search_wlo_all`, each query of
+  `search_wlo_content_many`, the HTML page and the search widget. Neither "no hits" nor "there is more" was a
+  finding over a variant nobody read; the single search had said "Keine Inhalte gefunden" there all along.
+
+### Changed — lines that name a record put the title last (2026-11-15)
+
+After the chatbot team named the lines it reads word for word — these are not among them, and it asked for the
+change. Ahead of the id a title could spell out an id of its own; now everything the server knows comes first and
+the title last, in quotes whose marks the title cannot contain (`quotedTitle`). The data fields keep the title.
+
+| Where | Before | Now |
+|---|---|---|
+| catalogue on a collection | `Skill-Registry: <Titel> (nodeId: <id>) — …` | `Skill-Registry (nodeId: <id>) — … — „<Titel>“` |
+| its entries | `Skill: <Titel> (nodeId: <id>) — laden mit get_skill` | `Skill (nodeId: <id>), laden mit get_skill — „<Titel>“` |
+| `browse_collection_tree` | `- **<Titel>** (<id>) [n Inhalte]` | `- nodeId: <id> [n Inhalte] — „<Titel>“` |
+| `find_content_by_url` | `- [match] <Titel> — nodeId: <id> — <Adresse>` | `- [match] nodeId: <id> — „<Titel>“ — <Adresse>` |
+| `get_collection_overview` | `<Titel> (<n>) — <id>`, `<Titel> (<id>)` | `<id> (<n>) „<Titel>“`, `<id> „<Titel>“` |
+| `get_node_details`, parents | `- <Titel> (nodeId: <id>)` | `- nodeId: <id> — „<Titel>“` |
+
+Unchanged, because the chatbot reads them word for word (pinned in `tests/line-forms.test.ts`): the entries of
+`get_skill_registry` (`### <Titel>` / `nodeId:`), `get_skill`, `lookup_wlo_vocabulary`, the write previews
+(`Datensatz: „Titel“ (id)`, `confirmToken:`), the outage and refusal wordings, and the markers of
+`get_collection_overview`.
+
 ### Changed — collection by title, after the chatbot team's measurement (2026-11-14/15)
 
 Measured by them on 24 titles (13 resolved with a subject, 10 without; every resolution was the right one). Two

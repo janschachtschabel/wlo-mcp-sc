@@ -131,7 +131,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         // Optional inline full text — opt-in, so a plain search pays zero extra
         // round-trips. Bounded, and what was not read is named (P-5).
         const textReport = params.includeTextContent ? await enrichStoredText(formatted) : undefined;
-        const searchNotices = contentSearchNotices(found.more, formatted.length, total, textReport);
+        const searchNotices = contentSearchNotices(found.more, formatted.length, total, textReport, found.incomplete);
 
         const isJson = (params.outputFormat ?? 'markdown') === 'json';
         // In markdown the notice goes INTO block 0: a measured real client
@@ -143,8 +143,8 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         // "Keine Inhalte gefunden." is a statement about the CATALOGUE. Over a page
         // that is merely exhausted (`more`) it told the chatbot the catalogue was.
         let text = isJson
-          ? renderToJson(formatted, total)
-          : (renderToText(formatted, total) || (found.more ? '' : 'Keine Inhalte gefunden.'));
+          ? renderToJson(formatted, total, { incomplete: found.incomplete })
+          : (renderToText(formatted, total) || (found.more || found.incomplete ? '' : 'Keine Inhalte gefunden.'));
         if (!isJson && derivedNotice) text += `\n\n${derivedNotice}`;
         // Markdown: into block 0, for the same reason as the derived-type notice.
         if (!isJson && searchNotices.length) text = [text, ...searchNotices].filter(Boolean).join('\n\n');
@@ -184,6 +184,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
             count: formatted.length,
             results: formatted,
             ...(found.more ? { more: found.more } : {}),
+            ...(found.incomplete ? { incomplete: true as const } : {}),
             ...(textReport?.skipped.length ? { textContentSkipped: textReport.skipped } : {}),
             ...(textReport?.unreadable.length ? { textContentUnreadable: textReport.unreadable } : {}),
             ...(derivedType ? { derivedResourceType: derivedType } : {}),
@@ -417,7 +418,7 @@ Filter nehmen deutsche Labels oder URIs. Nur content.total ist eine echte Treffe
         if (want.has('content'))     { md.push(`# Inhalte (${envelope.content.count})`);
           // "Keine Inhalte gefunden." is a statement about the catalogue — not
           // said over a page that is merely exhausted (`more`).
-          const listed = renderToText(envelope.content.results, envelope.content.total, noHint) || (envelope.content.more ? '' : 'Keine Inhalte gefunden.');
+          const listed = renderToText(envelope.content.results, envelope.content.total, noHint) || (envelope.content.more || envelope.content.incomplete ? '' : 'Keine Inhalte gefunden.');
           if (listed) md.push(listed);
           // Into block 0, right under the list it explains — the trailing
           // blocks never reach at least one measured client (2026-08-19).

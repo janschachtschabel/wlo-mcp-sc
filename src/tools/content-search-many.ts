@@ -13,6 +13,7 @@ import {
   inputProblem, searchContentMany, type ManyAnswer, type ManyQueryResult,
 } from '../services/content-search-many.js';
 import { codedErrorResult, toolError } from './shared.js';
+import { contentIncompleteNotice } from '../services/content-search.js';
 
 const MAX_QUERIES = 8;
 const MAX_RESULTS = 5;
@@ -46,6 +47,7 @@ export const searchManySchema = z.object({
     count: z.number(),
     results: z.array(hitSchema),
     more: z.literal(true).optional(),
+    incomplete: z.literal(true).optional(),
     licenseFilter: z.object({ checked: z.number(), kept: z.number() }).optional(),
     movedToOtherQueries: z.number().optional(),
     fuzzyFilters: z.array(z.string()).optional(),
@@ -67,7 +69,11 @@ function notes(r: ManyQueryResult): string[] {
   }
   if (r.movedToOtherQueries) lines.push(`${r.movedToOtherQueries} Treffer stehen bei einer anderen Anfrage, zu der sie besser passen.`);
   if (r.fuzzyFilters) lines.push(`Filter geraten: ${r.fuzzyFilters.join(', ')}.`);
-  if (r.more) lines.push('Es gibt weitere Treffer — search_wlo_content liefert mehr und blättert.');
+  if (r.incomplete) lines.push(contentIncompleteNotice(r.count === 0));
+  // `more` says the window was not known to be the last — over an empty list that is a possibility, not a promise.
+  if (r.more) lines.push(r.count === 0
+    ? 'Weitere Treffer möglich — search_wlo_content liefert mehr und blättert.'
+    : 'Es gibt weitere Treffer — search_wlo_content liefert mehr und blättert.');
   return lines;
 }
 
@@ -83,7 +89,7 @@ function renderMarkdown(answer: ManyAnswer, queryOf: Map<string, string>): strin
     ].filter(Boolean).map((line, j) => (j === 0 ? line : `   ${line}`)));
     // "keine Treffer" is a statement about the catalogue — over a window that
     // was not the last one it is only a statement about what was looked at.
-    const empty = r.count > 0 ? [] : [r.more ? 'keine Treffer im geprüften Ausschnitt' : 'keine Treffer'];
+    const empty = r.count > 0 ? [] : [r.more || r.incomplete ? 'keine Treffer im geprüften Ausschnitt' : 'keine Treffer'];
     // Every line carries repository values: one line each, or a title forges a record.
     return [head, ...hits.flat(), ...empty, ...notes(r)].map(oneLine).join('\n');
   });

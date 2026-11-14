@@ -10,7 +10,7 @@ import { oneLine, nodeIdLine } from './text-line.js';
 import { registryLines, registryHintFor } from './registry-render.js';
 
 // Moved out on 2026-11-05 and re-exported so every importer keeps its path.
-export { oneLine, nodeIdLine } from './text-line.js';
+export { oneLine, quotedTitle, nodeIdLine } from './text-line.js';
 export { DESCRIPTIONS_ONLY_NOTE, REGISTRY_INLINE_MAX, registrySummaryLines, registryHintFor } from './registry-render.js';
 
 export interface FormattedNode {

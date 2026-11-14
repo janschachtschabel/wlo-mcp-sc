@@ -74,6 +74,12 @@ export interface SearchResponse {
    */
   exhausted?: boolean;
   /**
+   * A ranked search whose query VARIANTS did not all answer: the window is what
+   * the others returned. Neither "no hits" nor "there is more" is a finding
+   * over it (review 2026-11-15).
+   */
+  incomplete?: boolean;
+  /**
    * Facet aggregation buckets, only present when `ngsearch` was called with
    * `facets`. Values are property URIs with their document counts (no
    * server-side labels — resolve via `resolveFacetCounts`).
