@@ -332,13 +332,36 @@ wurde („Arbeitsblat" → Arbeitsblatt), trägt in `_queryMeta.criteria` das Fe
 **Sammlung per Titel statt nodeId (`collection`).** `get_collection_overview`,
 `get_collection_contents`, `search_wlo_within_collection`, `browse_collection_tree`
 und `get_compendium_text` nehmen statt der id den Titel der Sammlung. Genommen wird
-nur **genau eine** Sammlung mit gleichem Titel (Groß-/Kleinschreibung, ä/ae, ß/ss,
-Leerzeichen und Bindestriche egal) — nie ein Präfix oder Teilwort. Die Antwort beginnt
-dann mit `Sammlung: Titel (unter Pfad) — nodeId` und trägt
-`resolvedCollection {nodeId, title, path?}`. Sonst läuft das Werkzeug **nicht**: Fehler
-`ambiguous_collection` mit `error.reason` (`several` = mehrere gleiche Titel, `none` = kein gleicher Titel, `unverified` = einer gefunden, aber nicht gesichert) und `error.candidates` (bis zu fünf: `nodeId`, `title`, `path?`,
-`contentsCount?`), bei nicht erreichbarem Suchindex zusätzlich `error.incomplete: true`
-(dann ist „kein gleicher Titel“ kein Befund). `discipline` (bei
+nur **genau eine** Sammlung mit gleichem Titel — nie ein Präfix oder Teilwort.
+Groß-/Kleinschreibung ist egal, Leerzeichen und Bindestrich gelten als derselbe Trenner;
+ä/ae, ß/ss und ein fehlender Trenner zählen nur, wenn sonst nichts passt
+(`resolvedCollection.matched: "loose"`, und die Antwort sagt es). Findet die Suche zu
+einer Schreibweise ohne Umlaute nichts Gleiches, sucht sie einmal mit Umlauten nach
+(„Saeuren und Basen“ → „Säuren und Basen“). Die Antwort beginnt dann mit
+`Sammlung: <nodeId> · unter <Pfad> — „<Titel>“` — Kennung zuerst, Titel zuletzt und in
+Anführungszeichen, damit ein Titel weder Kennung noch Pfad vortäuschen kann — und trägt
+`resolvedCollection {nodeId, title, path?, matched?, alsoFound?, alsoFoundTotal?}`.
+Sonst läuft das Werkzeug **nicht**: Fehler `ambiguous_collection` mit `error.reason`
+und `error.candidates` (bis zu fünf: `nodeId`, `title`, `path?`, `contentsCount?`,
+`disciplineUnknown?`):
+
+| `reason` | Bedeutung | Erneut versuchen hilft |
+|---|---|---|
+| `several` | mehrere Sammlungen tragen den Titel | nein — auswählen |
+| `none` | keine trägt genau den Titel | nur bei `incomplete: true` |
+| `unverified` | genau eine gefunden, aber nicht übernommen | bei `incomplete: true` ja; bei `disciplineUnverified: true` **nein** |
+
+`incomplete: true` heißt: ein Suchindex hat nicht geantwortet oder ein Suchfenster war
+voll (`windowFull: true`) — dann ist „kein gleicher Titel“ kein Befund.
+`disciplineUnverified: true` heißt: ein Fach war verlangt, und die eine gefundene
+Sammlung trägt keine Fachangabe. Im JSON-Modus ist `error.message` der Satz ohne die
+Kandidatenzeilen (sie stehen in `candidates` und im Textblock).
+
+**Mit Fach** (`discipline`): Trägt genau eine gleichnamige Sammlung das Fach, wird sie
+genommen; gleichnamige ohne Fachangabe stehen dann in `resolvedCollection.alsoFound`
+(höchstens fünf, `alsoFoundTotal` nennt die Zahl, wenn es mehr sind) und im Text unter
+„Auch gefunden, Fach unbekannt“. Trägt keine das Fach, wird eine ohne Fachangabe
+**nicht** genommen. `discipline` (bei
 `search_wlo_within_collection`: `collectionDiscipline`) unterscheidet Gleichnamige nach
 Fach; ein nicht erkanntes Fach grenzt nichts ein und steht als `unresolvedDiscipline`
 in der Antwort. Eine angegebene nodeId gewinnt immer — der Titel wird dann nicht

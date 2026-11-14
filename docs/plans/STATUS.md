@@ -5103,3 +5103,29 @@ Sie haben die Arbeitskopie gelesen (Stand `8cbc051`), der Chatbot verträgt die 
   Block. Nicht geändert: der Code `not_found` an `find_content_by_url` (vom Team so erbeten) — die Antwort ans Team
   sagt jetzt ausdrücklich, dass er dort NICHT „kein Datensatz" heißt. Die Wendung „mit dieser Anmeldung nicht
   lesbar" ist per Test festgeschrieben (Bitte des Teams, §7 ihrer Antwort).
+
+**GitHub konsolidiert (2026-11-15).** `main` ist der einzige Zweig, keine offenen PRs. Zusammengeführt: `actions/checkout`
+7.0.1, `actions/setup-node` 7.1.0 (von Hand, der Zweig hatte nach dem ersten Merge einen Konflikt), vier kleine
+Entwicklungs-Updates (esbuild, globals, tsx, typescript-eslint). Geschlossen: Node 25 im Image, TypeScript 7 /
+`@types/node` 26 (CI rot). `.github/dependabot.yml` nimmt Hauptversionen von `typescript`, `@types/node` und des
+Node-Images seither aus. Der Hilfsklon für die Pushes liegt jetzt unter `<scratchpad>/sc-remote2`.
+
+**Sammlung per Titel: Messung des Chatbot-Teams, zwei Befunde, behoben (2026-11-15).**
+Ihre Messung an 24 Titeln: 13 mit Fach, 10 ohne aufgelöst, alle richtig. Beide Befunde aus EINER Regel („ein Treffer
+ohne Fach wird durch ein Fach nicht ausgeschlossen"):
+- Trägt genau EINE gleichnamige das verlangte Fach → sie wird genommen, die ohne Fachangabe stehen in `alsoFound`.
+- Trägt KEINE das Fach → eine ohne Fachangabe wird nicht mehr genommen (`unverified` + `disciplineUnverified`).
+- Dazu: Nachsuche mit Umlauten, `error.message` im JSON ohne Kandidatenzeilen, Zeilen mit Kennung zuerst und Titel
+  zuletzt in Anführungszeichen, `oneLine` ersetzt auch U+0085/U+2028/U+2029, Satz an `find_content_by_url`.
+- **Live gegen Staging bestätigt** (anonym, lesend): „Klimawandel" + Geografie → nicht genommen; „Mechanik" + Physik →
+  genommen, Community-Sammlung genannt; „Saeuren und Basen" + Chemie → „Säuren und Basen", lose, gesagt.
+- **Review (1 groß, 7 klein, 1 Randnotiz) behoben:** die Umlaut-Nachsuche vergaß ein volles Fenster der ERSTEN Suche
+  und nahm so einen losen Treffer als einzigen; eine nicht beantwortete Nachsuche wird gesagt; `ue` nach q/a/e wird
+  nicht umgeschrieben und Großschreibung bleibt; Pfad und Zahl stehen VOR dem Titel, dessen Anführungszeichen ersetzt
+  werden; `alsoFoundTotal`; der Satz bei mehreren empfiehlt das Fach nicht mehr, wenn es schon genannt war.
+  Mein eigener Fehler dabei: beim Umschreiben der Testdatei fünf bestehende Tests überschrieben — vom Lint gemeldet
+  (ungenutzte Importe), aus dem gepushten Stand wiederhergestellt, Namensvergleich alt/neu gemacht.
+- **Offen, als Beobachtung des Reviews gemeldet, NICHT geändert:** andere Zeilen, in denen ein Titel vor der Kennung
+  steht (`Skill: <Titel> (nodeId: …)` in `registry-render.ts`, `find-by-url.ts`, `browse.ts`, `collection-overview.ts`,
+  `node-details.ts`) und die Vorschauzeile `Datensatz: „Titel“ (id)`, deren schließendes Anführungszeichen ein Titel
+  setzen kann. Das sind Formate, an denen Clients hängen — Entscheidung des Nutzers.

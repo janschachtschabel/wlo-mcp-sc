@@ -26,7 +26,8 @@ export const collectionNameParam = z.string().max(200).optional().describe(
   + 'Leerzeichen und Bindestrich gelten als derselbe Trenner; ä/ae, ß/ss und ein fehlender Trenner nur, wenn sonst '
   + 'nichts passt — das wird dann gesagt) — es wird nie geraten. Trägt keine oder mehr als eine Sammlung diesen '
   + 'Titel, oder konnte die Suche das nicht sicher feststellen, kommen statt eines Ergebnisses bis zu fünf '
-  + 'Kandidaten mit Pfad (Fehlercode ambiguous_collection). Wird ignoriert, sobald eine nodeId angegeben ist.');
+  + 'Kandidaten mit Pfad (Fehlercode ambiguous_collection, error.reason several|none|unverified). Wird ignoriert, '
+  + 'sobald eine nodeId angegeben ist.');
 
 /**
  * The subject that tells namesakes apart. `discipline` where that name is free;
@@ -35,27 +36,54 @@ export const collectionNameParam = z.string().max(200).optional().describe(
  */
 export const collectionDisciplineParam = (ownName: 'discipline' | 'collectionDiscipline') => z.string().max(200).optional().describe(
   'Nur zusammen mit `collection`: Fach der gesuchten Sammlung (Label oder URI, z. B. "Physik"), um '
-  + 'gleichnamige Sammlungen zu unterscheiden. Ein nicht erkanntes Fach grenzt nichts ein und wird in der Antwort genannt.'
+  + 'gleichnamige Sammlungen zu unterscheiden. Trägt genau eine gleichnamige dieses Fach, wird sie genommen (die ohne '
+  + 'Fachangabe nennt die Antwort); trägt keine es, wird eine ohne Fachangabe NICHT genommen. Ein nicht erkanntes Fach '
+  + 'grenzt nichts ein und wird in der Antwort genannt.'
   + (ownName === 'collectionDiscipline' ? ' NICHT der Inhaltsfilter `discipline`.' : ''));
 
 type Note = Extract<CollectionByName, { ok: true }>;
 type Miss = Extract<CollectionByName, { ok: false }>;
 
-const under = (path: string[] | undefined): string => (path?.length ? ` (unter ${path.join(' › ')})` : '');
 
 const disciplineHint = (r: CollectionByName, param: string): string => (r.unresolvedDiscipline
   ? formatUnresolvedHint([{ field: param, ...r.unresolvedDiscipline }]) : '');
+
+/**
+ * One collection on one line: everything the SERVER knows first — id, count,
+ * subject note — then the path, and the title LAST, quoted. Title and path are
+ * repository-supplied: ahead of the rest a title spelled out a path, a count
+ * and an id of its own, and a collection called `Mechanik“ (unter Physik) · 305
+ * Inhalte · „` read as the subject's own (chatbot team and review, 2026-11-14).
+ * Their quote marks are replaced so neither can close the quotes it stands in;
+ * the DATA (`candidates`, `resolvedCollection`) keeps the title as it is.
+ */
+const unquoted = (value: string): string => value.replace(/[„“”"«»]/g, '\'');
+const under = (path: string[] | undefined): string => (path?.length ? ` · unter ${path.map(unquoted).join(' › ')}` : '');
+const titled = (c: { nodeId: string; title: string }): string => ` — „${unquoted(c.title || c.nodeId)}“`;
+
+function candidateLine(c: CollectionCandidate): string {
+  const count = c.contentsCount === undefined ? '' : ` · ${c.contentsCount} Inhalte`;
+  const subject = c.disciplineUnknown ? ' · Fach unbekannt' : '';
+  return oneLine(`- ${nodeIdLine(c.nodeId)}${count}${subject}${under(c.path)}${titled(c)}`);
+}
 
 /** Which collection the name was taken for — the first thing the answer says. */
 function resolvedLines(note: Note, param: string): string {
   const c = note.collection;
   return [
-    oneLine(`Sammlung: ${c.title || c.nodeId}${under(c.path)} — ${c.nodeId}`),
+    oneLine(`Sammlung: ${c.nodeId}${under(c.path)}${titled(c)}`),
     // A loose match is a different word often enough that the reader must know.
     c.matched === 'loose' ? LOOSE_MATCH_NOTE : '',
+    // Taken for its subject; the namesakes that carry none are not hidden.
+    ...(c.alsoFound?.length ? [
+      c.alsoFoundTotal ? `${ALSO_FOUND_NOTE.slice(0, -1)} — ${c.alsoFound.length} von ${c.alsoFoundTotal}:` : ALSO_FOUND_NOTE,
+      ...c.alsoFound.map(candidateLine),
+    ] : []),
     disciplineHint(note, param),
   ].filter(Boolean).join('\n');
 }
+
+const ALSO_FOUND_NOTE = 'Auch gefunden, Fach unbekannt (nicht gewählt — die Sammlung oben trägt das genannte Fach):';
 
 const LOOSE_MATCH_NOTE = 'Der Titel stimmt nur in abweichender Schreibweise überein (ä/ae, ß/ss oder Trenner) — bitte prüfen, ob diese Sammlung gemeint ist.';
 
@@ -66,42 +94,46 @@ function resolvedField(note: Note): ResolvedCollection & { unresolvedDiscipline?
   return { ...note.collection, ...(note.unresolvedDiscipline ? { unresolvedDiscipline: note.unresolvedDiscipline } : {}) };
 }
 
-function candidateLine(c: CollectionCandidate): string {
-  const count = c.contentsCount === undefined ? '' : ` · ${c.contentsCount} Inhalte`;
-  const subject = c.disciplineUnknown ? ' · Fach unbekannt' : '';
-  return oneLine(`- ${c.title || c.nodeId}${under(c.path)} — ${nodeIdLine(c.nodeId)}${count}${subject}`);
-}
-
 /** The refusal: the tool did NOT run, and here is what to choose from. */
-function ambiguousResult(name: string, miss: Miss, param: string, json: boolean): WloToolResult {
+function ambiguousResult(name: string, miss: Miss, param: string, json: boolean, subjectGiven: boolean): WloToolResult {
   const asked = oneLine(name.trim());
   const head = miss.reason === 'several'
-    ? `Mehrere Sammlungen tragen den Titel „${asked}“ — es wurde keine ausgewählt. Bitte eine per nodeId angeben oder mit \`${param}\` eingrenzen:`
+    // The narrowing parameter is offered only where it was not used already.
+    ? `Mehrere Sammlungen tragen den Titel „${asked}“ — es wurde keine ausgewählt. Bitte eine per nodeId angeben${subjectGiven ? '' : ` oder mit \`${param}\` eingrenzen`}:`
+    : miss.disciplineUnverified
+      // Found, and not taken for another reason: it carries no subject at all.
+      ? `Eine Sammlung mit dem Titel „${asked}“ wurde gefunden, trägt aber keine Fachangabe — ob sie zum genannten Fach gehört, ließ sich nicht prüfen, und sie wurde nicht übernommen. Bitte die nodeId angeben:`
     : miss.reason === 'unverified'
       // Found, and deliberately not taken: "the only one" is not a finding of a search that did not see everything.
       ? `Eine Sammlung mit dem Titel „${asked}“ wurde gefunden, aber nicht übernommen — die Suche war unvollständig, es kann weitere gleichnamige geben. Bitte die nodeId angeben:`
       : miss.candidates.length
       ? `Keine Sammlung trägt genau den Titel „${asked}“ — es wurde nicht geraten. Die nächsten Treffer der Sammlungssuche, bitte eine per nodeId angeben:`
       : `Keine Sammlung trägt genau den Titel „${asked}“, und die Sammlungssuche fand auch nichts Ähnliches.`;
-  const text = [
-    head,
-    ...miss.candidates.map(candidateLine),
+  const notices = [
     // Not "no such collection" over an index that did not answer.
     ...(miss.unreachable ? [incompleteNotice('Sammlungen', miss.candidates.length === 0)] : []),
     ...(miss.windowFull ? [WINDOW_FULL_NOTICE] : []),
     disciplineHint(miss, param),
-  ].filter(Boolean).join('\n');
+  ];
+  const text = [head, ...miss.candidates.map(candidateLine), ...notices].filter(Boolean).join('\n');
   const result = codedErrorResult('ambiguous_collection', text, {
     // Which of the three cases the one code stands for — the value the sentence
     // above was chosen by, so a program need not read the wording.
     reason: miss.reason,
     candidates: miss.candidates,
+    ...(miss.disciplineUnverified ? { disciplineUnverified: true } : {}),
     ...(miss.incomplete ? { incomplete: true } : {}),
     ...(miss.windowFull ? { windowFull: true } : {}),
     ...(miss.unresolvedDiscipline ? { unresolvedDiscipline: miss.unresolvedDiscipline } : {}),
   });
-  // JSON mode keeps a parseable first block, like every other answer there.
-  if (json) result.content.unshift({ type: 'text' as const, text: JSON.stringify(result.structuredContent) });
+  // JSON mode keeps a parseable first block, like every other answer there —
+  // and there `message` is the sentence WITHOUT the candidate lines: they are
+  // in `candidates` and in the text block already, and a third copy inside the
+  // JSON cost about 3.4 kB per refusal (chatbot team, measured 2026-11-14).
+  if (json) {
+    result.structuredContent.error['message'] = [head, ...notices].filter(Boolean).join('\n');
+    result.content.unshift({ type: 'text' as const, text: JSON.stringify(result.structuredContent) });
+  }
   return result;
 }
 
@@ -169,13 +201,18 @@ export function withCollectionByName(
     }
     const json = params.outputFormat === 'json';
     let resolution: CollectionByName;
+    const subject: unknown = params[opts.disciplineParam] ?? opts.disciplineFallback?.(params);
     try {
-      resolution = await resolveCollectionByName(name, params[opts.disciplineParam] ?? opts.disciplineFallback?.(params));
+      resolution = await resolveCollectionByName(name, typeof subject === 'string' ? subject : undefined);
     } catch (err) {
       // The handler's own catch is not around this read; same shape, though.
       return toolError('Fehler beim Auflösen der Sammlung', err);
     }
-    if (!resolution.ok) return ambiguousResult(name, resolution, opts.disciplineParam, json);
+    if (!resolution.ok) {
+      // "Given" means it narrowed: an unresolved subject narrowed nothing.
+      const subjectGiven = typeof subject === 'string' && subject.trim() !== '' && !resolution.unresolvedDiscipline;
+      return ambiguousResult(name, resolution, opts.disciplineParam, json, subjectGiven);
+    }
     const result = await handler({ ...params, [opts.idParam]: resolution.collection.nodeId }, extra);
     return withResolved(result, resolution, opts.disciplineParam, json);
   };

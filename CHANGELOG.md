@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — collection by title, after the chatbot team's measurement (2026-11-14/15)
+
+Measured by them on 24 titles (13 resolved with a subject, 10 without; every resolution was the right one). Two
+findings from one rule — "a hit that carries no subject is not excluded by one":
+
+- **A subject asked for now decides.** Exactly one namesake carries it: that one is taken, and the namesakes
+  without a subject are named (`resolvedCollection.alsoFound`, at most five, `alsoFoundTotal` when cut; in the text
+  "Auch gefunden, Fach unbekannt"). A community's empty "Mechanik" used to refuse the subject's own collection.
+  None carries it: a namesake without a subject is NOT taken any more — `reason: "unverified"` with
+  `disciplineUnverified: true` and its own sentence. "Klimawandel" + "Geografie" used to answer with a community's
+  collection once its namesakes of other subjects had fallen away. Without a subject nothing changed.
+- **A title spelled without umlauts is searched once more with them** when nothing equal was found ("Saeuren und
+  Basen" → "Säuren und Basen"); the match stays a loose one and is said. A full window of the first search still
+  refuses.
+- **The lines changed shape:** `- nodeId: <id> · <n> Inhalte · Fach unbekannt · unter <Pfad> — „<Titel>“` and
+  `Sammlung: <id> · unter <Pfad> — „<Titel>“`. Everything the server knows comes first and the title last, with its
+  quote marks replaced: ahead of path and id a title could spell out both. The data fields keep the title as it is.
+- **`oneLine` also replaces U+0085, U+2028 and U+2029** — in every line-oriented answer of this server.
+- **JSON mode: `error.message` of `ambiguous_collection` no longer repeats the candidate lines** (about 3.4 kB per
+  refusal, measured by them); `candidates` and the text block are unchanged.
+- The `several` sentence no longer recommends the narrowing parameter where it was already used.
+- `find_content_by_url`'s description says that an entry with `error` — `not_found` too — leaves the check open.
+
 ### Fixed — chatbot team's answer of 2026-11-14
 
 - **A branch the repository refuses to open is SAID — it was silently an empty one.** Since 2026-11-13 a

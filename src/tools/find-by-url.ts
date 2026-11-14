@@ -101,6 +101,7 @@ export function registerFindByUrlTool(server: McpServer): void {
     description: `Prüfe für bis zu ${MAX_URLS} Web-Adressen, ob es in WLO schon einen Datensatz dazu gibt (Feld ccm:wwwurl) — vor dem Erschließen oder Anlegen einer Seite.
 Je Treffer "match": "exact" = dieselbe Adresse (bis auf Groß-/Kleinschreibung) — als Dublette behandeln; "normalized" = gleich erst nach Bereinigung (Schrägstrich am Ende, Fragment, utm_*/fbclid/gclid entfernt) — nachfragen, nicht still als Dublette werten. Kein Volltext-Vergleich: eine andere Seite derselben Domain ist kein Treffer. Es erscheint nur, was die anfragende Anmeldung lesen darf. Fehler stehen je Eintrag ("invalid_url", "upstream_busy", "not_found", "upstream_error"), nicht für den ganzen Aufruf.
 includeCollections=true zählt je Treffer die Sammlungen (kostet je Treffer zwei Abrufe).
+Ein Eintrag mit "error" — auch "not_found" — lässt die Prüfung OFFEN; nur "matches": [] ohne "error" heißt: kein Datensatz.
 Nicht für die thematische Suche — dafür search_wlo_content.`,
     inputSchema: {
       urls: z.array(z.string().max(2000)).min(1).max(MAX_URLS).describe('Die zu prüfenden Adressen (http/https).'),

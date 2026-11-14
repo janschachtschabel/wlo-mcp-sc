@@ -24,7 +24,10 @@
  * therefore need the same protection — one implementation, not four.
  */
 export function oneLine(value: string): string {
-  return value.replace(/\s*[\r\n]+\s*/g, ' ');
+  // NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR too: many readers break a line
+  // there, and a title carrying one forged the next line just the same
+  // (chatbot team, 2026-11-14).
+  return value.replace(/\s*[\r\n\u0085\u2028\u2029]+\s*/g, ' ');
 }
 
 /**

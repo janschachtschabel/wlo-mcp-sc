@@ -53,9 +53,20 @@ export interface ResolvedCollection {
   path?: string[];
   /** Present when the title matched only by the loose rule (`looseCollectionTitle`) — the caller is told. */
   matched?: 'loose';
+  /**
+   * Namesakes that carry NO subject, beside the one taken because it carries
+   * the subject asked for. They could be neither excluded nor confirmed — the
+   * caller is told they exist (chatbot team, 2026-11-14). At most
+   * `CANDIDATES_MAX`; `alsoFoundTotal` says how many there are when that cut.
+   */
+  alsoFound?: CollectionCandidate[];
+  alsoFoundTotal?: number;
 }
 
-export interface CollectionCandidate extends ResolvedCollection {
+export interface CollectionCandidate {
+  nodeId: string;
+  title: string;
+  path?: string[];
   /** Only where the search hit carried the number; no read is spent on it. */
   contentsCount?: number;
   /** A discipline was asked for and this hit carries none: it could be neither excluded nor confirmed. */
@@ -82,6 +93,11 @@ export type CollectionByName =
     unreachable?: true;
     /** … and/or a search window came back full, so the index may hold more than was seen. */
     windowFull?: true;
+    /**
+     * `unverified` for another reason than an incomplete search: a subject was
+     * asked for, and the one namesake found carries none — it is not taken.
+     */
+    disciplineUnverified?: true;
     unresolvedDiscipline?: UnresolvedDiscipline;
   };
 
@@ -104,6 +120,22 @@ export function looseCollectionTitle(title: string): string {
   return normalizeCollectionTitle(title)
     .replace(/ß/g, 'ss').replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
     .replace(/ /g, '');
+}
+
+/**
+ * A name spelled out put back into umlauts — a SEARCH word only, never compared
+ * with anything: "Saeuren" → "Säuren". Not "ss" → "ß" (most "ss" are just "ss").
+ */
+function withUmlauts(name: string): string {
+  // "ue" after q, a, e or ä is never an ü (Quelle, Frauen, Feuer, neue) — and
+  // respelled it would spoil the search for the word beside it. What is left
+  // over ("Poesie" → "Pösie", "aktuell" → "aktüll") costs one search that finds
+  // nothing. The case of the first letter is kept, so "SAEUREN" works too.
+  const upper = (m: string) => m[0] === m[0]!.toUpperCase();
+  return name
+    .replace(/ae/gi, m => (upper(m) ? 'Ä' : 'ä'))
+    .replace(/oe/gi, m => (upper(m) ? 'Ö' : 'ö'))
+    .replace(/(?<![qaeä])ue/gi, m => (upper(m) ? 'Ü' : 'ü'));
 }
 
 const idOf = (n: WloNode): string => n.ref?.id ?? '';
@@ -144,8 +176,15 @@ export async function resolveCollectionByName(name: string, discipline?: string)
   const kept = scope ? resolved.get(key) : undefined;
   if (kept) return { ok: true, collection: kept, ...unresolvedDiscipline };
 
-  // A hit that carries NO discipline is not excluded by one: it may well be the
-  // collection meant, and dropping it would make its namesake look unique.
+  // A subject asked for decides in three steps (chatbot team, measured
+  // 2026-11-14 on 24 real titles). A hit that carries NO subject is not
+  // EXCLUDED by one — it may be the collection meant. But it is not CONFIRMED
+  // either: with exactly one namesake that carries the subject, that one is
+  // taken and the unknown ones are named (a community's empty "Mechanik" used
+  // to refuse the subject's own, 305 contents); with none that carries it, an
+  // unknown one is never taken — it passed for unique once its namesakes of
+  // other subjects had fallen away ("Klimawandel" + "Geografie").
+  const narrowing = criteria.length > 0;
   const subjectUnknown = (n: WloNode) => criteria.some(c => !(n.properties?.[c.property] ?? []).some(Boolean));
   const inSubject = (n: WloNode) => subjectUnknown(n) || nodeMatchesCriteria(n, criteria);
   const wantedLoose = looseCollectionTitle(name);
@@ -156,18 +195,46 @@ export async function resolveCollectionByName(name: string, discipline?: string)
   const judge = (nodes: WloNode[], search: Search, window: number) => {
     const hits = rerankNodes(nodes.filter(n => idOf(n)), name);
     const strictHits = hits.filter(n => strict(n) && inSubject(n));
+    // The loose rule only where the strict one found nothing at all.
+    const equal = strictHits.length ? strictHits : hits.filter(n => loose(n) && inSubject(n));
+    // With a subject: who carries it, and who carries none. Without: all alike.
+    const confirmed = narrowing ? equal.filter(n => !subjectUnknown(n)) : equal;
+    const unknown = narrowing ? equal.filter(subjectUnknown) : [];
     return {
-      hits, strictHits,
-      // The loose rule only where the strict one found nothing at all.
-      equal: strictHits.length ? strictHits : hits.filter(n => loose(n) && inSubject(n)),
+      hits, strictHits, equal, confirmed, unknown,
       // A full window — of either index, or of the merged list — may hide a namesake.
       windowFull: search.full.length > 0 || search.nodes.length >= window,
       unreachable: search.unreachable.length > 0,
     };
   };
 
-  const first = await searchCollectionsResult(name, SEARCH_WINDOW);
+  let first = await searchCollectionsResult(name, SEARCH_WINDOW);
+  let searched = name;
   let seen = judge(first.nodes, first, SEARCH_WINDOW);
+  // Nothing equal, and the name is spelled without umlauts: the indexes do not
+  // return "Säuren und Basen" for "Saeuren und Basen" (chatbot team,
+  // 2026-11-14), so the loose rule had nothing to compare. ONE more search with
+  // the umlauts put back; the comparison stays the loose rule's, so a respelling
+  // that is no word ("Poesie" → "Pösie") finds nothing and changes nothing.
+  //
+  // What the FIRST search could not rule out stays unruled: its full window may
+  // hide a strictly equal title, and no later window of the OTHER spelling can
+  // look there (review 2026-11-15 — a loose match was taken as the only one).
+  let firstWindowFull = false;
+  const respelled = withUmlauts(name);
+  if (seen.equal.length === 0 && !seen.unreachable && respelled !== name) {
+    const second = await searchCollectionsResult(respelled, SEARCH_WINDOW);
+    const again = judge([...first.nodes, ...second.nodes.filter(n => !first.nodes.some(f => idOf(f) === idOf(n)))], second, SEARCH_WINDOW);
+    if (again.equal.length > 0) {
+      firstWindowFull = seen.windowFull;
+      first = { ...second, nodes: again.hits };
+      searched = respelled;
+      seen = again;
+    } else if (again.unreachable) {
+      // The one search that could have found the umlaut spelling did not answer.
+      seen = { ...seen, unreachable: true };
+    }
+  }
   // One equal title behind a full window is VERIFIED rather than refused: the
   // name index alone fills its 5 for almost any common word, and measured
   // 2026-11-13 the refusal hit 9 of 24 real titles that had exactly one
@@ -180,23 +247,37 @@ export async function resolveCollectionByName(name: string, discipline?: string)
   // staging (24 titles, 9 of them none + full window), the wide windows found 0
   // equal titles in all 9, at +0.4–2.4 s each. The answer stays honest without
   // it (`incomplete`, `windowFull`). Re-measure before changing.
-  if (seen.equal.length === 1 && seen.windowFull && !seen.unreachable) {
-    const wide = await searchCollectionsResult(name, VERIFY_KEYWORD_WINDOW, undefined,
+  if (seen.confirmed.length === 1 && seen.windowFull && !seen.unreachable && !firstWindowFull) {
+    const wide = await searchCollectionsResult(searched, VERIFY_KEYWORD_WINDOW, undefined,
       { nameLegMax: VERIFY_NAME_WINDOW, adoptNameHit: loose });
     // What the first pass saw stays in view: a namesake counts wherever it was seen.
     const inWide = new Set(wide.nodes.map(idOf));
     seen = judge([...wide.nodes, ...first.nodes.filter(n => !inWide.has(idOf(n)))], wide, VERIFY_KEYWORD_WINDOW);
   }
-  const { hits, strictHits, equal, windowFull, unreachable } = seen;
+  const { hits, strictHits, confirmed, unknown, unreachable } = seen;
+  const windowFull = seen.windowFull || firstWindowFull;
   const incomplete = unreachable || windowFull;
 
-  if (equal.length === 1 && !incomplete) {
-    const node = equal[0]!;
-    const path = await pathOf(idOf(node));
+  const candidateOf = (node: WloNode, path: string[] | undefined): CollectionCandidate => {
+    const count = node.collection?.childReferencesCount;
+    return {
+      nodeId: idOf(node), title: titleOf(node),
+      ...(path ? { path } : {}),
+      ...(typeof count === 'number' ? { contentsCount: count } : {}),
+      ...(subjectUnknown(node) ? { disciplineUnknown: true as const } : {}),
+    };
+  };
+
+  if (confirmed.length === 1 && !incomplete) {
+    const node = confirmed[0]!;
+    const beside = unknown.slice(0, CANDIDATES_MAX);
+    const [path, ...besidePaths] = await Promise.all([pathOf(idOf(node)), ...beside.map(n => pathOf(idOf(n)))]);
     const collection: ResolvedCollection = {
       nodeId: idOf(node), title: titleOf(node),
       ...(path ? { path } : {}),
       ...(strictHits.length ? {} : { matched: 'loose' as const }),
+      ...(beside.length ? { alsoFound: beside.map((n, i) => candidateOf(n, besidePaths[i])) } : {}),
+      ...(unknown.length > beside.length ? { alsoFoundTotal: unknown.length } : {}),
     };
     // Not kept without its path (the next caller would never get one).
     if (scope && path) resolved.set(key, collection);
@@ -213,22 +294,16 @@ export async function resolveCollectionByName(name: string, discipline?: string)
     .slice(0, CANDIDATES_MAX)
     .map(({ node }) => node);
   const paths = await mapPool(shown, CANDIDATES_MAX, n => pathOf(idOf(n)));
-  const candidates = shown.map((node, i): CollectionCandidate => {
-    const count = node.collection?.childReferencesCount;
-    const path = paths[i];
-    return {
-      nodeId: idOf(node), title: titleOf(node),
-      ...(path ? { path } : {}),
-      ...(typeof count === 'number' ? { contentsCount: count } : {}),
-      ...(subjectUnknown(node) ? { disciplineUnknown: true as const } : {}),
-    };
-  });
+  const candidates = shown.map((node, i) => candidateOf(node, paths[i] ?? undefined));
+  // Who decides: the namesakes that carry the subject, and only where there is
+  // none of them the ones that carry no subject at all.
+  const deciding = confirmed.length ? confirmed : unknown;
+  const reason = deciding.length > 1 ? 'several' as const : deciding.length === 1 ? 'unverified' as const : 'none' as const;
   return {
-    ok: false,
-    reason: equal.length > 1 ? 'several' : equal.length === 1 ? 'unverified' : 'none',
-    candidates, incomplete,
+    ok: false, reason, candidates, incomplete,
     ...(unreachable ? { unreachable: true as const } : {}),
     ...(windowFull ? { windowFull: true as const } : {}),
+    ...(reason === 'unverified' && confirmed.length === 0 ? { disciplineUnverified: true as const } : {}),
     ...unresolvedDiscipline,
   };
 }

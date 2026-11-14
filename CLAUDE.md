@@ -1777,6 +1777,17 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   is refused. Both halves are measured (staging, 24 titles): refusing on a full
   window outright resolved 3 of 24; with the wider pass 12. Do not widen for
   "no equal title" — measured unhelpful. Write tools keep requiring the id.
+  **A subject asked for DECIDES (chatbot team's measurement, 2026-11-15):** a
+  namesake that carries no subject is neither excluded nor confirmed by one.
+  Exactly one namesake carries it → taken, the unknown ones named
+  (`alsoFound`); none carries it → an unknown one is NEVER taken
+  (`unverified` + `disciplineUnverified`) — it passed for unique once the
+  namesakes of other subjects had fallen away. A second search with umlauts
+  put back runs only when nothing equal was found, and what the FIRST search
+  could not rule out (a full window) stays unruled. The line puts everything
+  the server knows first and the title LAST, quoted, its quote marks replaced:
+  title and path are repository-supplied, and ahead of the id a title spelled
+  out an id and a path of its own.
 - **Coded errors and output schemas (2026-11-13).** A spec-following client
   validates `structuredContent` against `outputSchema` even on `isError`. So
   every tool with an output schema publishes `anyOf: [success, { error }]`

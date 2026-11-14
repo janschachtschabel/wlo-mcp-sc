@@ -98,6 +98,13 @@ export const resolvedCollectionSchema = z.object({
   matched: z.literal('loose').optional(),
   /** The narrowing subject did not resolve and narrowed nothing. */
   unresolvedDiscipline: z.object({ value: z.string(), suggestions: z.array(z.string()).optional() }).optional(),
+  /** Namesakes that carry no subject, beside the one taken for carrying the subject asked for. */
+  alsoFound: z.array(z.object({
+    nodeId: z.string(), title: z.string(), path: z.array(z.string()).optional(),
+    contentsCount: z.number().optional(), disciplineUnknown: z.literal(true).optional(),
+  })).optional(),
+  /** Only when `alsoFound` was cut: how many such namesakes there are. */
+  alsoFoundTotal: z.number().optional(),
 }).optional();
 
 /**

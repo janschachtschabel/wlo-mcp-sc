@@ -86,7 +86,7 @@ bereinigter Adresse, gleicher Titel am Ablageort.
 |---|---|
 | `several` | mehrere Sammlungen mit gleichem Titel — wählt aus `candidates` |
 | `none` | keine Sammlung mit gleichem Titel |
-| `unverified` | genau eine gefunden, aber nicht gesichert (Suche unvollständig oder Fenster voll) |
+| `unverified` | genau eine gefunden, aber nicht übernommen: Suche unvollständig oder Fenster voll (`incomplete: true`) — oder, seit dem 15.11., ein Fach war verlangt und sie trägt keines (`disciplineUnverified: true`; erneut versuchen hilft dann nicht) |
 
 Code und Wortlaut bleiben. Bei `none` hinter einer unvollständigen Suche steht weiterhin
 `reason: "none"`, daneben `incomplete: true`.
