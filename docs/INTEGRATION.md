@@ -387,6 +387,13 @@ verengte ein Tippfehler das Ergebnis lautlos. Wer Filter vorab prüfen will:
 Der Token ist an einen Fingerabdruck der Änderungsmenge gebunden: **alles, was
 der Aufruf senden wird, muss in der Vorschau gestanden haben.**
 
+**Die zwei Stufen sind keine Freigabe durch einen Menschen.** Der Token geht an
+dasselbe Modell zurück, das die Vorschau angefordert hat, und nichts hindert es,
+ihn im nächsten Aufruf selbst einzulösen. Die Regel bindet, WAS geschrieben
+wird — nicht, WER zugestimmt hat. Die Person zu fragen ist Aufgabe des Hosts:
+er zeigt die Vorschau (`structuredContent.confirm.preview`) und sendet den
+zweiten Aufruf erst nach ihrer Zustimmung.
+
 Ein Abbruch (Timeout) wird als **offener Ausgang** gemeldet, nie als Fehlschlag —
 der Abbruch trifft die Antwort, nicht die Arbeit.
 
@@ -417,7 +424,8 @@ Fassung für das Modell.
   {code, message}`, auch Fehler, die das SDK vor dem Werkzeug erzeugt (falsche
   Parameter: `invalid_input`). Auf den Code verzweigen, nie auf den Text. Ist
   edu-sharing selbst ausgelastet, kommt `upstream_busy` mit `retryAfter`
-  (Sekunden) — ein Versuch danach lohnt sich, ein `upstream_error` nicht. Trägt
+  (Sekunden) — ein Versuch danach lohnt sich, ein `upstream_error` nicht. Ein
+  `internal_error` ist ein Fehler im Server selbst: nicht wiederholen. Trägt
   der Fehler `requiresNewPreview: true`, war der Schlüssel schon eingelöst:
   denselben Aufruf nicht wiederholen. Ob schon geschrieben wurde, sagt dann
   allein `outcomeOpen`, das jeder solche Fehler trägt: `false` = nichts

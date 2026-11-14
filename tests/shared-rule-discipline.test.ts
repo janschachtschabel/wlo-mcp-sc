@@ -91,9 +91,17 @@ test('collapsing repeated URLs happens only in result-dedupe.ts', () => {
  * answered, not that the body is JSON: a proxy maintenance page and a captive
  * portal both arrive as 200 with something `res.json()` throws on.
  */
-const RAW_RESPONSE_JSON = /\bres(ponse)?\.json\(\)/;
+// ANY receiver (audit 2026-11-14, T4): the first version named `res` and
+// `response` and so passed `r.json()`, `upstream.json()` and
+// `(await wloFetch(u)).json()`. No module here has a `.json()` of its own that
+// is not a Response's, so the call itself is the thing to match.
+const RAW_RESPONSE_JSON = /\.\s*json\s*\(\s*\)/;
 
 test('an upstream response body is parsed only through readJson', () => {
+  for (const slipped of ['const b = await r.json();', 'return (await wloFetch(u)).json()', 'await upstream . json( )', 'res.json()']) {
+    assert.ok(RAW_RESPONSE_JSON.test(slipped), `the guard sees: ${slipped}`);
+  }
+  assert.ok(!RAW_RESPONSE_JSON.test('const b = await readJson(res, "x"); JSON.stringify(json)'));
   // `read-json.ts` documents itself as the place "every client goes through",
   // and `CLAUDE.md` repeats the claim. `auth/identity.ts` did not: it parsed the
   // identity probe directly, so a non-JSON body surfaced as "identity check
@@ -111,9 +119,25 @@ test('an upstream response body is parsed only through readJson', () => {
  * the container can run `read_only: true` with one writable volume for the
  * access registry alone.
  */
-const WRITES_TO_DISK = /\b(writeFile|writeFileSync|appendFile|createWriteStream|mkdir|mkdirSync|rename|renameSync|unlink|rmdir)\s*\(/;
+// Widened 2026-11-14 (T4): `copyFile`, `rm`, `appendFileSync`, `cp`, `truncateSync`,
+// links and temp directories were missing (the bare words `truncate` and `link`
+// are left out: a widget shortens text with one, prose says the other) — and `open(path, 'w')`, which is
+// matched by its FLAG, because `open(` alone is also how a block is opened.
+const WRITES_TO_DISK = new RegExp(
+  '\\b(writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|mkdir|mkdirSync|mkdtemp|mkdtempSync'
+  + '|rename|renameSync|unlink|unlinkSync|rmdir|rmdirSync|rm|rmSync|copyFile|copyFileSync|cp|cpSync'
+  + '|truncateSync|symlink|symlinkSync|linkSync|writeSync|writevSync)\\s*\\('
+  + '|\\bopen(Sync)?\\s*\\([^)]*,\\s*[\'"`][wa]',
+);
 
 test('the access registry is the only module that writes to disk at runtime', () => {
+  for (const slipped of ["const fh = await open(path, 'w');", "openSync(p, 'a+')", 'await copyFile(a, b);', 'await rm(dir, { recursive: true });',
+    "appendFileSync(p, 'x')", 'await cp(a, b)', 'rmSync(p)', 'await writeFile(p, s)', 'truncateSync(p)']) {
+    assert.ok(WRITES_TO_DISK.test(slipped), `the guard sees: ${slipped}`);
+  }
+  for (const harmless of ["await open(path, 'r')", 'open(privateKey, wrapped, iv, body)', 'confirm(token)', 'readFileSync(p)']) {
+    assert.equal(WRITES_TO_DISK.test(harmless), false, `not a write: ${harmless}`);
+  }
   // The architecture's strongest property is that a breach finds nothing at
   // rest. `access-registry.ts` is the single, deliberate exception — it holds
   // access IDS, never a credential (pinned in access-registry.test.ts). A
@@ -128,9 +152,17 @@ test('the access registry is the only module that writes to disk at runtime', ()
 });
 
 /** An import reaching up into the MCP tool layer from a module below it. */
-const IMPORTS_TOOLS = /from '\.\.\/tools\//;
+// Any depth, either quote, and the dynamic form (audit 2026-11-14, T4):
+// `'../tools/'` alone passed `'../../tools/…'` from `services/write/` — the
+// directory with the most files — and an `await import(…)`.
+const IMPORTS_TOOLS = /(?:\bfrom|\bimport\s*\()\s*['"`](?:\.\.\/)+tools\//;
 
 test('services and the REST layer do not import from the tool layer', () => {
+  for (const slipped of ["import { x } from '../../tools/shared.js';", 'import { x } from "../tools/shared.js";',
+    "const m = await import('../tools/shared.js');", "} from '../tools/collections.js';"]) {
+    assert.ok(IMPORTS_TOOLS.test(slipped), `the guard sees: ${slipped}`);
+  }
+  assert.ok(!IMPORTS_TOOLS.test("import { x } from '../unsafe-tools.js'; // see ../tools/ for the callers"));
   // Same shape as the two rules above, one level up: `mapPool` and
   // `buildFilterCriteria` sat in `tools/shared.ts` because the MCP tools were
   // the first callers, and four services plus the REST layer then imported them
@@ -261,21 +293,46 @@ test('what a collection IS is decided in one place, never by the node type alone
   // a folder to the collection endpoint under a preview promising its contents
   // survive. `isCollectionNode` (node-kind.ts) asks the aspect; the tools go
   // through `wrongKind` (tools/curation-shared.ts).
-  const literal = /['"]ccm:(map|io)['"]/;
+  //
+  // The literal OR the constant that holds it (audit 2026-11-14, T4):
+  // `node.type === CONTAINER_TYPE` is the same comparison and passed.
+  const literal = /['"`]ccm:(map|io)['"`]|(?:[=!]==?\s*(?:CONTAINER_TYPE|CONTENT_TYPE)\b)|(?:\b(?:CONTAINER_TYPE|CONTENT_TYPE)\s*[=!]==?)/;
+  for (const slipped of ["if (node.type === 'ccm:map') {", 'if (node.type === CONTAINER_TYPE) {', 'return CONTENT_TYPE !== node.type;', 'x.type == `ccm:io`']) {
+    assert.ok(literal.test(slipped), `the guard sees: ${slipped}`);
+  }
+  assert.ok(!literal.test("import { CONTAINER_TYPE, CONTENT_TYPE } from '../node-kind.js';"), 'an import compares nothing');
+  // Lines that may name the type, each with its reason. Matched by their text,
+  // so a line that is edited has to be looked at again.
+  const allowed: Record<string, string[]> = {
+    // After `wrongKind` has DECIDED: these two only pick the sentence that says
+    // which tool fits instead, from the code it returned and the type it saw.
+    'tools/curation-delete.ts': [
+      "if (code === 'is_a_folder' || (code === 'not_a_collection' && type === CONTAINER_TYPE)) {",
+      "return code === 'not_a_collection' && type === CONTENT_TYPE ? ' Zum Löschen eines Datensatzes: wlo_delete_content.' : '';",
+    ],
+  };
   const offending = sourceFiles(srcDir)
     .map(rel)
     .filter(name => /^tools\/curation-/.test(name) || /^services\/write\//.test(name) || name === 'services/collection-overview.ts')
     // The one place that CREATES a record names its type; it compares nothing.
     .filter(name => name !== 'services/write/nodes-lifecycle.ts')
-    .filter(name => readFileSync(join(srcDir, name), 'utf8').split('\n')
-      .some(line => literal.test(line) && !/^\s*(\/\/|\*)/.test(line)));
+    .flatMap(name => readFileSync(join(srcDir, name), 'utf8').split('\n')
+      .filter(line => literal.test(line) && !/^\s*(\/\/|\*)/.test(line))
+      .filter(line => !(allowed[name] ?? []).includes(line.trim()))
+      .map(line => `${name}: ${line.trim()}`));
   assert.deepEqual(offending, [], 'use isCollectionNode / isContentNode / wrongKind instead of comparing the node type');
 });
 
 /** Building the catalogue field by hand instead of through `toRegistrySummary`. */
-const INLINE_REGISTRY_SUMMARY = /\.skillRegistry\s*=\s*\{/;
+// The assignment AND the literal form (audit 2026-11-14, T4): `{ ...node,
+// skillRegistry: { nodeId, … } }` builds the same field and passed.
+const INLINE_REGISTRY_SUMMARY = /\bskillRegistry\s*[:=]\s*\{/;
 
 test('the catalogue a node carries is built in exactly one place', () => {
+  for (const slipped of ['node.skillRegistry = { nodeId, title };', 'return { ...node, skillRegistry: { nodeId, title } };']) {
+    assert.ok(INLINE_REGISTRY_SUMMARY.test(slipped), `the guard sees: ${slipped}`);
+  }
+  assert.ok(!INLINE_REGISTRY_SUMMARY.test('node.skillRegistry = toRegistrySummary(registry); skillRegistry: z.object({})'));
   // Four writers produce this field — `refreshRegistries`, and in the cache
   // the live fallback, the background tick and the corpus seed. Three of them
   // carried their own copy of the same eight lines until 2026-08-11, which is
@@ -336,10 +393,15 @@ test('the HTTP entry point wires the ticket limiter, not just the password one',
   //
   // So the wiring is checked in the SOURCE, the only place it is visible.
   // Audited 2026-08-13: deleting the line left all 1853 tests green.
+  //
+  // Since 2026-11-14 the options are built in `http-options.ts`, which a test
+  // CAN import (`tests/http-options.test.ts` checks the limiter's behaviour and
+  // that `http.ts` passes the built options on whole). This scan stays as the
+  // statement of where the wiring lives.
   const found = offenders(/ticketAbuseLimiter/, ['http-app.ts', 'rest/auth-pages.ts']);
   const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
-  assert.deepEqual(files, ['http.ts'],
-    `http.ts must hand the ticket limiter to the handler — got ${JSON.stringify(files)}`);
+  assert.deepEqual(files, ['http-options.ts'],
+    `http-options.ts must hand the ticket limiter to the handler — got ${JSON.stringify(files)}`);
 });
 
 test('a page variant is projected onto its fields in exactly one place', () => {
@@ -546,19 +608,76 @@ test('a redirected change set is diffed against the node it will WRITE', () => {
   // notices a baseline that is right while a SENTENCE beside it still names the
   // requested node — that one is covered per tool
   // (`tools-curation-suggestions.test.ts` pins the title/id pair).
+  //
+  // Since 2026-11-14 (T4) the guard looks at EVERY curation tool that writes
+  // metadata (`updateNodeMetadata(`), not only at files that already contain
+  // `buildChangeSet(target.targetId` — a new tool written
+  // `buildChangeSet(nodeId, …, node.properties, desired)` contained no such
+  // text and was never inspected. It reads the ARGUMENTS of each call.
+
+  /** The top-level arguments of every `fn(…)` call in `text`. */
+  const callArguments = (text: string, fn: string): string[][] => {
+    const out: string[][] = [];
+    for (const m of text.matchAll(new RegExp(`\\b${fn}\\(`, 'g'))) {
+      const args: string[] = [];
+      let depth = 1;
+      let quote = '';
+      let start = m.index + m[0].length;
+      let i = start;
+      for (; i < text.length && depth > 0; i++) {
+        const ch = text[i]!;
+        if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = ''; continue; }
+        if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+        else if ('([{'.includes(ch)) depth++;
+        else if (')]}'.includes(ch)) depth--;
+        else if (ch === ',' && depth === 1) { args.push(text.slice(start, i).trim()); start = i + 1; }
+      }
+      args.push(text.slice(start, i - 1).trim());
+      out.push(args);
+    }
+    return out;
+  };
+  const isEmptyObject = (arg: string | undefined) => arg === undefined || /^\{\s*\}$/.test(arg);
+  const check = (name: string, text: string): string[] => {
+    if (!/\bupdateNodeMetadata\(/.test(text)) return [];
+    const found: string[] = [];
+    if (!text.includes('readWriteBaseline(')) {
+      found.push(`${name}: schreibt Metadaten, holt die Baseline aber nicht über readWriteBaseline`);
+    }
+    for (const [target, , baseline, desired] of callArguments(text, 'buildChangeSet')) {
+      // A change set with no fields (a deletion, a submission, a declined
+      // proposal) or with no baseline (a record about to be created) diffs nothing.
+      if (isEmptyObject(desired) || isEmptyObject(baseline)) continue;
+      if (target !== 'target.targetId') {
+        found.push(`${name}: buildChangeSet(${target}, …) schreibt Felder, aber nicht auf target.targetId`);
+      }
+      if (/\bnode\.properties\b/.test(baseline ?? '')) {
+        found.push(`${name}: Baseline kommt vom ANGEFRAGTEN Knoten statt vom Ziel`);
+      }
+    }
+    return found;
+  };
+  // The scanner itself, fed the shapes it must catch and the ones it must leave.
+  const WRITE = 'await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), { commit: false });';
+  assert.equal(check('x', `const cs = buildChangeSet(nodeId, 'content', node.properties ?? {}, desired, { added });\n${WRITE}`).length, 3,
+    'no baseline read, the requested id as target, the requested node as baseline');
+  assert.equal(check('x', `await readWriteBaseline(node, nodeId);\nbuildChangeSet(target.targetId, 'content', node.properties, desired);\n${WRITE}`).length, 1);
+  assert.equal(check('x', `await readWriteBaseline(node, nodeId);\nbuildChangeSet(nodeId, 'content', before, { [p]: (a, b) });\n${WRITE}`).length, 1);
+  assert.deepEqual(check('x', `await readWriteBaseline(node, nodeId);\nbuildChangeSet(target.targetId, 'content', before, desired, { a: 1 });\n`
+    + `buildChangeSet(nodeId, 'content', node.properties ?? {}, {}, { destructive: true });\n`
+    + `buildChangeSet(title, 'content', {}, collected.desired);\n${WRITE}`), [], 'a fieldless change set and a new record are not diffs');
+  assert.deepEqual(check('x', "buildChangeSet(nodeId, 'collection', node.properties ?? {}, desired);"), [], 'not a metadata writer');
+
   const wrong: string[] = [];
+  let inspected = 0;
   for (const file of sourceFiles(srcDir)) {
     const name = rel(file);
     if (!/^tools\/curation-[a-z-]+\.ts$/.test(name)) continue;
     const text = readFileSync(file, 'utf8');
-    if (!text.includes('buildChangeSet(target.targetId')) continue;
-    if (!text.includes('readWriteBaseline')) {
-      wrong.push(`${name}: baut auf target.targetId, holt die Baseline aber nicht über readWriteBaseline`);
-    }
-    if (/buildChangeSet\(target\.targetId[^)]*node\.properties/.test(text)) {
-      wrong.push(`${name}: Baseline kommt vom ANGEFRAGTEN Knoten statt vom Ziel`);
-    }
+    if (/\bupdateNodeMetadata\(/.test(text)) inspected++;
+    wrong.push(...check(name, text));
   }
+  assert.ok(inspected >= 3, `the guard must find the metadata tools it is for — inspected ${inspected}`);
   assert.deepEqual(wrong, [], `Baseline und Schreibziel müssen derselbe Knoten sein:\n${wrong.join('\n')}`);
 });
 
@@ -593,6 +712,11 @@ test('a log line that names a person goes through log-privacy', () => {
   const WHO: Record<string, string> = {
     ip: 'logAddress', address: 'logAddress', remote: 'logAddress',
     label: 'logAccount', user: 'logAccount', username: 'logAccount', account: 'logAccount',
+    // Audit 2026-11-14 (S7): the boot line named the service account and the
+    // authority the repository reported, the registration line a caller-chosen
+    // client name — each under a name this list did not know.
+    configuredAs: 'logAccount', authority: 'logAccount', login: 'logAccount', owner: 'logAccount',
+    clientName: 'logTerm', client_name: 'logTerm',
     query: 'logTerm', q: 'logTerm', term: 'logTerm', searchTerm: 'logTerm', subject: 'logTerm', title: 'logTerm',
   };
   /** Every `log.x(…)` call in a source text, cut at its BALANCED closing parenthesis — strings and all. */
@@ -633,6 +757,9 @@ test('a log line that names a person goes through log-privacy', () => {
   assert.ok(check('x', "log.warn('a', { subject: params.subject });").length >= 1);
   assert.ok(check('x', "log.warn('a', { title, lang });").length >= 1);
   assert.ok(check('x', 'log.warn(`blocked ${ip}`);').length >= 1);
+  assert.ok(check('x', "log.info('verified', { configuredAs: cred.label, authority: id.authority });").length >= 2);
+  assert.ok(check('x', "log.info('oauth client registered', { clientName: name, redirectUris: 1 });").length >= 1);
+  assert.equal(check('x', "log.info('v', { configuredAs: logAccount(cred.label), clientName: logTerm(name) });").length, 0);
   assert.equal(check('x', "log.warn('a', { ip: logAddress(ip), query: logTerm(q), n: 1 });").length, 0);
 
   const wrong: string[] = [];

@@ -26,6 +26,19 @@ import { collectionDisciplineParam, collectionNameParam, withCollectionByName } 
 const NO_TEXT = '_Kein Kompendiumstext hinterlegt._';
 
 /**
+ * What is said over a collection that was not READ. Never `NO_TEXT`: that is a
+ * statement about a collection somebody looked at. „mit dieser Anmeldung nicht
+ * lesbar" is the phrase a client recognises a refusal by, and it offers no retry.
+ */
+function unreadText(code: NonNullable<CompendiumEntry['unread']>): string {
+  if (code === 'not_found') return '_Sammlung nicht gefunden._';
+  if (code === 'forbidden') {
+    return '_Die Sammlung ist mit dieser Anmeldung nicht lesbar — ob ein Kompendiumstext hinterlegt ist, sagt das nicht._';
+  }
+  return '_Der Kompendiumstext konnte gerade nicht gelesen werden — das sagt nichts darüber, ob einer hinterlegt ist. Später erneut versuchen._';
+}
+
+/**
  * The outline, as an indented list.
  *
  * Every title goes through `oneLine`, the blanket rule for a renderer that
@@ -96,7 +109,7 @@ function renderEntry(entry: CompendiumEntry, view: CompendiumView | undefined, q
   // heading: a newline in a title would split one collection's prose into two,
   // the second under a collection name nobody wrote.
   const heading = oneLine(`# ${entry.title || entry.nodeId}`);
-  if (!view) return `${heading}\n\n${NO_TEXT}`;
+  if (!view) return `${heading}\n\n${entry.unread ? unreadText(entry.unread) : NO_TEXT}`;
 
   const parts = [heading];
   const outline = outlineLines(view);
@@ -132,7 +145,23 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown')
         .describe('"markdown" (default) or "json". JSON: {entries:[{nodeId,title,outline,charCount,truncated, and either compendiumText or passages+unmatchedTerms}]} \u2014 a collection without a compendium text carries only {nodeId,title,compendiumText:null}.'),
     },
-    outputSchema: contentTextSchema.extend({ resolvedCollection: resolvedCollectionSchema }),
+    outputSchema: contentTextSchema.extend({
+      resolvedCollection: resolvedCollectionSchema,
+      /** Collections that could not be read, and why — none of them is "has no compendium text". */
+      missing: z.array(z.object({ part: z.string(), code: z.string() })).optional(),
+      /** `outputFormat: "json"` only: the per-collection entries, so the JSON block and this object are ONE answer. */
+      entries: z.array(z.object({
+        nodeId: z.string(),
+        title: z.string(),
+        compendiumText: z.string().nullable().optional(),
+        unread: z.string().optional(),
+        outline: z.array(z.record(z.string(), z.unknown())).optional(),
+        charCount: z.number().optional(),
+        truncated: z.boolean().optional(),
+        passages: z.array(z.record(z.string(), z.unknown())).optional(),
+        unmatchedTerms: z.array(z.string()).optional(),
+      })).optional(),
+    }),
     annotations: { readOnlyHint: true },
     handler: withCollectionByName({
       idParam: 'nodeId', disciplineParam: 'discipline',
@@ -188,6 +217,9 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
               unmatchedTerms: unmatchedEverywhere(views),
             }
             : {}),
+          ...(entries.some(e => e.unread)
+            ? { missing: entries.filter(e => e.unread).map(e => ({ part: e.nodeId, code: e.unread as string })) }
+            : {}),
           // No `reason`: the schema reserves it for "there is no text", and
           // there always is one here — a collection without prose still yields
           // the "_Kein Kompendiumstext hinterlegt._" line, which says so in the
@@ -197,7 +229,7 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
         if (params.outputFormat === 'json') {
           const payload = entries.map((e, i) => {
             const view = views[i];
-            if (!view) return { nodeId: e.nodeId, title: e.title, compendiumText: null };
+            if (!view) return { nodeId: e.nodeId, title: e.title, compendiumText: null, ...(e.unread ? { unread: e.unread } : {}) };
             const base = {
               nodeId: e.nodeId,
               title: e.title,
@@ -212,9 +244,21 @@ export function registerCompendiumTool(server: McpServer, readingWidgetUri?: str
               ? { ...base, passages: view.passages, unmatchedTerms: view.unmatchedTerms }
               : { ...base, compendiumText: view.sections.map(s => s.text).join('\n\n') };
           });
+          // ONE answer for both: the block said `{entries}` and the structured
+          // answer said something else, so a client reading the contract and one
+          // reading the text held two different answers to the same call. The
+          // block keeps `entries` where it was; the other keys stand beside it.
+          //
+          // But the prose travels ONCE. `joined` is the Markdown of every entry,
+          // and `entries` holds the same paragraphs — both together doubled the
+          // answer and, with `query`, put the full text back beside the passages.
+          // `text` stays in the structured answer because the schema requires
+          // it, and is empty; the block has no such duty and leaves it out.
+          const { text: _prose, ...disclosures } = structuredContent;
+          const block = { ...disclosures, entries: payload };
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ entries: payload }) }],
-            structuredContent,
+            content: [{ type: 'text' as const, text: JSON.stringify(block) }],
+            structuredContent: { ...block, text: '' },
           };
         }
         return { content: [{ type: 'text' as const, text: joined }], structuredContent };

@@ -65,6 +65,12 @@ Herauslesen aus dem Text mehr nötig. Gibt es nichts zu bestätigen, kommt
 `{"confirm": null, "unchanged": true}`. Die Stapel-Ablage trägt dieselbe Form
 (Ziel `home`, 30 min gültig) und daneben weiter `batchToken`.
 
+**Zweistufig heißt nicht: von einem Menschen freigegeben.** Der Schlüssel geht an
+dasselbe Modell zurück, das die Vorschau angefordert hat; es kann ihn im nächsten
+Aufruf selbst einlösen. Die Regel bindet, WAS geschrieben wird, nicht WER
+zugestimmt hat. Die Person zu fragen ist Aufgabe des Hosts: er zeigt die Vorschau
+und sendet den bestätigenden Aufruf erst nach ihrer Zustimmung.
+
 **Sicher wiederholbar.** Geht die Antwort auf einen bestätigten Aufruf verloren,
 darf derselbe Aufruf mit demselben `confirmToken` und **denselben Argumenten**
 noch einmal kommen: 30 Minuten lang liefert der Server die erste Antwort erneut,
@@ -91,7 +97,7 @@ wird die Antwort, wie sie war: Endete der erste Aufruf mit `timeout` und
 `outcomeOpen: true`, bleibt auch die Wiederholung offen — dann nachsehen (etwa
 `find_content_by_url` oder eine neue Vorschau), nicht noch einmal senden.
 
-**Geplante Änderungen** (`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_remove_from_collections` — Liste `pairs`; `wlo_submit_contents`, `wlo_delete_collections` — Liste `items`): eine
+**Geplante Änderungen** (`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_remove_from_collections` — Liste `pairs`; `wlo_submit_contents` — Liste `items`; `wlo_delete_collections` — Liste `nodeIds`. Die ERGEBNIS-Liste heißt bei allen `items`): eine
 Bestätigung für den ganzen Plan; der Server führt ihn in Abschnitten von ~40 s aus
 (vier Schritte parallel, von oben nach unten). Die Antwort trägt `complete`,
 `progress {done, total}`, je Schritt `status`/`code`/`nodeId` und, solange etwas offen
@@ -134,7 +140,8 @@ bekommt den Fehler als lesbares Ergebnis; die Erfolgsform bleibt geschlossen. Di
 | `requiresNewPreview: true` | Nach der Einlösung: dieser Schlüssel ist verbraucht. **Keine** Aussage darüber, ob geschrieben wurde — die trifft `outcomeOpen` (immer dabei) | `outcomeOpen: false` → neue Vorschau; `true` → erst nachsehen |
 | `forbidden` | Das Repository verweigert den Zugriff (401/403) | — |
 | `upstream_busy` | edu-sharing ist ausgelastet (es antwortete 429 oder 503); `retryAfter` = sein `Retry-After` in Sekunden, sonst geschätzt 10. Auch als `missing`-Code der Bündel-Antworten, bei `get_collection_overview`, je Eintrag bei `find_content_by_url` und bei `wlo_health_check`. Nach einer Einlösung ohne `retryAfter`, mit `requiresNewPreview` | einmal nach `retryAfter` erneut, wenn es in die eigene Frist passt |
-| `upstream_error` | Das Repository hat einen Fehler gemeldet, oder ein Werkzeug ist unerwartet abgebrochen | — |
+| `upstream_error` | Das Repository hat einen Fehler gemeldet oder nicht geantwortet | — |
+| `internal_error` | Ein Fehler im Server selbst (seit 2026-11-14; vorher als `upstream_error` mit der rohen Meldung). Die Meldung ist bewusst allgemein, das Detail steht im Server-Log unter der `X-Request-Id`. Nach einer Einlösung trägt er `outcomeOpen: true` | nicht wiederholen; mit der Request-ID melden |
 | `refused` | Jede übrige fachliche Ablehnung; der Grund steht in `message`. Auffangnetz: jede Fehlerantwort ohne eigenen Code bekommt diesen | Text an die Person geben |
 | `batch_unknown` / `batch_expired` / `batch_mismatch` · `slot_missing` · `mismatch_bytes` · `folder_failed` · `nothing_stored` | Stapel-Ablage: Freigabe unbekannt/abgelaufen/fremd · hochgeladene Datei nicht (mehr) da · Bytes passen nicht zur Freigabe · Ordner nicht anlegbar · noch keine Datei abgelegt (die Felder `status`/`reason` bleiben daneben) Alle tragen `error.outcomeOpen`: `true` bei `batch_unknown`/`batch_expired` (unter der Freigabe können früher Dateien abgelegt worden sein — `wlo_list_my_batches` zeigt sie), bei einem Abbruch ohne Antwort und immer dann, wenn das Anlegen mit einem 5xx oder ohne verwertbare ID beantwortet wurde (dann kann der Ordner bzw. Datensatz existieren — erst nachsehen, nicht erneut senden); sonst `false`. | neu vorbereiten · neu hochladen · neu hochladen · Datei erneut senden · erst eine Datei ablegen |
 
@@ -264,6 +271,16 @@ lief, sagen `collections.registryChecked` bzw. `topicPages.registryChecked`),
 - **Inhaltssuche unvollständig** (seit 2026-11-15): Die Rangsuche stellt mehrere Varianten einer Anfrage. Antwortet eine davon nicht, trägt die Antwort `incomplete: true` (`search_wlo_content`; `content.incomplete` in `search_wlo_all`; je Anfrage in `search_wlo_content_many`) und den Satz „Die Inhaltssuche hat nicht (vollständig) geantwortet …“ — „keine Treffer“ ist dann kein Befund. Ohne `incomplete` und ohne `more` ist eine leere Liste das Ende.
 - **`contentsCount` an einem Sammlungs-Treffer ist der Zähler des Repositorys** (gemessen vom Chatbot-Team, 2026-11-14): Er hinkt einer Änderung um Sekunden nach und zählte an einer Sammlung mit Untersammlungen deren Verweise mit. Für „ungefähr wie viel liegt hier“ taugt er, als Kontrolle nach einem Schreibvorgang nicht. Direkt gelesene Zahlen liefern `list_collection_tree` und `browse_collection_tree` mit `includeContentCounts` (`contentCount` bzw. `fileCount`).
 - **Abgelehnt ≠ nicht erreichbar** (seit 2026-11-13): beantwortet das Repository eine Unterliste mit 401/403/404, ist das kein Ausfall — `incomplete`, `childrenUnread` und `source_unreachable` werden dafür nicht gesetzt (ein erneuter Versuch ändert nichts). Stattdessen wird es GESAGT (seit 2026-11-14), denn ein abgelehnter Zweig ist auch nicht leer: im Baum trägt der Knoten `childrenRefused: true`, eine Listenantwort (`search_wlo_collections`, `get_collection_contents` mit Untersammlungen, `search_skill`) trägt `restricted: true` und den Satz „Ein Teil des durchsuchten Bereichs ist mit dieser Anmeldung nicht lesbar und fehlt in dieser Antwort …“ (`get_skill_for_task` ebenso). Das gilt für die Unterliste wie für den Inhalt einer Untersammlung — beides wird ausgelassen und gekennzeichnet, der Rest geliefert. Im Baum bleibt ein Knoten, dessen eigene Inhalte abgelehnt wurden, stehen und trägt `contentsRefused: true` (bei einem Ausfall `contentsUnread: true`); `get_collection_overview` führt ihn in `subcollections` mit `contentsRefused: true`. Themenseiten sind bewusst anders: Varianten, die diese Anmeldung nicht lesen darf, gelten dort als „keine Variante“. Ein so abgelehnter STARTKNOTEN ist ein Fehler mit dem Satz „nicht gefunden oder mit dieser Anmeldung nicht lesbar“. `error.recordExists: true` trägt immer `error.nodeId`.
+- **Grenzen werden gesagt** (seit 2026-11-14). Wo eine Antwort nicht alles gelesen hat, trägt sie ein Feld — im ersten Markdown-Block als Satz, im JSON-Textblock und in `structuredContent` als dasselbe Feld:
+  - `get_collection_contents` mit `includeSubcollections`: `walkCapped` (der Lauf hat nicht alle Untersammlungen besucht), `contentsCut` (aus einer Untersammlung wurden nur die ersten 50 Dateien gelesen), `totalIsLowerBound` (die Trefferzahl zählt nur die besuchten Sammlungen; die Zeile heißt dann „Gefundene Treffer gesamt: mindestens N“), `skipLimitReached` (die nächste Seite läge über `skipCount` 400 und ist nicht abrufbar — eine Untersammlung als Start nehmen).
+  - `list_collection_tree`: `more.nextSkipCount` nennt nie einen Wert über 500. Liegt die nächste Seite teils darüber, nennt es 500 und der Text sagt, dass die ersten Einträge dort das Ende dieser Seite wiederholen; `skipLimitReached` steht erst bei `skipCount` 500.
+  - `search_wlo_within_collection`: `truncated` und `collectionTotal` — durchsucht werden die ersten 100 direkten Inhalte; der Satz nennt „die ersten 100 von N“.
+  - `search_wlo_collections`: `scanCapped` — der Ersatzlauf über den Baum hat an einer Grenze aufgehört; statt „Keine Sammlungen gefunden“ steht dann, dass nur ein Teil durchsucht wurde.
+  - `search_wlo_content`, `search_wlo_all` (Topf `content`): `totalIsUpperBound` — mit Lizenzfilter ließ sich die genaue Zahl nicht ermitteln, `total` ist dann die Summe der Lizenzfamilien und damit eine Obergrenze. Nicht gesetzt bei einer beantworteten Null und nicht, wenn eine der OER-Lizenzen gar nicht antwortete (dann `incomplete`).
+  - `get_related_content`: `siblingsRefused` / `siblingsUnread` — die Geschwisterliste wurde abgelehnt bzw. nicht gelesen; es steht dann nicht „Keine weiteren Inhalte in der Sammlung“.
+  - `collection` per Name: ließ sich die Liste der Fachportale nicht lesen, trägt der Fehler `ambiguous_collection` zusätzlich `portalsUnread: true` und einen eigenen Satz; gefundene Sammlungen stehen als Kandidaten da und werden nicht übernommen.
+  - `get_compendium_text`: je Eintrag `unread`, wenn die Sammlung nicht gelesen werden konnte, dazu `missing`. Mit `outputFormat: "json"` trägt der Textblock `entries` (und `missing`); `structuredContent` trägt dieselben `entries` und ein leeres `text`, damit die Prosa nur einmal übertragen wird.
+- **Fremdtext ist gekennzeichnet** (seit 2026-11-14): `get_url_text` und `get_wlo_content_text` stellen dem Text eine Hinweiszeile und `---` voran; im JSON-Textblock steht dafür das Feld `note` vor `text`.
 - `search_wlo_topic_pages`: Antwortet der Themenseiten-Index nicht oder lässt sich die EINE genannte Sammlung nicht lesen, ist das ein Fehler (`isError`), kein „keine Themenseiten“. Mit `query`: antwortet eine der Quellen nicht (Fachportal-Liste, ein Sammlungsindex, eine Kandidaten-Sammlung), trägt die Antwort `incomplete: true` und den Satz „KEIN Befund“ statt „Keine Themenseiten für …“.
 - `search`: Die Form `{results}` hat kein Feld für einen Ausfall: eine LEERE Liste über einer Sammlungssuche, die nicht geantwortet hat, kommt deshalb als Fehler (`isError`), nicht als „nichts gefunden“. Mit Treffern bleibt es eine Antwort.
 
@@ -583,9 +600,11 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 | `LOG_LEVEL` | `info` | Niedrigste geloggte Stufe (`debug`, `info`, `warn`, `error`); ein unbekannter Wert wird mit einer Warnung ignoriert. Logzeilen sind JSON mit `timestamp`, `level`, `service`, `message` (+ `req`, bei B3-Kopfzeilen `trace_id`/`span_id`) — über HTTP auf stdout, unter stdio auf stderr. |
 | `LOG_PERSONAL_DATA` | _(leer)_ | Leer: Client-Adresse, Kontoname und Suchbegriff stehen im Log als Pseudonym (`~` + 12 Hex-Zeichen, nur innerhalb eines Prozesslaufs stabil). `plain`: Klartext. Betrifft nur das Log. |
 | `INTERNAL_PORT` | _(leer)_ | Zweiter Port nur für `GET /health`, `/ready`, `/metrics` (Proben, Scraper). Zusatz — die Pfade bleiben auch am öffentlichen Port. `/metrics` dort ohne Token, solange `METRICS_TOKEN` leer ist: den Port nicht veröffentlichen. |
+| `INTERNAL_BIND_ADDR` | _(leer)_ | Schnittstelle, auf der `INTERNAL_PORT` lauscht. Leer = alle (ein Scraper in einem anderen Container muss ihn erreichen); `127.0.0.1` = nur die Maschine selbst. Ohne Loopback-Adresse und ohne `METRICS_TOKEN` warnt der Start. |
 | _(Kopfzeilen, keine Variable)_ | — | **Trace-Kontext:** `x-client-trace-id` und B3 (`b3` oder `X-B3-TraceId`/`X-B3-SpanId`/`X-B3-Sampled`) werden gelesen, nur wohlgeformt übernommen, stehen als `client_trace_id`, `trace_id`, `span_id` in jeder Logzeile der Anfrage und gehen als Kind-Span ans Repository weiter (und nur dorthin). Ohne diese Kopfzeilen wird nichts erfunden. |
 | `WLO_TEXT_TIMEOUT_MS` | 25 000 | dito für den Extraktionsdienst. |
-| `WLO_POOL_SIZE` · `WLO_TOPIC_POOL` | 25 · 10 | Nebenläufigkeit der Fan-outs. |
+| `WLO_POOL_SIZE` | 25 | Kandidaten-Pool der gerankten Suche: so viele Treffer liest JEDE Suchvariante je Fenster, unabhängig von `maxResults` — keine Nebenläufigkeit. Kleiner = schneller, etwas weniger Trefferbreite. |
+| `WLO_TOPIC_POOL` | 10 | Nebenläufigkeit beim Auflösen von Themenseiten (so viele Sammlungen werden gleichzeitig nach ihren Varianten gefragt). |
 | `WLO_SKILL_CACHE_REFRESH_MS` · `WLO_SKILL_CACHE_TTL_MS` | 300 000 · 600 000 | Auffrischung und Haltbarkeit des Freigabekatalog-Caches. Die TTL ist nie kleiner als das Auffrischintervall. |
 | `WLO_COMPENDIUM_SECTION_MAX` | 2 000 | Kappung je Hauptabschnitt des Kompendiumstexts. Betreiber-Einstellung, kein Aufrufparameter. |
 | `WLO_WIDGET_MIME` | `text/html;profile=mcp-app` | Notventil, falls ein Host noch `text/html+skybridge` erwartet. |
@@ -595,6 +614,8 @@ Die An/Aus-Schalter stehen in **Abschnitt 3**.
 ---
 
 ## 8. HTTP-Endpunkte
+
+Jede Antwort trägt `X-Content-Type-Options: nosniff` und `Referrer-Policy: no-referrer`. Unter `/api/*` wird ein Ausfall des Repositorys klassifiziert: 404, 403, 503 (mit `Retry-After`), 504 oder 502, jeweils `{error, code, retryAfter?}`; ein Fehler im Server selbst bleibt 500 ohne Code. Schließt der Client die Verbindung, bevor die Antwort fertig ist, wird die Anfrage mit 499 abgeschlossen (nur im Log und in den Metriken sichtbar).
 
 | Pfad | Zweck | CORS |
 |---|---|---|

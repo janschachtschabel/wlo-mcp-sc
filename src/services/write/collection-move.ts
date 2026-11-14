@@ -22,7 +22,7 @@
 
 import { BASE_URL } from '../../wlo-config.js';
 import { wloFetch, HEADERS } from '../../wlo-fetch.js';
-import { getChildCollectionsResult, readNodeMetadata, readNodeParents } from '../../wlo-node.js';
+import { readNodeMetadata, readNodeParents } from '../../wlo-node.js';
 import type { WloNode } from '../../wlo-types.js';
 import { isCollectionNode } from '../../node-kind.js';
 import { collectionTitleFromProperties } from '../../node-match.js';
@@ -30,7 +30,7 @@ import { sanitizeText } from '../../text-sanitize.js';
 import { isRefusal } from '../../upstream-error.js';
 import { log } from '../../logger.js';
 import { listCollectionTree } from '../collection-tree-flat.js';
-import { normTitle } from './collection-tree.js';
+import { normTitle, rawCollectionTitle, subCollectionsByTitle } from './collection-children.js';
 import { mayWrite } from './collection-proposals.js';
 import { failureDetail } from './nodes.js';
 import type { MutationOutcome } from './verify.js';
@@ -38,9 +38,6 @@ import type { MutationOutcome } from './verify.js';
 const TITLE_PROPS = ['cm:title', 'cclom:title', 'cm:name'];
 
 export interface Place { nodeId: string; title: string; /** Titles from the top down to this collection, itself included. */ path: string[] }
-
-/** The collection's own title as the repository holds it — for COMPARING. Display goes through `sanitizeText`, which caps. */
-const rawTitle = (node: WloNode) => collectionTitleFromProperties(node.properties) || node.title || '';
 
 export type MovePlan =
   | {
@@ -81,27 +78,10 @@ async function place(id: string, what: string): Promise<Placed | { ok: false; pl
   const path = [...collections].reverse().map(n => titleOf(n, n.ref!.id!));
   const above = chain[1] && isCollectionNode(chain[1]) ? chain[1] : undefined;
   return {
-    ok: true, chain: ids, raw: rawTitle(meta.node), mayWrite: mayWrite(meta.node),
+    ok: true, chain: ids, raw: rawCollectionTitle(meta.node), mayWrite: mayWrite(meta.node),
     place: { nodeId: id, title: titleOf(meta.node, id), path: path.length ? path : [titleOf(meta.node, id)] },
     ...(above ? { parent: { nodeId: above.ref!.id!, title: titleOf(above, above.ref!.id!), path: path.slice(0, -1) } } : {}),
   };
-}
-
-/** The sub-collections of `parentId` by normalised COLLECTION title → id; null when that could not be found out. */
-async function siblingTitles(parentId: string): Promise<Map<string, string> | null> {
-  const byTitle = new Map<string, string>();
-  for (let skip = 0; skip < 2000; skip += 500) {
-    const res = await getChildCollectionsResult(parentId, 500, skip, TITLE_PROPS);
-    if (!res.reachable) return null;
-    for (const node of res.nodes) {
-      // The SAME chain as for the moved collection: `cm:title` first. A leftover
-      // `cclom:title` beside it would otherwise hide a namesake.
-      const t = normTitle(rawTitle(node));
-      if (t && node.ref?.id && !byTitle.has(t)) byTitle.set(t, node.ref.id);
-    }
-    if (res.nodes.length < 500) return byTitle;
-  }
-  return null;
 }
 
 /** Read everything the preview has to say, and refuse what the repository would do badly. */
@@ -124,7 +104,8 @@ export async function planMove(nodeId: string, newParentId: string): Promise<Mov
   }
 
   // A namesake under the target: the repository would put both side by side.
-  const siblings = await siblingTitles(newParentId);
+  // By the SAME title chain as the moved collection (`cm:title` first) — the lister the tree uses.
+  const siblings = await subCollectionsByTitle(newParentId);
   if (!siblings) {
     return { ok: false, code: 'not_checked', message: `Die Untersammlungen von „${target.place.title}“ ließen sich nicht lesen — ohne diesen Blick `
       + 'kann dort schon eine gleichnamige Sammlung stehen. Es wurde nichts geändert.' };

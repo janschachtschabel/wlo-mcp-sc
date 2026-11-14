@@ -16,7 +16,7 @@
  * writing a second, drifting one.
  */
 
-import { queryTerms, termMatches } from './node-match.js';
+import { comparable, queryTerms, termMatches } from './node-match.js';
 
 /**
  * Saturation of the term frequency. The standard 1.2: past a handful of
@@ -62,7 +62,9 @@ export interface Bm25Result {
   docFreq: Record<string, number>;
 }
 
-const tokenize = (text: string): string[] => text.toLowerCase().match(TOKEN) ?? [];
+// `comparable`: one Unicode form on both sides, or a decomposed umlaut splits a
+// word into two tokens and its composed twin in the query matches neither.
+const tokenize = (text: string): string[] => comparable(text).match(TOKEN) ?? [];
 
 /**
  * The query, cut by the SAME rule the documents are cut by, then reduced to the

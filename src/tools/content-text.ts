@@ -12,7 +12,7 @@ import { NOT_EXTRACTED_NOTE, getContentText, type ContentTextMiss } from '../ser
 import { oneLine } from '../formatter.js';
 import { registerWloTool } from '../apps/register.js';
 import { contentTextSchema } from '../apps/outputSchemas.js';
-import { toolError } from './shared.js';
+import { toolError, UNTRUSTED_TEXT_FIELD, untrustedTextLead } from './shared.js';
 
 /** Default cap: enough for a worksheet, far below a context-flooding 41k text. */
 const DEFAULT_MAX_CHARS = 200000;
@@ -61,7 +61,9 @@ Kein Text: \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_ur
 
         if (params.outputFormat === 'json') {
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+            // The note rides in the TEXT block, ahead of the material's text, and not
+            // in `structuredContent`: that one is the declared machine contract.
+            content: [{ type: 'text' as const, text: JSON.stringify(result.text ? { note: UNTRUSTED_TEXT_FIELD, ...result } : result) }],
             structuredContent: result,
           };
         }
@@ -80,6 +82,9 @@ Kein Text: \`source: "none"\` mit \`reason\` (\`access_denied\`, \`no_text_no_ur
         const lines = [`# ${result.title || result.nodeId}`, '', `Quelle: ${origin}`]
           .map(oneLine);
         if (result.truncated) lines.push(`Hinweis: gekürzt auf ${params.maxChars ?? DEFAULT_MAX_CHARS} von ${result.charCountIsLowerBound ? 'mindestens ' : ''}${result.charCount} Zeichen.`);
+        // An uploaded file or a linked page: said before it, never after
+        // (`UNTRUSTED_TEXT_NOTE`). The no-text sentence below is the server's own.
+        if (result.text) lines.push(...untrustedTextLead().slice(0, -1));
         lines.push('');
         lines.push(result.text || [
           `Dieses Material hat keinen hinterlegten Volltext — ${result.reason ? NO_TEXT_REASONS[result.reason] : 'Grund unbekannt'}.`,

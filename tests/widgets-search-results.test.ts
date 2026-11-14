@@ -225,3 +225,72 @@ test('renderSearchResults escapes the query and handles a missing payload', () =
   assert.match(renderSearchResults(payload({ query: '<b>x</b>' }), 'de'), /&lt;b&gt;x&lt;\/b&gt;/);
   assert.match(renderSearchResults(undefined, 'de'), /Keine Treffer gefunden/);
 });
+
+// A flat list that says it read only a PART: dropped on the way into the
+// envelope, an empty one rendered as "Keine Treffer gefunden." — a statement
+// about the catalogue over a scan, a walk or a sample that did not cover it.
+const BOUNDS: [string, RegExp, RegExp][] = [
+  ['scanCapped', /nur ein Teil des Sammlungsbaums/, /only part of the collection tree/i],
+  ['walkCapped', /nicht vollständig durchlaufen/, /not walked to its end/i],
+  ['truncated', /nur die ersten Inhalte dieser Sammlung/, /only the first items of this collection/i],
+  ['skipLimitReached', /Weiter reicht das Blättern hier nicht/, /Paging does not reach further here/i],
+];
+
+for (const [flag, de, en] of BOUNDS) {
+  test(`search widget: an empty list with ${flag} is not "Keine Treffer gefunden."`, () => {
+    const empty = { total: 0, count: 0, results: [], [flag]: true } as never;
+    const html = renderSearchResults(empty, 'de');
+    assert.doesNotMatch(html, /Keine Treffer gefunden/);
+    assert.match(html, de);
+    assert.match(html, /class="wlo-empty"/, 'it is the headline of the empty state');
+    assert.match(renderSearchResults(empty, 'en'), en);
+  });
+
+  test(`search widget: ${flag} is noted above a list that has hits`, () => {
+    for (const hit of [node('c1', 'Optik', 'collection'), node('m1', 'Linsen')]) {
+      const html = renderSearchResults({ total: 1, count: 1, results: [hit], [flag]: true } as never, 'de');
+      assert.match(html, de);
+      assert.ok(html.search(de) < html.indexOf('wlo-grid'), 'above the hits');
+      assert.doesNotMatch(renderSearchResults({ total: 1, count: 1, results: [hit] } as never, 'de'), de);
+    }
+  });
+}
+
+test('search widget: a closed branch and a bound are both noted', () => {
+  const html = renderSearchResults({ total: 1, count: 1, results: [node('c1', 'Optik', 'collection')], restricted: true, scanCapped: true } as never, 'de');
+  assert.match(html, /mit dieser Anmeldung nicht lesbar/);
+  assert.match(html, /nur ein Teil des Sammlungsbaums/);
+});
+
+// ── Second review round: what the list says about itself, ABOVE hits ────────
+
+test('search widget: `contentsCut` is a bound like the others — noted above hits, and the headline of an empty list', () => {
+  const de = /nur die ersten Inhalte je Sammlung/;
+  const withHits = renderSearchResults({ total: 1, count: 1, results: [node('m1', 'Linsen')], contentsCut: true } as never, 'de');
+  assert.match(withHits, de);
+  assert.ok(withHits.search(de) < withHits.indexOf('wlo-grid'), 'above the hits');
+  assert.match(renderSearchResults({ total: 1, count: 1, results: [node('m1', 'Linsen')], contentsCut: true } as never, 'en'), /only the first items of each collection/i);
+  const empty = renderSearchResults({ total: 0, count: 0, results: [], contentsCut: true } as never, 'de');
+  assert.doesNotMatch(empty, /Keine Treffer gefunden/);
+  assert.match(empty, de);
+});
+
+for (const bucket of ['content', 'collections', 'topicPages']) {
+  test(`search widget: an incomplete ${bucket} bucket is noted above the hits that did come`, () => {
+    const p = payload();
+    p[bucket] = { ...p[bucket], incomplete: true };
+    const html = renderSearchResults(p, 'de');
+    assert.match(html, /die Liste kann Treffer auslassen/);
+    assert.ok(html.search(/die Liste kann Treffer auslassen/) < html.indexOf('wlo-grid'), 'above the hits');
+    assert.match(renderSearchResults(p, 'en'), /the list may be missing results/i);
+    assert.doesNotMatch(renderSearchResults(payload(), 'de'), /die Liste kann Treffer auslassen/);
+  });
+}
+
+test('search widget: a flat list that is incomplete says so above its hits', () => {
+  for (const hit of [node('c1', 'Optik', 'collection'), node('m1', 'Linsen')]) {
+    const html = renderSearchResults({ total: 1, count: 1, results: [hit], incomplete: true } as never, 'de');
+    assert.match(html, /die Liste kann Treffer auslassen/);
+    assert.equal(html.match(/die Liste kann Treffer auslassen/g)?.length, 1, 'once, however many buckets say it');
+  }
+});

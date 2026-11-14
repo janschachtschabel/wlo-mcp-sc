@@ -14,9 +14,11 @@
  *    region inserted together with its text is unreliably picked up by AT, one
  *    that already exists when the text lands fires dependably.
  *
- * Only the loading→result transition speaks. A grace window that expires with
- * NOTHING stays silent ("Inhalte geladen" over an empty view would be false),
- * and output that is already present at mount was never "loading" to the user.
+ * Two things speak. The loading→result transition says "geladen" — output that
+ * is already present at mount was never "loading" to the user. And a FAILURE
+ * (an error result, or a grace window that expired with nothing) speaks the
+ * sentence the error state shows, once, when it is entered: "Inhalte geladen"
+ * over it would be false, and silence leaves the listener with "loading".
  *
  * DOM glue — excluded from the build tsconfig, like the widget entry points.
  */
@@ -28,11 +30,17 @@ const LIVE_ID = 'wlo-live';
 /** Whether the PREVIOUS paint was still waiting; undefined = first paint. */
 let wasAwaiting: boolean | undefined;
 
+/** Whether the PREVIOUS paint showed the error state. */
+let wasFailed = false;
+
 /**
  * Call at the top of every paint with the shell's current view of the host.
- * Cheap and idempotent; only the one transition writes into the region.
+ * Cheap and idempotent; only a transition writes into the region.
+ *
+ * @param failure the error state's sentence when this paint shows it
+ *                (`failureMessage`), otherwise undefined
  */
-export function announceArrival(awaiting: boolean, hasOutput: boolean, locale: Locale): void {
+export function announceArrival(awaiting: boolean, hasOutput: boolean, locale: Locale, failure?: string): void {
   let region = document.getElementById(LIVE_ID);
   if (!region) {
     region = document.createElement('div');
@@ -43,7 +51,13 @@ export function announceArrival(awaiting: boolean, hasOutput: boolean, locale: L
     document.body.appendChild(region);
   }
 
-  const arrived = wasAwaiting === true && !awaiting && hasOutput;
+  const failed = !awaiting && failure !== undefined;
+  // An error result HAS output (`structuredContent.error`), so the failure is
+  // decided first — otherwise it would be announced as an arrival.
+  const arrived = wasAwaiting === true && !awaiting && hasOutput && !failed;
+  const enteredFailure = failed && !wasFailed;
   wasAwaiting = awaiting;
-  if (arrived) region.textContent = t(locale, 'resultsLoaded');
+  wasFailed = failed;
+  if (enteredFailure) region.textContent = failure;
+  else if (arrived) region.textContent = t(locale, 'resultsLoaded');
 }

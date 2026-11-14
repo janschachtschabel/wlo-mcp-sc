@@ -40,15 +40,16 @@ export interface StaticResult {
 const HTML = 'text/html; charset=utf-8';
 
 /**
- * CSP for the launcher page. Looser than the REST layer's HTML policy in exactly
- * one respect — the launcher runs an inline script (it builds example URLs and
- * offers a live API test), so `script-src` must permit inline code. Everything
- * else is denied: the page references no external asset at all, and its one
+ * CSP for the launcher page. Its script (it builds example URLs and offers a
+ * live API test) is served as a file, `/launcher.js`, so `script-src` is
+ * `'self'` — the page shares its origin with the pages a WLO password is typed
+ * on, and inline script allowed here was the one such allowance on that origin
+ * (audit 2026-11-14). Styles are still inline. Everything else is denied: the page references no external asset at all, and its one
  * fetch goes to `location.origin`, which `connect-src 'self'` covers. Framing is
  * refused so the page cannot be dressed up as somebody else's.
  */
-const LAUNCHER_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+export const LAUNCHER_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; " +
   "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const MARKDOWN = 'text/markdown; charset=utf-8';
 const TEXT = 'text/plain; charset=utf-8';
@@ -99,6 +100,8 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/authorize.js': { relPath: 'authorize.js', contentType: JS },
   '/access-block.js': { relPath: 'access-block.js', contentType: JS },
   '/auth-i18n.js': { relPath: 'auth-i18n.js', contentType: JS },
+  // The launcher's script as a FILE, so its page needs no inline script (audit 2026-11-14).
+  '/launcher.js': { relPath: 'launcher.js', contentType: JS },
 };
 
 /**

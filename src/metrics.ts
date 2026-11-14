@@ -33,7 +33,55 @@ const METRICS: Record<string, { kind: Kind; help: string }> = {
   wlo_tool_duration_seconds: { kind: 'histogram', help: 'Time spent in tool handlers.' },
   wlo_upstream_requests_total: { kind: 'counter', help: 'Calls to the repository by outcome (status class, error = no answer, cancelled = our caller hung up, shed = not sent, our own limit).' },
   wlo_upstream_duration_seconds: { kind: 'histogram', help: 'Time until the repository answered (headers received), by outcome. Calls that were not sent are not timed.' },
+  wlo_tool_errors_total: { kind: 'counter', help: 'MCP tool calls answered with isError, by tool and error code (a code outside the known set counts as "other", an error without one as "uncoded").' },
+  wlo_upstream_gate_wait_seconds: { kind: 'histogram', help: 'Time a repository call waited for a slot at our own limit, by outcome (granted, shed = not sent). Calls that got a slot at once are not timed.' },
+  wlo_rate_limited_total: { kind: 'counter', help: 'Requests refused by one of our own limiters, by limiter.' },
 };
+
+/**
+ * The error codes that may appear as a label value. An ALLOW list, because the
+ * code is read from a tool's answer and the rule above wants label values from
+ * our code: every entry is a literal a tool or the write pipeline answers with
+ * (`services/failure-code.ts` and the curation refusals). A code missing here
+ * still counts — as `other` — so forgetting one costs detail, never memory.
+ */
+export const TOOL_ERROR_CODES: ReadonlySet<string> = new Set([
+  // services/failure-code.ts — every read tool's `toolError`
+  'timeout', 'forbidden', 'not_found', 'upstream_busy', 'upstream_error',
+  // input and login
+  'invalid_input', 'invalid_url', 'unresolved_filter', 'ambiguous_collection', 'too_many', 'too_large',
+  'login_required', 'login_rejected', 'rate_limited', 'upstream_unreachable', 'internal_error',
+  // the two-step confirmation and plans
+  'confirm_mismatch', 'confirm_unknown', 'confirm_expired', 'plan_expired', 'plan_mismatch',
+  // refusals before a write
+  'refused', 'exists', 'duplicate', 'no_change', 'nothing_to_change', 'not_a_collection', 'not_a_record',
+  'is_a_folder', 'is_a_collection', 'is_original', 'link_record', 'would_replace_file', 'not_visible',
+  'not_checked', 'unreadable', 'unreadable_original', 'text_unreadable', 'changed_since_preview',
+  'not_in_collection', 'access_denied', 'node_not_found', 'unsupported_type',
+  // outcomes after a write
+  'unverified', 'not_stored', 'not_removed', 'suggestion_not_marked', 'proposal_not_marked',
+  'no_pending_proposal', 'already_submitted', 'already_proposed', 'already_decided',
+]);
+
+/**
+ * The `code` label for a tool result: null for a success, otherwise the
+ * answer's `structuredContent.error.code` when it is a known one, `other` for
+ * any other string and `uncoded` when the error names none.
+ */
+export function toolErrorCode(result: unknown): string | null {
+  const r = result as { isError?: unknown; structuredContent?: { error?: { code?: unknown } | null } | null } | null | undefined;
+  if (r?.isError !== true) return null;
+  const error = r.structuredContent?.error;
+  const code = typeof error === 'object' && error !== null ? error.code : undefined;
+  if (typeof code !== 'string' || !code) return 'uncoded';
+  return TOOL_ERROR_CODES.has(code) ? code : 'other';
+}
+
+/** Count a tool result that is an error, by tool and code. A success counts nothing. */
+export function countToolError(tool: string, result: unknown): void {
+  const code = toolErrorCode(result);
+  if (code !== null) count('wlo_tool_errors_total', { tool, code });
+}
 
 const values = new Map<string, number>();
 

@@ -77,7 +77,9 @@ test('a failing /api/search/<term> logs the route, not the path that ends in the
   process.stderr.write = ((c: unknown) => { lines.push(String(c)); return true; }) as typeof process.stderr.write;
   try {
     const out = await routeRestRequest('GET', '/api/search/Schwangerschaftsabbruch');
-    assert.equal(out?.status, 500, JSON.stringify(out));
+    // 502 since 2026-11-14: a repository that answers 500 is an upstream
+    // failure, not a defect of this server (`tests/rest-failure-status.test.ts`).
+    assert.equal(out?.status, 502, JSON.stringify(out));
   } finally { process.stderr.write = real; mock.restore(); }
   const logged = lines.join('');
   assert.match(logged, /rest handler error/);

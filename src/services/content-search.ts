@@ -25,7 +25,7 @@
  * and the failures.
  */
 
-import type { SearchCriterion, SearchResponse } from '../wlo-api.js';
+import type { SearchCriterion } from '../wlo-api.js';
 import { ngsearch } from '../wlo-api.js';
 import { ENHANCED_POOL_SIZE, enhancedSearch } from '../reranker.js';
 import { formatNodes, type FormattedNode } from '../formatter.js';
@@ -33,7 +33,7 @@ import { filterByExactLicense, pageSizeForLicense } from '../filter-criteria.js'
 import { dedupeByUrl } from '../result-dedupe.js';
 import { mapPool } from '../concurrency.js';
 import { capText } from '../text-cap.js';
-import { searchWithLicense } from './license-search.js';
+import { searchWithLicense, type LicensedSearchResponse } from './license-search.js';
 import { fileTextFor, isStoredText, readStoredText, storedTextAnswered } from './content-text.js';
 import { storedFileOf } from './node-details.js';
 import { TEXT_CONTENT_CAP, TEXT_ENRICH_MAX } from './node-details.js';
@@ -92,6 +92,8 @@ export interface ContentSearchResult {
    */
   // (see `incomplete` below for a window whose variants did not all answer)
   more?: { nextSkipCount: number };
+  /** The exact licence count could not be had: `total` counts the licence FAMILY (`license-search.ts`). */
+  totalIsUpperBound?: true;
 }
 
 export async function searchContent(opts: ContentSearchOptions): Promise<ContentSearchResult> {
@@ -116,7 +118,7 @@ export async function searchContent(opts: ContentSearchOptions): Promise<Content
   // How far ONE window advances the backend offset.
   const step = ranked ? ENHANCED_POOL_SIZE : size;
 
-  const readWindow = (skip: number, withTotal: boolean): Promise<SearchResponse> => searchWithLicense({
+  const readWindow = (skip: number, withTotal: boolean): Promise<LicensedSearchResponse> => searchWithLicense({
     license, criteria, size, skipCount: skip, withTotal,
     run: ranked
       ? (extra, n, s) => enhancedSearch(query, 'FILES', [...filters, ...extra], n, s)
@@ -134,10 +136,11 @@ export async function searchContent(opts: ContentSearchOptions): Promise<Content
   let skip = opts.skipCount;
   let reachedEnd: boolean;
   let partial = false;
+  let totalIsUpperBound = false;
   for (let round = 0; ; round++) {
     // The exact total (one facet request for a licence) is asked ONCE.
     const response = await readWindow(skip, round === 0);
-    if (round === 0) total = response.pagination.total;
+    if (round === 0) { total = response.pagination.total; totalIsUpperBound = response.totalIsUpperBound === true; }
     partial ||= response.incomplete === true;
     const fresh = response.nodes.filter(n => {
       const id = n.ref?.id ?? '';
@@ -169,6 +172,7 @@ export async function searchContent(opts: ContentSearchOptions): Promise<Content
     criteria,
     ...(results.length < max && !reachedEnd ? { more: { nextSkipCount: skip } } : {}),
     ...(partial ? { incomplete: true as const } : {}),
+    ...(totalIsUpperBound ? { totalIsUpperBound: true as const } : {}),
   };
 }
 
@@ -224,10 +228,11 @@ export async function enrichStoredText(nodes: FormattedNode[]): Promise<StoredTe
  */
 export function contentBucketNotices(bucket: {
   count: number; total: number; more?: { nextSkipCount: number }; incomplete?: true;
-  textContentSkipped?: string[]; textContentUnreadable?: string[];
+  textContentSkipped?: string[]; textContentUnreadable?: string[]; totalIsUpperBound?: true;
 }): string[] {
   return contentSearchNotices(bucket.more, bucket.count, bucket.total,
-    { skipped: bucket.textContentSkipped ?? [], unreadable: bucket.textContentUnreadable ?? [] }, bucket.incomplete);
+    { skipped: bucket.textContentSkipped ?? [], unreadable: bucket.textContentUnreadable ?? [] }, bucket.incomplete,
+    bucket.totalIsUpperBound);
 }
 
 /**
@@ -241,12 +246,18 @@ export function contentIncompleteNotice(empty: boolean): string {
     : 'Hinweis: Die Inhaltssuche hat nicht (vollständig) geantwortet — die Liste kann Treffer auslassen. Ein erneuter Aufruf kann sie vervollständigen.';
 }
 
+/** Said when the exact licence count could not be had and the total shown is the licence family's. */
+export const TOTAL_UPPER_BOUND_NOTICE = 'Hinweis: Die Gesamtzahl ist eine Obergrenze — die genaue Zahl für diese Lizenz war nicht zu ermitteln, '
+  + 'gezählt ist die Lizenzfamilie (auch restriktivere Varianten).';
+
 /** The German sentences for a `more`, an incomplete search and a text report — one wording for both tools. */
 export function contentSearchNotices(
   more: ContentSearchResult['more'], shown: number, total: number, text?: StoredTextReport, incomplete?: boolean,
+  totalIsUpperBound?: boolean,
 ): string[] {
   const lines: string[] = [];
   if (incomplete) lines.push(contentIncompleteNotice(shown === 0));
+  if (totalIsUpperBound) lines.push(TOTAL_UPPER_BOUND_NOTICE);
   if (more) {
     lines.push(shown === 0
       ? `Auf dieser Seite keine weiteren Treffer — das ist nicht das Ende des Katalogs. Weiter mit skipCount=${more.nextSkipCount}; schon gesehene IDs dabei weiter über excludeNodeIds mitgeben.`

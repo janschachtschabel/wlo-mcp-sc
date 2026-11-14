@@ -8,7 +8,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { WLO_REPOSITORY_URL } from '../wlo-api.js';
-import { oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
+import { listDisclosures, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, withDerivedResourceType, derivedResourceTypeNotice, licenseFilterNotice, licensePagingNotice, formatUnresolvedHint } from '../filter-criteria.js';
 import { queryMetaContent, toolError, wikiResolutionNotice } from './shared.js';
@@ -131,7 +131,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         // Optional inline full text — opt-in, so a plain search pays zero extra
         // round-trips. Bounded, and what was not read is named (P-5).
         const textReport = params.includeTextContent ? await enrichStoredText(formatted) : undefined;
-        const searchNotices = contentSearchNotices(found.more, formatted.length, total, textReport, found.incomplete);
+        const searchNotices = contentSearchNotices(found.more, formatted.length, total, textReport, found.incomplete, found.totalIsUpperBound);
 
         const isJson = (params.outputFormat ?? 'markdown') === 'json';
         // In markdown the notice goes INTO block 0: a measured real client
@@ -142,8 +142,12 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
         const derivedNotice = derivedResourceTypeNotice(derivedType, formatted.length);
         // "Keine Inhalte gefunden." is a statement about the CATALOGUE. Over a page
         // that is merely exhausted (`more`) it told the chatbot the catalogue was.
+        // ONE object for the JSON block and the structured answer: `more` and
+        // `totalIsUpperBound` were in the structured part only, so a client
+        // parsing block 0 read a short page as the end and a family count as exact.
+        const said = listDisclosures({ incomplete: found.incomplete, totalIsUpperBound: found.totalIsUpperBound, more: found.more });
         let text = isJson
-          ? renderToJson(formatted, total, { incomplete: found.incomplete })
+          ? renderToJson(formatted, total, said)
           : (renderToText(formatted, total) || (found.more || found.incomplete ? '' : 'Keine Inhalte gefunden.'));
         if (!isJson && derivedNotice) text += `\n\n${derivedNotice}`;
         // Markdown: into block 0, for the same reason as the derived-type notice.
@@ -183,8 +187,7 @@ IM ZWEIFEL search_wlo_all NEHMEN: das liefert Materialien UND Sammlungen UND The
             total,
             count: formatted.length,
             results: formatted,
-            ...(found.more ? { more: found.more } : {}),
-            ...(found.incomplete ? { incomplete: true as const } : {}),
+            ...said,
             ...(textReport?.skipped.length ? { textContentSkipped: textReport.skipped } : {}),
             ...(textReport?.unreadable.length ? { textContentUnreadable: textReport.unreadable } : {}),
             ...(derivedType ? { derivedResourceType: derivedType } : {}),

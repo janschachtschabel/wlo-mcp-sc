@@ -1,8 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getRelatedContent } from '../src/services/related.js';
+import { getRelatedContent as readRelated, type RelatedContentOptions, type RelatedContentResult } from '../src/services/related.js';
 import { installFetchMock, makeNode } from './fetchMock.js';
+
+/** The FOUND case: a seed that could not be read fails the test right here. */
+async function getRelatedContent(opts: RelatedContentOptions): Promise<RelatedContentResult> {
+  const res = await readRelated(opts);
+  assert.ok(!('seedStatus' in res), 'the seed resolved');
+  return res;
+}
 
 test('getRelatedContent: an unreadable parent collection must not fail the whole tool', async () => {
   // Live-found 2026-07-17: the siblings lookup hit `403 Forbidden` on a real
@@ -88,13 +95,13 @@ test('getRelatedContent: filters by the seed vocab and excludes the seed itself'
   }
 });
 
-test('getRelatedContent: returns null when the seed node is not found', async () => {
+test('getRelatedContent: a seed that is not found comes back with its status, not as a bare null', async () => {
   const mock = installFetchMock((url) => {
     if (url.includes('/metadata')) return { status: 404, json: {} };
     return { json: {} };
   });
   try {
-    assert.equal(await getRelatedContent({ nodeId: 'missing' }), null);
+    assert.deepEqual(await readRelated({ nodeId: 'missing' }), { seedStatus: 404 });
   } finally {
     mock.restore();
   }

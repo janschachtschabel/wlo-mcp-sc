@@ -19,7 +19,7 @@ import { didNotAnswer, getChildCollectionsResult, getCollectionContents } from '
 import { rerankNodes, sortByTitle } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode, formatNodes } from '../formatter.js';
-import { nodeMatchesText } from '../node-match.js';
+import { comparable, nodeMatchesText } from '../node-match.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
 import { failureStatus } from './failure-code.js';
@@ -47,7 +47,7 @@ export const RESTRICTED_NOTICE = 'Hinweis: Ein Teil des durchsuchten Bereichs is
  */
 export async function findCollectionsByTreeTraversal(
   level1: WloNode[], query: string,
-): Promise<{ matches: WloNode[]; unread: number; refused: number }> {
+): Promise<{ matches: WloNode[]; unread: number; refused: number; capped?: true }> {
   // De-dup by nodeId at insertion (audit Q-2): the same node can be reached more
   // than once across levels, and duplicates would make rows and `total` lie.
   const seen = new Set<string>();
@@ -65,9 +65,15 @@ export async function findCollectionsByTreeTraversal(
   };
   addMatches(level1);
 
+  // A cap that cut the scan is REPORTED (`capped`), not only logged: the caller
+  // says "no collection found" over what this returns, and over a part of the
+  // tree that is a statement nobody can make.
+  let capped = false;
   const LEVEL2_PARENT_CAP = 25;
+  const LEVEL2_CHILDREN = 50;
   const level2Parents = level1.slice(0, LEVEL2_PARENT_CAP);
   if (level1.length > LEVEL2_PARENT_CAP) {
+    capped = true;
     log.warn('collection search: level2 expansion capped', { from: level1.length, to: LEVEL2_PARENT_CAP, query: logTerm(query) });
   }
   // Listings that did not answer are COUNTED: "no collections found" over
@@ -75,31 +81,43 @@ export async function findCollectionsByTreeTraversal(
   let unread = 0;
   // Sub-lists the repository REFUSED: no outage, and not "no sub-collections" either.
   let refused = 0;
-  const level2Results = await Promise.allSettled(
-    level2Parents.map(parent => getChildCollectionsResult(parent.ref?.id ?? '', 50))
-  );
-  const allLevel2Nodes: WloNode[] = [];
-  for (const r of level2Results) {
-    if (r.status === 'fulfilled' && r.value.reachable) {
-      allLevel2Nodes.push(...r.value.nodes);
-      addMatches(r.value.nodes);
-    } else if (r.status === 'rejected' || didNotAnswer(r.value)) {
-      // A REFUSED sub-list (not readable for this login) is not counted HERE: it
-      // is no outage, and "try again" over it would be wrong for good (D6).
-      unread++;
-    } else {
-      refused++;
+  /**
+   * One level of sub-listings, a few at a time — it was up to twenty-five
+   * requests at once, against a gate every other caller shares. `mapPool` nulls
+   * a listing that THREW, which is the same case as one that did not answer.
+   * The listing carries no total, so a FULL page is what "there may be more"
+   * looks like from here.
+   */
+  const readLevel = async (parents: WloNode[], width: number): Promise<WloNode[]> => {
+    const listings = await mapPool(parents, TREE_CONCURRENCY, parent => getChildCollectionsResult(parent.ref?.id ?? '', width));
+    const found: WloNode[] = [];
+    for (const listing of listings) {
+      if (!listing || didNotAnswer(listing)) {
+        unread++;
+      } else if (!listing.reachable) {
+        // A REFUSED sub-list (not readable for this login) is no outage, and
+        // "try again" over it would be wrong for good (D6).
+        refused++;
+      } else {
+        if (listing.nodes.length >= width) capped = true;
+        found.push(...listing.nodes);
+        addMatches(listing.nodes);
+      }
     }
-  }
+    return found;
+  };
+  const allLevel2Nodes = await readLevel(level2Parents, LEVEL2_CHILDREN);
 
   if (matches.length === 0) {
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    // Both sides through `comparable`: lowercased alone, a decomposed umlaut on
+    // one side never meets the composed one on the other.
+    const queryWords = comparable(query).split(/\s+/).filter(w => w.length > 2);
     const scoreNode = (n: WloNode): number => {
-      const text = [
+      const text = comparable([
         n.properties?.['cm:name']?.[0] ?? '',
         n.properties?.['cclom:title']?.[0] ?? '',
         n.properties?.['cclom:general_description']?.[0] ?? '',
-      ].join(' ').toLowerCase();
+      ].join(' '));
       return queryWords.reduce((s, w) => s + (text.includes(w) ? 1 : 0), 0);
     };
     const anyScored = allLevel2Nodes.some(n => scoreNode(n) > 0);
@@ -108,17 +126,11 @@ export async function findCollectionsByTreeTraversal(
       ? [...allLevel2Nodes].sort((a, b) => scoreNode(b) - scoreNode(a)).slice(0, LEVEL3_PARENT_CAP)
       : allLevel2Nodes.slice(0, LEVEL3_PARENT_CAP);
 
-    const level3Results = await Promise.allSettled(
-      level2Candidates.map(parent => getChildCollectionsResult(parent.ref?.id ?? '', 30))
-    );
-    for (const r of level3Results) {
-      if (r.status === 'fulfilled' && r.value.reachable) addMatches(r.value.nodes);
-      else if (r.status === 'rejected' || didNotAnswer(r.value)) unread++;
-      else refused++;
-    }
+    if (allLevel2Nodes.length > LEVEL3_PARENT_CAP) capped = true;
+    await readLevel(level2Candidates, 30);
   }
 
-  return { matches, unread, refused };
+  return { matches, unread, refused, ...(capped ? { capped: true as const } : {}) };
 }
 
 /**
@@ -145,9 +157,33 @@ export const RECURSIVE_SKIP_MAX = 400;
  * the cap stands on the cost of the walk, which is measurable, not on a deadline
  * that is not.
  */
-const RECURSIVE_VISIT_MAX = 50;
+export const RECURSIVE_VISIT_MAX = 50;
 /** Collections of one level read at the same time. Small: each is two requests, and the upstream gate is shared. */
 const RECURSIVE_POOL = 6;
+/** Files read of ONE collection. There is no paging inside the walk: what a collection holds past this is not read. */
+export const RECURSIVE_FILES_PER_COLLECTION = 50;
+
+/**
+ * What the recursive walk gathered — and what it did NOT read, which the caller
+ * has to say: each of the three used to be a log line at most, under an answer
+ * that read like the whole subtree.
+ */
+export interface RecursiveContents {
+  nodes: FormattedNode[];
+  totalHits: number;
+  incomplete?: true;
+  restricted?: true;
+  /** The walk stopped at `RECURSIVE_VISIT_MAX` collections with more of the subtree waiting. */
+  walkCapped?: true;
+  /** At least one visited collection holds more files than the `RECURSIVE_FILES_PER_COLLECTION` read of it. */
+  contentsCut?: true;
+  /**
+   * Collections of the subtree were not visited — the cap, or simply a page
+   * that was full — so `totalHits`, which sums the VISITED ones, counts only
+   * part of what is under here.
+   */
+  totalIsLowerBound?: true;
+}
 
 /**
  * BFS over a collection and its sub-collections, collecting file children
@@ -164,7 +200,7 @@ export async function collectRecursiveContents(
   maxResults: number,
   excluded: Set<string>,
   query: string | undefined,
-): Promise<{ nodes: FormattedNode[]; totalHits: number; incomplete?: true; restricted?: true }> {
+): Promise<RecursiveContents> {
   const visited = new Set<string>();
   const seenNodes = new Set<string>(); // de-dup result rows across sub-collections
   const nodes: FormattedNode[] = [];
@@ -175,6 +211,7 @@ export async function collectRecursiveContents(
   // Branches the repository refused to open — a sub-listing or a
   // sub-collection's contents alike: left out, and said (`restricted`).
   let refusedBranches = 0;
+  let contentsCut = false;
 
   // Level by level, a few collections at a time. The walk used to read one
   // collection after the other — two requests each, up to a hundred in series
@@ -189,6 +226,9 @@ export async function collectRecursiveContents(
   while (level.length > 0 && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
     const next: string[] = [];
     let at = 0;
+    // Members of a group that were asked for and not REACHED (the page was
+    // full): past `at`, and unvisited all the same.
+    let dropped = 0;
     while (at < level.length && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
       const group: string[] = [];
       while (at < level.length && group.length < RECURSIVE_POOL && visited.size + group.length < RECURSIVE_VISIT_MAX) {
@@ -203,7 +243,7 @@ export async function collectRecursiveContents(
         // same answer of the repository must not end the call in one place and
         // pass for "empty" in the other. The START node stays an error: the
         // caller named it, and a list without it would be a list of nothing.
-        getCollectionContents(cid, 'files', 50).catch((err: unknown) => {
+        getCollectionContents(cid, 'files', RECURSIVE_FILES_PER_COLLECTION).catch((err: unknown) => {
           const status = failureStatus(err);
           if (cid === rootId || status === null || !isRefusal(status)) throw err;
           return null;
@@ -213,13 +253,14 @@ export async function collectRecursiveContents(
       for (let g = 0; g < group.length; g++) {
         // Enough rows already: what the rest of the group answered is dropped,
         // exactly as the serial walk never asked for it.
-        if (nodes.length >= maxResults) break;
+        if (nodes.length >= maxResults) { dropped += group.length - g; break; }
         visited.add(group[g]!);
         const settled = read[g]!;
         if (settled.status === 'rejected') throw settled.reason;
         const [filesResp, subs] = settled.value;
         if (!filesResp) refusedBranches += 1;
         totalHits += filesResp?.pagination.total ?? 0;
+        if (filesResp && filesResp.pagination.total > filesResp.nodes.length) contentsCut = true;
         let fileNodes = filesResp?.nodes ?? [];
         if (excluded.size) fileNodes = fileNodes.filter(n => !excluded.has(n.ref?.id ?? ''));
         // Drop a node already emitted from an earlier sub-collection.
@@ -245,10 +286,11 @@ export async function collectRecursiveContents(
         }
       }
     }
-    unread = (level.length - at) + next.length;
+    unread = (level.length - at) + dropped + next.length;
     level = next;
   }
-  if (visited.size >= RECURSIVE_VISIT_MAX && unread > 0) {
+  const walkCapped = visited.size >= RECURSIVE_VISIT_MAX && unread > 0;
+  if (walkCapped) {
     log.warn('recursive contents: visit cap reached, subtree not fully walked', {
       rootId, visited: visited.size, queued: unread,
     });
@@ -257,6 +299,9 @@ export async function collectRecursiveContents(
     nodes: nodes.slice(0, maxResults), totalHits,
     ...(unreadSubs > 0 ? { incomplete: true as const } : {}),
     ...(refusedBranches > 0 ? { restricted: true as const } : {}),
+    ...(walkCapped ? { walkCapped: true as const } : {}),
+    ...(contentsCut ? { contentsCut: true as const } : {}),
+    ...(unread > 0 ? { totalIsLowerBound: true as const } : {}),
   };
 }
 

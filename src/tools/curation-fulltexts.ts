@@ -23,13 +23,13 @@ import { sanitizeText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
 import { codedError, previewReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
 import { SOURCE_SCHEMA, parseFulltextInput } from './curation-fulltext-input.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const STATUS_LABEL: Record<string, string> = {
   stored: 'abgelegt', not_stored: 'nicht angekommen', unverified: 'offen — nicht bestätigt', failed: 'gescheitert', pending: 'offen',
 };
-const label = (s: ItemState) => `${STATUS_LABEL[s.status] ?? s.status}${s.code ? ` (${s.code})` : ''}`;
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL);
 
 function answer(plan: StoredPlan<FulltextItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Volltexte:', report, plan.expiresAt, plan.items.map(i => ({

@@ -81,7 +81,25 @@ type FlatNodeList = {
   incomplete?: true;
   /** A walk met a branch the repository refused to open. */
   restricted?: true;
-};
+} & { [K in BoundKey]?: true };
+
+/**
+ * What a flat list says about a read that covered only a PART: a capped tree
+ * scan, a capped walk, a sample of a collection, an offset past the limit. Each
+ * is also the key of its sentence in the strings table.
+ */
+const BOUND_KEYS = ['scanCapped', 'walkCapped', 'contentsCut', 'truncated', 'skipLimitReached'] as const;
+type BoundKey = typeof BOUND_KEYS[number];
+
+/**
+ * The bounds a payload reports. Read off the flat list itself rather than
+ * carried through the envelope: they describe the answer as a whole, and
+ * `search_wlo_all` — the envelope's own shape — has none of them.
+ */
+function boundsOf(payload: SearchAllPayload | FlatNodeList | undefined): BoundKey[] {
+  if (!payload || 'content' in payload) return [];
+  return BOUND_KEYS.filter(key => payload[key] === true);
+}
 
 /**
  * Accept both payload shapes so ONE widget serves every list tool. Which tool
@@ -127,6 +145,7 @@ export function renderSearchResults(
   state: SearchResultsState = {},
 ): string {
   const payload = toEnvelope(input);
+  const bounds = boundsOf(input);
   // Detail view first: a selected node replaces the grid entirely. An id the
   // current payload no longer contains falls through to the grid — the widget
   // must never go blank after a data refresh.
@@ -138,6 +157,9 @@ export function renderSearchResults(
   const topicPages = payload?.topicPages?.results ?? [];
   const collections = payload?.collections?.results ?? [];
   const content = payload?.content?.results ?? [];
+
+  // A source that did not answer — whichever bucket says it.
+  const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete || payload?.content?.incomplete;
 
   if (topicPages.length + collections.length + content.length === 0) {
     // A licence pass that removed everything is a different statement from "no
@@ -152,9 +174,10 @@ export function renderSearchResults(
       : '';
     // "No results" is a statement about the catalogue. Not made over a page that
     // is merely exhausted, nor over a source that did not answer.
-    const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete || payload?.content?.incomplete;
-    const headline = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable'
-      : payload?.collections?.restricted ? 'restricted' : 'noResults';
+    // Nor over a read that covered a part: dropped, a capped scan or a sampled
+    // collection with no match rendered as "Keine Treffer gefunden.".
+    const headline: StringKey = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable'
+      : payload?.collections?.restricted ? 'restricted' : bounds[0] ?? 'noResults';
     return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, headline))}</p>${reason}</div>`;
   }
 
@@ -189,10 +212,18 @@ export function renderSearchResults(
       `</div>`
     : '';
 
-  // Above the hits: a list with a closed branch is not the whole list.
-  const restrictedNote = payload?.collections?.restricted
-    ? `<p class="wlo-empty__reason">${escapeHtml(t(locale, 'restricted'))}</p>`
-    : '';
+  // Above the hits: a list a source left short, one with a closed branch, or
+  // one a bound cut, is not the whole list. `incomplete` had a sentence only
+  // for the EMPTY state — with hits shown, a search that lost a source looked
+  // like the complete answer.
+  const notes: StringKey[] = [
+    ...(unreachable ? ['sourceIncomplete' as const] : []),
+    ...(payload?.collections?.restricted ? ['restricted' as const] : []),
+    ...bounds,
+  ];
+  const restrictedNote = notes
+    .map(key => `<p class="wlo-empty__reason">${escapeHtml(t(locale, key))}</p>`)
+    .join('');
 
   // The bar precedes the grid: without a scrollport sticky cannot hold it in
   // view, so placing it after the results hid it behind the whole list.

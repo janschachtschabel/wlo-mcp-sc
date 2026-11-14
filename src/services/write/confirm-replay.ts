@@ -54,6 +54,12 @@ interface Entry {
 interface CallContext { tokenHash: string; argsHash: string; marked: boolean }
 
 const entries = new Map<string, Entry>();
+
+/** Redeemed keys whose answer is kept (or still being made) right now — for a metric. Reads only. */
+export function replayStoreSize(): number {
+  return entries.size;
+}
+
 const context = new AsyncLocalStorage<CallContext>();
 
 const hashOf = (value: string) => createHash('sha256').update(value).digest('hex');

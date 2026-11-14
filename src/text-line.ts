@@ -6,6 +6,11 @@
  * renderer can use `oneLine` without importing the formatter that imports it.
  */
 
+/** A character a reader breaks the line at. `\p{Zl}`/`\p{Zp}` are LINE and PARAGRAPH SEPARATOR. */
+const LINE_BREAK = /[\r\n\u0085\p{Zl}\p{Zp}]/u;
+/** A whole run of whitespace; NEL is named because `\s` does not include it. */
+const BLANK_RUN = /[\s\u0085]+/g;
+
 /**
  * Collapse line breaks so a value cannot break out of its line.
  *
@@ -27,7 +32,14 @@ export function oneLine(value: string): string {
   // NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR too: many readers break a line
   // there, and a title carrying one forged the next line just the same
   // (chatbot team, 2026-11-14).
-  return value.replace(/\s*[\r\n\u0085\u2028\u2029]+\s*/g, ' ');
+  //
+  // Two steps, each one character class with one quantifier, so the scan is
+  // linear. The single expression this replaces put a whitespace run on BOTH
+  // sides of the break, and a long run of spaces with no break behind it was
+  // re-scanned from every one of its positions: 40 000 spaces took 3.9 s, in a
+  // function that runs over nearly every output line.
+  if (!LINE_BREAK.test(value)) return value;
+  return value.replace(BLANK_RUN, run => (LINE_BREAK.test(run) ? ' ' : run));
 }
 
 /**
@@ -70,3 +82,4 @@ export function nodeIdLine(nodeId: string, originalId?: string): string {
     ? `nodeId: ${nodeId} (Verknüpfung; Original: ${originalId})`
     : `nodeId: ${nodeId}`;
 }
+

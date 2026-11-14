@@ -134,7 +134,11 @@ test('an unreadable fitting skill is never offered as loadable, whatever the mat
     const r = await ask({ task: 'Experiment planen', outputFormat: 'json' }, { unreadable: VERSUCH });
     const t = (JSON.parse(toolText(r)) as { task: { match: string; chosen?: { nodeId: string }; candidates: Array<{ nodeId: string; readable: boolean }> } }).task;
     const versuch = t.candidates.find(c => c.nodeId === VERSUCH);
-    if (versuch) assert.equal(versuch.readable, false, 'listed, but marked unreadable');
+    // Asserted, not guarded: behind `if (versuch)` a candidate list that simply
+    // dropped the unreadable skill passed — and CLAUDE.md says it IS a candidate.
+    assert.ok(versuch, 'the unreadable approved skill is still a candidate');
+    assert.equal(versuch.readable, false, 'listed, but marked unreadable');
+    assert.notEqual(t.chosen?.nodeId, VERSUCH, 'and never the one handed over');
     assert.doesNotMatch(toolText(r), /ANLEITUNG-VERSUCH/);
   } finally { SKILLS[FRAGEN]!.keywords.splice(2); }
 });

@@ -21,9 +21,10 @@
 
 import { BASE_URL } from '../../wlo-config.js';
 import { wloFetch, HEADERS } from '../../wlo-fetch.js';
-import { ORDER_POSITION_PROPERTY, getChildCollectionsResult } from '../../wlo-node.js';
+import { ORDER_POSITION_PROPERTY } from '../../wlo-node.js';
 import { collectionTitleFromProperties } from '../../node-match.js';
 import { listMembers } from './collections.js';
+import { LISTING_PAGE, listSubCollections } from './collection-children.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { log } from '../../logger.js';
 import { failureDetail } from './nodes.js';
@@ -31,7 +32,6 @@ import type { MutationOutcome } from './verify.js';
 
 /** Children of one kind a collection may hold for its order to be set here — beyond it the list cannot be checked for completeness. */
 export const ORDER_MAX = 500;
-const PAGE = 100;
 const PROPS = ['cm:title', 'cclom:title', 'cm:name', ORDER_POSITION_PROPERTY];
 
 export type OrderKind = 'collections' | 'contents';
@@ -58,22 +58,15 @@ export async function listOrderChildren(collectionId: string, kind: OrderKind): 
       id: m.referenceId, ...(m.materialId !== m.referenceId ? { materialId: m.materialId } : {}), title: m.title, hasPosition: m.hasPosition,
     }));
   }
-  const out: OrderChild[] = [];
-  for (let skip = 0; skip <= ORDER_MAX; skip += PAGE) {
-    const res = await getChildCollectionsResult(collectionId, PAGE, skip, PROPS, { stored: true });
-    if (!res.reachable) return 'unread';
-    for (const node of res.nodes) {
-      const id = node.ref?.id;
-      if (!id) continue;
-      out.push({
-        id, title: sanitizeText(collectionTitleFromProperties(node.properties) || id),
-        hasPosition: node.properties?.[ORDER_POSITION_PROPERTY]?.[0] !== undefined,
-      });
-    }
-    if (out.length > ORDER_MAX) return 'too_many';
-    if (res.nodes.length < PAGE) return out;
-  }
-  return 'too_many';
+  const nodes = await listSubCollections(collectionId, { pageSize: LISTING_PAGE, max: ORDER_MAX, props: PROPS, stored: true });
+  if (typeof nodes === 'string') return nodes;
+  return nodes.flatMap((node) => {
+    const id = node.ref?.id;
+    return id ? [{
+      id, title: sanitizeText(collectionTitleFromProperties(node.properties) || id),
+      hasPosition: node.properties?.[ORDER_POSITION_PROPERTY]?.[0] !== undefined,
+    }] : [];
+  });
 }
 
 /** Both listings, in stored order. */

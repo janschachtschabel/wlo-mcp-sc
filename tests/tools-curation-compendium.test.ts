@@ -345,3 +345,51 @@ test('K-14: the key approves the removal of THE text shown — not of whatever i
     setServiceCredentialForTest(null);
   }
 });
+
+// Second review 2026-11-14, finding 7: after the key is spent, an error with
+// no word on the outcome reads "open — look first". A removal the repository
+// REFUSED removed nothing, and must say so; a busy one is open and coded busy.
+for (const [status, code, open] of [[403, 'forbidden', false], [404, 'not_found', false], [500, 'upstream_error', true], [429, 'upstream_busy', true]] as const) {
+  test(`a removal answered ${status}: ${code}, outcomeOpen ${open}`, async () => {
+    setServiceCredentialForTest(USER);
+    const mock = installFetchMock((_url, init) => {
+      if ((init?.method ?? 'GET') !== 'GET') return { status, json: {} };
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'],
+        properties: { 'cm:title': ['Bruchrechnung'], [PROPERTY]: ['# Überblick'] } } } };
+    });
+    const c = await client();
+    try {
+      const preview = toolText(await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, remove: true } }));
+      const res = await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, remove: true, confirmToken: tokenFrom(preview) } });
+      const error = (res.structuredContent as { error: { code: string; outcomeOpen: boolean } }).error;
+      assert.deepEqual([error.code, error.outcomeOpen], [code, open]);
+    } finally {
+      await c.close();
+      mock.restore();
+      setServiceCredentialForTest(null);
+    }
+  });
+}
+
+test('a removal whose check could not run is coded unverified; one whose text is still there, not_visible', async () => {
+  for (const [after, code] of [['down', 'unverified'], ['kept', 'not_visible']] as const) {
+    setServiceCredentialForTest(USER);
+    let written = false;
+    const mock = installFetchMock((_url, init) => {
+      if ((init?.method ?? 'GET') !== 'GET') { written = true; return { json: {} }; }
+      if (written && after === 'down') return { status: 503, json: {} };
+      return { json: { node: { ref: { id: COLLECTION, repo: '-home-' }, type: 'ccm:map', aspects: ['ccm:collection'],
+        properties: { 'cm:title': ['Bruchrechnung'], [PROPERTY]: ['# Überblick'] } } } };
+    });
+    const c = await client();
+    try {
+      const preview = toolText(await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, remove: true } }));
+      const res = await c.callTool({ name: 'wlo_update_compendium', arguments: { nodeId: COLLECTION, remove: true, confirmToken: tokenFrom(preview) } });
+      assert.equal((res.structuredContent as { error: { code: string } }).error.code, code, after);
+    } finally {
+      await c.close();
+      mock.restore();
+      setServiceCredentialForTest(null);
+    }
+  }
+});

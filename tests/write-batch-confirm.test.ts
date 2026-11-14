@@ -85,6 +85,30 @@ describe('BatchConfirmations', () => {
   });
 });
 
+describe('BatchConfirmations — an OPEN manifest outcome (review 2026-11-14, finding 6)', () => {
+  it('is claimed again, marked for a look — and never by two calls at once', () => {
+    for (const open of [{ status: 'failed', open: true, detail: 'HTTP 503' }, { status: 'unverified', detail: 'keine Antwort' }] as const) {
+      const bc = new BatchConfirmations();
+      const token = bc.mint('person-a', PLAN);
+      bc.claimManifest(token, 'person-a');
+      bc.recordManifest(token, { ...open });
+      const again = bc.claimManifest(token, 'person-a') as { plan?: unknown; open?: { result: { status: string }; since: number } };
+      assert.ok(again.plan && again.open, 'the claim goes out again, with the open outcome');
+      assert.equal(again.open.result.status, open.status);
+      assert.ok(again.open.since <= Date.now());
+      assert.ok('already' in (bc.claimManifest(token, 'person-a') as object), 'while that call looks, a second one waits');
+    }
+  });
+
+  it('a refusal recorded as failed (not open) is a result — no second claim', () => {
+    const bc = new BatchConfirmations();
+    const token = bc.mint('person-a', PLAN);
+    bc.claimManifest(token, 'person-a');
+    bc.recordManifest(token, { status: 'failed', detail: 'HTTP 403' });
+    assert.ok('already' in (bc.claimManifest(token, 'person-a') as object));
+  });
+});
+
 describe('BatchConfirmations — review R-A (2026-11-06)', () => {
   it('a manifest in flight is not reported as filed; the recorded result is', () => {
     const bc = new BatchConfirmations();
@@ -92,14 +116,16 @@ describe('BatchConfirmations — review R-A (2026-11-06)', () => {
     assert.ok('plan' in (bc.claimManifest(token, 'person-a') as object));
     const während = bc.claimManifest(token, 'person-a') as { already: { status: string } };
     assert.notEqual(während.already.status, 'stored', 'nothing is known to be filed yet');
-    bc.recordManifest(token, { status: 'unverified', detail: 'abgebrochen' });
+    // A record that is KNOWN (it has an id) and not confirmed is a result, handed out again.
+    bc.recordManifest(token, { status: 'unverified', nodeId: 'm-0', detail: 'Titel fehlt' });
     assert.equal((bc.claimManifest(token, 'person-a') as { already: { status: string } }).already.status, 'unverified');
     bc.recordManifest(token, { status: 'stored', nodeId: 'm-1' });
     assert.deepEqual((bc.claimManifest(token, 'person-a') as { already: unknown }).already, { status: 'stored', nodeId: 'm-1' });
   });
 
   it('caps the batches held in total, oldest out — not only per owner', () => {
-    const bc = new BatchConfirmations({ maxTotal: 2 });
+    // 4 in total: without a pool these three share the unproven half — 2 (`store-budget.ts`).
+    const bc = new BatchConfirmations({ maxTotal: 4 });
     const erste = bc.mint('person-a', PLAN);
     bc.mint('person-b', PLAN);
     const dritte = bc.mint('person-c', PLAN);

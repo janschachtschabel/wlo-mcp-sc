@@ -110,7 +110,10 @@ test('IPv6 forms that carry a private IPv4 are judged by that IPv4', () => {
 
 test('the whole link-local block fe80::/10 is private, not just fe80', () => {
   for (const h of ['fe80::1', 'fe90::1', 'fea0::1', 'febf::1']) assert.equal(isPrivateHost(h), true, h);
-  assert.equal(isPrivateHost('fec0::1'), false, 'fec0 is outside fe80::/10');
+  // Until 2026-11-14 this line pinned fec0::1 as PUBLIC, as proof the /10 was
+  // bounded. fec0::/10 is site-local and refused on its own entry now; the bound
+  // is shown one block below both instead.
+  assert.equal(isPrivateHost('fe00::1'), false, 'fe00 is outside fe80::/10 and fec0::/10');
 });
 
 test('IPv6 multicast and the NAT64 local-use prefix are private', () => {

@@ -23,10 +23,25 @@ const STRINGS = {
     // Spoken by the live region on the loading→result transition; the visible
     // completion is the content itself (see shared/announce.ts).
     resultsLoaded: 'WLO-Inhalte geladen.',
+    // The error state (shared/failure.ts). Both sentences say outright that
+    // this is no finding about the catalogue — the empty state they replace
+    // claimed exactly that.
+    loadFailed: 'Die WLO-Inhalte konnten nicht geladen werden — der Abruf ist fehlgeschlagen. Das ist kein Befund „nichts vorhanden“.',
+    loadRefused: 'Der angefragte Inhalt ist nicht vorhanden oder mit dieser Anmeldung nicht lesbar.',
+    loadTimedOut: 'Es ist keine Antwort eingetroffen — die WLO-Inhalte konnten nicht geladen werden. Das ist kein Befund „nichts vorhanden“.',
+    retryIn: 'Bitte in etwa {n} Sekunden erneut versuchen.',
     noResults: 'Keine Treffer gefunden.',
     noResultsMore: 'Auf dieser Seite keine weiteren Treffer — der Katalog hält mehr.',
     sourceUnreachable: 'Die Suche war nicht vollständig erreichbar — das ist kein Befund „nichts vorhanden“.',
+    // The same outage with hits on screen: they are real, and not all of them.
+    sourceIncomplete: 'Die Suche war nicht vollständig erreichbar — die Liste kann Treffer auslassen.',
     restricted: 'Ein Teil des durchsuchten Bereichs ist mit dieser Anmeldung nicht lesbar und fehlt hier.',
+    // A bounded read: each says what was NOT read, never "nothing there".
+    scanCapped: 'Durchsucht wurde nur ein Teil des Sammlungsbaums — ob es eine passende Sammlung gibt, ist damit offen.',
+    walkCapped: 'Der Unterbaum wurde nicht vollständig durchlaufen — ein Teil der Inhalte fehlt hier.',
+    contentsCut: 'Gelesen wurden nur die ersten Inhalte je Sammlung — mindestens eine hält mehr, als hier steht.',
+    truncated: 'Durchsucht wurden nur die ersten Inhalte dieser Sammlung — der Rest wurde nicht geprüft.',
+    skipLimitReached: 'Weiter reicht das Blättern hier nicht — für den Rest eine Unter-Sammlung öffnen.',
     // Split from the count so the number can be composed in without an
     // interpolating `t()`; both halves are one sentence in the rendering.
     noResultsLicense: 'Kein Treffer mit genau der gewählten Lizenz.',
@@ -109,10 +124,20 @@ const STRINGS = {
     moreOnTopicPage: 'More on the topic page',
     loading: 'Loading WLO content …',
     resultsLoaded: 'WLO content loaded.',
+    loadFailed: 'The WLO content could not be loaded — the request failed. This is not a finding of “nothing there”.',
+    loadRefused: 'The requested content does not exist or cannot be read with this login.',
+    loadTimedOut: 'No answer arrived — the WLO content could not be loaded. This is not a finding of “nothing there”.',
+    retryIn: 'Please try again in about {n} seconds.',
     noResults: 'No results found.',
     noResultsMore: 'No further results on this page — the catalogue holds more.',
     sourceUnreachable: 'The search was not fully reachable — this is not a finding of “nothing there”.',
+    sourceIncomplete: 'The search was not fully reachable — the list may be missing results.',
     restricted: 'Part of the searched area is not readable with this login and is missing here.',
+    scanCapped: 'Only part of the collection tree was searched — whether a matching collection exists is still open.',
+    walkCapped: 'The subtree was not walked to its end — part of the contents is missing here.',
+    contentsCut: 'Only the first items of each collection were read — at least one holds more than is shown here.',
+    truncated: 'Only the first items of this collection were searched — the rest was not checked.',
+    skipLimitReached: 'Paging does not reach further here — open a sub-collection for the rest.',
     noResultsLicense: 'Nothing carries exactly the licence you asked for.',
     licenseCandidatesChecked: 'candidates checked',
     licenseFamilyHint: 'The repository can only filter licence families — the exact selection happens afterwards.',

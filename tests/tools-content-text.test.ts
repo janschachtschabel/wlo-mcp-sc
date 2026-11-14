@@ -125,7 +125,10 @@ test('get_wlo_content_text is registered and describes what it is for', async ()
     const tool = tools.find(x => x.name === 'get_wlo_content_text');
     assert.ok(tool, 'tool is registered');
     const head = (tool.description ?? '').slice(0, 256).toLowerCase();
-    assert.match(head, /volltext|inhalt|text/, 'names what it returns up front');
+    // The opening words, not `volltext|inhalt|text` — "text" alone is in the
+    // description of nearly every tool this server has.
+    assert.match(head, /^der inhalt eines wlo-materials/, 'names what it returns up front');
+    assert.match(head, /nicht seine metadaten/, 'and what it is not');
     assert.equal(tool.annotations?.readOnlyHint, true);
   } finally {
     await client.close();

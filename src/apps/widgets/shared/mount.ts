@@ -28,6 +28,7 @@ import { announceArrival } from './announce.js';
 import { createHost } from './host.js';
 import { installImageFallback } from './image-fallback.js';
 import { renderLoading } from './loading.js';
+import { failureOf, failureMessage, renderError } from './failure.js';
 import { followUpPrompt, type FollowUpAction } from './follow-up.js';
 
 /** What the render callback needs to know about the shell's state. */
@@ -55,12 +56,16 @@ export function mountTileWidget(
     // Live region first: the innerHTML swap below destroys any in-root status
     // text (see shared/announce.ts).
     const awaiting = host.awaitingOutput();
-    announceArrival(awaiting, host.toolOutput() != null, locale);
-    // Before the renderer, not after: with no result yet its empty state is a
-    // claim about content nobody has fetched (see shared/loading.ts).
+    const failure = awaiting ? null : failureOf(host.toolOutput(), host.timedOut());
+    announceArrival(awaiting, host.toolOutput() != null, locale, failure ? failureMessage(locale, failure) : undefined);
+    // Before the renderer, not after: with no result yet — or a failed one —
+    // its empty state is a claim about content nobody has fetched (see
+    // shared/loading.ts, shared/failure.ts).
     root.innerHTML = awaiting
       ? renderLoading(locale)
-      : render(host.toolOutput(), locale, { selectedId, canFollowUp: host.canFollowUp() });
+      : failure
+        ? renderError(locale, failure)
+        : render(host.toolOutput(), locale, { selectedId, canFollowUp: host.canFollowUp() });
 
     // preventScroll: keep the focus move without the default scroll-into-view,
     // which jerks the host iframe.

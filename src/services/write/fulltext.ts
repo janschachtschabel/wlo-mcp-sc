@@ -42,6 +42,7 @@ import { wrongKind } from '../../node-kind.js';
 import { flattenText } from '../../text-sanitize.js';
 import { failureCode, writeFailureCode } from '../failure-code.js';
 import { failureDetail, resolveWriteTarget } from './nodes.js';
+import { wroteNothing } from '../../upstream-error.js';
 
 /** Bytes (UTF-8) per full text. Measured to round-trip at 2 MB in a property (2026-11-07); a call carries one. */
 export const FULLTEXT_MAX_BYTES = 2_000_000;
@@ -278,7 +279,8 @@ export async function writeFulltext(plan: FulltextPlan, markdown: string): Promi
     // repository's own 500 the READ-BACK decides, as W3 does (overall review,
     // 20). A 502/503/504 may come from a proxy while the repository still
     // writes: an empty read-back right then proves nothing (review 3, finding 1).
-    if (res.status < 500) return failed(false);
+    // 429 is "busy", no verdict — it takes the open path with the proxies' 5xx.
+    if (wroteNothing(res.status)) return failed(false);
     if (res.status !== 500) return failed(true);
     const seen = await readBack(plan, markdown);
     if (seen === 'absent') return failed(false, ' Zurückgelesen: der Text ist nicht angekommen.');

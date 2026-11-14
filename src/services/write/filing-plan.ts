@@ -26,6 +26,7 @@ import { fileRecord, isAlreadyFiled, readFilingTarget, type FilingTarget } from 
 import { removalOf } from './remove-plan.js';
 import { proposeForCollection } from './collection-proposals.js';
 import { failureCode } from '../failure-code.js';
+import { wroteNothing } from '../../upstream-error.js';
 import { isOutcomeOpen } from './timeouts.js';
 import type { ItemState, PlanItem, Step } from './plan-runner.js';
 
@@ -49,6 +50,8 @@ export interface FilingItem extends PlanItem {
   materialTitle: string;
   /** The collection the material leaves once it is in `collection`. */
   source?: FilingTarget;
+  /** OUR filing left for the repository (its answer may be missing): found filed after that, it is `added`, not `already`. */
+  filingSent?: boolean;
   /** The removal from `source` left for the repository (its answer may be missing). */
   removalSent?: boolean;
   /**
@@ -189,11 +192,9 @@ async function propose(item: FilingItem): Promise<ItemState> {
       // somebody else's — the repository gives a proposer no way to tell the two apart.)
       case 'already_proposed': return before ? { status: 'proposed' } : { status: 'already', code: 'already_proposed' };
       case 'unverified': return { status: 'unverified', outcomeOpen: true };
-      default: {
-        const s = outcome.httpStatus;
-        if (s >= 400 && s < 500 && s !== 429) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
+      default:
+        if (wroteNothing(outcome.httpStatus)) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
         return { status: 'pending', code: failureCode(outcome.detail) };
-      }
     }
   } catch (err) {
     if (isOutcomeOpen(err)) return { status: 'pending', code: 'timeout' };
@@ -203,12 +204,36 @@ async function propose(item: FilingItem): Promise<ItemState> {
 
 async function file(item: FilingItem): Promise<ItemState> {
   if (item.propose) return propose(item);
-  if (await isAlreadyFiled(item.filedId, item.collection.nodeId) === true) return { status: 'already' };
+  // Found filed after OUR request left (an earlier call's, answered 5xx or not
+  // at all): that is our filing — `added`. It read "lag schon in der Sammlung"
+  // over the very thing this plan did (review 2026-11-14); the submit step
+  // tells the two apart the same way (`item.sent`). (A stranger's filing in the
+  // seconds between is called ours too — the repository gives no way to tell.)
+  const ours = Boolean(item.filingSent);
+  if (await isAlreadyFiled(item.filedId, item.collection.nodeId) === true) return { status: ours ? 'added' : 'already' };
+  // Set BEFORE the request leaves: an abort hits the answer, not the work.
+  item.filingSent = true;
   const outcome = await fileRecord(item.filedId, item.collection);
+  // …and taken back where the request provably never left: `filingSent` is what
+  // turns a later "it is there" into OUR filing (`added`), and a request that
+  // reached nobody filed nothing. What an EARLIER call sent stays sent.
+  if (outcome.neverSent && !ours) item.filingSent = false;
+  // The repository's own "already there" (409) after our earlier request: ours as well.
+  if (outcome.status === 'already' && ours) return { status: 'added' };
   // An abort hits the answer, not the work: the step stays OPEN, and the next
   // call's `isAlreadyFiled` above finds out whether it landed — instead of a
   // pair left "unverified" for good, or sent a second time.
   if (outcome.code === 'timeout') return { status: 'pending', code: 'timeout' };
+  if (outcome.status === 'failed' && outcome.httpStatus !== undefined) {
+    // The reading of the sibling steps (remove, propose, submit, delete): a
+    // refusal wrote nothing and says so. A 5xx or 429 is no verdict — a filing
+    // was measured to answer 500 — so the step stays open, and the next call's
+    // look above decides before anything is sent again. It used to end here as
+    // a plain `failed`: neither open nor looked at (audit 2026-11-14, W5).
+    return wroteNothing(outcome.httpStatus)
+      ? { status: 'failed', ...(outcome.code ? { code: outcome.code } : {}), outcomeOpen: false }
+      : { status: 'pending', ...(outcome.code ? { code: outcome.code } : {}) };
+  }
   return { status: outcome.status, ...(outcome.code ? { code: outcome.code } : {}) };
 }
 
@@ -225,9 +250,11 @@ export const filingStep: Step<FilingItem> = async (item) => {
   // there?" comes back unknown — and a second PUT answers 409.
   if (!item.filed) {
     const filed = await file(item);
-    if (filed.status !== 'added' && filed.status !== 'already') {
-      return filed.status === 'pending' ? filed : { ...filed, code: filed.code ?? 'not_removed' };
-    }
+    // Not filed (or not known to be): nothing is removed, and the state is the
+    // filing's own — with the filing's code or none. Deliberately NOT
+    // `not_removed`: that code says "now in BOTH collections", and this
+    // material is in the source only (review 2026-11-14, pinned by a test).
+    if (filed.status !== 'added' && filed.status !== 'already') return filed;
     item.filed = filed.status;
   }
   const filed = item.filed;

@@ -118,6 +118,12 @@ const contentSearchDisclosures = {
   more: z.object({ nextSkipCount: z.number() }).optional(),
   textContentSkipped: z.array(z.string()).optional(),
   textContentUnreadable: z.array(z.string()).optional(),
+  /**
+   * A licence was filtered and its exact count could not be had (the facet
+   * request gave no answer): `total` is then the licence FAMILY's count — more
+   * than the records under the licence asked for, never fewer.
+   */
+  totalIsUpperBound: z.literal(true).optional(),
 };
 
 /** `{ total, count, results }` — search_wlo_content / search_wlo_collections. */

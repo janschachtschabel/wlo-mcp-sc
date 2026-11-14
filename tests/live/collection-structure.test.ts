@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { BASE_URL } from '../../src/wlo-config.js';
 import { wloFetch } from '../../src/wlo-fetch.js';
 import { getChildCollectionsResult, getNodeMetadata } from '../../src/wlo-node.js';
-import { createCollection, deleteCollection } from '../../src/services/write/collections.js';
+import { deleteCollection } from '../../src/services/write/collections.js';
 import { listCollectionTree } from '../../src/services/collection-tree-flat.js';
 import { resolveVocab } from '../../src/vocabs.js';
 import { isAlreadyFiled } from '../../src/services/write/create-filing.js';
@@ -30,13 +30,11 @@ import { flattenTree, treeStep } from '../../src/services/write/collection-tree.
 import { deleteContentNode } from '../../src/services/write/nodes-lifecycle.js';
 import type { ItemState } from '../../src/services/write/plan-runner.js';
 import { requireLiveTarget, runStamp } from './guard.js';
+import { makeCollection, withCleanup } from './cleanup.js';
 
-async function make(parent: string | null, title: string, extra?: Record<string, string[]>): Promise<string> {
-  const made = await createCollection(parent, { title, ...(extra ? { extra } : {}) });
-  if (made.status !== 'created') assert.fail(`Sammlung abgelehnt: ${JSON.stringify(made)}`);
-  if (extra) assert.equal(made.check.status, 'ok', `Rücklesen: ${JSON.stringify(made.check)}`);
-  return made.nodeId;
-}
+// A create that is refused may still have created (500 for a create that landed
+// is measured): `makeCollection` looks for the leftover before it fails.
+const make = makeCollection;
 
 test('S3: a new collection keeps subject, level and keywords, and the read-back finds them', async () => {
   requireLiveTarget();
@@ -44,21 +42,19 @@ test('S3: a new collection keeps subject, level and keywords, and the read-back 
   const sek1 = resolveVocab('Sekundarstufe I', 'educationalContext')!;
   const extra = { 'ccm:taxonid': [physik], 'ccm:educationalcontext': [sek1], 'cclom:general_keyword': ['Lehrplan', `mcp-${runStamp}`] };
   const id = await make(null, `MCP-Struktur S3 ${runStamp}`, extra);
-  try {
+  await withCleanup(async () => {
     const node = await getNodeMetadata(id);
     assert.ok(node);
     for (const [property, values] of Object.entries(extra)) {
       assert.deepEqual(node.properties?.[property], values, property);
     }
-  } finally {
-    assert.equal((await deleteCollection(id)).status, 'ok', `NICHT GELÖSCHT: ${id}`);
-  }
+  }, () => [[id, () => deleteCollection(id)]]);
 });
 
 test('S1: a set order is returned only when asked for; a child without a position follows; the flat list reads it', async () => {
   requireLiveTarget();
   const root = await make(null, `MCP-Struktur S1 ${runStamp}`);
-  try {
+  await withCleanup(async () => {
     const c = await make(root, 'C');
     const a = await make(root, 'A');
     const b = await make(root, 'B');
@@ -80,9 +76,7 @@ test('S1: a set order is returned only when asked for; a child without a positio
     assert.deepEqual(flat.items.map(i => i.nodeId), [b, c, a, d]);
     assert.deepEqual(flat.items.map(i => i.contentCount), [0, 0, 0, 0]);
     assert.equal(flat.items[0]!.path.length, 2);
-  } finally {
-    assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
-  }
+  }, () => [[root, () => deleteCollection(root)]]);
 });
 
 // ── package 3: order of contents, removing, moving, deleting empty ones ─────
@@ -102,7 +96,7 @@ test('P3: contents are ordered by their REFERENCE ids, a move files first and re
   requireLiveTarget();
   const root = await make(null, `MCP-Struktur P3 ${runStamp}`);
   const records: string[] = [];
-  try {
+  await withCleanup(async () => {
     const optik = await make(root, 'Optik');
     const mechanik = await make(root, 'Mechanik');
     const leer = await make(root, 'Leer');
@@ -158,19 +152,14 @@ test('P3: contents are ordered by their REFERENCE ids, a move files first and re
     assert.deepEqual(outcome, { [leerKind]: 'deleted', [leer]: 'deleted', [optik]: 'not_empty', [mechanik]: 'not_empty' });
     assert.equal(await getNodeMetadata(leer), null);
     assert.ok(await getNodeMetadata(optik));
-  } finally {
-    assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
-    for (const id of records) {
-      const gone = await deleteContentNode(id);
-      assert.equal(gone.status, 'ok', `NICHT GELÖSCHT: ${id} ${JSON.stringify(gone)}`);
-    }
-  }
+  // Every delete runs, and the test's own failure is what gets reported (`cleanup.ts`).
+  }, () => [[root, () => deleteCollection(root)], ...records.map(id => [id, () => deleteContentNode(id)] as const)]);
 });
 
 test('P3: a tree created in one plan stands in the order of its input', async () => {
   requireLiveTarget();
   const root = await make(null, `MCP-Struktur Baum ${runStamp}`);
-  try {
+  await withCleanup(async () => {
     const flat = flattenTree([{ title: 'Zeta' }, { title: 'Alpha', children: [{ title: 'Zwei' }, { title: 'Eins' }] }, { title: 'Mitte' }]);
     assert.ok(flat.ok);
     const stored = { items: flat.items, state: new Map<string, ItemState>(flat.items.map(i => [i.key, { status: 'pending' }])) };
@@ -183,7 +172,5 @@ test('P3: a tree created in one plan stands in the order of its input', async ()
     assert.deepEqual(tree.items.map(i => i.title), ['Zeta', 'Alpha', 'Mitte', 'Zwei', 'Eins']);
     const level1 = await readOrderable(root);
     assert.ok(level1.ok && level1.collections.every(c => c.hasPosition), 'die Reihenfolge ist ausdrücklich gesetzt');
-  } finally {
-    assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
-  }
+  }, () => [[root, () => deleteCollection(root)]]);
 });

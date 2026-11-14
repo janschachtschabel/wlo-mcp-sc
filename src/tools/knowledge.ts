@@ -7,6 +7,7 @@
  */
 
 import { incompleteNotice } from '../services/collection-search.js';
+import { contentIncompleteNotice } from '../services/content-search.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -119,9 +120,17 @@ export function registerKnowledgeTools(server: McpServer, opts: KnowledgeToolOpt
         // on this", and an error is the only channel left to say otherwise. With
         // hits the list is merely shorter and stays an answer; rich mode carries
         // `incomplete` in its buckets and needs none of this.
-        const unanswered = envelope.collections.incomplete || envelope.topicPages.incomplete;
-        if (!rich && !all.length && unanswered) {
-          return { isError: true, content: [{ type: 'text' as const, text: incompleteNotice(envelope.collections.incomplete ? 'Sammlungen' : 'Themenseiten', true) }] };
+        //
+        // The CONTENT leg counts too — it is the main one, and a query variant
+        // that failed leaves the same empty list. And the error is CODED: as
+        // free text it reached a program as the default code of an uncoded
+        // refusal, which says "do not retry" about an outage.
+        if (!rich && !all.length) {
+          const notice = envelope.content.incomplete ? contentIncompleteNotice(true)
+            : envelope.collections.incomplete ? incompleteNotice('Sammlungen', true)
+            : envelope.topicPages.incomplete ? incompleteNotice('Themenseiten', true)
+            : '';
+          if (notice) return codedErrorResult('upstream_error', notice);
         }
         // The ChatGPT knowledge convention requires an absolute, openable `url`;
         // fall back to the in-repo render URL when the node has no external link.

@@ -212,11 +212,42 @@ test('bounds: 250 nodes, depth 4, 15 children, two identical siblings refused', 
       tree: [{ title: 'A', children: Array.from({ length: 16 }, (_, i) => ({ title: `K${i}` })) }] }, '16 children');
     const deep = { title: 'L1', children: [{ title: 'L2', children: [{ title: 'L3', children: [{ title: 'L4', children: [{ title: 'L5' }] }] }] }] };
     await assertRejectsWithoutUpstream(c, 'wlo_create_collection_tree', { parentCollectionId: PARENT, tree: [deep] }, 'depth 5');
-    const { mock } = repository();
+    // The rest of what the name promises was never exercised (audit 2026-11-14,
+    // T3): depth 4 itself, the node bound on BOTH sides, and for the twins only
+    // `isError` — which a refused login or an unreachable parent satisfies too.
+    const full = (grandchildren: number) => Array.from({ length: 15 }, (_, r) => ({
+      title: `R${r}`,
+      children: Array.from({ length: 15 }, (_, k) => ({
+        title: `K${k}`,
+        ...(r === 0 && k === 0 ? { children: Array.from({ length: grandchildren }, (_, g) => ({ title: `G${g}` })) } : {}),
+      })),
+    }));   // 15 + 225 = 240 nodes, plus the grandchildren
+    const { mock, creates } = repository();
     try {
+      const depth4 = await c.callTool({ name: 'wlo_create_collection_tree', arguments: { parentCollectionId: PARENT,
+        tree: [{ title: 'L1', children: [{ title: 'L2', children: [{ title: 'L3', children: [{ title: 'L4' }] }] }] }] } });
+      assert.notEqual(depth4.isError, true, 'depth 4 is the bound, not beyond it');
+      assert.ok(sc(depth4).confirm?.token, 'and it is previewed');
+
+      const at = await c.callTool({ name: 'wlo_create_collection_tree', arguments: { parentCollectionId: PARENT, tree: full(10) } });
+      assert.notEqual(at.isError, true, '250 nodes are allowed');
+      assert.ok(sc(at).confirm?.token, 'and previewed for approval');
+      assert.match(toolText(at), /250 /, toolText(at).slice(0, 200));
+
+      const before = mock.calls.length;
+      const over = await c.callTool({ name: 'wlo_create_collection_tree', arguments: { parentCollectionId: PARENT, tree: full(11) } });
+      assert.equal(over.isError, true);
+      assert.equal(sc(over).error?.code, 'invalid_input');
+      assert.match(toolText(over), /251 Knoten, höchstens 250/);
+      assert.equal(mock.calls.length, before, 'refused before the repository is asked anything');
+
       const twins = await c.callTool({ name: 'wlo_create_collection_tree', arguments: {
         parentCollectionId: PARENT, tree: [{ title: 'Optik' }, { title: 'optik' }] } });
       assert.equal(twins.isError, true);
+      assert.equal(sc(twins).error?.code, 'invalid_input');
+      assert.match(toolText(twins), /„optik“ steht zweimal unter der Elternsammlung/);
+      assert.equal(mock.calls.length, before, 'the twins are refused before any request too');
+      assert.deepEqual(creates, [], 'and nothing in this test created a collection');
     } finally { mock.restore(); }
   } finally { await c.close(); setServiceCredentialForTest(null); }
 });

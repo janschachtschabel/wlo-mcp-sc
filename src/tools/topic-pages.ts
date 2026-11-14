@@ -71,6 +71,9 @@ function buildTopicPagesMeta(
   });
 }
 
+const INCLUDE_CONTENT_JSON_ONLY = 'Hinweis: includeContent wirkt nur mit outputFormat="json" — diese Liste enthält keine '
+  + 'Schwimmlinien-Inhalte. Für die Inhalte EINER Seite: get_topic_page_content mit der Sammlung-nodeId.';
+
 export function registerTopicPageSearchTool(server: McpServer, searchResultsWidgetUri?: string): void {
   registerWloTool(server, {
     name: 'search_wlo_topic_pages',
@@ -218,6 +221,14 @@ Kein „discipline"-Parameter: über educationalContext und targetGroup eingrenz
           if (registry) page.skillRegistry = registry;
         }
         const rendered = renderThemePages(out, tpMeta, params.outputFormat, incomplete);
+        // `includeContent` resolves swimlanes for the JSON payload only. Asked
+        // for in Markdown it was ignored in silence, and a listing was read as
+        // the pages' content. Said after the count line and BEFORE the first
+        // page: below the repository's titles it would read as one of them.
+        if (params.includeContent && params.outputFormat !== 'json' && rendered.content[0]) {
+          const [head, ...rest] = rendered.content[0].text.split('\n');
+          rendered.content[0].text = [head, INCLUDE_CONTENT_JSON_ONLY, ...rest].join('\n');
+        }
         // Hits beside a source that did not answer: the list may lack pages.
         const partial = incomplete ? [{ type: 'text' as const, text: incompleteNotice('Themenseiten', false) }] : [];
         return {

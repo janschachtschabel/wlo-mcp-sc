@@ -42,7 +42,31 @@ export interface MarkdownSection {
 }
 
 /** `#` to `######`, at most three of indent, and a space is required after the hashes. */
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
+const HEADING_OPEN = /^ {0,3}(#{1,6})(?![^ \t])/;
+
+/** A character `.` does not match — a line holding one was never a heading (a stray `\r` cannot forge an outline entry). */
+const NOT_DOT = /[\r\n\p{Zl}\p{Zp}]/u;
+
+const isBlank = (ch: string | undefined) => ch === ' ' || ch === '\t';
+
+/**
+ * The hashes and the text after them, or null when the line is no heading.
+ *
+ * Only the OPENING is matched by an expression; the text is cut out by index.
+ * One expression for the whole line had three quantifiers in a row that could
+ * each take part of the same run of spaces, and a heading line holding 80 000
+ * of them took 9.5 s — on a document any editor can file.
+ */
+function matchHeading(line: string): { hashes: string; text: string } | null {
+  const open = HEADING_OPEN.exec(line);
+  if (!open) return null;
+  let from = open[0].length;
+  let to = line.length;
+  while (from < to && isBlank(line[from])) from++;
+  while (to > from && isBlank(line[to - 1])) to--;
+  const text = line.slice(from, to);
+  return NOT_DOT.test(text) ? null : { hashes: open[1]!, text };
+}
 
 /** An opening code fence, with its optional info string. */
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
@@ -80,11 +104,11 @@ export function parseSections(markdown: string): MarkdownSection[] {
       fenceChar = fence[1]![0]!;
       fenceLen = fence[1]!.length;
     } else {
-      const heading = HEADING.exec(line);
+      const heading = matchHeading(line);
       if (heading) {
         found.push({
-          level: heading[1]!.length,
-          title: (heading[2] ?? '').replace(CLOSING_HASHES, '$1').trim(),
+          level: heading.hashes.length,
+          title: heading.text.replace(CLOSING_HASHES, '$1').trim(),
           headingStart: pos + line.indexOf('#'),
           bodyStart: next,
         });

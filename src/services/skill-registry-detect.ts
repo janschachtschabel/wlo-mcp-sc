@@ -169,7 +169,7 @@ export interface ScanTruncation {
 /** Find the registry record among a collection's file children, or say why not. */
 export async function scanForRegistry(
   collectionId: string,
-): Promise<{ picked: ReturnType<typeof pickRegistryNode>; reason?: RegistryMiss; truncated?: ScanTruncation }> {
+): Promise<{ picked: ReturnType<typeof pickRegistryNode>; reason?: RegistryMiss; truncated?: ScanTruncation; refused?: true }> {
   let listing;
   try {
     // SKILL_PROPS, not the default projection: measured 2026-08-10, `/children`
@@ -178,6 +178,17 @@ export async function scanForRegistry(
     listing = await getCollectionContents(collectionId, 'files', REGISTRY_SCAN_MAX, 0, SKILL_PROPS);
   } catch (err) {
     const status = statusFromError(err);
+    // A refusal is an ANSWER for the rights it was asked with — not an outage.
+    // Still `unreadable` for the caller (nothing was learned about a registry),
+    // but marked, so the cache remembers it instead of asking on every tick;
+    // and at info, because it is the ordinary reply for a private collection
+    // and a warning per lookup buried the real ones.
+    if (status === 401 || status === 403) {
+      log.info('skill-registry: the collection listing was refused for this login — no registry is reported', {
+        collectionId, status,
+      });
+      return { picked: null, reason: 'unreadable', refused: true };
+    }
     log.warn('skill-registry: the collection could not be listed — reporting no registry', {
       collectionId, status, error: err instanceof Error ? err.message : String(err),
     });

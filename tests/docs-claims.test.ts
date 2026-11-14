@@ -215,6 +215,10 @@ const COUNTED_DOCS = [
   // "16" in five places while every document above said 51 and 19 — nobody
   // had listed it here, so nothing ever checked it.
   'docs/MCP-REFERENZ.md',
+  // Added 2026-11-14: both said "16 curation tools" resp. "13 curation tools"
+  // as a present-tense fact over a server with 26. A count that is HISTORY
+  // ("13 at the time") is worded so no pattern below reads it as a claim.
+  'docs/apps-sdk-submission-checklist.md', 'docs/AUTH.md',
 ];
 
 /**
@@ -367,7 +371,29 @@ test('no document states a tool count the server contradicts', async () => {
     [/Zahl bleibt (?:bei )?(\d+)/g, oneTool, 'one-tool mode keeps the count'],
     [/count stays (\d+)/gi, oneTool, 'one-tool mode keeps the count (English)'],
     [/`search_skill` heraus \(dann (\d+)\)/g, total - 1, 'WLO_DISABLE_SKILL_SEARCH drops one tool'],
+    // `docs/TOOLS.md`'s switch table. Its `WLO_DISABLE_SKILL_SEARCH=1` row said
+    // "51 Tools" over a server that lists 59 in that mode (found 2026-11-14):
+    // the skill-table patterns above are written for `docs/MCP-REFERENZ.md`'s
+    // three-column rows and never matched this two-column one. The last pattern
+    // is the net under the table: ANY "N Tools" cell in a switch row must be one
+    // of the counts a mode can produce.
+    [/^\| \*\*`WLO_DISABLE_SKILL_SEARCH=1`\*\* \| (\d+) Tools/gm, noSearch, 'switch table: search switched off'],
+    [/^\| \*\*`WLO_SKILL_TOOL_MODE=one-tool`\*\* \| (\d+) Tools/gm, oneTool, 'switch table: one-tool'],
+    [/\(Standard: (\d+)\)/g, total + batch, 'switch table: default with the batch tools'],
+    [/curation tools \((\d+) with `WLO_BATCH_UPLOAD_ENABLED`\)/g, curation, 'curation tools with the batch switch (English)'],
   ];
+
+  // The net under every switch table: a row of the form "| **…** | N Tools" may
+  // only state a count some mode really produces. Catches a row no pattern above
+  // was written for — which is how the 51 survived.
+  const possible = new Set([total, oneTool, noSearch, noSearchOneTool, total + batch]);
+  const strayRows: string[] = [];
+  for (const doc of COUNTED_DOCS) {
+    for (const m of read(doc).matchAll(/^\| \*\*[^|]+\| (\d+) Tools\b[^\n]*/gm)) {
+      if (!possible.has(Number(m[1]))) strayRows.push(`${doc}: "${m[0].trim().slice(0, 90)}"`);
+    }
+  }
+  assert.deepEqual(strayRows, [], `a switch-table row states a count no mode produces (possible: ${[...possible].join(', ')})`);
 
   // A pattern that matches nothing guards nothing. These must hit at least once
   // — each was written for a spelling that IS in the docs, and one of them did
@@ -375,6 +401,8 @@ test('no document states a tool count the server contradicts', async () => {
   const mustMatch = new Set([
     'skill table: default', 'skill table: search switched off', 'skill table: search off + one-tool',
     'skill table: registry mode', 'one-tool mode keeps the count', 'one-tool mode keeps the count (English)',
+    'switch table: search switched off', 'switch table: one-tool', 'switch table: default with the batch tools',
+    'curation tools with the batch switch (English)',
   ]);
   const matched = new Set<string>();
   const wrong: string[] = [];
@@ -418,7 +446,11 @@ test('every registered tool is named in the tool reference and in both READMEs',
   // Both files claim completeness — the reference in full, the compact list as
   // "alle 42 Werkzeuge auf einen Blick". A claim of completeness is the one kind
   // of document where a missing row is a defect rather than an omission.
-  for (const doc of ['docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md']) {
+  // Since 2026-11-14 the two documents the integrating teams work from are held
+  // to it as well: each carries the full tool table by hand, and neither was
+  // checked — the table exists in six places, and a tool added to four of them
+  // is the likely next defect. `npm run docs:tools` prints the rows to copy.
+  for (const doc of ['docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md', 'docs/INTEGRATION.md', 'docs/MCP-REFERENZ.md']) {
     const body = read(doc);
     const missing = names.filter(n => !new RegExp(String.raw`\b${n}\b`).test(body));
     assert.deepEqual(missing, [], `${doc} claims to list every tool`);

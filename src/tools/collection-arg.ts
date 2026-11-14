@@ -99,6 +99,9 @@ const LOOSE_MATCH_NOTE = 'Der Titel stimmt nur in abweichender Schreibweise übe
 /** A full search window: the index may hold a namesake nobody looked at. */
 const WINDOW_FULL_NOTICE = 'Die Suche hat mehr Treffer, als geprüft wurden — ob es weitere Sammlungen mit diesem Titel gibt, ist offen. Bitte die nodeId angeben.';
 
+/** The portal listing did not answer — the one place a PORTAL of that title would have been seen. */
+const PORTALS_UNREAD_NOTICE = 'Die Liste der Fachportale ließ sich gerade nicht lesen — ob auch ein Fachportal diesen Titel trägt, ist offen.';
+
 function resolvedField(note: Note): ResolvedCollection & { unresolvedDiscipline?: Note['unresolvedDiscipline'] } {
   return { ...note.collection, ...(note.unresolvedDiscipline ? { unresolvedDiscipline: note.unresolvedDiscipline } : {}) };
 }
@@ -112,6 +115,10 @@ function ambiguousResult(name: string, miss: Miss, param: string, json: boolean,
     : miss.disciplineUnverified
       // Found, and not taken for another reason: it carries no subject at all.
       ? `Eine Sammlung mit dem Titel „${asked}“ wurde gefunden, trägt aber keine Fachangabe — ob sie zum genannten Fach gehört, ließ sich nicht prüfen, und sie wurde nicht übernommen. Bitte die nodeId angeben:`
+    : miss.reason === 'unverified' && miss.portalsUnread && !miss.unreachable && !miss.windowFull
+      // The searches answered in full; what is open is the portal list alone.
+      // "Die Suche war unvollständig" would name a reason that did not happen.
+      ? `Eine Sammlung mit dem Titel „${asked}“ wurde gefunden, aber nicht übernommen — ob es eine weitere gleichnamige gibt, ließ sich nicht abschließend prüfen (siehe Hinweis unten). Bitte die nodeId angeben:`
     : miss.reason === 'unverified'
       // Found, and deliberately not taken: "the only one" is not a finding of a search that did not see everything.
       ? `Eine Sammlung mit dem Titel „${asked}“ wurde gefunden, aber nicht übernommen — die Suche war unvollständig, es kann weitere gleichnamige geben. Bitte die nodeId angeben:`
@@ -119,8 +126,12 @@ function ambiguousResult(name: string, miss: Miss, param: string, json: boolean,
       ? `Keine Sammlung trägt genau den Titel „${asked}“ — es wurde nicht geraten. Die nächsten Treffer der Sammlungssuche, bitte eine per nodeId angeben:`
       : `Keine Sammlung trägt genau den Titel „${asked}“, und die Sammlungssuche fand auch nichts Ähnliches.`;
   const notices = [
-    // Not "no such collection" over an index that did not answer.
+    // Not "no such collection" over an index that did not answer. Only for a
+    // SEARCH that did not: an unread portal list has its own sentence below.
     ...(miss.unreachable ? [incompleteNotice('Sammlungen', miss.candidates.length === 0)] : []),
+    // WHICH source it was, where it was the portal list: the searches may have
+    // answered in full, and the candidate above is their hit.
+    ...(miss.portalsUnread ? [PORTALS_UNREAD_NOTICE] : []),
     ...(miss.windowFull ? [WINDOW_FULL_NOTICE] : []),
     disciplineHint(miss, param),
   ];
@@ -133,6 +144,7 @@ function ambiguousResult(name: string, miss: Miss, param: string, json: boolean,
     ...(miss.disciplineUnverified ? { disciplineUnverified: true } : {}),
     ...(miss.incomplete ? { incomplete: true } : {}),
     ...(miss.windowFull ? { windowFull: true } : {}),
+    ...(miss.portalsUnread ? { portalsUnread: true } : {}),
     ...(miss.unresolvedDiscipline ? { unresolvedDiscipline: miss.unresolvedDiscipline } : {}),
   });
   // JSON mode keeps a parseable first block, like every other answer there —

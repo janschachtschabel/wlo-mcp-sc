@@ -71,6 +71,16 @@ export interface WloCredential {
    * returned.
    */
   jti?: string;
+  /**
+   * The account the repository CONFIRMED for this login, where the allow-list
+   * recorded one (`RegistryEntry.acct`). `label` is the spelling the block
+   * carries, and one login has several accepted spellings (measured
+   * 2026-11-12) — so a cap counted per label is no cap per person. Read by the
+   * per-account caps of the write side ONLY; what a confirm key is bound to
+   * stays the credential itself. Absent for `Basic`, the service account and
+   * entries listed before the account was recorded.
+   */
+  acct?: string;
 }
 
 /**
@@ -217,6 +227,7 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   // accepts for one is `EDU-TICKET` (the md-editor's production embedding path).
   // Everything else about the block — registry, revocation, abuse bucket — is
   // kind-agnostic and stays shared.
+  const account = accessSupport.registry.accountOf(payload.jti);
   const header = payload.k === 'ticket'
     ? `EDU-TICKET ${payload.secret}`
     : `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`;
@@ -228,7 +239,37 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
     // per id rather than per address — see there for why that is both safer and
     // what makes a relay client work.
     jti: payload.jti,
+    // From the ALLOW-LIST, never from the block: the block's content is the
+    // caller's to write (the public key is published), the entry is ours.
+    ...(account ? { acct: account } : {}),
   };
+}
+
+/** What one `Authorization` header amounts to — every question an entry point asks of it. */
+export interface PresentedAuthorization {
+  /** The credential it carries, or null (`credentialFromHeader`). */
+  credential: WloCredential | null;
+  /** Presented and not usable (`isUnusableAuthorization`). */
+  unusable: boolean;
+  /** …and it was a Bearer: the case that earns a 401 (`isUnusableBearer`). */
+  unusableBearer: boolean;
+}
+
+/**
+ * Read a header ONCE and answer all three questions from that one reading.
+ *
+ * The three functions below each decode again, and opening a block is an RSA
+ * private-key operation per configured key — so a request with a garbage Bearer
+ * cost up to three passes (six during a key rotation) before it was refused,
+ * for anyone who cared to send one (audit 2026-11-14, S5). An entry point calls
+ * this; the single-question functions stay for callers that ask one.
+ */
+export function readAuthorization(raw: string | undefined): PresentedAuthorization {
+  const credential = credentialFromHeader(raw);
+  const value = (raw ?? '').trim();
+  // The anonymous token yields no credential ON PURPOSE — see `isUnusableBearer`.
+  const unusable = credential === null && value.length > 0 && !isAnonymousToken(raw);
+  return { credential, unusable, unusableBearer: unusable && /^Bearer\s/i.test(value) };
 }
 
 /**

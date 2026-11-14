@@ -27,7 +27,7 @@ import { keyedDigest } from '../keyed-digest.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
-  abuseBucketKey, configuredServiceCredential, credentialFromHeader, isUnusableAuthorization, isUnusableBearer,
+  abuseBucketKey, configuredServiceCredential, readAuthorization,
 } from '../auth/credential.js';
 import { readAuthStatus, type AuthStatus } from '../auth/auth-status.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
@@ -76,8 +76,10 @@ export async function handleAuthStatus(req: IncomingMessage, res: ServerResponse
     return;
   }
   const header = req.headers['authorization'];
-  const userCred = credentialFromHeader(header);
-  if (!userCred && isUnusableBearer(header)) {
+  // Read once: each single question decodes the block again (`readAuthorization`).
+  const presented = readAuthorization(header);
+  const userCred = presented.credential;
+  if (presented.unusableBearer) {
     send(res, 401, { error: 'The access token is invalid or has been revoked.' }, { 'WWW-Authenticate': deps.challenge() });
     return;
   }
@@ -88,7 +90,7 @@ export async function handleAuthStatus(req: IncomingMessage, res: ServerResponse
       return;
     }
   }
-  const effective = userCred ?? (isUnusableAuthorization(header) ? null : configuredServiceCredential());
+  const effective = userCred ?? (presented.unusable ? null : configuredServiceCredential());
   const key = cacheKey(header, userCred ? 'user' : effective ? 'service' : 'anonymous');
   const hit = cache.get(key);
   if (hit && hit.until > now) { send(res, 200, hit.payload); return; }

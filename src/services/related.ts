@@ -9,7 +9,8 @@
  */
 
 import type { SearchCriterion } from '../wlo-api.js';
-import { getCollectionContents, getNodeMetadata, ngsearch } from '../wlo-api.js';
+import { getCollectionContents, ngsearch, readNodeMetadata } from '../wlo-api.js';
+import { failureCode } from './failure-code.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode, formatNodes } from '../formatter.js';
 import { log } from '../logger.js';
@@ -49,14 +50,28 @@ export interface RelatedContentResult {
    * its contents could be read.
    */
   registryCollectionId?: string;
+  /**
+   * The sibling listing was REFUSED (401/403/404) resp. did not answer. Either
+   * way `siblings` is empty and says nothing about the collection: "no further
+   * contents" is a statement only an answered listing supports.
+   */
+  siblingsRefused?: true;
+  siblingsUnread?: true;
 }
 
-/** Returns null when the seed node cannot be resolved. */
+/**
+ * The seed could not be read, with the status the repository gave (`0` = an
+ * unreadable body). Not a bare `null`: only a 404 means "there is no such
+ * node" — a 403 is a record this login may not see and a 503 says nothing about
+ * the record at all, and the caller's sentence has to tell them apart.
+ */
+export interface RelatedSeedMiss { seedStatus: number }
+
 export async function getRelatedContent(
   opts: RelatedContentOptions,
-): Promise<RelatedContentResult | null> {
-  const seed = await getNodeMetadata(opts.nodeId);
-  if (!seed) return null;
+): Promise<RelatedContentResult | RelatedSeedMiss> {
+  const { node: seed, status } = await readNodeMetadata(opts.nodeId);
+  if (!seed) return { seedStatus: status };
 
   const props = seed.properties ?? {};
   const disciplineUris = props['ccm:taxonid'] ?? [];
@@ -105,6 +120,11 @@ export async function getRelatedContent(
         const sib = await getCollectionContents(parentId, 'files', maxResults + 1, 0);
         result.siblings = formatNodes(sib.nodes).filter(n => n.nodeId !== opts.nodeId).slice(0, maxResults);
       } catch (err) {
+        // Degraded, and SAID: an empty list beside no flag reads as a collection
+        // that holds nothing else.
+        const code = failureCode(err);
+        if (code === 'forbidden' || code === 'not_found') result.siblingsRefused = true;
+        else result.siblingsUnread = true;
         log.warn('related: siblings lookup failed, continuing without', {
           parentId,
           error: err instanceof Error ? err.message : String(err),

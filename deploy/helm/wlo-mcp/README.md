@@ -118,6 +118,7 @@ a key (rotation window: `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, DEPLOYMENT.md §3.1).
 | A default for `image.repository` and `repositoryUrl` | See "Required values". |
 | `PORT`, `INTERNAL_PORT`, `WLO_AUTH_REGISTRY_PATH` under `config` | Each must agree with a container port, a Service or the volume mount; the chart derives them. |
 | `BIND_ADDR`, `HOST_PORT` | They configure the compose file's host port mapping; a Service does that here. |
+| `INTERNAL_BIND_ADDR` | The internal port must answer on the pod's address — the kubelet's probes and the scraper come from outside the pod, and a loopback bind answers neither. Who may reach it is decided by the NetworkPolicy (and `METRICS_TOKEN`), not by an interface. |
 | The compose file's `init: true` | No equivalent is needed: the HTTP entry point installs its own SIGTERM handler (`src/shutdown.ts`), so the stop does not depend on an init process. |
 | The compose file's log rotation (`max-size`, `max-file`) | Container log rotation belongs to the node / the platform's log pipeline. The server writes one JSON line per event to stdout. |
 | The image's `HEALTHCHECK` | Kubernetes ignores it; the probes replace it. |
@@ -173,6 +174,11 @@ a key (rotation window: `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, DEPLOYMENT.md §3.1).
   `monitoring.serviceMonitor.bearerToken`.
 - **Alert thresholds are proposals** without operating history. The rules use
   only series the server exports (plus `up`).
+- **Six gauges have no rule yet:** `wlo_skill_registry_cache_entries`,
+  `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`,
+  `wlo_confirm_replays_held` and `wlo_upload_held_bytes` report how full the
+  bounded in-memory stores are at the moment of the scrape. They are for sizing (`resources`), and a threshold
+  for them needs operating history first.
 - **No alert here can see a crash loop.** A recreated pod is a new series, so
   the server's own metrics cannot count restarts; `WloMcpRecentlyStarted`
   (info) only says "this process is younger than 10 minutes". Take restarts

@@ -43,6 +43,7 @@ function repo(opts: { folder?: boolean; folderStatus?: number } = {}) {
   // Metadata writes are KEPT, as the repository keeps them (measured 2026-11-06) — the manifest's
   // summary in cm:description is read back, and a fake that drops it would rightly read "unverified".
   const kept: Record<string, string[]> = {};
+  let uploaded = 0;
   const mock = installFetchMock((url, init) => {
     const method = init?.method ?? 'GET';
     calls.push(`${method} ${url}`);
@@ -58,8 +59,14 @@ function repo(opts: { folder?: boolean; folderStatus?: number } = {}) {
       return opts.folderStatus ? { status: opts.folderStatus, json: {} } : { json: { node: { ref: { id: 'ordner-1' } } } };
     }
     if (url.includes('/children?') && method === 'POST') return { json: { node: { ref: { id: `n-${calls.length}` } } } };
-    if (url.includes('/content?')) return { json: {} };
-    if (method === 'GET') return { json: { node: { ref: { id: 'n' }, size: PDF.length, downloadUrl: 'x', properties: { ...kept } } } };
+    // The record shows the size of what was UPLOADED (a PDF, then vorgang.json) —
+    // the read-back compares it with the bytes sent, so one fixed size would not do.
+    if (url.includes('/content?')) {
+      const part = (init?.body as FormData).get('file');
+      uploaded = part instanceof Blob ? part.size : 0;
+      return { json: {} };
+    }
+    if (method === 'GET') return { json: { node: { ref: { id: 'n' }, size: uploaded, downloadUrl: 'x', properties: { ...kept } } } };
     return { json: {} };
   });
   return { calls, mock };
@@ -322,8 +329,12 @@ test('an aborted manifest is not reported as filed by the next call', async (t) 
     const s = (zweimal as { structuredContent?: Record<string, unknown> }).structuredContent!;
     assert.notEqual(s['status'], 'stored', toolText(zweimal));
     assert.doesNotMatch(toolText(zweimal), /liegt schon ab/);
-    assert.equal(s['status'], 'unverified');
-    assert.doesNotMatch(String(s['detail'] ?? ''), /gerade/, 'the abort is over — not "being filed"');
+    // An open outcome is looked for, and — not found — filed once more (second
+    // review 2026-11-14, finding 6). Creates still abort here, so this call
+    // ends open again: an error that says so, never "handled".
+    assert.equal((zweimal as { isError?: boolean }).isError, true);
+    assert.equal((s['error'] as { outcomeOpen?: boolean }).outcomeOpen, true);
+    assert.doesNotMatch(toolText(zweimal), /gerade/, 'the abort is over — not "being filed"');
   } finally { restore(); }
 });
 
@@ -447,6 +458,9 @@ test('K-14: a title of up to 200 characters is filed as approved — not cut at 
   assert.ok(title.length > 120 && title.length <= 200);
   const r = await c.callTool({ name: 'wlo_prepare_file_batch', arguments: { ...PLAN, entries: [{ title, sha256: SHA, size: PDF.length, ext: 'pdf' }] } });
   assert.ok(toolText(r).includes(title), 'the whole title is in the preview');
-  const plan = (r as { structuredContent?: { plan?: { entries?: Array<{ title: string }> } } }).structuredContent?.plan;
-  if (plan?.entries) assert.equal(plan.entries[0]!.title, title);
+  // The normalised plan lies at the TOP of structuredContent (`entries`), not under
+  // `plan` — the guard `if (plan?.entries)` this replaces was never true.
+  const entries = (r as { structuredContent?: { entries?: Array<{ title: string }> } }).structuredContent?.entries;
+  assert.equal(entries?.length, 1);
+  assert.equal(entries![0]!.title, title, 'and whole in what the upload module is handed');
 });

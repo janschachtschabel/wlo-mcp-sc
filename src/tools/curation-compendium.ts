@@ -29,6 +29,8 @@ import { verifyWrite } from '../services/write/verify.js';
 import { validateField } from '../services/write/fields.js';
 import { getNodeMetadata, readNodeMetadata } from '../wlo-node.js';
 import { sanitizeText } from '../text-sanitize.js';
+import { CONFIRM_TOKEN } from './curation-fields.js';
+import { failedWriteReply } from './curation-report.js';
 import {
   registerCurationTool,
   type WriteAuthChallenge,
@@ -61,8 +63,7 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
       nodeId: z.string().describe('nodeId der Sammlung.'),
       text: z.string().optional().describe('Der neue Kompendialtext als Markdown.'),
       remove: z.boolean().optional().describe('true entfernt den vorhandenen Text.'),
-      confirmToken: z.string().optional()
-        .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
+      confirmToken: CONFIRM_TOKEN,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params: Record<string, unknown>) => {
@@ -168,21 +169,27 @@ async function handleRemoval(
   if (refusal) return refusal;
 
   const failure = await deleteProperty(cs.nodeId, PROPERTY);
-  if (failure) return errorText(`Der Kompendialtext konnte nicht entfernt werden: ${failure}`);
+  // One reading of a failed write (`failedWriteReply`): the repository's own
+  // "no" removed nothing and says which no; a 5xx or 429 is no verdict. As a
+  // plain `errorText` a 403 after the spent key read "open — look first" over
+  // a removal that provably did not happen (second review 2026-11-14).
+  if (failure) return failedWriteReply(failure.httpStatus, `Der Kompendialtext konnte nicht entfernt werden: ${failure.detail}`);
 
   // The status is read, not inferred from a null node: `getNodeMetadata` folds
   // every non-OK response into null, and "we could not look" would otherwise be
   // indistinguishable from "the property is gone" — and reported as success.
   const { node: after, status } = await readNodeMetadata(cs.nodeId);
+  // The codes `reportMutation` gives the same two outcomes of every other
+  // mutation — `refused` named neither.
   if (!after) {
-    return errorText(
+    return codedError('unverified',
       `Das Entfernen wurde abgeschickt, ließ sich danach aber nicht überprüfen ` +
         `(HTTP ${status || 'keine verwertbare Antwort'}). Ob der Kompendialtext weg ist, ist damit offen — ` +
         'bitte die Sammlung direkt ansehen.',
     );
   }
   if (after.properties?.[PROPERTY]?.length) {
-    return errorText(
+    return codedError('not_visible',
       'Das Entfernen wurde mit Erfolg beantwortet, der Text steht aber weiterhin im Datensatz. ' +
         'Er wurde also NICHT entfernt — bitte die Rechte an dieser Sammlung prüfen.',
     );

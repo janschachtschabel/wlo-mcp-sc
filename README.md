@@ -167,6 +167,7 @@ else has sensible defaults.
 | `LOG_LEVEL` | `info` | all | Lowest level that is logged: `debug`, `info`, `warn` or `error` (no line is written at `debug` today). An unknown value is ignored with a warning. The log is one JSON object per line — `timestamp`, `level`, `service`, `message`, plus `trace_id`/`span_id` when the caller sent B3 headers and `req`, the request id. Over HTTP it goes to **stdout**, under stdio to **stderr** (stdout is the protocol channel there). |
 | `LOG_PERSONAL_DATA` | _(unset)_ | all | What the log says about a person. Unset: a client address, a WLO account name and a search term are written as short **pseudonyms** (a keyed digest valid only in this process — "the same address again" stays visible, the value does not). `plain` writes them as they are. Affects the log only; limits and the allow-list use the real values in memory either way. |
 | `INTERNAL_PORT` | _(unset)_ | http | A second port that serves **only** `GET /health`, `GET /ready` and `GET /metrics` — for probes and the scraper, away from the public proxy. An addition: the three paths stay on `PORT`. On this port `/metrics` needs no token unless `METRICS_TOKEN` is set, so it must not be published. Requests here are not counted in `wlo_http_requests_total`. |
+| `INTERNAL_BIND_ADDR` | _(unset)_ | http | The interface `INTERNAL_PORT` listens on. Unset = every interface (a scraper or probe in another container must reach it). `127.0.0.1` keeps it to the machine itself. With neither a loopback address here nor `METRICS_TOKEN`, the start logs a warning that `/metrics` is readable by whoever reaches the port. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | all | Optional service account. Unset (default) → the server reads **anonymously**, public content only, exactly as before. Both set → every call authenticates as that one account via HTTP Basic, so **all** users of this MCP see the same elevated content. Use a purpose-made, read-only account: whatever it can see, every user can see, and edu-sharing's audit trail shows the service account rather than the person. Half a credential is treated as none. **Wrong credentials do not downgrade to public content** — the repository answers `401` (measured against production 2026-07-31, on the identity and the search endpoints alike), so every query fails and the server returns nothing at all. Unset both variables to run anonymously instead. Check with the `wlo_auth_status` tool: `mode: "service"` together with `authenticated: false` and `upstream: "ok"` means the credentials are being rejected (`upstream: "unreachable"` means the repository did not answer — no verdict on the credentials). HTTP Basic is used because it is the only scheme besides the session cookie that edu-sharing's own OpenAPI declares. **Scope:** the service account applies to the MCP endpoint only. The public REST layer (`GET /api/*`) and the launcher stay anonymous by design — they are reachable from the internet without any login, so letting them inherit the account would make everything it can see world-readable. A credential over a non-`https` repository URL is sent in the clear (Basic is base64, not encryption); the server warns about this at startup. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | all | Allows the **service account** to use the curation (write) tools. Off by default: a change made under a shared account is attributable to nobody — the repository history records the account name, not the person who asked for it. A caller with their own WLO login may always write and needs nothing here; an anonymous caller never can — they see the tools (that is how their client learns to offer a login) and every call is refused. This also governs stdio, where the credentials come from the environment and therefore count as a service account. Accepted values: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. See [Curation](#curation-writing-to-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | http | PKCS#8 PEM enabling **personal access blocks**: a user fetches an encrypted block at `/auth`, pastes it once into their AI host's `Authorization` field as `Bearer …`, and can revoke it at `/auth-revoke.html` (or `/auth/revoke` — the same page), either by pasting the block back or by logging in to end every access of the account at once. The second way is the only one open to OAuth users, who never see their block. Each account keeps its ten most recent blocks. Unset means the whole feature is off — the `/auth/…` endpoints answer 404, the pages say so, and a Bearer header is refused exactly as before. The public key is DERIVED from this one, so there is no second variable to drift. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **This key decrypts every issued block back into a live WLO password** — keep it in the server's `.env`, never in the image or the repository. |
@@ -1140,84 +1141,25 @@ must not cost the other one its fallback.
 
 ## Architecture
 
-```
-wlo-mcp-server/
-├── src/
-│   ├── server.ts             # factory: registers all 60 tools (transport-agnostic)
-│   ├── tools/                # tool definitions, grouped by responsibility
-│   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
-│   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
-│   │   ├── content-search.ts #   search_wlo_content, search_wlo_all
-│   │   ├── node-details.ts   #   get_node_details, get_nodes_details
-│   │   ├── node-relations.ts #   get_related_content, get_node_breadcrumb
-│   │   ├── collection-stats.ts #  get_collection_stats
-│   │   ├── skills.ts         #   search_skill, get_skill (or get_skill_for_task)
-│   │   ├── vocabulary.ts     #   lookup_wlo_vocabulary, lookup_wlo_publishers
-│   │   ├── topic-pages.ts    #   search_wlo_topic_pages
-│   │   ├── topic-page-content.ts # get_topic_page_content
-│   │   ├── browse.ts         #   get_subject_portals, browse_collection_tree
-│   │   ├── compendium.ts     #   get_compendium_text
-│   │   ├── wikipedia.ts      #   get_wikipedia_summary
-│   │   ├── knowledge.ts      #   search, fetch (ChatGPT knowledge tools)
-│   │   └── health.ts         #   wlo_health_check
-│   ├── services/             # business logic reused by tools + REST + widgets
-│   │   ├── search.ts         #   searchAll (combined search + opt-in enrichments)
-│   │   ├── compendium.ts     #   getCompendiumTexts
-│   │   ├── compendium-view.ts #   outline, per-section cap, BM25 passage selection
-│   │   ├── publishers.ts     #   lookupPublishers (facet-based counts)
-│   │   ├── related.ts        #   getRelatedContent
-│   │   ├── stats.ts          #   getCollectionStats
-│   │   ├── skills.ts         #   findSkills (list + rank + fetch raw Markdown)
-│   │   └── topic-page.ts     #   resolveTopicPageSwimlanes
-│   ├── apps/                 # OpenAI Apps-SDK seam + widgets
-│   │   ├── register.ts       #   registerWloTool (outputSchema/annotations/_meta.ui)
-│   │   ├── tool-defaults.ts  #   applyReadOnlyToolDefaults: noauth _meta + required hints + status, on every tool
-│   │   ├── tool-status.ts    #   per-tool openai/toolInvocation status strings (DE)
-│   │   ├── outputSchemas.ts  #   zod structuredContent schemas
-│   │   ├── resources.ts      #   ui:// widget resources (loads dist-widgets/)
-│   │   ├── instructions.ts   #   server instructions block
-│   │   └── widgets/          #   vanilla-TS widgets (esbuild → dist-widgets/*.html)
-│   ├── vocabs.ts             # label ↔ URI mappings (6 vocabularies)
-│   ├── vocabs-hochschule.ts  # university-subject URI→label (display-only; NOT in resolveVocab)
-│   ├── vocab-suggest.ts      # fuzzy vocab suggestions (levenshtein, ≤2 edits)
-│   ├── wlo-api.ts            # barrel re-export of the edu-sharing REST client
-│   ├── wlo-config.ts         #   env config + shared types + wloFetch + DISPLAY_PROPS
-│   ├── wlo-search.ts         #   search endpoints (ngsearch, collection keyword search)
-│   ├── wlo-node.ts           #   node endpoints (children/metadata/text/download/breadcrumb) + URL builders
-│   ├── topic-page-api.ts     # topic-page discovery (page_variant search, variant→collection)
-│   ├── topic-page-structure.ts # one page's content: variant → swimlanes
-│   ├── wikipedia-api.ts      # Wikipedia REST summary client (search title fallback)
-│   ├── wikipedia-relevance.ts # picks which fuzzy candidate the query is about
-│   ├── reranker.ts           # RRF merge + quality scoring (pure)
-│   ├── query-expand.ts       # query → weighted backend variants (synonyms, stopwords)
-│   ├── node-match.ts         # local node matching (text + criteria) for /children fallbacks
-│   ├── text-bm25.ts          # Okapi BM25 over a small in-memory corpus (pure)
-│   ├── formatter.ts          # WloNode → FormattedNode → markdown / json
-│   ├── logger.ts             # minimal structured JSON logger (stdout over HTTP, stderr under stdio)
-│   ├── rate-limit.ts         # in-memory per-IP rate limiter + client-IP resolution
-│   ├── read-body.ts          # bounded request-body reader (413 support)
-│   ├── mcp-transport.ts      # Streamable-HTTP transport options (MCP_SSE → JSON vs SSE)
-│   ├── rest/                 # public read-only REST layer (GET /api/*) over the services
-│   │   ├── validate.ts       #   input validation (query/nodeId/id-count caps, int clamp, fields)
-│   │   ├── project.ts        #   field projection for /api/{search,collection} (?fields=)
-│   │   ├── result.ts         #   RestResult shape + badRequest helper
-│   │   ├── handlers.ts       #   the per-endpoint handlers (handleSearch, handleCollection, …)
-│   │   ├── routes.ts         #   routeRestRequest (pure router) + handleRestRequest (http.ts adapter)
-│   │   ├── skills.ts         #   skill registry + raw loader (GET /api/skills[/<id>])
-│   │   └── static.ts         #   resolveStaticRoute (pure) + handleStaticRequest (serves /launcher.html)
-│   ├── stdio.ts              # entry: stdio transport
-│   └── http.ts               # entry: Streamable HTTP (CORS, rate/body limits, routing)
-├── public/                   # static assets served by http.ts
-│   ├── launcher.html         #   bilingual prompt launcher (self-contained; GET /launcher.html, GET /)
-│   ├── bookmarklet.md        #   selection → launcher bookmarklet (install docs, DE/EN)
-│   └── skills/               #   AI-app skills served raw via GET /api/skills/<id>
-├── tests/                    # offline unit/smoke tests (node:test): npm test
-│   ├── fetchMock.ts          #   the in-memory MCP client + upstream fetch stub every tool test uses
-│   └── netguard.mjs          #   fails any unmocked non-loopback fetch — enforces "no network required"
-├── scripts/                  # tooling (not shipped): run-tests.mjs (npm test), vocab generation, measurements
-├── docs/                     # DEPLOYMENT.md, PRIVACY.md, TOOLS.md, apps-sdk-submission-checklist.md, apps-sdk-golden-prompts.md, plans/
-├── Dockerfile · docker-compose.yml · .dockerignore · .env.example
-```
+The source is organised by layer; each directory has one job. The module-level
+map — which file owns which rule, and why — is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| Directory | What lives there |
+|---|---|
+| `src/` (top level) | The two entry points (`stdio.ts`, `http.ts`), the server factory (`server.ts`), the HTTP dispatcher (`http-app.ts`), the edu-sharing client (`wlo-*.ts`, with `wlo-fetch.ts` as the one credential boundary), and the leaf modules every layer shares: vocabularies, text handling, reranking, limits, logging, metrics, shutdown. |
+| `src/tools/` | One module per tool group: input schema, rendering, registration. No algorithms — those are in `services/`. `curation-*.ts` are the write tools. |
+| `src/services/` | What the tools and the REST routes both call: search, collections, topic pages, skills and the skill registry, compendium, full text. No MCP SDK import. |
+| `src/services/write/` | The write pipeline every mutation goes through: gate, field rules, change set, two-step confirmation, read-back, plans for batches. |
+| `src/auth/` | Personal access: the encrypted access block, its allow-list (the only file written at run time), OAuth 2.1, the ticket exchange for embedded widgets. |
+| `src/rest/` | The HTTP surface beside MCP: `/api/*`, the sign-in and OAuth pages, `/health`, `/ready`, `/metrics`, the static files. Described in `docs/openapi.yaml`. |
+| `src/apps/` | The one seam every tool is registered through (`register.ts`), output schemas, and the Apps-SDK widgets. |
+| `src/apps/widgets/` | Four HTML widgets (search results, collection tree, topic page, reading view), plain TypeScript bundled by esbuild into `dist-widgets/`. |
+| `public/` | Static pages served as they are: the prompt launcher, the sign-in and revocation pages, `llms.txt`, `robots.txt`. |
+| `tests/` | The offline suite (`node:test`; upstream faked by `fetchMock.ts`, any other network call fails via `netguard.mjs`). `tests/live/` runs against a real staging repository and is never part of `npm test`. |
+| `scripts/` | Tooling that is not shipped: the test runner, vocabulary generation and comparison, measurements, `dump-tools.ts` / `docs-tools.ts`. |
+| `docs/` | Documentation by reader — start at [docs/README.md](docs/README.md). `docs/plans/` holds designs and the measurements they rest on. |
+| `deploy/` | A draft Helm chart (`deploy/helm/wlo-mcp/`, installed nowhere yet). |
+| repository root | `Dockerfile`, `docker-compose.yml`, `.env.example` (every setting, commented), CI for GitHub and GitLab. |
 
 **Data flow:** transport entry (`stdio.ts` / `http.ts`) →
 `createMcpServer()` (`server.ts`) → a tool handler (`tools/*`) →
@@ -1309,6 +1251,7 @@ the code), grouped by module.
 
 ## Further documents
 
+- **[docs/README.md](docs/README.md)** — the index: which document answers what, by role (operator, integrator, contributor, editorial team).
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the developer's map: layers, seams, invariants, and the measured constraints a change must respect.
 - **[CHANGELOG.md](CHANGELOG.md)** — notable changes.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — contribution guide.

@@ -32,14 +32,16 @@ import type { WloNode } from '../../wlo-types.js';
 import { nodeTitle } from '../../node-match.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { log } from '../../logger.js';
+import { wroteNothing } from '../../upstream-error.js';
 import { addToCollection } from './collections.js';
 import { isAlreadyFiled } from './create-filing.js';
+import { LISTING_PAGE } from './collection-children.js';
 import { failureDetail, setProperty } from './nodes.js';
 import type { MutationOutcome } from './verify.js';
 
 export const PROPOSAL_STATUS_PROPERTY = 'ccm:collection_proposal_status';
 export type ProposalStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED';
-const PAGE = 100;
+const PAGE = LISTING_PAGE;
 /** Proposals read per collection and status. More than this is said, not guessed at. */
 export const PROPOSALS_MAX = 300;
 
@@ -130,7 +132,7 @@ export async function listProposals(collection: string, status: ProposalStatus):
  */
 async function setProposalStatus(collection: string, proposal: Proposal, to: 'ACCEPTED' | 'DECLINED'): Promise<MutationOutcome> {
   const failure = await setProperty(proposal.proposalId, PROPOSAL_STATUS_PROPERTY, [to]);
-  if (failure) return { status: 'failed', detail: failure };
+  if (failure) return { status: 'failed', ...failure };
   const node = (await readNodeMetadata(proposal.proposalId, [PROPOSAL_STATUS_PROPERTY])).node;
   const stored = node?.properties?.[PROPOSAL_STATUS_PROPERTY]?.[0];
   if (stored === to) return { status: 'ok' };
@@ -177,5 +179,11 @@ export async function decideProposal(collection: string, proposal: Proposal, acc
   } catch (err) {
     marked = { status: 'unverified', detail: err instanceof Error ? err.message : String(err) };
   }
-  return marked.status === 'ok' ? { status: 'accepted' } : { status: 'filed_not_marked', mark: marked.status, detail: marked.detail };
+  if (marked.status === 'ok') return { status: 'accepted' };
+  // `failed` promises "the proposal is still pending" — which only the
+  // repository's own refusal proves (`wroteNothing`). A mark request answered
+  // 5xx or 429 may have landed all the same: that is a mark SENT and not
+  // confirmed, and it was reported as still pending (review 2026-11-14).
+  const mark = marked.status === 'failed' && !wroteNothing(marked.httpStatus ?? 0) ? 'unverified' : marked.status;
+  return { status: 'filed_not_marked', mark, detail: marked.detail };
 }

@@ -20,7 +20,7 @@ import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan
 import { flattenText, sanitizeText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
 import { codedError, previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const KIND = 'submit-contents';
@@ -29,10 +29,7 @@ const STATUS_LABEL: Record<string, string> = {
   submitted: 'eingereicht', already: 'lag schon zur Prüfung vor', unverified: 'offen — nicht bestätigt',
   not_stored: 'NICHT eingereicht — der Datensatz zeigt keinen Workflow-Status', failed: 'nicht eingereicht', pending: 'offen',
 };
-// "Not submitted" over an outcome nobody knows sends a model to submit again.
-const label = (s: ItemState) => (s.status === 'failed' && s.outcomeOpen
-  ? 'offen — Ausgang unbekannt, bitte am Datensatz prüfen'
-  : STATUS_LABEL[s.status] ?? s.status) + (s.code ? ` (${s.code})` : '');
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL, {}, { where: 'am Datensatz' });
 
 function answer(plan: StoredPlan<SubmitItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Einreichen zur Prüfung:', report, plan.expiresAt, plan.items.map(i => ({

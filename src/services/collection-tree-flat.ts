@@ -76,8 +76,19 @@ export interface FlatTree {
   count: number;
   skipCount: number;
   items: FlatTreeItem[];
-  /** The walk stopped at a full page: there is more, from `nextSkipCount`. */
+  /**
+   * The walk stopped at a full page: there is more, from `nextSkipCount` — an
+   * offset the tool takes. Where the page steps past `FLAT_TREE_SKIP_MAX` it is
+   * that bound, and the page there repeats the tail of this one
+   * (`nextSkipCount < skipCount + count`).
+   */
   more?: { nextSkipCount: number };
+  /**
+   * There IS more, and this page already starts AT `FLAT_TREE_SKIP_MAX`: no
+   * further offset can be asked for, the rest is reached from a sub-collection
+   * as the start. Never beside `more`.
+   */
+  skipLimitReached?: true;
   /** A listing below the start collection did not answer — the list may lack that branch. */
   incomplete?: true;
   /** A listing below the start collection was refused — that branch is not in the list. */
@@ -202,7 +213,18 @@ export async function listCollectionTree(opts: FlatTreeOptions): Promise<FlatTre
     count: page.length,
     skipCount,
     items: page,
-    ...(items.length > skipCount + maxItems ? { more: { nextSkipCount: skipCount + maxItems } } : {}),
+    // A `more` must name an offset the tool ACCEPTS. Past `FLAT_TREE_SKIP_MAX`
+    // it named one the schema refuses — a dead end that read like a way on.
+    //
+    // A page that steps PAST the bound (page sizes that do not divide it:
+    // 450 + 100) is not at the limit yet — the bound itself is an offset the
+    // tool takes, and it reaches part of what follows. So `more` names the
+    // bound then (that page repeats the tail of this one, which the tool text
+    // says), and `skipLimitReached` is left for the page AT the bound, from
+    // where no further offset exists.
+    ...(items.length <= skipCount + maxItems ? {}
+      : skipCount < FLAT_TREE_SKIP_MAX ? { more: { nextSkipCount: Math.min(skipCount + maxItems, FLAT_TREE_SKIP_MAX) } }
+        : { skipLimitReached: true as const }),
     ...(unread > 0 ? { incomplete: true as const } : {}),
     ...(refused > 0 ? { restricted: true as const } : {}),
     // Only where it cost something: a page that is full is answered by `more`.

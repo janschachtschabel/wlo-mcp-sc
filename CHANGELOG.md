@@ -6,6 +6,121 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — full audit of 2026-11-14: every finding fixed, two finds of the chatbot team, control documents
+
+No tool, parameter, endpoint, variable or metric was renamed or removed. What a client or an operator can observe
+differently is listed here; the same list, for the chatbot team, is `docs/plans/2026-11-14-antwort-sammlungsstrukturen-2.md`.
+Three independent reviews of the fixes found 36 further points (no critical one), all worked. Because that is many,
+a second round followed over the whole state: 4 major, 14 minor and 7 nits more — among them one the first round
+had introduced (the budget key of a confirmed account could be produced by an unproven login) — all worked too.
+
+**Writing**
+
+- **A file replacement is read back against what was sent.** The read-back only checked that the record had a size —
+  true before the replacement too. It now compares the byte size (and a changed content hash where the repository
+  gives one); equal size without such proof is `unverified`. A lost or unconfirmed upload is a coded error
+  (`not_stored`, `unverified`, `forbidden` …, `error.upload`, the right `outcomeOpen`) instead of a text line above a
+  success; a file-only update no longer ends "nothing to change".
+- **One reading of a failed write** (`wroteNothing`, `src/upstream-error.ts`): a 4xx other than 429 wrote nothing,
+  everything else is open. The test was written out in nine places, five of which took a 429 for "nothing written".
+  Single tools now answer what the repository said: 401/403 → `forbidden`, 404 → `not_found`, another 4xx →
+  `refused`, each `outcomeOpen: false`; 429/503 → `upstream_busy` with `retryAfter`, open. Before, all of them were
+  `upstream_error` and open.
+- **`wlo_remove_from_collection`** refuses in the PREVIEW, without a key: `not_in_collection`, `is_original` (the
+  record lies in the collection directly — removing it would delete the material), `not_checked`.
+- **`wlo_create_collection`**: a parent the caller may not write is `forbidden` before the key; a namesake beside it
+  is named in the preview; a collection that was created and not confirmed carries `nodeId` and `recordExists`.
+- **`wlo_add_to_collection`** on 409 says "already in the collection", as the batch does. **`wlo_add_to_collections`**:
+  a filing answered 5xx/429 stays `pending` and is looked at before anything is sent again; our own filing found
+  afterwards is `added`, not `already`.
+- **`wlo_submit_content`** behaves like the batch tool (`not_stored`, `unverified`, the 4xx codes; after a 5xx the
+  record is read first), and sends the note as the preview shows it.
+- **`wlo_rename_collection`** with nothing to change answers `unchanged: true` and issues no key.
+  **`wlo_delete_collections`**: `confirm.preview.action` is `delete`. **`wlo_remove_from_collections`** refuses a
+  collection or folder given as material. **`wlo_store_batch_manifest`** keeps its claim when the outcome is open —
+  no second file.
+- **Plans**: an open step reads "offen — Ausgang unbekannt, bitte prüfen" in all seven batch tools (one label
+  function; four had the rule); a step that throws is counted and ends after three tries; a mere lookup no longer
+  evicts a plan; an expired key answers `confirm_expired` every time.
+- **Tree merge matches by the collection title.** It compared the record title chain (`cclom:title` first) against
+  collections titled by `cm:title` — the move had it right. One lister now serves tree, move and order.
+- Per-identity budgets (previews, plans, upload slots) go by the confirmed account, so two spellings of one login
+  share one. **And a stranger cannot spend them:** a `Basic` login is never proven before a preview, so typing a
+  person's account name — or inventing twenty — could evict other people's pending confirmation keys, plans and
+  prepared batches (their confirmation then answered `confirm_unknown`; nothing foreign could be read or written).
+  Proven identities (an access block, the service account) and unproven ones now fill and evict in separate halves
+  of each store (`services/write/store-budget.ts`). Unproven callers can still evict each other.
+- **`wlo_create_collection_tree`**: a create answered 5xx/429 stays `pending` and is looked up by title before it is
+  sent again; it ended as "nicht angelegt" over a collection that may exist. **`wlo_store_batch_manifest`** after an
+  open outcome looks whether the file is there (`found`), files it once, or answers `not_checked`.
+  `proposal_not_marked` says `mark: "failed"` only when the mark provably did not land.
+
+**Reading**
+
+- **Linear scans over repository text.** `oneLine`, the heading parser and the `:::` block parser took 61 s, 53 s and
+  1.2 s on a 200 000-character adversarial value; all three now run in under 300 ms with identical results
+  (300 000 fuzzed inputs each).
+- **The skill-registry cache is keyed by who read.** Entries were shared between the service account, anonymous
+  `/api` callers and personal logins. Now per scope; a personal login is served what an anonymous reader may see,
+  looks up the rest itself, and what it read is kept for that login alone, for a minute. A forced lookup
+  (`includeSkillRegistry`) no longer re-attaches a remembered catalogue over a fresh "none".
+- **"Not read" is not "not there"**, in four more places: `get_related_content`, `get_compendium_text`,
+  `get_topic_page_content` and `get_wlo_content_text` tell 404, 401/403 ("mit dieser Anmeldung nicht lesbar") and an
+  outage apart. `get_wlo_content_text` answers `access_denied` / `text_unreadable` instead of `node_not_found`.
+- **Bounds are said**, in Markdown block 0, JSON block 0, `structuredContent` and the search widget:
+  `get_collection_contents` with sub-collections (`walkCapped`, `contentsCut`, `totalIsLowerBound`,
+  `skipLimitReached`), `search_wlo_within_collection` (`truncated`, `collectionTotal` — it samples the first 100),
+  `search_wlo_collections` (`scanCapped`), `search_wlo_content` / `search_wlo_all` (`totalIsUpperBound`; an OER
+  search can be `incomplete`), `get_related_content` (`siblingsRefused`, `siblingsUnread`).
+- **`list_collection_tree`** no longer names a `more.nextSkipCount` it would refuse (chatbot team): past the bound
+  it says `skipLimitReached` and to start from a sub-collection.
+- **A subject portal resolves by name** (chatbot team): neither search index returns a portal for its own title
+  word, so `collection: "Physik"` found only deeper collections. The resolution also reads the portal list; an
+  exact title is taken, and an unreadable list makes the answer `unverified` (`portalsUnread`).
+- `search` (ChatGPT convention): an empty list over an incomplete search is a coded `upstream_error`.
+  `get_compendium_text` in JSON: block 0 and `structuredContent` hold the same `entries`, and the prose travels once.
+  NFC and NFD spellings match each other.
+
+**Errors, REST, security**
+
+- **New code `internal_error`**: a mistake of ours (JavaScript's own error classes) is answered with a generic
+  sentence and logged in full; before, it went out as `upstream_error` with the raw message. A connection lost while
+  connecting or while a body is read stays an upstream failure — and, for a write, an open outcome.
+- **`/api/*`** answers 404 / 403 / 503 with `Retry-After` / 504 / 502 as `{error, code, retryAfter?}` where every
+  upstream failure was a 500; a 405 carries `Allow`.
+- `get_url_text` and `get_wlo_content_text` put a note and a separator ahead of the foreign text (JSON: `note`).
+- Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. The launcher's script
+  is a file (`/launcher.js`), so its policy no longer allows inline script on the origin that takes passwords.
+- `url-safety` also refuses 6to4, Teredo and SIIT forms of a private address, `fec0::/10` and a trailing dot.
+- An `Authorization` header is decoded once per request (it was up to three RSA passes for a garbage token).
+- New `INTERNAL_BIND_ADDR`; a startup warning when the internal port serves `/metrics` without a token on a
+  non-loopback address. Boot and OAuth log lines pseudonymise the account and client name.
+
+**Operations, widgets, dependencies**
+
+- Widgets have an ERROR state: a failed call showed "Keine Treffer gefunden". A refusal and an outage get their own
+  sentences; a capped or sampled empty list says so.
+- Metrics: `wlo_tool_errors_total{tool,code}`, `wlo_upstream_gate_wait_seconds{outcome}`,
+  `wlo_rate_limited_total{limiter}`, and gauges for the bounded stores (`wlo_skill_registry_cache_entries`,
+  `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`,
+  `wlo_upload_held_bytes`).
+- Compose reads `MEM_LIMIT` (default unchanged, 512m; 768m recommended with the batch upload).
+- `@modelcontextprotocol/sdk` and `zod` are pinned to a patch range and updated one pull request each.
+
+**Tests**
+
+- The wiring of `http.ts` is testable (`buildHttpOptions`): deleting a limiter there used to leave the suite green.
+- `netguard` records a swallowed network call and fails the run; two tests had been reaching staging unnoticed.
+- Every curation tool is checked to refuse an anonymous and a service caller; every test client validates
+  `structuredContent` against the published schema; seven guards were widened and each now tests itself.
+- `tools/list` has a size budget (measured 231 306 characters for 60 tools) so it cannot grow unseen.
+
+**Documents**
+
+- `CLAUDE.md` holds what binds every change in about 250 lines (it was 2154); the rule blocks moved verbatim to
+  `docs/rules/`, one file per area. `docs/plans/STATUS.md` is the short current state; its history is archived.
+  `docs/README.md` lists the documents by reader; `npm run docs:tools` prints the tool table to copy from.
+
 ### Added — collection structures, package 4: moving a collection, proposals, "not public yet" (wishes S5, S8, S9, 2026-11-14)
 
 Three more curation tools (26, 60 in all; 64 with the batch upload). Measured with two accounts before it was

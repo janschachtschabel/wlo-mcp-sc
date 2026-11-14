@@ -26,3 +26,15 @@ export function upstreamErrorMessage(label: string, res: Response): string {
 export function isRefusal(status: number): boolean {
   return status === 401 || status === 403 || status === 404;
 }
+
+/**
+ * A status that proves a WRITE request wrote nothing: any 4xx except 429. The
+ * repository looked at the request and said no. A 5xx is no such proof — a
+ * proxy answers 502/504 while the work lands, and a create was measured to
+ * answer 500 and exist (2026-11-06) — and neither is 429 (busy, no verdict) or
+ * a missing status (`0`: no answer at all). The ONE reading for every write
+ * path: inlined, four plan steps each carried their own copy of it.
+ */
+export function wroteNothing(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
+}

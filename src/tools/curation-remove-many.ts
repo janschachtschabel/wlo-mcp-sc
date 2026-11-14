@@ -19,7 +19,7 @@ import {
 import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
 import type { WloToolResult } from '../apps/register.js';
 import { previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { runPlannedCall } from './curation-plan.js';
 
 const KIND = 'remove-from-collections';
@@ -28,10 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
   removed: 'herausgenommen', absent: 'war nicht enthalten', unverified: 'offen — nicht bestätigt',
   failed: 'nicht herausgenommen', pending: 'offen',
 };
-// "Not removed" over an outcome nobody knows sends a model to act on a guess.
-const label = (s: ItemState) => (s.status === 'failed' && s.outcomeOpen
-  ? 'offen — Ausgang unbekannt, bitte in der Sammlung prüfen'
-  : STATUS_LABEL[s.status] ?? s.status) + (s.code ? ` (${s.code})` : '');
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL, {}, { where: 'in der Sammlung' });
 
 function answer(plan: StoredPlan<RemoveItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Herausnehmen aus Sammlungen:', report, plan.expiresAt, plan.items.map(i => ({

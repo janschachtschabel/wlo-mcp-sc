@@ -451,7 +451,7 @@ browser), so the embedding page must template it server-side.
 
 ## 6. Why the write tools are visible to people who cannot use them
 
-Until 2026-08-05 the 13 curation tools were simply absent without a
+Until 2026-08-05 the curation tools (13 at the time) were simply absent without a
 write-capable identity. It looked like the safer choice and it was the reason
 the login never started: **a model that never sees a write tool never calls one,
 so nothing ever asks the host to authenticate**, and a connector added without

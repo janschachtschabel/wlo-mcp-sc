@@ -224,7 +224,8 @@ test('a filing whose answer never came is re-checked by the next call, not sent 
       assert.deepEqual([first.pairs[0]!.status, first.pairs[0]!.code], ['pending', 'timeout']);
       assert.equal(first.complete, false);
       const second = sc(await c.callTool({ name: TOOL, arguments: { pairs, continuationToken: first.continuationToken } }));
-      assert.equal(second.pairs[0]!.status, 'already');
+      // Found filed after OUR request left: our filing, not "was there before" (review 2026-11-14).
+      assert.equal(second.pairs[0]!.status, 'added');
       assert.equal(puts.length, 1);
     } finally { globalThis.fetch = real; }
   } finally { await c.close(); mock.restore(); setServiceCredentialForTest(null); }

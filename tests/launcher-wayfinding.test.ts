@@ -19,7 +19,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const PAGE = readFileSync(new URL('../public/launcher.html', import.meta.url), 'utf8');
+// Page and script file together: the script (and its string tables) moved out of the page on 2026-11-14.
+const PAGE = ['../public/launcher.html', '../public/launcher.js']
+  .map(rel => readFileSync(new URL(rel, import.meta.url), 'utf8')).join(String.fromCharCode(10));
 
 /**
  * Where a person must be able to get to from the start page. Each one is a route

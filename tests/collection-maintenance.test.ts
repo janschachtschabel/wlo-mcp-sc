@@ -618,8 +618,10 @@ test('wlo_create_collection_tree: the level is ordered even when its LAST step f
 test('wlo_remove_from_collection (the single tool): a record filed directly is refused too — its preview promised the material stays', async () => {
   const s = await scene(withDirect);
   try {
-    const { done } = await s.confirm('wlo_remove_from_collection', { collectionId: 'optik', nodeId: 'd1' });
+    // Refused in the PREVIEW since the audit of 2026-11-14 (W9): no key is issued for it.
+    const done = await s.call('wlo_remove_from_collection', { collectionId: 'optik', nodeId: 'd1' });
     assert.equal(done.isError, true);
+    assert.equal(sc(done).confirm, undefined);
     assert.deepEqual([sc(done).error!.code, sc(done).error!.outcomeOpen], ['is_original', false]);
     assert.match(toolText(done), /würde das Material selbst löschen/);
     assert.ok(s.repo.nodes.has('d1'));

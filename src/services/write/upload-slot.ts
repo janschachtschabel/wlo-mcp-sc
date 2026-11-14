@@ -10,7 +10,8 @@
  *  - **Type from the bytes** (MA-1, `file-types.ts`): head + ZIP central directory; unknown →
  *    `unsupported_type`. The client's name only tells markdown from plain text.
  *  - **One owner, one take:** the ref is an opaque random id; `take(ref, identity)` succeeds only for
- *    the identity that put it, and only once.
+ *    the identity that put it — the account the upload's login proof confirmed, or the very credential
+ *    that uploaded it (`slotHolder`) — and only once.
  *  - **Short-lived:** 30 minutes (`ttlMs`); `sweep` drops what expired.
  *  - **Capped** per identity (`maxPerIdentity`, 20) AND in total (`maxTotal`, `maxTotalBytes`, default
  *    128 MB — well below the container's 512 MB): uploads in flight count at their declared length
@@ -33,12 +34,15 @@ import { abuseBucketKey, type WloCredential } from '../../auth/credential.js';
 import type { DistinctValueLimiter } from '../../rate-limit.js';
 import { resolvePositiveInt } from '../../wlo-config.js';
 import { isEnabledFlag } from './credential-gate.js';
+import { accountBudget, accountOf } from './confirm.js';
 import { detectUploadType, type UploadType } from './file-types.js';
 import { zipEntryNames } from './zip-entries.js';
 
 export interface Slot {
   ref: string;
   identity: string;
+  /** The exact credential that uploaded it (`slotHolder`), where the route knows one. */
+  holder?: string;
   data: Buffer;
   sha256: string;
   size: number;
@@ -112,6 +116,13 @@ export class UploadSlots {
     return bytes;
   }
 
+  /** Bytes of the files held right now (uploads in flight are not files yet) — for a metric. Reads only: nothing is swept. */
+  get bytes(): number {
+    let bytes = 0;
+    for (const s of this.slots.values()) bytes += s.size;
+    return bytes;
+  }
+
   private bytesHeldBy(identity: string): number {
     let bytes = 0;
     for (const b of this.reserved.get(identity) ?? []) bytes += b;
@@ -120,7 +131,7 @@ export class UploadSlots {
   }
 
   /** ``declared``: the Content-Length, when the client sent one (reserved instead of ``maxBytes``). */
-  async put(identity: string, body: Readable, clientName: string, declared?: number): Promise<PutResult> {
+  async put(identity: string, body: Readable, clientName: string, declared?: number, holder?: string): Promise<PutResult> {
     this.sweep();
     const reserve = declared !== undefined && declared >= 0 ? Math.min(declared, this.maxBytes) : this.maxBytes;
     if (this.openOf(identity) >= this.maxPerIdentity || this.open >= this.maxTotal
@@ -138,7 +149,7 @@ export class UploadSlots {
         ? zipEntryNames(data) : [];
       const type = detectUploadType(data, entries, clientName);
       if (!type) return { ok: false, code: 'unsupported_type' };
-      const slot: Slot = { ref: randomBytes(18).toString('base64url'), identity, data, sha256,
+      const slot: Slot = { ref: randomBytes(18).toString('base64url'), identity, ...(holder ? { holder } : {}), data, sha256,
         size: data.length, type, expires: this.clock() + this.ttlMs };
       this.slots.set(slot.ref, slot);
       return { ok: true, slot };
@@ -205,10 +216,16 @@ export class UploadSlots {
     });
   }
 
-  /** The slot, if this identity owns it and it has not expired — removed from the table (once). */
-  take(ref: string, identity: string): Slot | null {
+  /**
+   * The slot, if this identity owns it and it has not expired — removed from the table (once).
+   * `holder`: the caller's exact credential (`slotHolder`). It opens a slot that very credential
+   * uploaded, whatever account identity the upload's login proof gave it — see `slotHolder`.
+   */
+  take(ref: string, identity: string, holder?: string): Slot | null {
     const slot = this.slots.get(ref);
-    if (!slot || slot.identity !== identity) return null;
+    if (!slot) return null;
+    const sameHolder = holder !== undefined && slot.holder !== undefined && slot.holder === holder;
+    if (slot.identity !== identity && !sameHolder) return null;
     this.slots.delete(ref);
     return slot.expires > this.clock() ? slot : null;
   }
@@ -255,10 +272,37 @@ export function sharedUploadSlots(): UploadSlots {
 
 
 /** Whose slot / batch this is: a hash of the PERSONAL account name, or null (none, the anonymous
- *  token, the service account). The route and the batch tools derive it the same way. */
-export function slotIdentity(cred: { label: string; source: string } | null): string | null {
+ *  token, the service account). The route and the batch tools derive it the same way. The account is
+ *  the CONFIRMED one where the credential names it (`accountOf`): keyed on the name as typed, each
+ *  spelling of one login had a slot budget of its own (audit 2026-11-14, W14).
+ *
+ *  A CONFIRMED account hashes in its own namespace (`accountBudget`), a typed name in another: hashed
+ *  alike, a `Basic` header that merely types `maria` — which a tool call never proves — named the
+ *  slots of the person whose confirmed account is `maria` (review 2026-11-14, finding 1). */
+export function slotIdentity(cred: Pick<WloCredential, 'label' | 'source' | 'acct'> | null): string | null {
   if (!cred || cred.source !== 'user') return null;
-  return createHash('sha256').update(`user:${cred.label}`).digest('hex');
+  return createHash('sha256').update(accountBudget(cred) ?? `user:${accountOf(cred)}`).digest('hex');
+}
+
+/** The slot identity of an account the repository CONFIRMED — what an upload is filed under. */
+function confirmedSlotIdentity(account: string): string {
+  return createHash('sha256').update(accountBudget({ acct: account })!).digest('hex');
+}
+
+/**
+ * The exact credential, as a keyed digest (`keyed-digest.ts` — never a bare hash of a header). An
+ * upload remembers it beside the account identity, so the SAME credential finds its slot again in the
+ * tool call: a `Basic` header and a block listed before accounts were recorded carry no `acct`, and
+ * the tool call does not prove a login, so it cannot derive the account identity the upload got from
+ * its proof. A typed name can match neither.
+ */
+export function slotHolder(cred: Pick<WloCredential, 'header'>): string {
+  return keyedDigest(`slot:${cred.header}`);
+}
+
+/** Bytes the shared table holds right now, 0 before the first upload — for a metric. Creates nothing. */
+export function uploadStoreBytes(): number {
+  return shared?.bytes ?? 0;
 }
 
 
@@ -286,13 +330,13 @@ const REFUSED_TTL_MS = 60_000;
 export async function verifiedSlotIdentity(
   cred: WloCredential | null, deps: { ip: string; authAbuseLimiter: DistinctValueLimiter },
   now: number = Date.now(),
-): Promise<{ identity: string } | { refused: 'login' | 'unreachable' } | { refused: 'limited'; retryAfter: number }> {
-  const identity = slotIdentity(cred);
-  if (!cred || !identity) return { refused: 'login' };
+): Promise<{ identity: string; holder: string } | { refused: 'login' | 'unreachable' } | { refused: 'limited'; retryAfter: number }> {
+  if (!cred || !slotIdentity(cred)) return { refused: 'login' };
   // Keyed (`keyed-digest.ts`): a bare hash of the header is a password hash.
   const key = keyedDigest(cred.header);
+  const holder = slotHolder(cred);
   const hit = verified.get(key);
-  if (hit && hit.until > now) return { identity: hit.identity };
+  if (hit && hit.until > now) return { identity: hit.identity, holder };
   const refusedUntil = refusedLogins.get(key);
   if (refusedUntil !== undefined) {
     if (refusedUntil > now) return { refused: 'login' };
@@ -316,7 +360,14 @@ export async function verifiedSlotIdentity(
     refusedLogins.set(key, now + REFUSED_TTL_MS);
     return { refused: 'login' };
   }
+  // The account the PROOF confirmed, never the credential's own fields: `Basic` carries the name as
+  // typed (each spelling a budget of its own, and no block of the same person could take the slot),
+  // and a block's `acct` appears mid-session (`noteAccount`) — an identity derived from the credential
+  // changed under slots already held and under this cache. The proof says the same for every form.
+  // (The fallback to `slotIdentity` is for the type only: an authenticated identity has an account.)
+  const account = proof.identity.account;
+  const identity = account ? confirmedSlotIdentity(account) : slotIdentity(cred)!;
   if (verified.size >= MAX_VERIFIED) verified.clear();
   verified.set(key, { identity, until: now + VERIFY_TTL_MS });
-  return { identity };
+  return { identity, holder };
 }

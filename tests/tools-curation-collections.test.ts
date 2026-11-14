@@ -240,7 +240,15 @@ test('a rename the collection does not show afterwards is not reported as done',
 
 test('a rename the collection does show is reported plainly', async () => {
   setServiceCredentialForTest(USER);
-  const mock = serve({ [COLLECTION]: 'Brüche' });
+  // The collection shows the new title only once the rename was SENT. A fixture
+  // that carried it from the start is a rename to the title it already has —
+  // and that gets no key any more (audit 2026-11-14, W13).
+  const titles = { [COLLECTION]: 'Bruchrechnung' };
+  const handler = serveHandler(titles);
+  const mock = installFetchMock((url, init) => {
+    if ((init?.method ?? 'GET') === 'PUT') titles[COLLECTION] = 'Brüche';
+    return handler(url, init);
+  });
   const c = await client();
   try {
     const text = succeeded(await confirmed(c, 'wlo_rename_collection', { nodeId: COLLECTION, title: 'Brüche' }));

@@ -11,6 +11,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { Readable } from 'node:stream';
 
 import { handleUploadRequest, UPLOAD_PATH } from '../src/rest/upload-route.js';
 import { UploadSlots } from '../src/services/write/upload-slot.js';
@@ -23,12 +24,17 @@ const grenze = () => ({ ip: '127.0.0.1', authAbuseLimiter: createDistinctValueLi
 const echt = globalThis.fetch;
 const GAST = `Basic ${Buffer.from('gast:falsch').toString('base64')}`;
 
-/** The repository confirms every login except ``gast`` (which answers as guest). */
+/**
+ * The repository confirms every login except ``gast`` (which answers as guest) — each as ITS OWN
+ * account. It used to confirm everybody as `person`; since the slot identity is the confirmed account,
+ * that made all the people of this file one person sharing one slot budget.
+ */
 function identitaeten(): InstalledMock {
   return installFetchMock((url, init) => {
     const auth = new Headers((init?.headers ?? {}) as HeadersInit).get('authorization') ?? '';
     if (url.includes('/iam/v1/people/')) {
-      return { json: { person: { authorityName: auth === GAST ? 'esguest' : 'person' } } };
+      const account = Buffer.from(auth.replace(/^Basic\s+/i, ''), 'base64').toString('utf8').split(':')[0] || 'person';
+      return { json: { person: { authorityName: auth === GAST ? 'esguest' : account } } };
     }
     return { status: 404, json: {} };
   });
@@ -236,6 +242,56 @@ describe('login limiter buckets like POST /mcp (relay clients)', () => {
     } finally {
       mock.restore();
     }
+  });
+});
+
+describe('the slot identity is the account the login PROOF confirmed (review 2026-11-14, finding 3)', () => {
+  it('two Basic spellings are one person; a block of that account takes the slot; a typed name never does', async () => {
+    const { verifiedSlotIdentity, slotIdentity, slotHolder } = await import('../src/services/write/upload-slot.js');
+    const basic = (user: string) => ({ header: `Basic ${Buffer.from(`${user}:pw`).toString('base64')}`, label: user, source: 'user' as const });
+    // Whatever is typed, the repository confirms ONE account.
+    const mock = installFetchMock(() => ({ json: { person: { authorityName: 'proof-maria' } } }));
+    const deps = { ip: '10.0.0.7', authAbuseLimiter: createDistinctValueLimiter(0) };
+    try {
+      const one = await verifiedSlotIdentity(basic('Proof.Maria'), deps, 5_000);
+      const two = await verifiedSlotIdentity(basic('proof.maria@example.org'), deps, 5_000);
+      assert.ok('identity' in one && 'identity' in two);
+      assert.equal(one.identity, two.identity, 'one budget for both spellings');
+      const block = { label: 'Proof.Maria', source: 'user' as const, acct: 'proof-maria' };
+      assert.equal(one.identity, slotIdentity(block), 'the identity a block of that account brings to the tool call');
+      assert.notEqual(one.holder, two.holder);
+
+      const slots = new UploadSlots();
+      const put = async () => {
+        const r = await slots.put(one.identity, Readable.from([PDF]), 'a.pdf', undefined, one.holder);
+        assert.ok(r.ok);
+        return r.slot.ref;
+      };
+      // A Basic header that merely TYPES the account name: another identity, another holder.
+      const typed = basic('proof-maria');
+      typed.header = `Basic ${Buffer.from('proof-maria:falsch').toString('base64')}`;
+      const ref = await put();
+      assert.equal(slots.take(ref, slotIdentity(typed)!, slotHolder(typed)), null, 'not by a typed name');
+      // …and the refused take left the slot where it was.
+      assert.ok(slots.take(ref, slotIdentity(block)!, 'some-other-holder'), 'by a block of the confirmed account');
+      // The same Basic credential in the tool call: no `acct`, so only the holder matches.
+      const same = basic('Proof.Maria');
+      assert.notEqual(slotIdentity(same), one.identity);
+      assert.ok(slots.take(await put(), slotIdentity(same)!, slotHolder(same)), 'by the credential that uploaded it');
+    } finally { mock.restore(); }
+  });
+
+  it('a block whose account is recorded mid-session keeps its slots', async () => {
+    const { verifiedSlotIdentity, slotIdentity } = await import('../src/services/write/upload-slot.js');
+    const mock = installFetchMock(() => ({ json: { person: { authorityName: 'late-acct' } } }));
+    const deps = { ip: '10.0.0.8', authAbuseLimiter: createDistinctValueLimiter(0) };
+    try {
+      const legacy = { header: 'Basic bGF0ZTpwdw==', label: 'Late.Acct', source: 'user' as const, jti: 'jti-late' };
+      const before = await verifiedSlotIdentity(legacy, deps, 9_000);
+      assert.ok('identity' in before);
+      // `noteAccount` has run: the same block now names its account.
+      assert.equal(before.identity, slotIdentity({ ...legacy, acct: 'late-acct' }));
+    } finally { mock.restore(); }
   });
 });
 

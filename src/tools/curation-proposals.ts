@@ -20,6 +20,7 @@ import {
 import { nodeIdLine, oneLine, quotedTitle } from '../formatter.js';
 import { sanitizeText } from '../text-sanitize.js';
 import { CONFIRM_TOKEN } from './curation-fields.js';
+import { failedWriteReply } from './curation-report.js';
 import {
   codedError, confirmOrExplain, isPreviewCall, markWritten, plainText, previewReply, registerCurationTool,
   timeoutOrError, type WriteAuthChallenge,
@@ -142,8 +143,8 @@ Nur ein OFFENER Vorschlag lässt sich entscheiden. nodeId ist die des vorgeschla
                 : `Ob der Vorschlag als angenommen markiert ist, ließ sich nicht bestätigen (${outcome.detail}). `)
               + 'Nicht noch einmal annehmen.', { ...ids, mark: outcome.mark }), nodeId);
           case 'failed':
-            return codedError(outcome.httpStatus === 403 || outcome.httpStatus === 401 ? 'forbidden' : 'upstream_error',
-              `Die Entscheidung konnte nicht geschrieben werden: ${outcome.detail}`, ids);
+            // One reading of a failed write (`failedWriteReply`): a refusal wrote nothing and says so.
+            return failedWriteReply(outcome.httpStatus ?? 0, `Die Entscheidung konnte nicht geschrieben werden: ${outcome.detail}`, ids);
           case 'not_visible':
             return codedError('not_visible', `Die Anfrage wurde angenommen, die Änderung ist aber nicht zu sehen. ${outcome.detail}`, ids);
           default:

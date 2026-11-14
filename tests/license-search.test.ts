@@ -51,7 +51,9 @@ beforeEach(() => {
     return {
       json: {
         nodes: [],
-        pagination: { total: 0, from: 0, count: 0 },
+        // Not 0: a query that matches NOTHING is an answered count of zero,
+        // which is not the degradation path the unset `facetBuckets` stands for.
+        pagination: { total: 99, from: 0, count: 0 },
         ...(facetBuckets ? { facets: [{ property: LICENSE_PROPERTY, values: facetBuckets }] } : {}),
       },
     };

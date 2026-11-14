@@ -28,7 +28,7 @@ import type { WloToolResult } from '../apps/register.js';
 import {
   codedError, previewReply, rejectionReply, type WriteAuthChallenge, registerCurationTool,
 } from './curation-shared.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const KIND = 'collection-tree';
@@ -60,12 +60,12 @@ const CODE_LABEL: Record<string, string> = {
   not_checked: 'Unterordner nicht lesbar', forbidden: 'keine Berechtigung',
   order_not_set: 'die Reihenfolge dieser Ebene ließ sich nicht setzen',
 };
-const label = (s: ItemState) =>
-  `${STATUS_LABEL[s.status] ?? s.status}${s.code ? ` — ${CODE_LABEL[s.code] ?? s.code}` : ''}`;
+// `status — Hinweis`: the line form this tool answered in before the shared function.
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL, CODE_LABEL, { noteAfterDash: true });
 
 function answer(plan: StoredPlan<TreeItem>, report: Awaited<ReturnType<typeof runPlan>>, parentId: string): WloToolResult {
   return planReply(
-    `Sammlungsbaum unter ${parentId}:`, report, plan.expiresAt,
+    `Sammlungsbaum unter ${sanitizeText(parentId)}:`, report, plan.expiresAt,
     plan.items.map(i => ({ id: { path: i.key }, text: i.key, state: plan.state.get(i.key)! })), label,
   );
 }
@@ -133,8 +133,9 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
           const target = await readFilingTarget(parentId);
           if (!target.ok) {
             return { reply: target.reason === 'not_found'
-              ? codedError('not_found', `Die Elternsammlung ${parentId} wurde nicht gefunden.`)
-              : codedError('not_a_collection', `${parentId} ist keine Sammlung.`) };
+              // The id came from the caller and this text goes to the model: sanitized, like every echoed id.
+              ? codedError('not_found', `Die Elternsammlung ${sanitizeText(parentId)} wurde nicht gefunden.`)
+              : codedError('not_a_collection', `${sanitizeText(parentId)} ist keine Sammlung.`) };
           }
           if (target.target.readOnly) {
             return { reply: codedError('forbidden', `An der Elternsammlung „${sanitizeText(target.target.title)}“ darf diese Anmeldung nicht schreiben — `
@@ -142,7 +143,7 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
           }
           const walk = await findExisting(parentId, items);
           if (!walk.ok) {
-            return { reply: codedError('not_checked', `Die Unterordner von ${walk.unreadable} ließen sich nicht lesen. Ohne diesen Blick kann `
+            return { reply: codedError('not_checked', `Die Unterordner von ${sanitizeText(walk.unreadable)} ließen sich nicht lesen. Ohne diesen Blick kann `
               + '„anlegen“ eine Dublette sein — es wurde nichts geändert. Bitte später erneut versuchen.') };
           }
           if (onExisting === 'fail' && walk.existing.size) {

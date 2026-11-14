@@ -24,6 +24,7 @@ import { requireWrite } from '../services/write/credential-gate.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { planRenderedVariant, writeRenderedVariant } from '../services/write/topic-page.js';
 import { sanitizeText } from '../text-sanitize.js';
+import { CONFIRM_TOKEN } from './curation-fields.js';
 import {
   registerCurationTool,
   type WriteAuthChallenge,
@@ -50,8 +51,7 @@ export function registerCurationTopicPageTool(server: McpServer, challenge: Writ
     inputSchema: {
       collectionId: z.string().describe('nodeId der Sammlung, zu der die Themenseite gehört.'),
       variantId: z.string().describe('nodeId der Variante, die künftig gerendert werden soll.'),
-      confirmToken: z.string().optional()
-        .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
+      confirmToken: CONFIRM_TOKEN,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {

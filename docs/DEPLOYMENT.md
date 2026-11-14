@@ -72,7 +72,7 @@ tracked compose file. The full list with defaults is in
 | `WLO_COMPENDIUM_SECTION_MAX` | `2000` | Characters one main section of a compendium text may contribute when `get_compendium_text` is called without a `query`; with one it caps a single passage. Raise it if a deployment wants the untruncated prose back — at the default one of the eleven texts on staging is affected (65 250 → 20 802 delivered). The REST route `/api/compendium` is unaffected either way. |
 | `WLO_FETCH_TIMEOUT_MS` | `20000` | Per-upstream-request timeout. Sized from measurement (creating a record takes 4.2–8.0 s); the compose file deliberately forwards it with an **empty** default so this number lives only in `src/wlo-config.ts`. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | `all` (set by compose) | Switches off tools declared unsafe. Compose ships `all`, so `get_url_text` is **absent in a default deployment** — which is the recommendation, see the README section "Tools declared unsafe". Set the variable to an empty value in `.env` to switch them on; the server then logs `registering a tool declared UNSAFE` at startup, which is how you confirm the switch took effect either way. |
-| `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | One shared WLO identity for every call on `POST /mcp` — the mode a chatbot or portal deployment uses. Unset = anonymous, public content only. It applies to the MCP endpoint **alone**: the public `/api/*` surface and the launcher stay anonymous by design and never inherit these rights. Wrong credentials do not degrade to public — edu-sharing answers `401` and the server can then answer nothing at all; the startup log names that case. |
+| `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | One shared WLO identity for every call on `POST /mcp` — the mode a chatbot or portal deployment uses. Unset = anonymous, public content only. **A decision, not a detail:** with the account set, a `/mcp` request that carries NO `Authorization` header reads with this account — so whatever the account may read beyond public material is readable by anyone who reaches `/mcp`. Give it the rights you would give any visitor, or restrict who reaches `/mcp`. (A header that cannot be used falls back to anonymous, never to this account.) It applies to the MCP endpoint **alone**: the public `/api/*` surface and the launcher stay anonymous by design and never inherit these rights. Wrong credentials do not degrade to public — edu-sharing answers `401` and the server can then answer nothing at all; the startup log names that case. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | Lets the service account use the 26 curation (write) tools. Off by default: a change under a shared account is attributable to nobody — the history records the account, not the person who asked. A caller with their own WLO login may always write and needs nothing here. Accepted: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. |
 | `WLO_ALLOW_PREPARED_WRITES` | _(unset)_ | For the **embedded** deployment: the chatbot runs inside a repository page where the visitor is already signed in, so a confirmed curation step comes back as a *described* request that the page performs with **their** session — this server writes nothing and needs no write rights. Off by default; anonymous callers never reach it, since building the preview reads the record under the service identity. Not a substitute for `WLO_ALLOW_SERVICE_WRITES` and not implied by it: that one lets the shared account change data, this one lets it change nothing. Currently the route exists for `wlo_add_to_collection`, `wlo_remove_from_collection` and `wlo_suggest_metadata` — the curation steps whose write is a single request; every other curation tool keeps refusing as before, because a create or a rename lands through two calls and half of that is not something to hand a browser. The proposal descriptor carries a body (the drafts) and the provenance query `type=AI`; the executing page cannot drop it, so nothing filed this way can claim a human wrote it. Deciding on a proposal (`wlo_decide_suggestion`) stays here: accepting writes the value into the record, which is a different act from proposing. Accepted: `1`, `true`, `yes`, `on`. |
 | `WLO_INBOX_ID` | _(unset)_ | nodeId of the shared inbox new records are filed in under the service account; editing existing records does not need it. No default on purpose — node ids are repository-bound, so a hardcoded one points at a different collection on staging than on production. Unset ⇒ service-account creation is refused with a message naming this variable. |
@@ -83,6 +83,7 @@ tracked compose file. The full list with defaults is in
 | `BIND_ADDR` | `127.0.0.1` | Host interface compose publishes on. Set `0.0.0.0` **only** with `TRUST_PROXY=0` for direct exposure. |
 | `HOST_PORT` | `3000` | Host-side port of the published mapping. |
 | `WLO_BATCH_UPLOAD_ENABLED` | _(unset)_ | Switches on **batch filing** into a person's own area: four curation tools (`wlo_prepare_file_batch`, `wlo_store_batch_file`, `wlo_store_batch_manifest`, `wlo_list_my_batches`) and the route `POST /api/uploads`. Off: neither exists and `tools/list` is unchanged. Personal login only — the service account is refused even with `WLO_ALLOW_SERVICE_WRITES`. Upload bytes, approvals and plans live **in memory**: run one instance, and a restart drops open batches. |
+| `MEM_LIMIT` | `512m` | The container's memory limit in `docker-compose.yml` — read by compose, not by the server. The default fits a server without the batch upload; set `768m` when `WLO_BATCH_UPLOAD_ENABLED` is on (§5.0.2 has the measurement). |
 | `UPLOAD_MAX_BYTES` | `52428800` (50 MB, at most 100 MB) | Largest single file one upload slot takes. Your reverse proxy must allow at least this much on `/api/uploads` (§4). |
 | `UPLOAD_MAX_TOTAL_BYTES` | `134217728` (128 MB) | All open upload slots together — the memory the batch path may hold at once (also 20 slots per identity, and one login holds at most half of the bytes, never less than one file of `UPLOAD_MAX_BYTES`). |
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` (at most 28000) | How long one upload body may take. Kept below the server-wide 30 s request timeout so the route answers 408 itself. |
@@ -268,10 +269,18 @@ collection's listing), then start from a new preview.
   `GET /metrics` with `Authorization: Bearer <token>`; without the variable the
   path answers 404. `wlo_http_requests_total{route,status}`,
   `wlo_tool_calls_total{tool,outcome}`,
+  `wlo_tool_errors_total{tool,code}` (the error code of an `isError` answer; a
+  code outside the known set counts as `other`, an error without one as `uncoded`),
   `wlo_upstream_requests_total{outcome}` (`shed` = not sent, our own limit),
-  three duration **histograms** on one bucket layout (0.05 s … 60 s) —
+  `wlo_rate_limited_total{limiter}` (our own 429s),
+  four duration **histograms** on one bucket layout (0.05 s … 60 s) —
   `wlo_tool_duration_seconds{tool}`, `wlo_upstream_duration_seconds{outcome}`,
-  `wlo_http_request_duration_seconds{route}` — plus gauges for the upstream
+  `wlo_http_request_duration_seconds{route}`,
+  `wlo_upstream_gate_wait_seconds{outcome}` (only calls that had to queue at our
+  own limit; `granted` or `shed`) — plus gauges for the bounded
+  in-memory stores, read at the moment of the scrape
+  (`wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`,
+  `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes`), for the upstream
   queue and the usual process metrics (`process_*`, `nodejs_heap_*`,
   `nodejs_eventloop_lag_seconds`). Counters start at zero with the process.
   Labels never carry a caller, a path or a query.
@@ -324,10 +333,11 @@ writes nothing — run it again before trusting these numbers on other hardware 
 - **Worst case together: about 480 MB** — 172 MB search peak + 178 MB upload store + 131 MB full texts
   (the script prints the same sum, by the same rule) — before the request
   bodies in flight (a tool call up to `MAX_BODY_BYTES`, an upload up to `UPLOAD_MAX_BYTES`). The
-  compose file's `mem_limit: 512m` therefore fits a server WITHOUT the batch upload
-  (`WLO_BATCH_UPLOAD_ENABLED` unset) with a wide margin, and one WITH it only just. With the batch upload
-  on, give it **768 MB**: being killed for memory in the middle of a write is the outcome every other rule
-  here works to avoid.
+  compose file's default of 512 MB (`mem_limit: ${MEM_LIMIT:-512m}`) therefore fits a server WITHOUT the
+  batch upload (`WLO_BATCH_UPLOAD_ENABLED` unset) with a wide margin, and one WITH it only just. With the
+  batch upload on, give it **768 MB** — `MEM_LIMIT=768m` in `.env`: being killed for memory in the middle
+  of a write is the outcome every other rule here works to avoid. The variable is read by compose alone,
+  not by the server; the Helm chart sets its own `resources`.
 
 The same two runs timed one call of each read tool (anonymous, staging, in this order, so the first
 is the coldest — a single call each, not a distribution):

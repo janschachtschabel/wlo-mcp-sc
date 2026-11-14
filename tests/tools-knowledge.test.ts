@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { connectedClient, installFetchMock, makeNode } from './fetchMock.js';
+import { connectedClient, installFetchMock, makeNode, toolText } from './fetchMock.js';
 import { TRUNCATION_MARKER } from '../src/text-cap.js';
 
 test('search returns {results:[{id,title,url}]} and duplicates the JSON in content[0].text', async () => {
@@ -98,11 +98,17 @@ test('fetch cites a topic page by its topic-page URL, not the render URL', async
 });
 
 test('fetch on an unknown id returns an error result', async () => {
-  const mock = installFetchMock(() => ({ json: {} }));
+  // A 404, as the repository answers an id it does not know. The fixture used
+  // to answer 200 with an empty body — an unreadable answer, coded
+  // `upstream_error` — and the test asserted `isError` alone, so it could not
+  // tell "not there" from an outage (audit 2026-11-14, T3).
+  const mock = installFetchMock(() => ({ status: 404, json: {} }));
   const client = await connectedClient();
   try {
     const result = await client.callTool({ name: 'fetch', arguments: { id: 'nope' } });
     assert.equal(result.isError, true);
+    assert.equal((result.structuredContent as { error?: { code?: string } }).error?.code, 'not_found');
+    assert.match(toolText(result), /Node nope nicht gefunden/);
   } finally { await client.close(); mock.restore(); }
 });
 

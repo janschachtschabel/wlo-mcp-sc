@@ -91,7 +91,8 @@ function serve(opts: {
       return { json: { node: {
         ref: { id: NODE, repo: '-home-' },
         properties: props,
-        size: stored ? MARKDOWN.length : null,
+        // BYTES, as the repository counts — the read-back compares with what was sent.
+        size: stored ? Buffer.byteLength(MARKDOWN) : null,
         downloadUrl: stored ? 'https://repo.example/dl' : null,
       } } };
     }
@@ -166,13 +167,20 @@ test('the confirmation key is bound to the bytes, not just to the title', async 
   const preview = toolText(await create(client, { title: 'Brüche kürzen', content: MARKDOWN }));
   const key = keyFrom(preview);
 
-  const swapped = toolText(await create(client, {
+  const posts = () => s.mock.calls.filter((c) => (c.init?.method ?? 'GET') === 'POST').length;
+  const before = posts();
+  const refused = await create(client, {
     title: 'Brüche kürzen',
     content: '# Etwas ganz anderes\n',
     confirmToken: key,
-  }));
+  });
   assert.equal(s.seen.contentCalls, 0, 'a swapped file must never reach the repository');
-  assert.match(swapped, /Vorschau|bestätig|abgelaufen|passt nicht|erneut/i);
+  // The CODE, and no create at all: the alternation this replaces
+  // (`Vorschau|bestätig|…|erneut`) matched a fresh preview as readily as the
+  // refusal, and a record created EMPTY would have left `contentCalls` at 0.
+  assert.equal(refused.isError, true);
+  assert.equal((refused.structuredContent as { error?: { code?: string } }).error?.code, 'confirm_mismatch');
+  assert.equal(posts(), before, 'no record is created for bytes nobody approved');
 });
 
 test('a same-title record in the storage location is named in the preview', async (t) => {
@@ -374,9 +382,14 @@ test('a file that is not a recognised image never reaches the repository', async
 function serveUpdate(opts: { stored?: boolean; uploadOk?: boolean } = {}) {
   const { stored = true, uploadOk = true } = opts;
   const props: Record<string, string[]> = { 'cclom:title': ['Brüche kürzen'] };
+  // The record carries a file BEFORE the replacement — that is what makes it
+  // one. A fixture answering one fixed size before and after could not tell a
+  // dropped replacement from a stored one (audit 2026-11-14, W1).
+  let size = 500;
   const mock = installFetchMock((url, init) => {
     const method = init?.method ?? 'GET';
     if (url.includes('/content?')) {
+      if (uploadOk && stored) size = Buffer.byteLength(MARKDOWN);
       return uploadOk ? { json: {} } : { status: 403, json: { error: 'AccessDenied' } };
     }
     if (method === 'GET') {
@@ -384,8 +397,8 @@ function serveUpdate(opts: { stored?: boolean; uploadOk?: boolean } = {}) {
         ref: { id: NODE, repo: '-home-' },
         type: 'ccm:io',
         properties: props,
-        size: stored ? 42 : null,
-        downloadUrl: stored ? 'https://repo.example/dl' : null,
+        size,
+        downloadUrl: 'https://repo.example/dl',
       } } };
     }
     if (url.includes('/metadata')) Object.assign(props, JSON.parse(String(init?.body ?? '{}')));
@@ -426,13 +439,18 @@ test('the confirmation key for a replacement is bound to the new bytes', async (
 
   const client = await curationClient();
   const key = keyFrom(toolText(await update(client, { nodeId: NODE, content: MARKDOWN })));
-  const swapped = toolText(await update(client, {
+  const writes = () => s.mock.calls.filter((c) => (c.init?.method ?? 'GET') !== 'GET').length;
+  const before = writes();
+  const refused = await update(client, {
     nodeId: NODE, content: '# etwas anderes\n', confirmToken: key,
-  }));
+  });
 
   assert.equal(s.mock.calls.filter((c) => c.url.includes('/content?')).length, 0,
     'a swapped file must never reach the repository');
-  assert.match(swapped, /Vorschau|bestätig|abgelaufen|passt nicht|erneut/i);
+  // The code, not a word a fresh preview also contains.
+  assert.equal(refused.isError, true);
+  assert.equal((refused.structuredContent as { error?: { code?: string } }).error?.code, 'confirm_mismatch');
+  assert.equal(writes(), before, 'and nothing else was written either');
 });
 
 test('confirming replaces the content and reports it', async (t) => {
@@ -481,5 +499,6 @@ test('a replacement the record does not show afterwards is not called success', 
   const client = await curationClient();
   const key = keyFrom(toolText(await update(client, { nodeId: NODE, content: MARKDOWN })));
   const text = toolText(await update(client, { nodeId: NODE, content: MARKDOWN, confirmToken: key }));
-  assert.match(text, /KEINEN Inhalt/i);
+  // Not "KEINEN Inhalt": the record still carries its old file.
+  assert.match(text, /NICHT ersetzt/);
 });

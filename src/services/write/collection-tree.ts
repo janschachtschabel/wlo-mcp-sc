@@ -18,8 +18,6 @@
  *   check is what makes a re-presented key harmless.
  */
 
-import { getChildCollectionsResult } from '../../wlo-node.js';
-import { nodeTitle } from '../../node-match.js';
 import { mapPool } from '../../concurrency.js';
 import { log } from '../../logger.js';
 import { completeCollection, createCollection, type CollectionFields } from './collections.js';
@@ -27,15 +25,12 @@ import { validateField } from './fields.js';
 import { listOrderChildren, setCollectionOrder } from './collection-order.js';
 import { isOutcomeOpen } from './timeouts.js';
 import { failureCode } from '../failure-code.js';
+import { wroteNothing } from '../../upstream-error.js';
+import { normTitle, subCollectionsByTitle } from './collection-children.js';
 import type { ItemState, PlanItem, Step, StoredPlan } from './plan-runner.js';
 
 /** Chatbot frame (2026-11-06): trees of 30–120 nodes, at most 250. */
 export const TREE_MAX_NODES = 250;
-
-/** Children listed per page, and pages read, before a listing counts as too large to check. */
-const LIST_PAGE = 500;
-const LIST_PAGES_MAX = 4;
-const TITLE_PROPS = ['cclom:title', 'cm:title', 'cm:name'];
 
 /** The metadata a node of the tree may carry beside title and description (S3, 2026-11-14). */
 export interface TreeMetadata {
@@ -61,11 +56,6 @@ const TREE_FIELDS: Array<[keyof TreeMetadata, string]> = [
 export interface TreeCandidates { field: string; value: string; suggestions: string[] }
 
 export type OnExisting = 'merge' | 'fail';
-
-/** Case, edge and inner spacing do not make a different collection. */
-export function normTitle(title: string): string {
-  return title.trim().replace(/\s+/g, ' ').toLowerCase();
-}
 
 /**
  * `shared` applies to every node; a node that names a field itself REPLACES the
@@ -148,26 +138,6 @@ export function flattenTree(
 }
 
 /**
- * The sub-collections of `parentId` by normalised title → nodeId, or null when
- * that could not be found out (unreadable, or more than the pages read — a
- * duplicate beyond the last page read is what `merge` exists to prevent).
- */
-export async function listChildCollections(parentId: string): Promise<Map<string, string> | null> {
-  const byTitle = new Map<string, string>();
-  for (let page = 0; page < LIST_PAGES_MAX; page++) {
-    const res = await getChildCollectionsResult(parentId, LIST_PAGE, page * LIST_PAGE, TITLE_PROPS);
-    if (!res.reachable) return null;
-    for (const node of res.nodes) {
-      const t = normTitle(nodeTitle(node));
-      const id = node.ref?.id;
-      if (t && id && !byTitle.has(t)) byTitle.set(t, id);
-    }
-    if (res.nodes.length < LIST_PAGE) return byTitle;
-  }
-  return null;
-}
-
-/**
  * Which plan steps already exist? Walks only below collections that exist.
  * `unreadable` names the collection whose listing failed — the preview refuses
  * then, because "anlegen" over a branch nobody could look into may be a duplicate.
@@ -186,7 +156,7 @@ export async function findExisting(
     for (const i of ready) pending.delete(i.key);
     const parents = [...new Set(ready.map(parentIdOf).filter((id): id is string => Boolean(id)))];
     const listings = new Map<string, Map<string, string> | null>();
-    await mapPool(parents, 4, async id => { listings.set(id, await listChildCollections(id)); return null; });
+    await mapPool(parents, 4, async id => { listings.set(id, await subCollectionsByTitle(id)); return null; });
     for (const item of ready) {
       const parentId = parentIdOf(item);
       if (!parentId) continue; // below a collection that will be created
@@ -217,7 +187,7 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
   const listings = new Map<string, Promise<Map<string, string> | null>>();
   const listing = (id: string) => {
     let p = listings.get(id);
-    if (!p) { p = listChildCollections(id); listings.set(id, p); }
+    if (!p) { p = subCollectionsByTitle(id); listings.set(id, p); }
     return p;
   };
   const lanes = new Map<string, Promise<unknown>>();
@@ -293,14 +263,26 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
         // A refused create is not proof that nothing exists: the lock above
         // covers OUR creates, not someone else's under the same parent, and that
         // collision answers 500 while creating. So look before saying "failed".
-        const listing = await listChildCollections(parentId);
+        const listing = await subCollectionsByTitle(parentId);
         // A listing that did not answer is no proof either way — and "failed"
         // over a collection that exists is how a second one gets created. The
         // step stays open; the next call looks again (bounded by `MAX_OPEN_TRIES`).
         if (!listing) return { status: 'pending', code: 'not_checked' };
         const landed = listing.get(normTitle(item.title));
         if (landed) return { status: 'unverified', nodeId: landed, code: 'upstream_error' };
-        return { status: 'failed', code: failureCode(result.detail) };
+        // The reading of the sibling steps (file, remove, propose, submit,
+        // delete): the repository's own "no" created nothing and says so. A
+        // 5xx, a 429 or an accepted answer without an id (no status) is no
+        // verdict — a proxy answers 502 while the create lands a moment AFTER
+        // the look above. It ended here as a plain `failed`, worded "nicht
+        // angelegt". Now the step stays open WITH its code: the code is what
+        // makes the next call look for the title under the parent (`mayExist`)
+        // before it creates again; `MAX_OPEN_TRIES` ends it as failed-and-open.
+        // The code is read from the STATUS, not from the repository's text.
+        const status = result.httpStatus ?? 0;
+        return wroteNothing(status)
+          ? { status: 'failed', code: failureCode(`HTTP ${status}`), outcomeOpen: false }
+          : { status: 'pending', code: status ? failureCode(`HTTP ${status}`) : 'upstream_error' };
       }
       if (result.check.status === 'ok') return { status: 'created', nodeId: result.nodeId };
       // WHICH field did not land is in the detail; the code alone is not actionable.
@@ -310,7 +292,16 @@ export function treeStep(rootId: string, plan: StoredPlan<TreeItem>, onExisting:
       // Open, not failed: the next call looks before it creates again.
       if (isOutcomeOpen(err)) return { status: 'pending', code: 'timeout' } satisfies ItemState;
       log.warn('collection tree step failed', { path: item.key, error: err instanceof Error ? err.message : String(err) });
-      return { status: 'failed', code: failureCode(err) };
+      // Not open by `isOutcomeOpen`: a `fetch failed` that reaches this line
+      // proves its request never LEFT (`NEVER_SENT`). With no earlier attempt of
+      // ours on this step, nothing can exist: failed, and said so. Anything
+      // else — an earlier attempt still open, or a throw nobody can place —
+      // is no proof that nothing was created; the step stays open and the next
+      // call looks first. It ended here as a plain `failed`, neither.
+      const neverSent = err instanceof Error && err.message === 'fetch failed';
+      return neverSent && !own?.code
+        ? { status: 'failed', code: failureCode(err), outcomeOpen: false }
+        : { status: 'pending', code: failureCode(err) };
     }
   };
   return async (item, before) => {

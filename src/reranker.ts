@@ -8,7 +8,7 @@ import type { WloNode, SearchResponse, SearchCriterion, NgsearchContentType } fr
 import { ngsearch, resolvePositiveInt } from './wlo-api.js';
 import type { QueryVariant } from './query-expand.js';
 import { expandQuery } from './query-expand.js';
-import { nodeTitle, queryTerms as signalTerms, termMatches } from './node-match.js';
+import { comparable, nodeTitle, queryTerms as signalTerms, termMatches } from './node-match.js';
 import { log } from './logger.js';
 import { isClientGone } from './request-scope.js';
 import { logTerm } from './log-privacy.js';
@@ -39,7 +39,10 @@ const termInText = termMatches;
 function computeRelevanceScore(node: WloNode, query: string): number {
   let score = 0;
   const props = node.properties ?? {};
-  const queryLower = query.toLowerCase();
+  // `comparable` on BOTH sides: the terms come back in one Unicode form, and a
+  // title that is only lowercased keeps its own — a decomposed umlaut then
+  // matches neither the composed query nor, any longer, a decomposed one.
+  const queryLower = comparable(query);
   // Drop stopwords: a stopword ("die", "und", …) must not act as a relevance
   // signal (a title merely containing "die" is not a match). Phrase-level checks
   // below still use the full `queryLower`, so exact-phrase matches are unaffected.
@@ -47,9 +50,9 @@ function computeRelevanceScore(node: WloNode, query: string): number {
 
   // Shared title chain (node-match.ts) so a node titled only at cm:title /
   // node-level scores against its real title, not an empty string.
-  const title = nodeTitle(node).toLowerCase();
-  const desc  = (props['cclom:general_description']?.[0] ?? '').toLowerCase();
-  const keywords = (props['cclom:general_keyword'] ?? []).map((k: string) => k.toLowerCase());
+  const title = comparable(nodeTitle(node));
+  const desc  = comparable(props['cclom:general_description']?.[0] ?? '');
+  const keywords = (props['cclom:general_keyword'] ?? []).map((k: string) => comparable(k));
   const allKw = keywords.join(' ');
 
   // Title relevance. The phrase check goes through `termMatches` too: it awards

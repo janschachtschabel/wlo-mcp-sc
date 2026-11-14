@@ -32,9 +32,13 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+// One file at a time. Several of them create collections at the top level, and
+// sibling creates under one parent AT ONCE are measured to answer 500 while the
+// collection is created all the same (2026-11-06, 17 of 24) — a failed test and
+// a leftover on staging for a reason that has nothing to do with what is tested.
 const { status } = spawnSync(
   process.execPath,
-  ['--env-file-if-exists=.env', '--import', 'tsx', '--test', ...files],
+  ['--env-file-if-exists=.env', '--import', 'tsx', '--test', '--test-concurrency=1', ...files],
   { stdio: 'inherit' },
 );
 process.exit(status ?? 1);

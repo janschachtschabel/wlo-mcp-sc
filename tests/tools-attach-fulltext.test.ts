@@ -215,6 +215,8 @@ test('a read-back that differs is not_stored with outcomeOpen true — something
 
 for (const [status, code, open, extra] of [
   [403, 'forbidden', false, {}],
+  // A 429 is "busy", no verdict: never "nothing written" (review 2026-11-14, finding 1).
+  [429, 'upstream_busy', true, {}],
   // After the repository's own 500 the READ-BACK decides (overall review, 20): nothing came back → nothing landed.
   [500, 'upstream_error', false, {}],
   [502, 'upstream_error', true, { readBackStatus: 503 }],

@@ -76,14 +76,17 @@ export async function runPlannedCall<I extends PlanItem>(call: PlannedCall<I>): 
   const continuation = String(params['continuationToken'] ?? '');
   const token = String(params['confirmToken'] ?? '');
   const key = continuation || token;
-  if (key) {
-    const found = findPlan<I>(kind, key, args);
-    if (found && !found.ok) return planErrorReply(found.code);
-    if (found) return proceed(found.plan);
-    if (continuation) return planErrorReply('plan_expired');
-  }
-
+  // ONE `try` around every path that runs the plan. The continuation ran
+  // outside it: a throw there reached the caller raw, where the same throw
+  // after a confirmation was answered as an open outcome.
   try {
+    if (key) {
+      const found = findPlan<I>(kind, key, args);
+      if (found && !found.ok) return planErrorReply(found.code);
+      if (found) return await proceed(found.plan);
+      if (continuation) return planErrorReply('plan_expired');
+    }
+
     const prepared = await call.prepare(token);
     if ('reply' in prepared) return prepared.reply;
     const { draft } = prepared;

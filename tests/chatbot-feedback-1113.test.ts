@@ -79,10 +79,11 @@ test('browse_collection_tree marks a branch whose children could not be read', a
   try {
     const r = await client.callTool({ name: 'browse_collection_tree', arguments: { nodeId: 'top', depth: 2 } });
     assert.match(toolText(r), /ließen sich gerade nicht lesen/);
-    const tree = (structured(r)['results'] ?? structured(r)['tree']) as Array<Record<string, unknown>>;
-    const flagged = JSON.stringify(structured(r));
-    assert.match(flagged, /"childrenUnread":true/, flagged.slice(0, 300));
-    assert.ok(tree === undefined || Array.isArray(tree));
+    // WHICH branch: the flag anywhere in the payload would also be satisfied by
+    // marking the branch that DID answer (the assertion this replaces was
+    // `tree === undefined || Array.isArray(tree)`, true of anything).
+    const tree = structured(r)['results'] as Array<{ nodeId: string; childrenUnread?: boolean }>;
+    assert.deepEqual(Object.fromEntries(tree.map(n => [n.nodeId, n.childrenUnread === true])), { 'b-1': true, 'b-2': false });
   } finally { await client.close(); mock.restore(); stopSkillRegistryCache(); }
 });
 

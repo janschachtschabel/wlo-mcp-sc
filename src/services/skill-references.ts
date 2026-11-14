@@ -47,8 +47,74 @@ export interface SkillReference {
   offset: number;
 }
 
-/** `::: <kind>` … `:::`, both fences on their own line. An unclosed block does not match. */
-const BLOCK = /^:::[ \t]*(wlo-material|ki-skill)[ \t]*\r?$([\s\S]*?)^:::[ \t]*\r?$/gm;
+/**
+ * `::: <kind>` … `:::`, both fences on their own line. An unclosed block does
+ * not match.
+ *
+ * Tested against ONE line each, anchored at its start. As a single expression
+ * over the document the body was a lazy scan to the end, started again from
+ * every opener that had no closer — quadratic in a document of unclosed blocks.
+ */
+const OPENER = /^:::[ \t]*(wlo-material|ki-skill)[ \t]*$/;
+const CLOSER = /^:::[ \t]*$/;
+/** What ends a line for `^`/`$` in a multiline expression — the reading the single expression had. */
+const LINE_END = /[\r\n\p{Zl}\p{Zp}]/gu;
+
+interface Block { kind: SkillReference['kind']; body: string; offset: number }
+
+/** Every closed block, in document order. An opener inside an open block is part of its body. */
+function findBlocks(markdown: string): Block[] {
+  const blocks: Block[] = [];
+  let open: { kind: SkillReference['kind']; offset: number; bodyStart: number } | undefined;
+  const ends = new RegExp(LINE_END.source, LINE_END.flags);   // /g carries lastIndex; one per call
+  let pos = 0;
+  for (;;) {
+    const end = ends.exec(markdown);
+    const lineEnd = end ? end.index : markdown.length;
+    // Cheap test first: only a line that starts with the fence is matched at all.
+    if (markdown.startsWith(':::', pos)) {
+      const line = markdown.slice(pos, lineEnd);
+      if (!open) {
+        const kind = OPENER.exec(line)?.[1] as SkillReference['kind'] | undefined;
+        if (kind) open = { kind, offset: pos, bodyStart: lineEnd };
+      } else if (CLOSER.test(line)) {
+        blocks.push({ kind: open.kind, body: markdown.slice(open.bodyStart, pos), offset: open.offset });
+        open = undefined;
+      }
+    }
+    if (!end) return blocks;
+    pos = lineEnd + 1;
+  }
+}
+
+/**
+ * The first Markdown link that is not an image: `[title](target`.
+ *
+ * Scanned by hand for the same reason as the blocks: as an expression, every
+ * `[` without a `]` behind it read to the end of the body. The reading is the
+ * expression's own — the title runs from the leftmost eligible `[` to the next
+ * `]`, and a `]` that is not followed by `(target` ends that attempt.
+ */
+function findTitleLink(body: string): { title: string; url: string } | null {
+  let from = -1;                                // leftmost eligible `[` since the last `]`
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '[') {
+      if (from < 0 && (i === 0 || body[i - 1] !== '!')) from = i;
+    } else if (ch === ']') {
+      if (from >= 0 && i > from + 1 && body[i + 1] === '(') {
+        TARGET.lastIndex = i + 2;
+        const url = TARGET.exec(body)?.[0];
+        if (url) return { title: body.slice(from + 1, i), url };
+      }
+      from = -1;
+    }
+  }
+  return null;
+}
+
+/** A link target: up to the closing parenthesis or the first whitespace. Sticky, so it is read in place. */
+const TARGET = /[^)\s]+/y;
 
 /**
  * The three URL shapes that carry a node id. Order does not matter — the FIRST
@@ -56,9 +122,6 @@ const BLOCK = /^:::[ \t]*(wlo-material|ki-skill)[ \t]*\r?$([\s\S]*?)^:::[ \t]*\r
  * which is the record itself rather than the external source.
  */
 const NODE_ID = /(?:[?&]nodeId=|\/components\/render\/)([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/;
-
-/** A Markdown link that is NOT an image — the first one is the title link. */
-const TITLE_LINK = /(^|[^!])\[([^\]]+)\]\(([^)\s]+)/;
 
 /**
  * A Markdown backslash escape: a backslash before ASCII punctuation means that
@@ -86,20 +149,15 @@ function plainTitle(text: string): string {
 
 export function parseSkillReferences(markdown: string): SkillReference[] {
   const refs: SkillReference[] = [];
-  // A regex with /g carries lastIndex between calls; a fresh one per call keeps
-  // this function pure for concurrent callers.
-  const blocks = new RegExp(BLOCK.source, BLOCK.flags);
-  for (let m = blocks.exec(markdown); m; m = blocks.exec(markdown)) {
-    const kind = m[1] as SkillReference['kind'];
-    const body = m[2] ?? '';
-    const link = TITLE_LINK.exec(body);
+  for (const { kind, body, offset } of findBlocks(markdown)) {
+    const link = findTitleLink(body);
     if (!link) continue;                       // a block with no link references nothing
     refs.push({
       kind,
-      title: plainTitle(link[2] ?? ''),
-      url: link[3] ?? '',
+      title: plainTitle(link.title),
+      url: link.url,
       nodeId: NODE_ID.exec(body)?.[1] ?? '',
-      offset: m.index,
+      offset,
     });
   }
   return refs;

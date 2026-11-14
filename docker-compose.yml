@@ -215,6 +215,8 @@ services:
       # /health, /ready, /metrics on a port of their own. NOT in `ports:` — it is
       # for the container network (a scraper, a probe), never for the host.
       INTERNAL_PORT: "${INTERNAL_PORT:-}"
+      # The interface it listens on; empty = every interface of the container.
+      INTERNAL_BIND_ADDR: "${INTERNAL_BIND_ADDR:-}"
       WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"
       WLO_POOL_SIZE: "${WLO_POOL_SIZE:-}"
       WLO_TOPIC_POOL: "${WLO_TOPIC_POOL:-}"
@@ -250,7 +252,9 @@ services:
     # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege
     # escalation, and run a read-only root filesystem (the app writes only the access registry on the /data volume; a
     # small tmpfs covers /tmp).
-    mem_limit: 512m
+    # MEM_LIMIT: 512m fits a server without the batch upload; with
+    # WLO_BATCH_UPLOAD_ENABLED set, give it 768m (measured: docs/DEPLOYMENT.md §5.0.2).
+    mem_limit: ${MEM_LIMIT:-512m}
     cpus: 1.0
     read_only: true
     tmpfs:

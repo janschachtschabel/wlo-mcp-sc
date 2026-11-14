@@ -64,6 +64,10 @@ export function isConnectionLost(err: unknown): boolean {
   if (typeof message !== 'string') return false;
   // Whole words, case-sensitive: a refusal that merely CONTAINS the letters is not a lost connection.
   if (/socket hang up|other side closed|\b(ECONNRESET|EPIPE)\b/.test(message)) return true;
+  // The connection broke while the BODY was read (undici: `TypeError:
+  // terminated`): the request was answered, so it certainly left — what is
+  // lost is the answer. Open by definition (review 2026-11-14).
+  if (message === 'terminated') return true;
   // A fetch failure whose cause names nothing we can place: open.
   return message === 'fetch failed' && !NEVER_SENT.has(named);
 }

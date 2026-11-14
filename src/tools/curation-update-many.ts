@@ -25,7 +25,7 @@ import {
   candidatesField, collectDesired, previewReply, rejectionReply, registerCurationTool, type FieldCandidates, type WriteAuthChallenge,
 } from './curation-shared.js';
 import { ADD_FIELDS, ADD_SCHEMA, CONTENT_FIELDS, FIELD_SCHEMA } from './curation-fields.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const KIND = 'update-contents';
@@ -34,7 +34,7 @@ const STATUS_LABEL: Record<string, string> = {
   stored: 'geschrieben', suggested: 'vorgeschlagen', partly: 'teilweise', not_stored: 'nicht gespeichert',
   unverified: 'offen — nicht bestätigt', failed: 'gescheitert', pending: 'offen',
 };
-const label = (s: ItemState) => `${STATUS_LABEL[s.status] ?? s.status}${s.code ? ` (${s.code})` : ''}`
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL)
   + `${s.written || s.suggested ? ` — ${s.written ?? 0} geschrieben, ${s.suggested ?? 0} vorgeschlagen` : ''}`;
 
 const directLabels = [...DIRECT_PROPERTIES].map(p => WRITABLE_FIELDS[p]?.label ?? p).join(', ');

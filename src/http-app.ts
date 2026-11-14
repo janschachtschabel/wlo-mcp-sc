@@ -12,9 +12,7 @@ import { createMcpServer } from './server.js';
 import {
   abuseBucketKey,
   configuredServiceCredential,
-  credentialFromHeader,
-  isUnusableAuthorization,
-  isUnusableBearer,
+  readAuthorization,
   runAnonymous,
   runWithCredential,
 } from './auth/credential.js';
@@ -46,6 +44,7 @@ import {
   budgetBucket, CLIENT_KEY_HEADER, countToolCalls, type ClientBudgets, type TrustedClient,
 } from './client-budget.js';
 import { logAddress } from './log-privacy.js';
+import { applyBaselineHeaders } from './response-headers.js';
 
 export interface HttpAppOptions {
   /**
@@ -198,6 +197,8 @@ export function createHttpRequestHandler(
     // the request causes — the write it starts included (`request-id.ts`).
     const id = requestIdFrom(req.headers['x-request-id']);
     res.setHeader('X-Request-Id', id);
+    // On every answer this handler gives, whichever branch writes it.
+    applyBaselineHeaders(res);
     // Counted when the response is over, by what it ended as. `close` without a
     // finished response is the client hanging up first.
     const acceptedAt = Date.now();
@@ -367,7 +368,12 @@ export function createHttpRequestHandler(
       // A user who configured their own WLO credentials in their AI host's
       // connector settings sends them here. Parsed once, up front, because the
       // abuse guard below must only weigh credentials we would actually forward.
-      const userCred = credentialFromHeader(req.headers['authorization']);
+      //
+      // ONE reading answers all three questions asked of the header below
+      // (`readAuthorization`): each used to decode again, an RSA operation per
+      // configured key, three times over for a Bearer that was garbage.
+      const presented = readAuthorization(req.headers['authorization']);
+      const userCred = presented.credential;
 
       // A Bearer we were GIVEN and cannot open is the one case that earns a 401,
       // and it is the doorway the MCP specification prescribes into OAuth
@@ -386,7 +392,7 @@ export function createHttpRequestHandler(
       // Before the body is read (cheap rejection) and before the abuse limiter,
       // which deliberately weighs only credentials we would forward upstream —
       // a Bearer never leaves this server.
-      if (!userCred && isUnusableBearer(req.headers['authorization'])) {
+      if (presented.unusableBearer) {
         log.info('unusable bearer token — answering 401 with the discovery pointer', { ip: logAddress(ip) });
         res.writeHead(401, {
           'Content-Type': 'application/json',
@@ -503,7 +509,7 @@ export function createHttpRequestHandler(
         // shared account's rights (nor write under a name that attributes the
         // change to nobody). Anonymous keeps the request working and the rights
         // honest — the handler-wide runAnonymous scope already holds it.
-        const unusable = !userCred && isUnusableAuthorization(req.headers['authorization']);
+        const unusable = presented.unusable;
         if (unusable) {
           log.warn('Authorization header could not be used — serving this request anonymously', { ip: logAddress(ip) });
         }

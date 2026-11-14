@@ -23,7 +23,7 @@ import { rerankNodes } from '../reranker.js';
 import { isClientGone } from '../request-scope.js';
 import { shortCache } from '../short-cache.js';
 import { WLO_ROOT_COLLECTION_ID } from '../wlo-config.js';
-import { readNodeBreadcrumb } from '../wlo-node.js';
+import { didNotAnswer, getChildCollectionsResult, readNodeBreadcrumb } from '../wlo-node.js';
 import type { WloNode } from '../wlo-types.js';
 import { searchCollectionsResult } from './collection-search.js';
 
@@ -49,7 +49,10 @@ const VERIFY_NAME_WINDOW = 50;
 export interface ResolvedCollection {
   nodeId: string;
   title: string;
-  /** Ancestor titles from the subject portal down. Absent when the path could not be read — never invented. */
+  /**
+   * Ancestor titles from the subject portal down. Absent when the path could
+   * not be read — never invented — and for a portal, which has none to name.
+   */
   path?: string[];
   /** Present when the title matched only by the loose rule (`looseCollectionTitle`) — the caller is told. */
   matched?: 'loose';
@@ -89,10 +92,16 @@ export type CollectionByName =
     candidates: CollectionCandidate[];
     /** The search did not see everything: neither "no such collection" nor "only this one" is a finding. */
     incomplete: boolean;
-    /** Why: an index did not answer … */
+    /** Why: a SEARCH index did not answer (never the portal list — that is `portalsUnread`) … */
     unreachable?: true;
     /** … and/or a search window came back full, so the index may hold more than was seen. */
     windowFull?: true;
+    /**
+     * Its own reason, apart from `unreachable`: what did not answer is the list of subject portals —
+     * the one place a portal of that title could have been seen. The searches
+     * may have answered in full, and their hit is among the candidates.
+     */
+    portalsUnread?: true;
     /**
      * `unverified` for another reason than an incomplete search: a subject was
      * asked for, and the one namesake found carries none — it is not taken.
@@ -161,6 +170,38 @@ async function pathOf(nodeId: string): Promise<string[] | undefined> {
   return chain.slice(root + 1).filter(c => c.nodeId !== nodeId).map(c => c.title);
 }
 
+const portals = shortCache<WloNode[]>(4);
+
+/**
+ * The subject portals — the collections directly under the root.
+ *
+ * A source of its own, because neither index returns them: the portal
+ * "Physik" is no hit for the word "Physik" (measured 2026-07-17 for the
+ * keyword index; the chatbot team met it as `ambiguous_collection` with
+ * "Physikalische Konstanten" offered and the portal missing). A portal is a
+ * collection like any other, and the place portals can be FOUND is their
+ * listing: one request, kept for a minute per scope of rights.
+ *
+ * `reachable: false` only for an outage. A REFUSED listing says this login sees
+ * no portals — an answer, and nothing to add.
+ *
+ * `full`: the listing carries no total, so a page that comes back full is what
+ * "there may be more portals" looks like — and one of them may carry the title.
+ */
+async function subjectPortals(): Promise<{ nodes: WloNode[]; reachable: boolean; full: boolean }> {
+  const scope = sharedReadScope();
+  const key = `${scope}:${WLO_ROOT_COLLECTION_ID}`;
+  const kept = scope ? portals.get(key) : undefined;
+  if (kept) return { nodes: kept, reachable: true, full: kept.length >= PORTAL_WINDOW };
+  const listing = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, PORTAL_WINDOW);
+  if (didNotAnswer(listing)) return { nodes: [], reachable: false, full: false };
+  if (scope && listing.reachable) portals.set(key, listing.nodes);
+  return { nodes: listing.nodes, reachable: true, full: listing.nodes.length >= PORTAL_WINDOW };
+}
+
+/** Portals read in one listing. Staging holds 35 (2026-08-11); a full page is not known to be all. */
+const PORTAL_WINDOW = 100;
+
 export async function resolveCollectionByName(name: string, discipline?: string): Promise<CollectionByName> {
   const wanted = normalizeCollectionTitle(name);
   // Resolved through the same filter resolution `search_wlo_collections` uses,
@@ -208,9 +249,18 @@ export async function resolveCollectionByName(name: string, discipline?: string)
     };
   };
 
-  let first = await searchCollectionsResult(name, SEARCH_WINDOW);
+  const [searchedFirst, portalList] = await Promise.all([searchCollectionsResult(name, SEARCH_WINDOW), subjectPortals()]);
+  // Only portals whose title IS the name (by either rule) join the hits: the
+  // listing is not a search, and a portal is no candidate for another word.
+  // Added to what the search answered, so every later pass keeps them in view;
+  // the window test still reads the search's own count (`searchedFirst`).
+  const namedPortals = portalList.nodes.filter(n => idOf(n) && (strict(n) || loose(n)));
+  let first: Search = {
+    ...searchedFirst,
+    nodes: [...searchedFirst.nodes, ...namedPortals.filter(p => !searchedFirst.nodes.some(n => idOf(n) === idOf(p)))],
+  };
   let searched = name;
-  let seen = judge(first.nodes, first, SEARCH_WINDOW);
+  let seen = judge(first.nodes, searchedFirst, SEARCH_WINDOW);
   // Nothing equal, and the name is spelled without umlauts: the indexes do not
   // return "Säuren und Basen" for "Saeuren und Basen" (chatbot team,
   // 2026-11-14), so the loose rule had nothing to compare. ONE more search with
@@ -254,15 +304,27 @@ export async function resolveCollectionByName(name: string, discipline?: string)
     const inWide = new Set(wide.nodes.map(idOf));
     seen = judge([...wide.nodes, ...first.nodes.filter(n => !inWide.has(idOf(n)))], wide, VERIFY_KEYWORD_WINDOW);
   }
-  const { hits, strictHits, confirmed, unknown, unreachable } = seen;
-  const windowFull = seen.windowFull || firstWindowFull;
-  const incomplete = unreachable || windowFull;
+  const { hits, strictHits, confirmed, unknown } = seen;
+  // A portal listing that did not answer may hide a namesake, exactly like an
+  // index that was down: "exactly one" is then not ours to say. That is ALL it
+  // decides — what the searches found is still found, and is offered as a
+  // candidate with the reason named (`portalsUnread`), not as "the search was
+  // down".
+  const portalsUnread = !portalList.reachable;
+  // `unreachable` is about the SEARCHES alone. It used to include the portal
+  // list, and the tool then said "die Suche nach Sammlungen war nur teilweise
+  // erreichbar" beside the portal sentence — over searches that had answered.
+  const unreachable = seen.unreachable;
+  // A full page of portals is a full window like any other.
+  const windowFull = seen.windowFull || firstWindowFull || portalList.full;
+  const incomplete = unreachable || portalsUnread || windowFull;
 
   const candidateOf = (node: WloNode, path: string[] | undefined): CollectionCandidate => {
     const count = node.collection?.childReferencesCount;
     return {
       nodeId: idOf(node), title: titleOf(node),
-      ...(path ? { path } : {}),
+      // A portal has no ancestors: nothing to say, so no empty list either.
+      ...(path?.length ? { path } : {}),
       ...(typeof count === 'number' ? { contentsCount: count } : {}),
       ...(subjectUnknown(node) ? { disciplineUnknown: true as const } : {}),
     };
@@ -274,12 +336,13 @@ export async function resolveCollectionByName(name: string, discipline?: string)
     const [path, ...besidePaths] = await Promise.all([pathOf(idOf(node)), ...beside.map(n => pathOf(idOf(n)))]);
     const collection: ResolvedCollection = {
       nodeId: idOf(node), title: titleOf(node),
-      ...(path ? { path } : {}),
+      ...(path?.length ? { path } : {}),
       ...(strictHits.length ? {} : { matched: 'loose' as const }),
       ...(beside.length ? { alsoFound: beside.map((n, i) => candidateOf(n, besidePaths[i])) } : {}),
       ...(unknown.length > beside.length ? { alsoFoundTotal: unknown.length } : {}),
     };
-    // Not kept without its path (the next caller would never get one).
+    // Not kept when its path could not be READ (the next caller would never get
+    // one). A portal's path was read and is empty — that one is kept.
     if (scope && path) resolved.set(key, collection);
     return { ok: true, collection, ...unresolvedDiscipline };
   }
@@ -303,6 +366,7 @@ export async function resolveCollectionByName(name: string, discipline?: string)
     ok: false, reason, candidates, incomplete,
     ...(unreachable ? { unreachable: true as const } : {}),
     ...(windowFull ? { windowFull: true as const } : {}),
+    ...(portalsUnread ? { portalsUnread: true as const } : {}),
     ...(reason === 'unverified' && confirmed.length === 0 ? { disciplineUnverified: true as const } : {}),
     ...unresolvedDiscipline,
   };

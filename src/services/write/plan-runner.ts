@@ -23,7 +23,10 @@
 import { randomBytes, createHash } from 'node:crypto';
 
 import { mapPool } from '../../concurrency.js';
-import { currentIdentity } from './confirm.js';
+import { log } from '../../logger.js';
+import { writeFailureCode } from '../failure-code.js';
+import { budgetIdentity, currentBudget, currentIdentity } from './confirm.js';
+import { poolShare, type StoreBudget, type TrustPool } from './store-budget.js';
 
 /** From the confirmation; never extended. */
 export const PLAN_TTL_MS = 30 * 60 * 1000;
@@ -35,8 +38,13 @@ export const PLAN_BUDGET_MS = 40_000;
  * (`collection-tree.ts` serialises them); 4 under different parents: 12 of 12.
  */
 export const PLAN_POOL = 4;
-/** Plans held at once — a bound on memory; complete plans go first (`sweep`). */
-const MAX_PLANS = 200;
+/**
+ * Plans held at once — a bound on memory; complete plans go first (`makeRoom`).
+ * The TOTAL of two pools (`store-budget.ts`, `poolShare`): a plan can be
+ * started under a login nobody proved, so counted in one pool, invented names
+ * ended the oldest unfinished plan of anybody (review 2026-11-14).
+ */
+export const MAX_PLANS = 200;
 /**
  * UNFINISHED plans one identity may hold, so one signed-in caller cannot evict
  * everyone else's running plan and memory stays bounded per caller (a tree may
@@ -92,7 +100,17 @@ const READY: ReadonlySet<ItemStatus> = new Set(['created', 'existing', 'unverifi
 interface StoredPlan<I extends PlanItem> {
   planId: string;
   kind: string;
+  /** Who may continue it (`currentIdentity`) — the credential it was approved under. */
   identity: string;
+  /**
+   * Whose share of `PLANS_PER_IDENTITY` it counts against (`budgetIdentity`):
+   * the confirmed account where there is one, like previews and upload slots.
+   * Counted by `identity`, every block of one person had five plans of its own.
+   * Never used to decide who may continue a plan.
+   */
+  budget: string;
+  /** Which half of the store it lives in — and the only half it may be ended FOR (`makeRoom`). */
+  pool: TrustPool;
   /** Hash of the arguments that built the plan: a key with other arguments is `plan_mismatch`. */
   args: string;
   items: I[];
@@ -130,27 +148,46 @@ function remove(p: StoredPlan<PlanItem>, now: number): void {
   }
 }
 
-function sweep(now: number, identity?: string): void {
+/** Drop what has EXPIRED. Every entry point calls this; it never takes a living plan. */
+function sweep(now: number): void {
   for (const p of [...plans.values()]) if (p.expiresAt <= now) remove(p, now);
   for (const [k, until] of ended) if (until <= now) ended.delete(k);
-  if (identity !== undefined) {
-    // Room from the identity's own COMPLETE plans, oldest first (insertion order
-    // is age order). Unfinished plans are never evicted — see PLANS_PER_IDENTITY.
-    const own = [...plans.values()].filter(p => p.identity === identity);
-    let excess = own.length - PLANS_PER_IDENTITY + 1;
-    for (const p of own) {
-      if (excess <= 0) break;
-      if (isComplete(p)) { remove(p, now); excess--; }
-    }
-  }
   for (const [k, id] of byConfirmKey) if (!plans.has(id)) byConfirmKey.delete(k);
+}
+
+/**
+ * Make room for ONE new plan of `identity` — called only where a plan starts.
+ * It used to be part of `sweep`, which every lookup runs: with the store full,
+ * `findPlan`, `livePlans` and `hasPlanCapacity` each ended the oldest
+ * unfinished plan of somebody who had started nothing (audit 2026-11-14, W10).
+ */
+function makeRoom(now: number, { key: budget, pool }: StoreBudget): void {
+  // From the identity's own COMPLETE plans, oldest first (insertion order is
+  // age order). Unfinished plans are never evicted — see PLANS_PER_IDENTITY.
+  const own = [...plans.values()].filter(p => p.budget === budget);
+  let excess = own.length - PLANS_PER_IDENTITY + 1;
+  for (const p of own) {
+    if (excess <= 0) break;
+    if (isComplete(p)) { remove(p, now); excess--; }
+  }
   // The memory bound across identities: complete plans first, the oldest
   // unfinished only when nothing else is left — buried, so it still says why.
-  while (plans.size >= MAX_PLANS) {
-    const victim = [...plans.values()].find(isComplete) ?? plans.values().next().value;
+  // Counted and taken within the starter's POOL only (`store-budget.ts`): an
+  // unfinished plan of a confirmed account is never what an unproven login's
+  // new plan ends, however many names that login invents.
+  const inPool = [...plans.values()].filter(p => p.pool === pool);
+  for (let over = inPool.length - poolShare(MAX_PLANS, pool) + 1; over > 0; over--) {
+    const at = Math.max(0, inPool.findIndex(isComplete));
+    const [victim] = inPool.splice(at, 1);
     if (!victim) break;
     remove(victim, now);
   }
+  for (const [k, id] of byConfirmKey) if (!plans.has(id)) byConfirmKey.delete(k);
+}
+
+/** Plans held right now, finished or not — for a metric. Reads only: nothing is swept. */
+export function planStoreSize(): number {
+  return plans.size;
 }
 
 /**
@@ -159,9 +196,9 @@ function sweep(now: number, identity?: string): void {
  * one of their plans is done.
  */
 export function hasPlanCapacity(now = Date.now()): boolean {
-  const identity = currentIdentity();
+  const budget = budgetIdentity();
   sweep(now);
-  return [...plans.values()].filter(p => p.identity === identity && !isComplete(p)).length < PLANS_PER_IDENTITY;
+  return [...plans.values()].filter(p => p.budget === budget && !isComplete(p)).length < PLANS_PER_IDENTITY;
 }
 
 /** Store an approved plan. `initial` carries what the preview already knew (existing nodes). */
@@ -169,11 +206,13 @@ export function startPlan<I extends PlanItem>(
   kind: string, args: string, items: I[], initial: Map<string, ItemState>, confirmToken: string, now = Date.now(),
 ): string {
   const identity = currentIdentity();
-  sweep(now, identity);
+  const budget = currentBudget();
+  sweep(now);
+  makeRoom(now, budget);
   const planId = randomBytes(18).toString('base64url');
   const state = new Map(items.map(i => [i.key, initial.get(i.key) ?? { status: 'pending' as const }]));
   plans.set(planId, {
-    planId, kind, identity, args: hashKey(args), items, state, expiresAt: now + PLAN_TTL_MS, running: null,
+    planId, kind, identity, budget: budget.key, pool: budget.pool, args: hashKey(args), items, state, expiresAt: now + PLAN_TTL_MS, running: null,
     confirmKey: hashKey(confirmToken),
   } as StoredPlan<PlanItem>);
   byConfirmKey.set(hashKey(confirmToken), planId);
@@ -258,7 +297,14 @@ export async function runPlan<I extends PlanItem>(
       await mapPool(ready, PLAN_POOL, async item => {
         tried.add(item.key);
         const before = item.after ? plan.state.get(item.after) : undefined;
-        const next = await step(item, before);
+        // A step is meant to answer, never to throw — but one that does must
+        // still COUNT. `mapPool` swallows a throw, so the item stayed `pending`
+        // without a try: open until the plan expired, with a client looping
+        // "while not complete". Whether its request left is not known here.
+        const next = await step(item, before).catch((err: unknown): ItemState => {
+          log.warn('plan step threw', { kind: plan.kind, error: err instanceof Error ? err.message : String(err) });
+          return { status: 'pending', code: writeFailureCode(err) };
+        });
         if (next.status !== 'pending') { plan.state.set(item.key, next); return null; }
         // Still open. A cause that never goes away — a proxy that resets every
         // POST, a failure `isOutcomeOpen` cannot place — would otherwise keep
@@ -292,11 +338,6 @@ function report<I extends PlanItem>(plan: StoredPlan<I>): PlanReport {
 export function livePlans<I extends PlanItem>(kind: string, now = Date.now()): ReadonlyArray<StoredPlan<I>> {
   sweep(now);
   return [...plans.values()].filter(p => p.kind === kind) as unknown as StoredPlan<I>[];
-}
-
-/** Read access for the tool's answer. */
-export function planState<I extends PlanItem>(plan: StoredPlan<I>): ReadonlyMap<string, ItemState> {
-  return plan.state;
 }
 
 export type { StoredPlan };

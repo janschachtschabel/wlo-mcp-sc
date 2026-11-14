@@ -29,6 +29,7 @@ import type { WriteMode } from './credential-gate.js';
 import { updateNodeMetadata, failureDetail, writeTimeoutMs, type FieldWriteStatus } from './nodes.js';
 import { confirmDeleted, type MutationOutcome } from './verify.js';
 import { findByUrl, type ExistingRecord } from './duplicates.js';
+import { wroteNothing } from '../../upstream-error.js';
 import { uploadContent, type UploadOutcome } from './content-upload.js';
 import type { UploadFile } from './content-source.js';
 
@@ -60,7 +61,8 @@ export type CreateOutcome =
   | { status: 'created'; nodeId: string; statuses: FieldWriteStatus[]; upload?: UploadOutcome; incomplete?: string }
   | { status: 'duplicate'; existing: ExistingRecord }
   /** `open`: the record MAY exist although the create is reported as failed (a 5xx, or an answer without an id). */
-  | { status: 'failed'; detail: string; open?: true };
+  /** `httpStatus`: what the create answered, where the repository answered non-OK — the reply's code is read from it. */
+  | { status: 'failed'; detail: string; open?: true; httpStatus?: number };
 
 /**
  * Where a new record is filed.
@@ -165,8 +167,9 @@ export async function createContentNode(
     },
   );
   // A 5xx is no proof that nothing was created (measured 2026-11-06: a create
-  // answered 500 while the collection existed) — said to the caller as `open`.
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), ...(res.status >= 500 ? { open: true as const } : {}) };
+  // answered 500 while the collection existed), and neither is a 429 (busy, no
+  // verdict) — said to the caller as `open`. Only a refusal closes it.
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status, ...(wroteNothing(res.status) ? {} : { open: true as const }) };
 
   // An unparseable body takes the same route as one carrying no id: the POST was
   // accepted, so a record may exist — and with `renameIfExists` a retry would
@@ -239,10 +242,11 @@ export const REVIEW_STATUS = '200_tocheck';
  * else in this pipeline.
  */
 export type SubmitOutcome =
-  | { status: 'submitted'; receiver: string; workflowStatus: string }
+  | { status: 'submitted'; receiver: string }
   | { status: 'dropped' }
   | { status: 'unverified'; detail: string }
-  | { status: 'failed'; detail: string };
+  /** `httpStatus`: what the workflow PUT answered — a 4xx wrote nothing, a 5xx is no verdict (`sendSubmission`). */
+  | { status: 'failed'; detail: string; httpStatus: number };
 
 /**
  * Hand a record to the editorial queue, then read the record back.
@@ -264,7 +268,7 @@ export async function submitForReview(nodeId: string, comment: string): Promise<
       }),
     },
   );
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
 
   const node = await getNodeMetadata(nodeId);
   if (!node) {
@@ -282,7 +286,6 @@ export async function submitForReview(nodeId: string, comment: string): Promise<
   return {
     status: 'submitted',
     receiver: node.properties?.['ccm:wf_receiver']?.[0] ?? REVIEW_RECEIVER,
-    workflowStatus: stored,
   };
 }
 
@@ -306,7 +309,7 @@ export async function deleteContentNode(nodeId: string): Promise<MutationOutcome
     `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}?recycle=true`,
     { method: 'DELETE', headers: { Accept: 'application/json' } },
   );
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
   log.warn('content node deleted', { nodeId });
   return await confirmDeleted(nodeId);
 }

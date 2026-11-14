@@ -45,6 +45,7 @@ import {
 import { log } from '../logger.js';
 import { parseRequestUrl } from '../request-url.js';
 import { flattenText } from '../text-sanitize.js';
+import { logTerm } from '../log-privacy.js';
 import { grantConsent, showConsent } from './oauth-consent.js';
 import { germanRetryMessage, refuseRateLimited } from './rate-limited.js';
 import { exchangeCode } from './oauth-token.js';
@@ -196,7 +197,9 @@ async function registerClient(
     || FALLBACK_CLIENT_NAME;
 
   const clientId = encodeClientId({ redirectUris: uris, name }, keys);
-  log.info('oauth client registered', { name, redirectUris: uris.length });
+  // Registration is open, so the name is whatever the caller typed — a person's
+  // name as readily as a product's. Pseudonymised like a search term.
+  log.info('oauth client registered', { clientName: logTerm(name), redirectUris: uris.length });
 
   // No `client_secret`: public clients with PKCE only. There is nowhere to keep
   // a secret anyway — see `auth/oauth-clients.ts` on why the id is self-contained.

@@ -20,7 +20,7 @@ import { failureCode, writeFailureCode } from '../failure-code.js';
 import { addedValues, buildChangeSet, displayValue, type ChangeSet } from './change-set.js';
 import { desiredOn, propertyOn, titleOn } from './collection-fields.js';
 import { routeFields } from './field-routing.js';
-import { readWriteBaseline, updateNodeMetadata } from './nodes.js';
+import { readWriteBaseline, rejectedWriteIsOpen, updateNodeMetadata, type FieldWriteStatus } from './nodes.js';
 import type { ItemState, PlanItem, Step } from './plan-runner.js';
 import { createSuggestions, newProposals, type SuggestionDraft } from './suggestions.js';
 import { verifyWrite } from './verify.js';
@@ -212,13 +212,17 @@ export const updateStep: Step<UpdateItem> = async (item): Promise<ItemState> => 
   let changedOther = false;
   let firstCode: string | undefined;
   let unverified = false;
+  // A field rejected with something other than a refusal, and not in the record: no proof that nothing landed.
+  let writeOpen = false;
 
   if (item.write.changes.length) {
+    let rejected: Map<string, FieldWriteStatus>;
     try {
       const cs = item.write;
       const { statuses } = await updateNodeMetadata(cs.nodeId, desiredOf(cs), { commit: false });
-      const rejected = statuses.find(s => !s.ok);
-      if (rejected) firstCode = failureCode(new Error(rejected.detail ?? ''));
+      rejected = new Map(statuses.filter(s => !s.ok).map(s => [s.property, s]));
+      const first = statuses.find(s => !s.ok);
+      if (first) firstCode = failureCode(new Error(first.detail ?? ''));
     } catch (err) {
       // The request may have reached the repository before the answer was lost.
       return { status: 'failed', code: writeFailureCode(err), outcomeOpen: true };
@@ -227,8 +231,11 @@ export const updateStep: Step<UpdateItem> = async (item): Promise<ItemState> => 
       const verified = await verifyWrite(item.write);
       for (const c of item.write.changes) {
         const o = verified.outcomes[c.property] ?? 'dropped';
-        if (o === 'stored') written++;
-        else { notStored++; if (o === 'changed') changedOther = true; }
+        if (o === 'stored') { written++; continue; }
+        notStored++;
+        if (o === 'changed') changedOther = true;
+        const refusal = rejected.get(c.property);
+        if (refusal !== undefined && rejectedWriteIsOpen(refusal)) writeOpen = true;
       }
     } catch {
       unverified = true;
@@ -273,5 +280,5 @@ export const updateStep: Step<UpdateItem> = async (item): Promise<ItemState> => 
     // The refusal's own code where there is one (a foreign record: forbidden).
     return { status: 'partly', code: notStored ? (firstCode ?? 'not_stored') : 'suggest_failed', outcomeOpen: true, ...counts };
   }
-  return { status: 'not_stored', code: firstCode ?? 'not_stored', outcomeOpen: suggestOpen, ...counts };
+  return { status: 'not_stored', code: firstCode ?? 'not_stored', outcomeOpen: suggestOpen || writeOpen, ...counts };
 };

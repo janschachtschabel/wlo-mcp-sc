@@ -15,7 +15,7 @@
  * paths here are remote HTTP, i.e. asynchronous I/O.
  */
 
-import { WLO_TEXT_TIMEOUT_MS, getNodeMetadata, readNodeDownload, readNodeTextContent, stripStoreRef } from '../wlo-api.js';
+import { WLO_TEXT_TIMEOUT_MS, readNodeMetadata, readNodeDownload, readNodeTextContent, stripStoreRef } from '../wlo-api.js';
 import { extractTextFromUrl } from '../text-extraction-api.js';
 import { nodeTitle } from '../node-match.js';
 import { capText } from '../text-cap.js';
@@ -208,10 +208,11 @@ export async function getContentText(
 ): Promise<ContentText> {
   // In parallel: the text read is the slow one (median 4.6 s live), so pulling
   // the node's title and fallback URL alongside it costs no extra wall time.
-  const [repo, node] = await Promise.all([
+  const [repo, meta] = await Promise.all([
     readStoredText(nodeId),
-    getNodeMetadata(nodeId, NODE_PROPS),
+    readNodeMetadata(nodeId, NODE_PROPS),
   ]);
+  const node = meta.node;
 
   const title = node ? nodeTitle(node) : '';
   const base = { nodeId, title, sourceUrl: null as string | null };
@@ -230,7 +231,13 @@ export async function getContentText(
   // not public refuses its metadata too (live-verified), so the "not found"
   // branch would otherwise claim the material does not exist when it does.
   if (repo.status === 403 || repo.status === 401) return miss('access_denied');
-  if (!node) return miss('node_not_found');
+  if (!node) {
+    // The status decides: "not found" stood here for every miss, and a record
+    // behind a 503 was reported as one that does not exist.
+    // (A 2xx naming no node is an answer as well: nothing under the id.)
+    if (meta.status === 404 || (meta.status >= 200 && meta.status < 300)) return miss('node_not_found');
+    return miss(meta.status === 401 || meta.status === 403 ? 'access_denied' : 'text_unreadable');
+  }
 
   const wwwurl = stripStoreRef(node.properties?.['ccm:wwwurl']?.[0]);
   if (!wwwurl) {

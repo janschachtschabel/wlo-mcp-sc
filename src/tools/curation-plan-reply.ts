@@ -54,6 +54,55 @@ export function planErrorReply(code: PlanErrorCode): WloToolResult {
 }
 
 /**
+ * A step that ended as `failed` while its outcome is not known — never worded
+ * as "not done". `where` names the place to look ("in der Sammlung"), for the
+ * tools that have one: "bitte prüfen" alone does not say what to open.
+ */
+const openOutcome = (where?: string) => `offen — Ausgang unbekannt, bitte ${where ? `${where} ` : ''}prüfen`;
+
+/**
+ * Closed statuses that ARE a statement about an open outcome: `unverified`
+ * ("offen — nicht bestätigt") and `partly` (something landed, something did
+ * not). Replacing their word with the general one would say less.
+ */
+const WORDS_ITS_OWN_OPEN: ReadonlySet<string> = new Set(['unverified', 'partly']);
+
+/** What a tool's own wording adds to the shared rule — two things the single shared form had taken away (review 2026-11-14). */
+export interface PlanLabelOptions {
+  /** Where an open outcome is checked: "in der Sammlung", "am Datensatz". */
+  where?: string;
+  /** Word the note as `status — Hinweis` instead of `status (Hinweis)` — the tree's line form. */
+  noteAfterDash?: true;
+}
+
+/**
+ * The German word for one step's state — the ONE function every plan tool
+ * words its steps with (audit 2026-11-14, W7). Each tool passes its word table
+ * (`labels`: status → word) and, where a code needs explaining, `codeNotes`.
+ *
+ * It exists for one rule: a `failed` step with `outcomeOpen` is "offen —
+ * Ausgang unbekannt", never the table's "nicht …". "Not filed" over an outcome
+ * nobody knows sends a model to do it again. Seven tools carried a copy of this
+ * function and three of them had no such rule — a tree step the runner ended
+ * after `MAX_OPEN_TRIES` read "nicht angelegt" over a collection that may exist.
+ */
+export function planItemLabel(
+  state: ItemState, labels: Readonly<Record<string, string>>, codeNotes: Readonly<Record<string, string>> = {},
+  opts: PlanLabelOptions = {},
+): string {
+  // Not `failed` alone: `not_stored` carries `outcomeOpen: true` too (a field
+  // write answered 5xx whose read-back shows the old value), and its table word
+  // "nicht gespeichert" stood beside a structured "outcome open" (review
+  // 2026-11-14). Any closed status says "open" when its outcome is — except
+  // the ones whose own word already does, and says more (`WORDS_ITS_OWN_OPEN`).
+  const open = state.outcomeOpen === true && state.status !== 'pending' && !WORDS_ITS_OWN_OPEN.has(state.status);
+  const word = open ? openOutcome(opts.where) : labels[state.status] ?? state.status;
+  if (!state.code) return word;
+  const note = codeNotes[state.code] ?? state.code;
+  return opts.noteAfterDash ? `${word} — ${note}` : `${word} (${note})`;
+}
+
+/**
  * One step as answered: `id` is what identifies it to the caller (a tree path; a
  * material and a collection) and is spread into the structured entry; `text`
  * names it in the reply.

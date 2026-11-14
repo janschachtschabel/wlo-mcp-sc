@@ -139,7 +139,7 @@ test('a field the write call rejected with a 5xx is reported as STORED when the 
 
 test('a rejected field the read-back does NOT show stays rejected — and says nothing was written for it', () => {
   const cs = buildChangeSet('n-1', 'content', { 'cclom:title': ['Alt'] }, { 'cclom:title': ['Neu'] });
-  const r = reportOutcome(cs, [{ property: 'cclom:title', ok: false, detail: 'HTTP 403' }],
+  const r = reportOutcome(cs, [{ property: 'cclom:title', ok: false, detail: 'HTTP 403', httpStatus: 403 }],
     { outcomes: { 'cclom:title': 'dropped' }, allStored: false });
   assert.equal(errorOf(r)?.code, 'not_stored');
   assert.equal(errorOf(r)?.outcomeOpen, false);
@@ -153,6 +153,18 @@ test('a field rejected with a 5xx that the read-back does not show is OPEN — t
       { outcomes: { 'cclom:title': 'dropped' }, allStored: false });
     assert.equal(errorOf(r)?.outcomeOpen, true, status);
   }
+});
+
+test('the STATUS of a rejected field decides, never the text beside it (review 2026-11-14, finding 8)', () => {
+  const cs = buildChangeSet('n-1', 'content', { 'cclom:title': ['Alt'] }, { 'cclom:title': ['Neu'] });
+  const open = (detail: string, httpStatus?: number) => errorOf(reportOutcome(cs,
+    [{ property: 'cclom:title', ok: false, detail, ...(httpStatus !== undefined ? { httpStatus } : {}) }],
+    { outcomes: { 'cclom:title': 'dropped' }, allStored: false }))?.outcomeOpen;
+  // A repository body is foreign text and may hold any three digits.
+  assert.equal(open('HTTP 403: nein', 502), true, 'a 502 whose text names a 403 is open');
+  assert.equal(open('HTTP 500: kaputt', 403), false, 'a 403 whose text names a 500 is a refusal');
+  assert.equal(open('HTTP 403'), true, 'no status in hand: no proof, whatever the text says');
+  assert.equal(open('zu viel', 429), true, 'busy is no verdict');
 });
 
 test('a rejected field that reads back DIFFERENT from both is rejected and open — something changed', () => {

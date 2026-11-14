@@ -17,6 +17,9 @@
  *   - The KEY carries whose rights the read was made with (`sharedReadScope`,
  *     `auth/credential.ts`), and a personal login's reads are not kept at all:
  *     the repository answers by rights, so one caller's answer is not another's.
+ *     (One user keys differently on purpose: the registry cache's memo of a
+ *     personal login's OWN answers, keyed by a keyed digest of that identity —
+ *     `services/skill-registry-cache.ts`. Never shared, which is the rule.)
  *   - It is short (a minute by default) and bounded. What must be current — a
  *     write's read-back, a confirmation preview — does not go through here.
  */

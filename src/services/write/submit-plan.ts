@@ -21,8 +21,8 @@ import { readNodeMetadata } from '../../wlo-api.js';
 import { mapPool } from '../../concurrency.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { nodeTitle } from '../../node-match.js';
-import { isRefusal } from '../../upstream-error.js';
-import { failureCode } from '../failure-code.js';
+import { isRefusal, wroteNothing } from '../../upstream-error.js';
+import { failureCode, type FailureCode } from '../failure-code.js';
 import { log } from '../../logger.js';
 import { REVIEW_STATUS, submitForReview } from './nodes-lifecycle.js';
 import { isOutcomeOpen } from './timeouts.js';
@@ -90,20 +90,46 @@ export function submitLine(item: SubmitItem, already: boolean): string {
   return `„${item.title}“ (${item.nodeId})${already ? ` — liegt schon zur Prüfung vor (Status ${REVIEW_STATUS}), kein Schritt` : ''}`;
 }
 
+/** What became of ONE submission that was sent — the reading both submit tools give it. */
+export type Submission =
+  /** `receiver` where the read-back named it. */
+  | { status: 'submitted'; receiver?: string }
+  /** Answered with success, and the record shows no submission: nothing is in the queue. */
+  | { status: 'not_stored' }
+  | { status: 'unverified'; detail: string }
+  /** `outcomeOpen: false` only for a refusal (4xx): nothing was written. `httpStatus` says which. */
+  | { status: 'failed'; code: FailureCode; outcomeOpen: boolean; detail: string; httpStatus: number }
+  /** No verdict: the repository is busy, or the record could not be read after a 5xx. */
+  | { status: 'pending'; code: FailureCode; detail: string };
+
 /**
- * The workflow PUT came back non-OK. A 4xx is a refusal: nothing was written.
- * A 5xx is not that — a proxy may answer 502/504 while the PUT lands — so the
- * record is read before anything is said: in the queue, it is our submission.
+ * Send ONE submission and say what is now true. Throws only what
+ * `submitForReview` throws (no answer at all) — each caller has its own word
+ * for that.
+ *
+ * A workflow PUT that came back non-OK: a 4xx is a refusal, nothing was
+ * written. A 5xx is not that — a proxy may answer 502/504 while the PUT lands —
+ * so the record is read before anything is said: in the queue, it is our
+ * submission. The single tool used to skip that look and call all of it
+ * `refused` (audit 2026-11-14, W11).
  */
-async function afterRefusedPut(item: SubmitItem, detail: string): Promise<ItemState> {
-  const code = failureCode(detail);
-  const status = Number(/\bHTTP (\d{3})\b/.exec(detail)?.[1] ?? 0);
-  if (status >= 400 && status < 500 && status !== 429) return { status: 'failed', code, outcomeOpen: false };
-  const after = await readNodeMetadata(item.nodeId, STATUS_PROPS);
-  if (after.node && inQueue(after.node.properties)) return { status: 'submitted' };
-  // Busy, or not readable: the next call looks again before it sends again.
-  if (!after.node || code === 'upstream_busy') return { status: 'pending', code };
-  return { status: 'failed', code, outcomeOpen: true };
+export async function sendSubmission(nodeId: string, comment: string): Promise<Submission> {
+  const outcome = await submitForReview(nodeId, comment);
+  switch (outcome.status) {
+    case 'submitted': return { status: 'submitted', receiver: outcome.receiver };
+    case 'dropped': return { status: 'not_stored' };
+    case 'unverified': return { status: 'unverified', detail: outcome.detail };
+    default: {
+      const { detail, httpStatus } = outcome;
+      const code = failureCode(detail);
+      if (wroteNothing(httpStatus)) return { status: 'failed', code, outcomeOpen: false, detail, httpStatus };
+      const after = await readNodeMetadata(nodeId, STATUS_PROPS);
+      if (after.node && inQueue(after.node.properties)) return { status: 'submitted' };
+      // Busy, or not readable: nothing is known yet.
+      if (!after.node || code === 'upstream_busy') return { status: 'pending', code, detail };
+      return { status: 'failed', code, outcomeOpen: true, detail, httpStatus };
+    }
+  }
 }
 
 export function submitStep(comment: string): Step<SubmitItem> {
@@ -122,15 +148,16 @@ export function submitStep(comment: string): Step<SubmitItem> {
 
       // Set BEFORE the request leaves: an abort hits the answer, not the work.
       item.sent = true;
-      const outcome = await submitForReview(item.nodeId, comment);
+      const outcome = await sendSubmission(item.nodeId, comment);
       switch (outcome.status) {
         case 'submitted': return { status: 'submitted' };
-        // Answered with success, and the record shows no submission: nothing is in the queue.
-        case 'dropped': return { status: 'not_stored', code: 'dropped' };
+        case 'not_stored': return { status: 'not_stored', code: 'dropped' };
         case 'unverified': return { status: 'unverified', outcomeOpen: true };
+        // The next call looks again before it sends again.
+        case 'pending': return { status: 'pending', code: outcome.code };
         default:
           log.warn('batch submission step failed', { nodeId: item.nodeId, detail: outcome.detail });
-          return await afterRefusedPut(item, outcome.detail);
+          return { status: 'failed', code: outcome.code, outcomeOpen: outcome.outcomeOpen };
       }
     } catch (err) {
       // Open, not failed: the next call reads the record before it sends again.

@@ -25,6 +25,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { log } from './logger.js';
+import { observe } from './metrics.js';
 import { WLO_UPSTREAM_CONCURRENCY } from './wlo-config.js';
 
 /**
@@ -126,6 +127,10 @@ export function acquireUpstreamSlot(opts: {
     return Promise.resolve(false);
   }
 
+  // Only a call that had to QUEUE is timed: one that got its slot at once never waited.
+  const queuedAt = Date.now();
+  const waited = (outcome: 'granted' | 'shed'): void =>
+    observe('wlo_upstream_gate_wait_seconds', { outcome }, (Date.now() - queuedAt) / 1000);
   return new Promise<boolean>((resolve, reject) => {
     const leave = (): void => {
       const i = waiting.indexOf(waiter);
@@ -133,12 +138,16 @@ export function acquireUpstreamSlot(opts: {
       clearTimeout(timer);
       opts.signal?.removeEventListener('abort', onAbort);
     };
-    const waiter: Waiter = { grant: () => { leave(); resolve(true); }, drop: () => { leave(); resolve(false); } };
+    const waiter: Waiter = {
+      grant: () => { leave(); waited('granted'); resolve(true); },
+      drop: () => { leave(); waited('shed'); resolve(false); },
+    };
     const onAbort = (): void => { leave(); reject(opts.signal!.reason); };
     const wait = maxWaitOverride ?? opts.maxWaitMs;
     const timer = opts.patient ? undefined : setTimeout(() => {
       leave();
       log.warn('upstream gate: no slot in time — call not sent', { limit, waiting: waiting.length, waitedMs: wait });
+      waited('shed');
       resolve(false);
     }, wait);
     opts.signal?.addEventListener('abort', onAbort, { once: true });

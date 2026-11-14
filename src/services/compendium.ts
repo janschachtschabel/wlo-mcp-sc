@@ -10,14 +10,26 @@
  * bundling.
  */
 
-import { DISPLAY_PROPS, getNodesMetadata } from '../wlo-api.js';
+import { DISPLAY_PROPS, readNodeMetadata, type WloNode } from '../wlo-api.js';
 import { formatNode } from '../formatter.js';
+import { mapPool } from '../concurrency.js';
+import { failureCode } from './failure-code.js';
+import { codeOfStatus, type MissingCode } from './node-details.js';
 
 export interface CompendiumEntry {
   nodeId: string;
   title: string;
   compendiumText: string | null;
+  /**
+   * Set when the collection could not be READ, with the reason. `compendiumText:
+   * null` alone then says nothing: "no compendium text" is a statement about a
+   * collection somebody looked at, and a 403 or a 503 looked at none.
+   */
+  unread?: MissingCode;
 }
+
+/** Reads at once — the pool `getNodesMetadata` ran this fan-out with. */
+const COMPENDIUM_POOL = 8;
 
 export async function getCompendiumTexts(nodeIds: string[]): Promise<CompendiumEntry[]> {
   if (nodeIds.length === 0) return [];
@@ -29,15 +41,21 @@ export async function getCompendiumTexts(nodeIds: string[]): Promise<CompendiumE
   // byte-identical to the `-all-` read, including a 4914-character description,
   // so the filter bounds WHICH properties come back and never their content.
   // The responses shrink ~43%.
-  const nodes = await getNodesMetadata(nodeIds, undefined, DISPLAY_PROPS);
-  // getNodesMetadata drops nodes that failed to resolve, so map what came back
-  // by its canonical id and build one entry per REQUESTED id (order preserved;
-  // a missing/failed node yields a null-text entry rather than vanishing).
-  const byId = new Map(nodes.map(n => [n.ref?.id, n] as const));
+  // One read per id WITH its status: the bulk helper drops every node that
+  // did not resolve, and what is left cannot tell a collection without a text
+  // from one that was refused or behind an outage.
+  const reads = await mapPool(nodeIds, COMPENDIUM_POOL, async (id): Promise<WloNode | MissingCode> => {
+    try {
+      const { node, status } = await readNodeMetadata(id, DISPLAY_PROPS);
+      return node ?? codeOfStatus(status);
+    } catch (err) {
+      return failureCode(err);
+    }
+  });
 
-  return nodeIds.map(id => {
-    const node = byId.get(id);
-    if (!node) return { nodeId: id, title: '', compendiumText: null };
+  return nodeIds.map((id, i) => {
+    const node = reads[i] ?? 'upstream_error';
+    if (typeof node === 'string') return { nodeId: id, title: '', compendiumText: null, unread: node };
     // The property directly, not FormattedNode: since 2026-08-20 `formatNode`
     // carries only the `hasCompendium` signal — this service IS the delivery
     // path the signal points at, so it must not read through the type that

@@ -23,26 +23,27 @@ import { createMcpServer } from '../src/server.js';
  * tool list and the curation tools refuse at call time, so what a test needs to
  * vary is the CREDENTIAL in scope (`setServiceCredentialForTest`), not the way
  * the server was built.
+ *
+ * STRICT since 2026-11-14 (audit, T5b): the tool list is fetched once, and with
+ * it in hand the SDK client validates EVERY `structuredContent` against the
+ * advertised `outputSchema` — an `isError` answer included. That is what a
+ * specification-following host does. Until then only the ten files that asked
+ * for `strictClient()` validated anything, so an undeclared key in a tool's
+ * answer (`additionalProperties: false`) failed nowhere else — the auditor made
+ * this client strict and the whole suite still passed, which is the state this
+ * pins. A test that needs the lenient client must build its own and say why.
  */
 export async function connectedClient(): Promise<Client> {
   const server = createMcpServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return client;
-}
-
-/**
- * A client that follows the specification: with the tool list in hand the SDK
- * client validates EVERY `structuredContent` against the advertised
- * `outputSchema` — an `isError` answer included. `connectedClient()` alone
- * validates nothing, which is how unreadable coded errors stayed invisible.
- */
-export async function strictClient(): Promise<Client> {
-  const client = await connectedClient();
   await client.listTools();
   return client;
 }
+
+/** The same client under the name the first ten strict test files use. */
+export const strictClient = connectedClient;
 
 type AdvertisedTool = { name: string; outputSchema?: unknown };
 

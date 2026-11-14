@@ -51,7 +51,10 @@ test('a configured but NOT working credential is called out, not hidden', async 
     const sc = r.structuredContent as { mode: string; authenticated: boolean };
     assert.equal(sc.mode, 'service');
     assert.equal(sc.authenticated, false, 'configured is not the same as working');
-    assert.match(toolText(r), /Zugangsdaten|greifen nicht|Gast/i, 'and the text says so');
+    // "Zugangsdaten" alone is also in the sentence for a WORKING login; what this
+    // case must say is that they are not accepted.
+    assert.match(toolText(r), /WLO akzeptiert sie nicht/, 'and the text says so');
+    assert.equal((r.structuredContent as { upstream?: string }).upstream, 'ok', 'a refusal, not an outage');
     assert.match(toolText(r), /gemeinsame Dienstkonto/, 'described, not named (S-7)');
     assert.doesNotMatch(toolText(r), /„“|wlo-mcp/);
   } finally { await client.close(); mock.restore(); setServiceCredentialForTest(null); }

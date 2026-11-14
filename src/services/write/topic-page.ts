@@ -190,7 +190,7 @@ export async function planRenderedVariant(
  */
 export async function writeRenderedVariant(plan: TopicPagePlan): Promise<MutationOutcome> {
   const failure = await setProperty(plan.folderId, PROPERTY, [plan.document]);
-  if (failure) return { status: 'failed', detail: failure };
+  if (failure) return { status: 'failed', ...failure };
   log.info('topic page variant set', { collectionId: plan.collectionId, folderId: plan.folderId });
 
   const folder = await getNodeMetadata(plan.folderId, [PROPERTY]);

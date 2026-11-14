@@ -9,7 +9,7 @@
  * (read by the model and by the widget).
  */
 
-import { count, observe } from '../metrics.js';
+import { count, countToolError, observe } from '../metrics.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 
@@ -175,6 +175,7 @@ export function registerWloTool(
       try {
         const result = await def.handler(args, extra);
         outcome = (result as { isError?: boolean } | undefined)?.isError ? 'error' : 'ok';
+        if (outcome === 'error') countToolError(def.name, result);
         return result;
       } finally {
         count('wlo_tool_calls_total', { tool: def.name, outcome });

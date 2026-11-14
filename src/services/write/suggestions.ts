@@ -18,6 +18,7 @@ import { wloFetch, HEADERS } from '../../wlo-fetch.js';
 import { readJson } from '../../read-json.js';
 import { log } from '../../logger.js';
 import { failureDetail, resolveWriteTarget } from './nodes.js';
+import { wroteNothing } from '../../upstream-error.js';
 import type { WloNode } from '../../wlo-types.js';
 import { toRepositoryPath, type PreparedRequest } from './prepared-request.js';
 
@@ -215,7 +216,7 @@ export async function createSuggestions(
     headers: HEADERS,
     body: JSON.stringify(drafts),
   });
-  if (!res.ok) return { ok: false, detail: await failureDetail(res), ...(res.status >= 500 ? { open: true as const } : {}) };
+  if (!res.ok) return { ok: false, detail: await failureDetail(res), ...(wroteNothing(res.status) ? {} : { open: true as const }) };
 
   const body = await readJson<unknown>(res, 'createSuggestions');
   if (body === null) {
@@ -317,7 +318,7 @@ export async function setSuggestionStatus(
     method: 'PATCH',
     headers: HEADERS,
   });
-  if (!res.ok) return { ok: false, detail: await failureDetail(res), open: res.status >= 500 };
+  if (!res.ok) return { ok: false, detail: await failureDetail(res), open: !wroteNothing(res.status) };
 
   let now: Suggestion | undefined;
   try {

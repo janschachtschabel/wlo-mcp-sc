@@ -17,21 +17,20 @@ import assert from 'node:assert/strict';
 import { BASE_URL } from '../../src/wlo-config.js';
 import { wloFetch } from '../../src/wlo-fetch.js';
 import { runWithCredential, type WloCredential } from '../../src/auth/credential.js';
-import { createCollection, deleteCollection } from '../../src/services/write/collections.js';
+import { deleteCollection } from '../../src/services/write/collections.js';
 import { readFilingTarget } from '../../src/services/write/create-filing.js';
 import { moveCollection, planMove } from '../../src/services/write/collection-move.js';
 import { decideProposal, listProposals, proposeForCollection } from '../../src/services/write/collection-proposals.js';
 import { deleteContentNode } from '../../src/services/write/nodes-lifecycle.js';
 import { listCollectionTree } from '../../src/services/collection-tree-flat.js';
 import { requireLiveTarget, runStamp } from './guard.js';
+import { makeCollection, withCleanup } from './cleanup.js';
 
 const JSON_HEADERS = { Accept: 'application/json', 'Content-Type': 'application/json' };
 
-async function make(parent: string | null, title: string): Promise<string> {
-  const made = await createCollection(parent, { title });
-  if (made.status !== 'created') assert.fail(`Sammlung abgelehnt: ${JSON.stringify(made)}`);
-  return made.nodeId;
-}
+// A create that is refused may still have created (500 for a create that landed
+// is measured): `makeCollection` looks for the leftover before it fails.
+const make = makeCollection;
 async function record(label: string): Promise<string> {
   const res = await wloFetch(`${BASE_URL}/node/v1/nodes/-home-/-userhome-/children?type=ccm%3Aio&renameIfExists=true`, {
     method: 'POST', headers: JSON_HEADERS,
@@ -45,7 +44,7 @@ async function record(label: string): Promise<string> {
 test('S5: a collection moves with its sub-tree and keeps its id; a namesake and the own sub-tree are refused before anything is sent', async () => {
   requireLiveTarget();
   const root = await make(null, `MCP-Struktur Umhängen ${runStamp}`);
-  try {
+  await withCleanup(async () => {
     const a = await make(root, 'A');
     const a1 = await make(a, 'A1');
     const b = await make(root, 'B');
@@ -65,9 +64,7 @@ test('S5: a collection moves with its sub-tree and keeps its id; a namesake and 
     const twin = await make(root, 'a ');
     const namesake = await planMove(twin, b);
     assert.deepEqual([namesake.ok, !namesake.ok && namesake.code, !namesake.ok && namesake.existingId], [false, 'exists', a]);
-  } finally {
-    assert.equal((await deleteCollection(root)).status, 'ok', `NICHT GELÖSCHT: ${root}`);
-  }
+  }, () => [[root, () => deleteCollection(root)]]);
 });
 
 test('S8: who may READ a collection and not write it may propose; who may write decides — accept files first, then marks', async (t) => {
@@ -80,7 +77,7 @@ test('S8: who may READ a collection and not write it may propose; who may write 
 
   const collection = await make(null, `MCP-Struktur Vorschlag ${runStamp}`);
   let material: string | undefined;
-  try {
+  await withCleanup(async () => {
     const granted = await wloFetch(`${BASE_URL}/node/v1/nodes/-home-/${collection}/permissions?sendMail=false&sendCopy=false`, {
       method: 'POST', headers: JSON_HEADERS,
       body: JSON.stringify({ inherited: true, permissions: [{ authority: { authorityName: user, authorityType: 'USER' }, permissions: ['Consumer'] }] }),
@@ -111,11 +108,9 @@ test('S8: who may READ a collection and not write it may propose; who may write 
     assert.ok(accepted.ok && accepted.proposals.some(p => p.proposalId === proposal.proposalId));
     const still = await listProposals(collection, 'PENDING');
     assert.ok(still.ok && !still.proposals.some(p => p.proposalId === proposal.proposalId));
-  } finally {
-    assert.equal((await deleteCollection(collection)).status, 'ok', `NICHT GELÖSCHT: ${collection}`);
-    if (material) {
-      const gone = await asReader(() => deleteContentNode(material!));
-      assert.equal(gone.status, 'ok', `NICHT GELÖSCHT: ${material} ${JSON.stringify(gone)}`);
-    }
-  }
+  // Every delete runs, and the test's own failure is what gets reported (`cleanup.ts`).
+  }, () => [
+    [collection, () => deleteCollection(collection)],
+    ...(material ? [[material, () => asReader(() => deleteContentNode(material!))] as const] : []),
+  ]);
 });

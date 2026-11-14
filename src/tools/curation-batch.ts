@@ -27,12 +27,16 @@ import { z } from 'zod';
 
 import { currentCredential } from '../auth/credential.js';
 import {
-  BATCH_TTL_MS, BatchConfirmations, batchOwner, type BatchPlan, type FolderChoice, type StoreResult, TooManyBatches } from '../services/write/batch-confirm.js';
-import { createBatchFolder, fileBatchEntry, fileManifest, folderLayout } from '../services/write/batch-filing.js';
+  BATCH_TTL_MS, BatchConfirmations, batchOwner, batchPool, type BatchPlan, type FolderChoice, type StoreResult, TooManyBatches } from '../services/write/batch-confirm.js';
+import type { TrustPool } from '../services/write/store-budget.js';
+import { createBatchFolder, fileBatchEntry, fileManifest, findFiledManifest, folderLayout } from '../services/write/batch-filing.js';
+import { failureFields } from '../services/failure-code.js';
+import { wroteNothing } from '../upstream-error.js';
+import { refusalCode } from './curation-report.js';
 import { BATCH_ROLES, MANIFEST_FORMAT, type BatchRole } from '../services/write/batch-manifest.js';
 import { fileNameFrom } from '../services/write/content-source.js';
 import { requireWrite, writeMode } from '../services/write/credential-gate.js';
-import { batchUploadEnabled, sharedUploadSlots, slotIdentity } from '../services/write/upload-slot.js';
+import { batchUploadEnabled, sharedUploadSlots, slotHolder, slotIdentity } from '../services/write/upload-slot.js';
 import { flattenText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
 import { registerCurationTool, codedError, isOutcomeOpen, timeoutOrError, type WriteAuthChallenge } from './curation-shared.js';
@@ -56,17 +60,23 @@ export function resetBatchesForTest(): void {
  * without one is an upstream failure.
  */
 function result(text: string, structured: Record<string, unknown>, isError = false, outcomeOpen?: boolean): WloToolResult {
-  const code = typeof structured['reason'] === 'string' ? structured['reason'] : 'upstream_error';
   // `outcomeOpen` like every other curation error (audit 2026-11-12, K-7). The
   // SERVICE says when a failed step may have created something all the same
   // (`open`: a 5xx, an answer without an id) — an id in the answer does not
   // tell, a failed step never carries one. `open` itself is not part of the
-  // answer; it becomes `error.outcomeOpen`.
-  const { open: serviceSaysOpen, ...shown } = structured;
+  // answer; it becomes `error.outcomeOpen`. Neither is `httpStatus`: it becomes
+  // the CODE — the repository's own "no" by its name (`refusalCode`), a busy
+  // one as `upstream_busy` with its wait (`failureFields`, the one pairing
+  // place). Every failed create here was `upstream_error`, a 403 and a 429
+  // alike (review 2026-11-14).
+  const { open: serviceSaysOpen, httpStatus, ...shown } = structured;
+  const coded: { code: string; retryAfter?: number } = typeof structured['reason'] === 'string' ? { code: structured['reason'] }
+    : typeof httpStatus !== 'number' ? { code: 'upstream_error' }
+      : wroteNothing(httpStatus) ? { code: refusalCode(httpStatus) } : failureFields(`HTTP ${httpStatus}`);
   const open = outcomeOpen ?? serviceSaysOpen === true;
   return { content: [{ type: 'text' as const, text }],
     structuredContent: isError
-      ? { ...shown, error: { code, message: text, outcomeOpen: open, ...(typeof shown['scope'] === 'string' ? { scope: shown['scope'] } : {}) } }
+      ? { ...shown, error: { ...coded, message: text, outcomeOpen: open, ...(typeof shown['scope'] === 'string' ? { scope: shown['scope'] } : {}) } }
       : shown,
     ...(isError ? { isError: true } : {}) };
 }
@@ -78,7 +88,11 @@ function withOpen(reply: WloToolResult, open: boolean): WloToolResult {
   return { ...reply, structuredContent: { ...sc, error: { ...sc.error, outcomeOpen: sc.error['outcomeOpen'] === true || open } } };
 }
 
-interface Person { owner: string; slotIdentity: string }
+interface Person {
+  owner: string; slotIdentity: string; slotHolder: string;
+  /** Proven or not (`store-budget.ts`): whose idle batches a new one of this login may make room from. */
+  pool: TrustPool;
+}
 
 /**
  * Owner and slot identity of a personal login, or a refusal (none, anonymous,
@@ -91,12 +105,12 @@ function personal(challenge: WriteAuthChallenge): Person | { refusal: WloToolRes
   const cred = currentCredential();
   const owner = writeMode() === 'user' ? batchOwner(cred) : null;
   const slot = slotIdentity(cred);
-  if (!owner || !slot) {
+  if (!cred || !owner || !slot) {
     const refusal = codedError('login_required', 'Die Ablage in den persönlichen Bereich geht nur mit der eigenen WLO-Anmeldung — ' +
       'nicht über ein gemeinsames Konto.');
     return { refusal: { ...refusal, _meta: { 'mcp/www_authenticate': [challenge] } } };
   }
-  return { owner, slotIdentity: slot };
+  return { owner, slotIdentity: slot, slotHolder: slotHolder(cred), pool: batchPool(cred) };
 }
 
 function megabytes(bytes: number): string {
@@ -173,7 +187,7 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       const mintedAt = Date.now();
       let token: string;
       try {
-        token = batches.mint(wer.owner, plan);
+        token = batches.mint(wer.owner, plan, wer.pool);
       } catch (err) {
         if (!(err instanceof TooManyBatches)) throw err;
         // Nothing was prepared and nothing touched: a running batch is not given up for a new one.
@@ -242,7 +256,9 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       if (r.outcome !== 'ok' && r.outcome !== 'already') return refusedToken(r.outcome);
       // From here the slot is TAKEN: on every path below it is either filed or
       // dropped — an "already" must not leave surplus bytes in memory.
-      const slot = sharedUploadSlots().take(String(params['ref']), wer.slotIdentity);
+      // By the confirmed account, or by the very credential that uploaded it (`slotHolder`): a
+      // `Basic` upload is held under the account its login proof named, which this call cannot derive.
+      const slot = sharedUploadSlots().take(String(params['ref']), wer.slotIdentity, wer.slotHolder);
       if (r.outcome === 'already') return result(`Datei ${index} wurde schon behandelt.`, { ...r.result, already: true });
       if (!slot) {
         batches.abandon(token, index);
@@ -312,24 +328,57 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
         return result(text, { ...claim.already, already: true });
       }
       const { plan, results } = claim;
+      // An earlier call's outcome stayed OPEN (a create answered 5xx/429, or no
+      // answer): this call LOOKS before it files, and whatever stops it before
+      // the look puts that open outcome back — a released claim would let the
+      // next call file blind, and with `renameIfExists` that is a second file.
+      const earlier = claim.open;
+      const giveBack = () => (earlier ? batches.recordManifest(token, earlier.result) : batches.releaseManifest(token));
       if (![...results.values()].some((x) => x.status === 'stored')) {
-        batches.releaseManifest(token);
+        giveBack();
         return result('Noch keine Datei abgelegt — der Vorgang wird erst danach dazugelegt.', { status: 'failed', reason: 'nothing_stored' }, true);
       }
       let choice: FolderChoice;
       try {
         choice = await chooseFolder(token, plan);
       } catch (err) {
-        // Nothing of the manifest was sent yet: it may be claimed again.
-        batches.releaseManifest(token);
-        return withOpen(timeoutOrError('Der Ordner für den Vorgang war nicht erreichbar', err, 'Ein Ordner kann angelegt sein'), isOutcomeOpen(err));
+        // Nothing of the manifest was sent by THIS call: it may be claimed again.
+        giveBack();
+        return withOpen(timeoutOrError('Der Ordner für den Vorgang war nicht erreichbar', err, 'Ein Ordner kann angelegt sein'), isOutcomeOpen(err) || Boolean(earlier));
+      }
+      if (!choice.ok) {
+        giveBack();
+        return result('Der Ordner ist nicht erreichbar — der Vorgang wurde nicht abgelegt.',
+          { status: 'failed', reason: 'folder_failed' }, true, choice.open === true || Boolean(earlier));
+      }
+      if (earlier) {
+        const own = new Set([...results.values()].map((x) => x.nodeId).filter((id): id is string => Boolean(id)));
+        let look: Awaited<ReturnType<typeof findFiledManifest>>;
+        try {
+          look = await findFiledManifest(choice.parent, own, { since: earlier.since, ownFolder: plan.layout === 'folder' && !choice.denied });
+        } catch {
+          look = { found: 'unknown' };
+        }
+        if (look.found === 'filed') {
+          const found: StoreResult = { status: 'stored', nodeId: look.nodeId };
+          batches.recordManifest(token, found);
+          return result('Der Vorgang liegt ab — beim Nachsehen gefunden, es wurde kein zweiter angelegt.', { ...found, found: true });
+        }
+        if (look.found === 'incomplete') {
+          const found: StoreResult = { status: 'unverified', nodeId: look.nodeId,
+            detail: 'vorgang.json ist angelegt, aber nicht vollständig (Inhalt oder Kennzahlen fehlen) — wlo_list_my_batches zeigt ihn als unreadable.' };
+          batches.recordManifest(token, found);
+          return result(`Vorgang: beim Nachsehen gefunden, aber unvollständig — es wurde kein zweiter angelegt. ${found.detail}`, { ...found, found: true });
+        }
+        if (look.found === 'unknown') {
+          // Still open, and still nothing filed blind: the next call looks again.
+          batches.recordManifest(token, earlier.result);
+          return result('Ob vorgang.json schon abliegt, ließ sich nicht nachsehen — es wurde nichts abgelegt. Bitte in einigen '
+            + 'Sekunden erneut aufrufen oder im persönlichen Bereich nachsehen.', { status: 'failed', reason: 'not_checked' }, true, true);
+        }
+        // Not there: filed below, once — like a first call.
       }
       try {
-        if (!choice.ok) {
-          batches.releaseManifest(token);
-          return result('Der Ordner ist nicht erreichbar — der Vorgang wurde nicht abgelegt.',
-            { status: 'failed', reason: 'folder_failed' }, true, choice.open === true);
-        }
         const manifest = {
           format: MANIFEST_FORMAT, ordner: plan.folderName, layout: choice.denied ? 'flat' : plan.layout,
           inhalte: plan.entries.map((e) => {
@@ -339,8 +388,15 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
           }),
         };
         const out = await fileManifest(choice.parent, manifest);
-        if (out.status === 'failed') batches.releaseManifest(token); else batches.recordManifest(token, out);
-        return result(`Vorgang: ${out.status}.`, { ...out }, out.status === 'failed');
+        // Only a failure that created NOTHING gives the claim back. An open one
+        // (`open`: a 5xx, an answer without an id — the record may exist) is
+        // recorded like the aborted filing below: released, the next call filed
+        // a second vorgang.json (audit 2026-11-14, W12). Recorded as OPEN it is
+        // not the last word either: the next call looks for the record first.
+        if (out.status === 'failed' && !out.open) batches.releaseManifest(token); else batches.recordManifest(token, out);
+        return result(out.status === 'failed' && out.open
+          ? 'Vorgang: offen — ob vorgang.json angelegt wurde, ist nicht bekannt. Derselbe Aufruf sieht zuerst nach und legt nur ab, was fehlt.'
+          : `Vorgang: ${out.status}.`, { ...out }, out.status === 'failed');
       } catch (err) {
         // Possibly created: recorded as open, never filed a second time and never reported as filed.
         batches.recordManifest(token, { status: 'unverified',

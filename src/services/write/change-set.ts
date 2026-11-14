@@ -311,7 +311,9 @@ export function renderChangeSet(cs: ChangeSet): string {
   // Each step on its own line, each flattened on its own — never the joined block.
   for (const item of cs.items ?? []) lines.push(`- ${flattenText(item)}`);
 
-  if (cs.destructive) {
+  // A destructive PLAN names what it deletes in its step lines; the line below
+  // is for the deletion of the ONE node the change set is anchored on.
+  if (cs.destructive && !cs.items?.length) {
     // The title is WHAT is being deleted, so a silent cut here is the worst
     // place for one: the reader would confirm the removal of a record they
     // cannot fully name.

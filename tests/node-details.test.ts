@@ -131,8 +131,9 @@ test('when the lookup fails, includeParents says so instead of claiming emptines
     const text = toolText(await client.callTool({
       name: 'get_node_details', arguments: { nodeId: 'n1', includeParents: true },
     }));
-    assert.match(text, /nicht ermittel|nicht bestimm|unklar/i);
+    assert.match(text, /Die Sammlungen zu diesem Knoten konnten nicht ermittelt werden \(.*HTTP 500/);
     assert.doesNotMatch(text, /Keine Eltern-Sammlungen gefunden/);
+    assert.doesNotMatch(text, /### Eltern-Sammlungen/, 'and no list is shown beside it');
   } finally {
     await client.close();
     mock.restore();

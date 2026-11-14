@@ -23,7 +23,19 @@ const SHORT_TERM_MAX = 3;
  * same reason.
  */
 export function queryTerms(query: string): string[] {
-  return query.toLowerCase().split(/\s+/).filter(t => t.length >= 2 && !DE_STOPWORDS.has(t));
+  return comparable(query).split(/\s+/).filter(t => t.length >= 2 && !DE_STOPWORDS.has(t));
+}
+
+/**
+ * A text as the matchers here compare it: lowercase, and in ONE Unicode form.
+ *
+ * An umlaut is either one code point or the base letter plus a combining mark
+ * (NFD — what macOS file names and some editors produce). Compared by code
+ * unit the two never meet, so a decomposed "Größe" in a title was invisible to
+ * the composed one in a query. Both sides of every comparison go through here.
+ */
+export function comparable(text: string): string {
+  return text.normalize('NFC').toLowerCase();
 }
 
 /**
@@ -42,7 +54,7 @@ export function queryTerms(query: string): string[] {
  * behaviour German needs. Only the START is checked: requiring a boundary at
  * the end too would reject exactly those compounds.
  *
- * `text` is expected lowercase, as is `term`.
+ * `text` is expected lowercase, as is `term` — both as `comparable` makes them.
  */
 export function termMatches(term: string, text: string): boolean {
   if (!term) return false;
@@ -106,12 +118,12 @@ export function collectionTitleFromProperties(properties: Properties): string {
 export function nodeMatchesText(node: WloNode, q: string): boolean {
   const words = queryTerms(q);
   if (words.length === 0) return false;
-  const haystack = [
+  const haystack = comparable([
     node.properties?.['cm:name']?.[0] ?? node.name ?? '',
     node.properties?.['cclom:title']?.[0] ?? node.title ?? '',
     node.properties?.['cm:title']?.[0] ?? '',
     node.properties?.['cclom:general_description']?.[0] ?? '',
-  ].join(' ').toLowerCase();
+  ].join(' '));
   return words.some(w => termMatches(w, haystack));
 }
 

@@ -106,6 +106,8 @@ export interface AccessRegistry {
    * presenting the id under ANOTHER name is not that access (audit S-1).
    */
   labelOf(jti: string): string | undefined;
+  /** The account the repository CONFIRMED for the id's login (`acct`), or undefined where none was recorded. */
+  accountOf(jti: string): string | undefined;
   add(entry: RegistryEntry): Promise<void>;
   remove(jti: string): Promise<boolean>;
   /**
@@ -411,6 +413,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     known: (jti) => entries.has(jti),
     expiresAt: (jti) => entries.get(jti)?.exp,
     labelOf: (jti) => entries.get(jti)?.label,
+    accountOf: (jti) => entries.get(jti)?.acct,
     async add(entry) {
       await commit(() => {
         // Undo restores the WHOLE map in its old order: re-inserting evicted

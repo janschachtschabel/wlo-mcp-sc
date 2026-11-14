@@ -184,9 +184,9 @@ const REGISTRY_POOL = 10;
 export async function loadSkillRegistry(
   collectionId: string,
   opts: { resolveHeads?: boolean } = {},
-): Promise<{ registry: SkillRegistry | null; reason?: RegistryMiss; scanTruncated?: ScanTruncation; tooLarge?: true }> {
-  const { picked, reason, truncated } = await scanForRegistry(collectionId);
-  if (!picked) return { registry: null, reason, ...(truncated ? { scanTruncated: truncated } : {}) };
+): Promise<{ registry: SkillRegistry | null; reason?: RegistryMiss; scanTruncated?: ScanTruncation; tooLarge?: true; refused?: true }> {
+  const { picked, reason, truncated, refused } = await scanForRegistry(collectionId);
+  if (!picked) return { registry: null, reason, ...(truncated ? { scanTruncated: truncated } : {}), ...(refused ? { refused } : {}) };
   return buildRegistryFrom(picked, collectionId, opts);
 }
 

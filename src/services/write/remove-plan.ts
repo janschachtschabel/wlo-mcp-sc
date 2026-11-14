@@ -19,11 +19,13 @@
  *   collection" into that request and into a state.
  */
 
+import { wrongKind } from '../../node-kind.js';
 import { getNodeMetadata } from '../../wlo-api.js';
 import { mapPool } from '../../concurrency.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { nodeTitle } from '../../node-match.js';
 import { log } from '../../logger.js';
+import { wroteNothing } from '../../upstream-error.js';
 import { failureCode } from '../failure-code.js';
 import { readFilingTarget, type FilingTarget } from './create-filing.js';
 import { findReference, listMembers, removeReference } from './collections.js';
@@ -73,6 +75,14 @@ export async function resolveRemovals(pairs: PairInput[]): Promise<ResolvedRemov
     if (!node) {
       reasons.push(`Das Material „${sanitizeText(id)}“ wurde nicht gefunden oder ist nicht lesbar.`);
       refused.push({ nodeId: id, code: 'not_found' });
+      return;
+    }
+    // What is taken out is a RECORD (a reference is one too) — the check the
+    // batch add applies. A collection or folder id here went on to the step.
+    const wrong = wrongKind(node, 'content');
+    if (wrong) {
+      reasons.push(`„${sanitizeText(id)}“ ${wrong.reason}`);
+      refused.push({ nodeId: id, code: wrong.code });
       return;
     }
     title.set(id, sanitizeText(nodeTitle(node) || id));
@@ -138,9 +148,8 @@ export async function removalOf(
     const outcome = await removeReference(collectionId, found.referenceId);
     if (outcome.status === 'ok') return { status: 'removed' };
     if (outcome.status === 'failed') {
-      const status = outcome.httpStatus ?? 0;
       // A refusal wrote nothing. Anything else is looked at again by the next call.
-      if (status >= 400 && status < 500 && status !== 429) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
+      if (wroteNothing(outcome.httpStatus ?? 0)) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
       return { status: 'pending', code: failureCode(outcome.detail) };
     }
     // Answered, and the reference is still there or could not be read.

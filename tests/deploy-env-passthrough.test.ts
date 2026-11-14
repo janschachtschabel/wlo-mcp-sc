@@ -50,8 +50,16 @@ test('the Dockerfile does not override the repository default', () => {
  *                          They belong in `.env.example` because that is where
  *                          an operator looks for "how do I publish this", and
  *                          `docker compose` reads them from the same file.
+ *   MEM_LIMIT            — the container's memory limit (`mem_limit:`), set by
+ *                          compose from OUTSIDE; the server never reads it.
  */
-const NOT_FORWARDED = new Set(['PORT', 'BIND_ADDR', 'HOST_PORT']);
+const NOT_FORWARDED = new Set(['PORT', 'BIND_ADDR', 'HOST_PORT', 'MEM_LIMIT']);
+
+test('MEM_LIMIT sets the memory limit, with the default unchanged at 512m', () => {
+  // Not forwarded — so the generic check above cannot see whether the variable
+  // documented in .env.example does anything at all.
+  assert.match(read('docker-compose.yml'), /^\s+mem_limit: \$\{MEM_LIMIT:-512m\}\s*$/m);
+});
 
 /** Variable names documented in .env.example, whether or not they are commented out. */
 function documentedVars(): string[] {

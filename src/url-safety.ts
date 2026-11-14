@@ -38,7 +38,8 @@ function hexPairToIpv4(rest: string): string | null {
 
 /**
  * Rewrite an IPv6 address that CARRIES an IPv4 to that IPv4; anything else is
- * returned unchanged. Three carriers exist, and each reaches a private host
+ * returned unchanged. Three carriers are recognised by prefix (two more by
+ * position, see `unwrapByPosition`), and each reaches a private host
  * when only the IPv6 shape is judged (audit 2026-11-05, measured by executing
  * the old check):
  *
@@ -56,9 +57,48 @@ function hexPairToIpv4(rest: string): string | null {
  */
 function unwrapEmbeddedIpv4(host: string): string {
   const carried = /^(?:::ffff:|64:ff9b::|::)(.+)$/.exec(host)?.[1];
-  if (!carried) return host;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(carried)) return carried;
-  return hexPairToIpv4(carried) ?? host;
+  if (carried) {
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(carried)) return carried;
+    const fromPair = hexPairToIpv4(carried);
+    if (fromPair) return fromPair;
+  }
+  return unwrapByPosition(host) ?? host;
+}
+
+/** The eight groups of an IPv6 address, or null when `host` is not one. */
+function ipv6Groups(host: string): number[] | null {
+  if (isIP(host) !== 6) return null;
+  // A dotted tail (`::ffff:0:127.0.0.1`) is two groups written differently.
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  const text = dotted
+    ? `${dotted[1]}${(Number(dotted[2]) * 256 + Number(dotted[3])).toString(16)}:${(Number(dotted[4]) * 256 + Number(dotted[5])).toString(16)}`
+    : host;
+  const [head = '', tail] = text.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const fill = tail === undefined ? 0 : 8 - left.length - right.length;
+  const groups = [...left, ...Array<string>(Math.max(0, fill)).fill('0'), ...right].map(g => parseInt(g, 16));
+  return groups.length === 8 && groups.every(Number.isFinite) ? groups : null;
+}
+
+/**
+ * Two more carriers, whose IPv4 sits at a fixed POSITION rather than behind a
+ * prefix the pattern above can cut off (audit 2026-11-14, S6):
+ *
+ * - 6to4 `2002:AABB:CCDD::/48` (RFC 3056) — a relay forwards to the IPv4 in
+ *   groups 2–3, so `2002:7f00:1::` is 127.0.0.1.
+ * - SIIT `::ffff:0:a.b.c.d` (`::ffff:0:0/96`, RFC 2765) — the translator's
+ *   spelling of an IPv4 host; NOT the mapped form, which has no zero group.
+ *
+ * Only the embedded address is judged: `2002:808:808::` is 8.8.8.8 and public.
+ */
+function unwrapByPosition(host: string): string | null {
+  const g = ipv6Groups(host);
+  if (!g) return null;
+  const quad = (hi: number, lo: number) => [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.');
+  if (g[0] === 0x2002) return quad(g[1]!, g[2]!);
+  if (g.slice(0, 4).every(x => x === 0) && g[4] === 0xffff && g[5] === 0) return quad(g[6]!, g[7]!);
+  return null;
 }
 
 /**
@@ -81,8 +121,12 @@ const PRIVATE_RANGES: ReadonlyArray<readonly [string, number, 'ipv4' | 'ipv6']> 
   ['::', 128, 'ipv6'],           // unspecified
   ['::1', 128, 'ipv6'],          // loopback
   ['64:ff9b:1::', 48, 'ipv6'],   // NAT64 local-use (RFC 8215)
+  // Teredo (RFC 4380): a tunnel to a host behind a NAT, its IPv4 obfuscated in
+  // the low bits. Refused whole — nothing a page is served from lives there.
+  ['2001::', 32, 'ipv6'],
   ['fc00::', 7, 'ipv6'],         // unique local
   ['fe80::', 10, 'ipv6'],        // link-local
+  ['fec0::', 10, 'ipv6'],        // site-local (deprecated, RFC 3879 — still routed inside a site)
   ['ff00::', 8, 'ipv6'],         // multicast
 ];
 
@@ -102,7 +146,9 @@ for (const [address, prefix, family] of PRIVATE_RANGES) blockList.addSubnet(addr
  * before a caller ever reads `.hostname` (measured 2026-08-03).
  */
 export function isPrivateHost(hostname: string): boolean {
-  const host = unwrapEmbeddedIpv4(hostname.toLowerCase().replace(/^\[|\]$/g, ''));
+  // A trailing dot is the fully qualified spelling of the SAME name: `localhost.`
+  // resolves like `localhost`, and `new URL()` keeps the dot.
+  const host = unwrapEmbeddedIpv4(hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, ''));
 
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
 

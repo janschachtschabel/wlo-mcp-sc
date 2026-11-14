@@ -35,6 +35,7 @@ import { resolvePositiveInt } from '../wlo-config.js';
 import { DRAIN_FACTOR } from '../read-body.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { BUSY_RETRY_DEFAULT_S } from '../services/failure-code.js';
+import { count } from '../metrics.js';
 
 export const UPLOAD_PATH = '/api/uploads';
 
@@ -86,6 +87,8 @@ function refuse(
  * answered with (its contract), `code` and `retryAfter` are the fields every other REST 429/503 carries.
  */
 function refuseRetryable(req: IncomingMessage, res: ServerResponse, status: 429 | 503, code: string, wait: number): void {
+  // Counted with the other limiters' refusals; the label is one of this file's own literals.
+  if (status === 429) count('wlo_rate_limited_total', { limiter: `upload_${code}` });
   refuse(req, res, status, { error: code, code, retryAfter: wait }, { 'Retry-After': String(wait) });
 }
 
@@ -144,7 +147,9 @@ export async function handleUploadRequest(
     refuse(req, res, STATUS['timeout']!, { error: 'timeout' });
   }, deps.timeoutMs);
   try {
-    const result = await deps.slots.put(identity, req, clientName(req.headers['x-upload-name']), declared);
+    // `holder`: the tool call that files this slot presents the same credential but proves no login,
+    // so for `Basic` it cannot derive the account identity — the credential itself opens the slot too.
+    const result = await deps.slots.put(identity, req, clientName(req.headers['x-upload-name']), declared, wer.holder);
     if (result.ok && timedOut) {
       // The answer (408) is out, the ref reached nobody: drop the slot (finding 9).
       deps.slots.take(result.slot.ref, identity);

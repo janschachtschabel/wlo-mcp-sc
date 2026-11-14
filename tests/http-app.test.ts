@@ -15,6 +15,7 @@ import { createHttpRequestHandler } from '../src/http-app.js';
 import type { HttpAppOptions } from '../src/http-app.js';
 import { createDistinctValueLimiter, createRateLimiter } from '../src/rate-limit.js';
 import { streamableHttpOptions } from '../src/mcp-transport.js';
+import { installFetchMock } from './fetchMock.js';
 
 function startServer(overrides: Partial<HttpAppOptions> = {}): Promise<{ server: http.Server; base: string }> {
   const handler = createHttpRequestHandler({
@@ -315,8 +316,19 @@ test('the protocol budget of a trusted client is 3x its rate, checked before the
 
 test('a 429 on /api/* names its code and the exact wait — REST, not JSON-RPC', async () => {
   const { server, base } = await startServer({ apiRateLimiter: createRateLimiter(1) });
+  // The first request is ALLOWED and so runs a real search: its upstream calls
+  // are answered here. Unmocked they went to the repository — netguard threw,
+  // the REST handler caught the throw as an upstream failure, and the test
+  // stayed green over six calls to staging (audit 2026-11-14, T2). The test's
+  // own requests to the loopback server keep the real fetch.
+  const direct = globalThis.fetch;
+  const mock = installFetchMock(() => ({ json: { nodes: [], pagination: { total: 0, from: 0, count: 0 } } }));
   try {
-    await fetch(`${base}/api/search?q=Optik`);
+    const first = await direct(`${base}/api/search?q=Optik`);
+    assert.equal(first.status, 200, 'the allowed request is answered from the mocked repository');
+    await first.arrayBuffer();
+    assert.ok(mock.calls.length > 0, 'and it did ask upstream');
+    mock.restore();
     const refused = await fetch(`${base}/api/search?q=Optik`);
     assert.equal(refused.status, 429);
     const wait = Number(refused.headers.get('retry-after'));
@@ -325,7 +337,7 @@ test('a 429 on /api/* names its code and the exact wait — REST, not JSON-RPC',
     assert.equal(body.code, 'rate_limited');
     assert.equal(body.retryAfter, wait);
     assert.match(body.error, /Rate limit exceeded/);
-  } finally { await close(server); }
+  } finally { mock.restore(); await close(server); }
 });
 
 test('a small JSON-RPC batch still works — every element is answered', async () => {

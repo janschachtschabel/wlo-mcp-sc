@@ -239,3 +239,44 @@ test('a listed id does not carry ANOTHER account — the public key lets anyone 
   // The honest block under the same id still works.
   assert.ok(credentialFromHeader(tokenFor({ ...payload, jti: 'angreifer-id', u: 'angreifer' })));
 });
+
+// ── review 2026-11-14, W14: the credential names the CONFIRMED account ────────
+
+test('a block whose entry carries the confirmed account hands it on; two spellings of one login share one budget', async (t) => {
+  const { setServiceCredentialForTest } = await import('../src/auth/credential.js');
+  const { budgetIdentity, currentIdentity } = await import('../src/services/write/confirm.js');
+  const { slotIdentity } = await import('../src/services/write/upload-slot.js');
+  const registry = await withSupport(t);
+  t.after(() => setServiceCredentialForTest(null));
+  await registry.add({ jti: 'laptop', label: 'Lehrerin', acct: 'lehrerin', iat: payload.iat });
+  await registry.add({ jti: 'handy', label: 'LEHRERIN', acct: 'lehrerin', iat: payload.iat });
+
+  const one = credentialFromHeader(tokenFor({ ...payload, jti: 'laptop', u: 'Lehrerin' }));
+  const two = credentialFromHeader(tokenFor({ ...payload, jti: 'handy', u: 'LEHRERIN' }));
+  assert.ok(one && two);
+  assert.deepEqual([one.acct, two.acct], ['lehrerin', 'lehrerin']);
+  assert.deepEqual([one.label, two.label], ['Lehrerin', 'LEHRERIN'], 'the label stays the spelling the block carries');
+  assert.equal(slotIdentity(one), slotIdentity(two), 'one account, one slot budget');
+
+  setServiceCredentialForTest(one);
+  const [budgetOne, bindingOne] = [budgetIdentity(), currentIdentity()];
+  setServiceCredentialForTest(two);
+  assert.equal(budgetIdentity(), budgetOne, 'one account, one budget of pending previews');
+  // Its own namespace: `user:lehrerin` is what an unproven `Basic lehrerin:…` gets.
+  assert.equal(budgetOne, 'acct:lehrerin');
+  assert.notEqual(currentIdentity(), bindingOne, 'a key stays bound to the block it was approved under');
+});
+
+test('an entry without a confirmed account yields a credential without one — the budget is the binding identity, as before', async (t) => {
+  const { setServiceCredentialForTest } = await import('../src/auth/credential.js');
+  const { budgetIdentity, currentIdentity } = await import('../src/services/write/confirm.js');
+  const registry = await withSupport(t);
+  t.after(() => setServiceCredentialForTest(null));
+  await registry.add({ jti: payload.jti, label: payload.u, iat: payload.iat });
+
+  const cred = credentialFromHeader(tokenFor());
+  assert.ok(cred);
+  assert.equal('acct' in cred, false);
+  setServiceCredentialForTest(cred);
+  assert.equal(budgetIdentity(), currentIdentity());
+});

@@ -49,7 +49,8 @@ test('withFiling keeps the error part beside the record it adds', () => {
 
 test('every field refused or dropped → not_stored with outcomeOpen: false — nothing was written', () => {
   const cs = buildChangeSet('n-1', 'content', {}, { 'cclom:title': ['Neu'], 'cclom:general_description': ['D'] });
-  const r = reportOutcome(cs, [{ property: 'cclom:title', ok: false, detail: '403' }] as never,
+  const r = reportOutcome(cs, // The STATUS says it was a refusal — the text beside it is for a person.
+    [{ property: 'cclom:title', ok: false, detail: '403', httpStatus: 403 }] as never,
     { outcomes: { 'cclom:general_description': 'dropped' }, allStored: false } as never);
   assert.equal(errorOf(r)?.['outcomeOpen'], false);
 });

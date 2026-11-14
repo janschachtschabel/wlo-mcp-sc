@@ -281,6 +281,40 @@ test('json output carries the outline, and the passages only when asked', async 
   } finally { mock.restore(); }
 });
 
+test('json output carries each text ONCE — in the block and in the structured answer', async () => {
+  const mock = textMock(STRUCTURED);
+  try {
+    const md = await callCompendium({ nodeId: 'coll-1' });
+    for (const args of [{}, { query: 'Lehrplan Thueringen' }]) {
+      const { text, result } = await callCompendium({ nodeId: 'coll-1', outputFormat: 'json', ...args });
+      const block = JSON.parse(text);
+      const sc = contentTextSchema.passthrough().parse(result['structuredContent']) as Record<string, unknown>;
+      // The joined Markdown beside `entries` is the same prose a second time
+      // (≈19 KB → ≈38 KB on a real collection), and with `query` it puts back
+      // what the narrowing took out.
+      assert.equal(block.text, undefined, 'block 0 carries no joined text');
+      assert.equal(sc['text'], '', 'nor does the structured answer repeat it');
+      assert.ok(text.length < md.text.length * 1.6 + 600,
+        `the JSON block must not carry the prose twice: ${text.length} vs markdown ${md.text.length}`);
+      assert.ok(JSON.stringify(sc).length < md.text.length * 1.6 + 600);
+      assert.deepEqual(block.entries, sc['entries'], 'one answer, read either way');
+      assert.equal(block.charCount, sc['charCount']);
+      assert.equal(block.truncated, sc['truncated']);
+    }
+  } finally { mock.restore(); }
+});
+
+test('json output names an unread collection in the block and in the structured answer alike', async () => {
+  const mock = installFetchMock((url) => (url.includes('/metadata') ? { status: 503 } : { json: {} }));
+  try {
+    const { text, result } = await callCompendium({ nodeId: 'coll-1', outputFormat: 'json' });
+    const block = JSON.parse(text);
+    const sc = result['structuredContent'] as Record<string, unknown>;
+    assert.ok(Array.isArray(block.missing) && block.missing.length === 1);
+    assert.deepEqual(block.missing, sc['missing']);
+  } finally { mock.restore(); }
+});
+
 test('a collection without a compendium text still answers, and says nothing is there', async () => {
   const mock = installFetchMock((url) => {
     if (url.includes('/metadata') && url.includes('coll-1')) {

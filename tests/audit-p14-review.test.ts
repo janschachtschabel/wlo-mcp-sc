@@ -146,7 +146,8 @@ const PLAN: BatchPlan = {
 };
 
 test('a preparation refused at the SERVER bound evicts nothing — not even the owner\'s idle batches', () => {
-  const bc = new BatchConfirmations({ clock: () => 1_000_000, maxPerOwner: 2, maxTotal: 3 });
+  // 6 in total: these callers name no pool, so they share the unproven half — 3 (`store-budget.ts`).
+  const bc = new BatchConfirmations({ clock: () => 1_000_000, maxPerOwner: 2, maxTotal: 6 });
   const running = bc.mint('b', PLAN);
   bc.redeem(running, 'b', 0);
   const alsoRunning = bc.mint('c', PLAN);

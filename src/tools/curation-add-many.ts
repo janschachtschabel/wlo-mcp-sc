@@ -22,7 +22,7 @@ import {
 import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
 import type { WloToolResult } from '../apps/register.js';
 import { previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { runPlannedCall } from './curation-plan.js';
 import { notPublicNote, withNotPublic } from './curation-public.js';
 
@@ -40,10 +40,7 @@ const CODE_NOTE: Record<string, string> = {
   already_proposed: 'war für diese Sammlung schon vorgeschlagen (offen oder bereits entschieden) — liegt NICHT in der Sammlung',
   source_is_original: 'liegt in der Quelle als Original, nicht als Verweis — dort NICHT herausgenommen (das würde das Material löschen); liegt jetzt in BEIDEN',
 };
-// "Not filed" over an outcome nobody knows sends a model to file again.
-const label = (s: ItemState) => (s.status === 'failed' && s.outcomeOpen
-  ? 'offen — Ausgang unbekannt, bitte prüfen'
-  : STATUS_LABEL[s.status] ?? s.status) + (s.code ? ` (${CODE_NOTE[s.code] ?? s.code})` : '');
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL, CODE_NOTE, { where: 'in der Sammlung' });
 
 function answer(plan: StoredPlan<FilingItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Aufnahme in Sammlungen:', report, plan.expiresAt, plan.items.map(i => ({

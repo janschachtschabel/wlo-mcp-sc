@@ -308,11 +308,17 @@ test('a delete whose read-back times out is not reported as failed', async () =>
   const c = await client();
   try {
     const preview = toolText(await c.callTool({ name: 'wlo_delete_content', arguments: { nodeId: NODE } }));
-    const text = toolText(await c.callTool({
+    const answer = await c.callTool({
       name: 'wlo_delete_content', arguments: { nodeId: NODE, confirmToken: tokenFrom(preview) },
-    }));
+    });
+    const text = toolText(answer);
     assert.doesNotMatch(text, /konnte nicht gelöscht werden/i);
-    assert.match(text, /offen|überprüf|nachsehen/i);
+    // The sentence and the fields a program reads — `offen|überprüf|nachsehen`
+    // was satisfied by the key-spent block alone, whatever the first block said.
+    assert.match((answer.content as Array<{ text: string }>)[0]!.text, /ob sie gewirkt hat, ist damit offen/);
+    const error = (answer.structuredContent as { error: { code: string; outcomeOpen?: boolean } }).error;
+    assert.equal(error.code, 'unverified');
+    assert.equal(error.outcomeOpen, true, 'a delete that was sent is never reported as "nothing happened"');
   } finally {
     await c.close();
     mock.restore();

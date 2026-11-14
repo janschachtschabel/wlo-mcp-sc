@@ -15,7 +15,7 @@ import { oneLine } from '../formatter.js';
 import { getUrlText } from '../services/url-text.js';
 import { registerWloTool } from '../apps/register.js';
 import { urlTextSchema } from '../apps/outputSchemas.js';
-import { toolError } from './shared.js';
+import { toolError, UNTRUSTED_TEXT_FIELD, untrustedTextLead } from './shared.js';
 
 const DEFAULT_MAX_CHARS = 200000;
 
@@ -61,7 +61,9 @@ UNSICHER (unsafe): ruft eine vom Aufrufer gewählte Adresse über einen fremden 
 
         if ((params.outputFormat ?? 'markdown') === 'json') {
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+            // The note rides in the TEXT block, ahead of the page text, and not in
+            // `structuredContent`: that one is the declared machine contract.
+            content: [{ type: 'text' as const, text: JSON.stringify(result.text ? { note: UNTRUSTED_TEXT_FIELD, ...result } : result) }],
             structuredContent: result,
           };
         }
@@ -75,10 +77,9 @@ UNSICHER (unsafe): ruft eine vom Aufrufer gewählte Adresse über einen fremden 
         if (result.truncated) {
           lines.push(oneLine(`Hinweis: gekürzt auf ${maxChars} von ${result.charCount} Zeichen.`));
         }
-        lines.push('');
-        lines.push(result.reason
-          ? `_Kein Text: ${REASON_TEXT[result.reason] ?? result.reason} (reason: ${result.reason})_`
-          : result.text);
+        // A page the CALLER chose: said before it, never after (`UNTRUSTED_TEXT_NOTE`).
+        if (result.reason) lines.push('', `_Kein Text: ${REASON_TEXT[result.reason] ?? result.reason} (reason: ${result.reason})_`);
+        else lines.push(...untrustedTextLead(), result.text);
 
         return {
           content: [{ type: 'text' as const, text: lines.join('\n') }],

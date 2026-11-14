@@ -25,7 +25,7 @@ import { getChildCollectionsResult, getCollectionContents, readNodeMetadata } fr
 import { mapPool } from '../../concurrency.js';
 import { sanitizeText } from '../../text-sanitize.js';
 import { collectionTitleFromProperties } from '../../node-match.js';
-import { isRefusal } from '../../upstream-error.js';
+import { isRefusal, wroteNothing } from '../../upstream-error.js';
 import { failureCode } from '../failure-code.js';
 import { log } from '../../logger.js';
 import { deleteCollection } from './collections.js';
@@ -188,9 +188,8 @@ export function deleteEmptyStep(plan?: { state: ReadonlyMap<string, ItemState> }
       if (outcome.status === 'ok') return { status: 'deleted' };
       if (outcome.status === 'failed') {
         log.warn('batch delete step failed', { nodeId: item.nodeId, detail: outcome.detail });
-        const status = outcome.httpStatus ?? 0;
         // A refusal deleted nothing. Anything else is looked at again: gone then is OUR delete.
-        if (status >= 400 && status < 500 && status !== 429) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
+        if (wroteNothing(outcome.httpStatus ?? 0)) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
         return { status: 'pending', code: failureCode(outcome.detail) };
       }
       return { status: 'unverified', outcomeOpen: true };

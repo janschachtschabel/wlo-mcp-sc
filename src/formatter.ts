@@ -312,20 +312,62 @@ export function formatNodes(nodes: WloNode[]): FormattedNode[] {
 }
 
 /**
+ * What a list answer says about ITSELF beside its rows: a source that did not
+ * answer, a branch the repository refused, a bound that cut the read. Every key
+ * is absent on a complete answer.
+ */
+export interface ListDisclosures {
+  /** A source did not answer — the list may be short (chatbot feedback 2026-11-13, D7). */
+  incomplete?: true;
+  /** A branch the repository refused to open: not an outage, not empty (2026-11-14). */
+  restricted?: true;
+  scanCapped?: true;
+  walkCapped?: true;
+  contentsCut?: true;
+  totalIsLowerBound?: true;
+  /** The total is the licence FAMILY's — the exact count could not be had. */
+  totalIsUpperBound?: true;
+  /** The page is short of the catalogue: where the next one starts. */
+  more?: { nextSkipCount: number };
+  skipLimitReached?: true;
+  truncated?: true;
+  collectionTotal?: number;
+}
+
+/** The same keys as they are computed: a condition, where the answer carries a marker. */
+export type ListDisclosureFlags = {
+  [K in keyof ListDisclosures]?: ListDisclosures[K] | (ListDisclosures[K] extends true | undefined ? boolean : never);
+};
+
+/**
+ * The disclosures that HOLD, as the fields an answer carries.
+ *
+ * One object for both halves of an answer. The JSON block and
+ * `structuredContent` were assembled separately, and a field added to one was
+ * missing from the other: the bounds of a walk reached only a client that reads
+ * the structured answer, while `incomplete` had been put into the block exactly
+ * because some clients parse nothing else.
+ */
+export function listDisclosures(flags: ListDisclosureFlags): ListDisclosures {
+  return Object.fromEntries(
+    Object.entries(flags).filter(([, value]) => value !== undefined && value !== false),
+  ) as ListDisclosures;
+}
+
+/**
  * Render a structured JSON envelope. Use when the caller wants to parse fields
  * directly instead of regex-matching the markdown output.
+ *
+ * `flags` go into the TEXT too: a client that parses block 0 and never looks at
+ * `structuredContent` otherwise reads a list a source left short, or a bound
+ * cut, as the whole list.
  */
-export function renderToJson(nodes: FormattedNode[], totalHits?: number, flags: { incomplete?: boolean; restricted?: boolean } = {}): string {
+export function renderToJson(nodes: FormattedNode[], totalHits?: number, flags: ListDisclosureFlags = {}): string {
   return JSON.stringify({
     total: totalHits ?? nodes.length,
     count: nodes.length,
     results: nodes,
-    // In the TEXT too: a client that parses block 0 and never looks at
-    // `structuredContent` otherwise reads a list a source left short as the
-    // whole list (chatbot feedback 2026-11-13, D7). Absent when complete.
-    ...(flags.incomplete ? { incomplete: true } : {}),
-    // A branch the repository refused to open: not an outage, not empty (2026-11-14).
-    ...(flags.restricted ? { restricted: true } : {}),
+    ...listDisclosures(flags),
   });
 }
 
@@ -401,11 +443,14 @@ function headingFor(title: string, url: string): string {
 export function renderToText(
   nodes: FormattedNode[],
   totalHits?: number,
-  opts: { registryHint?: boolean } = {},
+  opts: { registryHint?: boolean; totalIsLowerBound?: boolean } = {},
 ): string {
   const lines: string[] = [];
   if (totalHits !== undefined) {
-    lines.push(`Gefundene Treffer gesamt: ${totalHits}, zeige ${nodes.length}\n`);
+    // A total summed over a PART (a walk that stopped at a full page) is a floor.
+    // Said in the line that prints the number: a sentence of its own stood under
+    // nearly every first page of a recursive listing.
+    lines.push(`Gefundene Treffer gesamt: ${opts.totalIsLowerBound ? 'mindestens ' : ''}${totalHits}, zeige ${nodes.length}\n`);
   }
   for (const n of nodes) {
     const parts: string[] = [];

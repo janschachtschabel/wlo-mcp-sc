@@ -130,9 +130,13 @@ Gib EINES an:
             if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
             return { content: emptyContent, structuredContent: empty };
           }
+          // Three cases, three sentences: an outage, a refusal (the phrase the
+          // chatbot recognises a refusal by), and "there is none".
           const prose = reason === 'source_unreachable'
             ? incompleteNotice('Themenseiten', true)
-            : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
+            : reason === 'node_not_readable'
+              ? 'Die Themenseite ist mit dieser Anmeldung nicht lesbar (node_not_readable).'
+              : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
           return {
             content: [{ type: 'text' as const, text: emptyRegistry ? `${prose}\n\n${emptyRegistry}` : prose }],
             structuredContent: empty,

@@ -9,9 +9,12 @@
  *  - `handleRestRequest(req, res)` — the thin node:http adapter mounted by `http.ts`.
  */
 
+import { isAccident } from '../accident.js';
 import { log } from '../logger.js';
 import { parseRequestUrl } from '../request-url.js';
 import type { RestResult } from './result.js';
+import { failureFields, type FailureCode } from '../services/failure-code.js';
+import { isClientGone } from '../request-scope.js';
 import {
   SKILL_PREFIX,
   handleSearch,
@@ -72,7 +75,7 @@ export async function routeRestRequest(
   // filters still ride the query string and degrade gracefully when stripped.
   // An explicit `q` query param wins (it is the older, documented contract).
   if (path.startsWith(SEARCH_PREFIX) && path.length > SEARCH_PREFIX.length) {
-    if (method !== 'GET') return { status: 405, json: { error: 'Method not allowed. Use GET.' } };
+    if (method !== 'GET') return METHOD_NOT_ALLOWED;
     let term: string;
     try {
       term = decodeURIComponent(path.slice(SEARCH_PREFIX.length));
@@ -84,15 +87,14 @@ export async function routeRestRequest(
       return await handleSearch(parsed.searchParams);
     } catch (err) {
       // The ROUTE, not the path: here the path ends in the search term.
-      log.error('rest handler error', { path: SEARCH_PREFIX, error: err instanceof Error ? err.message : String(err) });
-      return { status: 500, json: { error: 'Internal server error' } };
+      return failureResult(SEARCH_PREFIX, err);
     }
   }
 
   // Variable path: raw skill Markdown by id (`/api/skills/<id>`). Checked before
   // the exact-match table (which owns the `/api/skills` list route).
   if (path.startsWith(SKILL_PREFIX)) {
-    if (method !== 'GET') return { status: 405, json: { error: 'Method not allowed. Use GET.' } };
+    if (method !== 'GET') return METHOD_NOT_ALLOWED;
     // Malformed percent-escapes (e.g. %ZZ) make decodeURIComponent throw a
     // URIError; decoding must happen inside a guard or the rejection escapes to
     // the http.ts call site and the socket hangs until requestTimeout.
@@ -105,23 +107,78 @@ export async function routeRestRequest(
     try {
       return await handleSkillRaw(id);
     } catch (err) {
-      log.error('rest handler error', { path, error: err instanceof Error ? err.message : String(err) });
-      return { status: 500, json: { error: 'Internal server error' } };
+      // The ROUTE here too: the path ends in an id the caller chose.
+      return failureResult(SKILL_PREFIX, err);
     }
   }
 
   const handler = ROUTES[path];
   if (!handler) return null;
-  if (method !== 'GET') return { status: 405, json: { error: 'Method not allowed. Use GET.' } };
+  if (method !== 'GET') return METHOD_NOT_ALLOWED;
   try {
     return await handler(parsed.searchParams);
   } catch (err) {
-    log.error('rest handler error', {
-      path,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    return failureResult(path, err);
+  }
+}
+
+/** Every route here is GET-only; a 405 has to say which method the path does take. */
+const METHOD_NOT_ALLOWED: RestResult = { status: 405, json: { error: 'Method not allowed. Use GET.' }, allow: 'GET' };
+
+/**
+ * What a caller reads per failure code — fixed English sentences, never the
+ * repository's own text or ours: a thrown message names functions and can quote
+ * an upstream body.
+ */
+const FAILURE: Record<FailureCode, { status: number; error: string }> = {
+  not_found: { status: 404, error: 'Not found.' },
+  forbidden: { status: 403, error: 'The repository refused this read: not readable without a login.' },
+  upstream_busy: { status: 503, error: 'The repository is busy. Try again shortly.' },
+  timeout: { status: 504, error: 'The repository did not answer in time.' },
+  upstream_error: { status: 502, error: 'The repository could not be read.' },
+};
+
+/**
+ * A thrown handler error as a response.
+ *
+ * Classified, where it was a generic 500 for everything: "not there", "not
+ * public" and "busy for ten seconds" all read as a defect of this server, and a
+ * client could neither stop retrying a 404 nor wait out a 503. The code is
+ * `failureCode`'s — the one the MCP tools answer with — and the body is the REST
+ * shape the 429s already use, `{error, code, retryAfter?}`.
+ *
+ * Which errors are OURS is `isAccident`'s answer — the one rule `toolError`
+ * goes by, so the two surfaces cannot disagree about the same throw. An
+ * accident stays a 500 without a code or a detail; the log has both. A plain
+ * `Error` counts as the repository's: that is what every read path here throws
+ * when a listing did not answer or a body was not JSON, and telling those
+ * apart from a rare invariant of ours by their WORDING (tried, review
+ * 2026-11-14) made every new outage sentence a silent 500.
+ */
+function failureResult(route: string, err: unknown): RestResult {
+  // A hang-up is not a failure (`toolError` holds the same line): nobody reads
+  // this answer, and an error line per closed tab buries the ones an operator
+  // must read. 499 so that it does not count among the server errors either.
+  if (isClientGone(err)) {
+    log.info('rest request abandoned — its client is gone', { path: route });
+    return { status: 499, json: { error: 'Client closed request' } };
+  }
+  const detail = { path: route, error: err instanceof Error ? err.message : String(err) };
+  if (isAccident(err)) {
+    log.error('rest handler error', detail);
     return { status: 500, json: { error: 'Internal server error' } };
   }
+  const { code, retryAfter } = failureFields(err);
+  // A refusal is the ordinary reply for an id that does not exist or is not
+  // public — on an open endpoint, an error line for each buried the outages.
+  if (code === 'not_found' || code === 'forbidden') log.warn('rest handler error', detail);
+  else log.error('rest handler error', detail);
+  const { status, error } = FAILURE[code];
+  return {
+    status,
+    json: { error, code, ...(retryAfter ? { retryAfter } : {}) },
+    ...(retryAfter ? { retryAfter } : {}),
+  };
 }
 
 /** Minimal request/response surface the adapter needs (satisfied by node:http). */
@@ -162,6 +219,7 @@ export async function handleRestRequest(req: RestReq, res: RestRes): Promise<boo
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
       ...(result.retryAfter ? { 'Retry-After': String(result.retryAfter) } : {}),
+      ...(result.allow ? { Allow: result.allow } : {}),
     });
     res.end(JSON.stringify(result.json));
   }

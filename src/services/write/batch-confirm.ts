@@ -25,6 +25,7 @@ import { keyedDigest } from '../../keyed-digest.js';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { BatchRole } from './batch-manifest.js';
+import { budgetOf, poolShare, type TrustPool } from './store-budget.js';
 
 export interface BatchEntry {
   index: number;
@@ -51,7 +52,21 @@ export interface StoreResult {
   detail?: string;
   /** With `failed`: something MAY exist all the same (a 5xx, an answer without an id). */
   open?: true;
+  /** With `failed`, where the repository answered: what it answered — the code of the reply is read from it. */
+  httpStatus?: number;
 }
+
+/**
+ * A manifest outcome that does not say whether vorgang.json exists: a create
+ * answered 5xx/429 (`failed` + `open`), or no answer at all (`unverified`
+ * without an id). With an id the record is known — that is a result.
+ */
+export function isOpenManifest(result: StoreResult): boolean {
+  return (result.status === 'failed' && result.open === true) || (result.status === 'unverified' && !result.nodeId);
+}
+
+/** The open outcome of an earlier manifest call, and since when this batch exists (what a look may attribute to it). */
+export interface OpenManifest { result: StoreResult; since: number }
 
 export type Redeem =
   | { outcome: 'ok'; plan: BatchPlan; entry: BatchEntry }
@@ -64,6 +79,8 @@ export type FolderChoice =
 
 interface Pending {
   owner: string;
+  /** Which half of the store it lives in — and the only half it may be dropped FOR (`mint`). */
+  pool: TrustPool;
   plan: BatchPlan;
   expires: number;
   results: Map<number, StoreResult>;
@@ -82,7 +99,11 @@ interface Pending {
 
 export const BATCH_TTL_MS = 30 * 60 * 1000;
 /** Batches held at once across ALL owners — the owner is a header hash, so the per-owner cap alone
- *  bounds memory only as far as the per-address login limiter does. Oldest out. */
+ *  bounds memory only as far as the per-address login limiter does. Oldest out.
+ *
+ *  The TOTAL of two pools (`store-budget.ts`, `poolShare`): preparing a batch proves no login, and
+ *  every rotated password is a new owner — counted in one pool, that evicted other people's
+ *  prepared, unstarted batches (review 2026-11-14). */
 const MAX_TOTAL_BATCHES = 500;
 const FOLDER_OPEN_NOTE = 'Ob der Ordner angelegt wurde, ist offen — für diesen Stapel wird kein zweiter angelegt. '
   + 'Bitte im persönlichen Bereich nachsehen und den Stapel neu vorbereiten.';
@@ -107,6 +128,15 @@ export function batchOwner(cred: { header: string; source: string } | null): str
   if (!cred || cred.source !== 'user') return null;
   // Keyed (`keyed-digest.ts`): a bare hash of the header is a password hash, and this one is held for the batch's lifetime.
   return keyedDigest(`batch:${cred.header}`);
+}
+
+/**
+ * Which half of the store a credential's batches live in (`store-budget.ts`): the proven one for a
+ * confirmed account or a listed block, the unproven one for a `Basic` header. The OWNER stays the
+ * header digest — this decides only whose idle batches may make room for a new one.
+ */
+export function batchPool(cred: Parameters<typeof budgetOf>[0]): TrustPool {
+  return budgetOf(cred).pool;
 }
 
 /** Every batch in the way of a new one is being filed — `scope` says whose limit it is. */
@@ -140,8 +170,13 @@ export class BatchConfirmations {
    * next file then answered `batch_unknown` over a half-filed folder (audit
    * 2026-11-12, K-13). When every batch in the way is under way, the new one is
    * refused instead (`TooManyBatches`): finish one, or let it run out.
+   *
+   * `pool` (`batchPool`) bounds the SERVER-wide half of that: a new batch is
+   * counted against its pool's share and makes room from that pool's idle
+   * batches only. Without a pool it is the unproven one — the safe side for a
+   * caller that does not say.
    */
-  mint(owner: string, plan: BatchPlan): string {
+  mint(owner: string, plan: BatchPlan, pool: TrustPool = 'unproven'): string {
     this.sweep();
     // Under way: something of it was filed or is being filed, and its manifest —
     // the last step — is not in yet. A FINISHED batch is history, not work.
@@ -163,13 +198,18 @@ export class BatchConfirmations {
     const all = [...this.pending];
     const own = idleToEvict(all.filter(([, p]) => p.owner === owner), this.maxPerOwner, new Set());
     if (!own) throw new TooManyBatches('owner');
-    const any = idleToEvict(all, this.maxTotal, new Set(own));
+    const any = idleToEvict(all.filter(([, p]) => p.pool === pool), poolShare(this.maxTotal, pool), new Set(own));
     if (!any) throw new TooManyBatches('server');
     for (const token of [...own, ...any]) this.pending.delete(token);
     const token = `${randomBytes(18).toString('base64url')}.${batchFingerprint(plan).slice(0, 12)}`;
-    this.pending.set(token, { owner, plan: structuredClone(plan), expires: this.clock() + BATCH_TTL_MS,
+    this.pending.set(token, { owner, pool, plan: structuredClone(plan), expires: this.clock() + BATCH_TTL_MS,
       results: new Map(), inFlight: new Set(), manifest: 'none' });
     return token;
+  }
+
+  /** Batches held right now, both pools together. Reads only: nothing is swept. */
+  get size(): number {
+    return this.pending.size;
   }
 
   /** Test seam: forget every batch. */
@@ -245,12 +285,21 @@ export class BatchConfirmations {
    * Plan and results for the manifest, or — when it was claimed before — what is
    * KNOWN about it: in flight, or the recorded result (like `redeem`'s `already`).
    */
-  claimManifest(token: string, owner: string): { plan: BatchPlan; results: Map<number, StoreResult> } |
+  claimManifest(token: string, owner: string): { plan: BatchPlan; results: Map<number, StoreResult>; open?: OpenManifest } |
     { already: StoreResult } | 'unknown' | 'expired' | 'mismatch' {
     const p = this.live(token, owner);
     if (typeof p === 'string') return p;
     if (p.manifest === 'inFlight') return { already: MANIFEST_IN_FLIGHT };
-    if (p.manifest !== 'none') return { already: p.manifest };
+    if (p.manifest !== 'none') {
+      if (!isOpenManifest(p.manifest)) return { already: p.manifest };
+      // An OPEN outcome is no answer to hand out again and again: recorded for
+      // good, every later call said "schon behandelt" over a manifest nobody
+      // had looked for — and nothing ever looked (review 2026-11-14). The claim
+      // goes out once more, MARKED: the caller must look before it files.
+      const earlier = p.manifest;
+      p.manifest = 'inFlight';
+      return { plan: p.plan, results: p.results, open: { result: earlier, since: p.expires - BATCH_TTL_MS } };
+    }
     p.manifest = 'inFlight';
     return { plan: p.plan, results: p.results };
   }

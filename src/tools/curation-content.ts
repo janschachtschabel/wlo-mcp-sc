@@ -23,9 +23,11 @@ import { buildChangeSet } from '../services/write/change-set.js';
 import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
 import { desiredOn, titleOn } from '../services/write/collection-fields.js';
 import { isCollectionNode } from '../node-kind.js';
-import { createContentNode, resolveCreateParent, submitForReview, REVIEW_STATUS } from '../services/write/nodes-lifecycle.js';
+import { createContentNode, resolveCreateParent, REVIEW_STATUS } from '../services/write/nodes-lifecycle.js';
+import { sendSubmission } from '../services/write/submit-plan.js';
+import { refusalCode, reportWithUpload, uploadNote } from './curation-report.js';
 import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
-import { uploadContent, type UploadOutcome } from '../services/write/content-upload.js';
+import { contentStateOf, uploadContent } from '../services/write/content-upload.js';
 import { findByTitle, findByUrl, type ExistingRecord } from '../services/write/duplicates.js';
 import { fileRecord, readFilingTarget, type FilingTarget } from '../services/write/create-filing.js';
 import { fileExistingRecord, filingSentence, withFiling } from './curation-create-filing.js';
@@ -114,35 +116,6 @@ const submitSchema = {
   comment: z.string().max(1000).optional().describe('Notiz für die Redaktion.'),
   confirmToken: CONFIRM_TOKEN,
 };
-
-/**
- * What became of the file, as one sentence for both tools.
- *
- * Worded about the FILE, not about the surrounding act, because the same
- * sentence has to be true beside "Angelegt: <id>" and after a metadata change —
- * "Der Datensatz wurde angelegt" would be a lie on the update path.
- *
- * Every outcome except `stored` is stated plainly, including the one edu-sharing
- * makes easy to miss: a `200` for an upload the record does not show. Someone
- * told "created" who finds an empty record learns the hard way; someone told the
- * record has no content yet can fix it.
- */
-function uploadNote(upload: UploadOutcome | undefined): string {
-  if (!upload) return '';
-  switch (upload.status) {
-    case 'stored':
-      return ` — Datei hochgeladen (${upload.size} Bytes).`;
-    case 'dropped':
-      return ' — ACHTUNG: Der Datensatz trägt danach KEINEN Inhalt. Das Hochladen wurde mit Erfolg '
-        + 'beantwortet, der Datensatz zeigt aber keine Datei. Bitte die Rechte prüfen und den Inhalt '
-        + 'erneut hochladen.';
-    case 'unverified':
-      return ` — Das Hochladen wurde abgeschickt, ließ sich danach aber nicht überprüfen. Ob der Datensatz `
-        + `den Inhalt trägt, ist offen. (${upload.detail})`;
-    default:
-      return ` — ACHTUNG: Das Hochladen der Datei ist fehlgeschlagen: ${upload.detail}`;
-  }
-}
 
 /**
  * A record for this URL already exists — coded `exists` with the record, so a
@@ -339,17 +312,23 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // would reach the original either way: bytes are not copied per
         // reference (measured, F4). Sending it somewhere else than the metadata
         // would make one call obey the confirmed preview and the other not.
-        const upload = file ? await uploadContent(cs.nodeId, file) : undefined;
-        const note = uploadNote(upload).replace(/^ — /, '');
+        //
+        // `before`: what the record held when it was read for the preview —
+        // without it a dropped replacement cannot be told from a stored one.
+        const upload = file ? await uploadContent(cs.nodeId, file, undefined, contentStateOf(baseline.written)) : undefined;
 
-        try {
-          const verified = await verifyWrite(cs);
-          const report = reportOutcome(cs, statuses, verified);
-          return note ? prependText(report, note) : report;
-        } catch (err) {
-          const report = unverifiedReply(err);
-          return note ? prependText(report, note) : report;
-        }
+        const fieldReport = async (): Promise<WloToolResult> => {
+          try {
+            return reportOutcome(cs, statuses, await verifyWrite(cs));
+          } catch (err) {
+            return unverifiedReply(err);
+          }
+        };
+        if (!upload) return await fieldReport();
+        // The upload is part of the RESULT (code, `outcomeOpen`), not a line in
+        // front of it. No field report for a call that changes no field: its
+        // "Es gab nichts zu ändern" stood under a file that had just been replaced.
+        return reportWithUpload(cs.changes.length > 0 ? await fieldReport() : null, upload);
       } catch (err) {
         return timeoutOrError('Der Datensatz konnte nicht bearbeitet werden', err,
           `Ob die Änderung an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`, { preview: isPreviewCall(params) });
@@ -494,28 +473,33 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // The upload has its own read-back, so it gets its own line — and an
         // upload that did not land is stated as such next to the id, never
         // folded into a general success.
-        const head = `Angelegt: ${result.nodeId}${uploadNote(result.upload)}`;
-        let report;
+        const created = `Angelegt: ${result.nodeId}`;
+        let fields: WloToolResult;
         try {
-          const verified = await verifyWrite(stored);
-          report = markWritten(reportOutcome(stored, result.statuses, verified), result.nodeId);
+          fields = reportOutcome(stored, result.statuses, await verifyWrite(stored));
         } catch (err) {
-          // `markWritten` here too: the read-back failed, the create did not. Without
-          // it the spent-key advice was "preview again" over a record this very
-          // answer names (review of phase 3).
-          report = markWritten(unverifiedReply(err), result.nodeId);
+          fields = unverifiedReply(err);
         }
+        // A file that did not arrive makes the answer an ERROR with the id in
+        // it (`markWritten`): as a line above a success, a record created
+        // without its content was replayed as done (audit 2026-11-14, W1).
+        //
+        // `markWritten` in every case, the failed read-back included: the
+        // read-back failed, the create did not. Without it the spent-key advice
+        // was "preview again" over a record this very answer names (review of phase 3).
+        let report = markWritten(
+          result.upload ? reportWithUpload(fields, result.upload, `${created} — `) : prependText(fields, created),
+          result.nodeId);
         if (result.incomplete) {
           // The record exists and a step after the create got no answer. An
           // error whatever the read-back shows of the fields — the file's state
           // is not in it — and one that carries the id (K-6).
+          const head = `${created}${result.upload ? ` — ${uploadNote(result.upload)}` : ''}`;
           const open = codedError('unverified',
             `${head} — ${result.incomplete} NICHT erneut anlegen: der Datensatz existiert. `
               + 'Was fehlt, lässt sich mit wlo_update_content nachtragen.',
             { outcomeOpen: true, recordExists: true, nodeId: result.nodeId });
-          report = { ...open, content: [...open.content, ...report.content] };
-        } else {
-          report = prependText(report, head);
+          report = { ...open, content: [...open.content, ...fields.content] };
         }
         // Create first, then file: a failed filing leaves the record and is
         // reported beside it, never as a failure of the whole call.
@@ -556,7 +540,10 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         requireWrite();
 
         const nodeId = String(params['nodeId'] ?? '');
-        const comment = typeof params['comment'] === 'string' ? params['comment'] : '';
+        // What is SHOWN is what is sent: flattened once, for the preview and for
+        // the queue — the raw note carried invisible characters past the person
+        // who approved it (the batch tool's rule).
+        const comment = typeof params['comment'] === 'string' ? flattenText(params['comment']) : '';
 
         const node = await getNodeMetadata(nodeId);
         if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
@@ -582,7 +569,7 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         // Flattened rather than capped: it is exactly the text they must read.
         const cs = buildChangeSet(nodeId, 'content', node.properties ?? {}, {}, {
           action: `Reicht „${recordTitle(node.properties)}“ (${nodeId}) zur redaktionellen Prüfung ein.`
-            + (comment ? ` Notiz an die Redaktion: „${flattenText(comment)}“` : ''),
+            + (comment ? ` Notiz an die Redaktion: „${comment}“` : ''),
         });
 
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
@@ -596,27 +583,41 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
         const refusal = confirmOrExplain(token, cs);
         if (refusal) return refusal;
 
-        const outcome = await submitForReview(nodeId, comment);
+        // ONE reading for both submit tools (`sendSubmission`): the codes, and
+        // the look at the record after a 5xx, are the batch tool's.
+        const outcome = await sendSubmission(nodeId, comment);
         switch (outcome.status) {
           case 'submitted':
             return { content: [{ type: 'text' as const, text:
-              `Zur redaktionellen Prüfung eingereicht — der Datensatz trägt jetzt den Status ` +
-              `${outcome.workflowStatus} und liegt bei ${sanitizeText(outcome.receiver)}.` }] };
-          case 'dropped':
+              `Zur redaktionellen Prüfung eingereicht — der Datensatz trägt jetzt den Status ${REVIEW_STATUS}` +
+              `${outcome.receiver ? ` und liegt bei ${sanitizeText(outcome.receiver)}` : ''}.` }] };
+          case 'not_stored':
             // The measured failure this read-back exists for: the call succeeds
             // and the record shows no submission. "Eingereicht" would leave a
             // draft in nobody's queue while the user believes an editor has it.
-            return errorText(
+            // Read back, so it is KNOWN that nothing is in the queue.
+            return codedError('not_stored',
               'Das Einreichen wurde mit Erfolg beantwortet, der Datensatz zeigt danach aber keinen ' +
                 'Workflow-Status. Er wurde also NICHT eingereicht — bitte die Rechte an diesem Datensatz prüfen.',
-            );
+              { outcomeOpen: false });
           case 'unverified':
-            return errorText(
+            return codedError('unverified',
               `Das Einreichen wurde abgeschickt, konnte danach aber nicht überprüft werden. Ob der Datensatz ` +
-                `in der Redaktions-Warteschlange liegt, ist damit offen. (${outcome.detail})`,
-            );
+                `in der Redaktions-Warteschlange liegt, ist damit offen. (${outcome.detail})`, { outcomeOpen: true });
+          case 'pending':
+            return codedError(outcome.code,
+              `Das Einreichen wurde nicht bestätigt (${outcome.detail}), und der Datensatz ließ sich danach nicht ` +
+                'verlässlich lesen. Ob er in der Redaktions-Warteschlange liegt, ist damit offen — bitte am Datensatz ' +
+                'nachsehen, bevor erneut eingereicht wird.', { outcomeOpen: true });
           default:
-            return errorText(`Das Einreichen ist fehlgeschlagen: ${outcome.detail}`);
+            // A refusal wrote nothing; after a 5xx the record was read and is NOT in the queue —
+            // which is no proof either (a proxy may answer while the PUT is still on its way).
+            return outcome.outcomeOpen
+              ? codedError(outcome.code, `Das Einreichen ist fehlgeschlagen: ${outcome.detail} Der Datensatz zeigt gerade keinen `
+                + 'Workflow-Status; ob die Anfrage noch wirkt, ist offen — bitte am Datensatz nachsehen, bevor erneut eingereicht wird.',
+                { outcomeOpen: true })
+              : codedError(refusalCode(outcome.httpStatus), `Das Einreichen wurde abgelehnt: ${outcome.detail} Es wurde nichts eingereicht.`,
+                { outcomeOpen: false });
         }
       } catch (err) {
         return timeoutOrError('Der Datensatz konnte nicht eingereicht werden', err,

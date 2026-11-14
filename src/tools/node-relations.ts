@@ -13,9 +13,14 @@ import { getNodeCollections } from '../services/node-collections.js';
 import { oneLine, renderToText } from '../formatter.js';
 import { ensureRegistries } from '../services/skill-registry-cache.js';
 import { sanitizeText } from '../text-sanitize.js';
-import { subjectRegistryText, toolError } from './shared.js';
+import { nodeLookupMiss, subjectRegistryText, toolError } from './shared.js';
+import { codeOfStatus } from '../services/node-details.js';
 import { registerWloTool, registerReadTool } from '../apps/register.js';
 import { nodeListSchema } from '../apps/outputSchemas.js';
+
+/** „mit dieser Anmeldung nicht lesbar" is the phrase a client recognises a refusal by — no retry is offered. */
+const SIBLINGS_REFUSED = 'Die Inhalte der Sammlung sind mit dieser Anmeldung nicht lesbar — ob sie weitere Inhalte hält, sagt das nicht.';
+const SIBLINGS_UNREAD = 'Die Inhalte der Sammlung konnten gerade nicht gelesen werden — das sagt nichts darüber, ob es weitere gibt. Später erneut versuchen.';
 
 export function registerNodeRelationTools(server: McpServer, searchResultsWidgetUri?: string): void {
   registerWloTool(server, {
@@ -41,7 +46,13 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
       ),
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
-    outputSchema: nodeListSchema,
+    outputSchema: nodeListSchema.extend({
+      /** The seed could not be read, and why — the shape `get_node_details` uses. */
+      missing: z.array(z.object({ part: z.string(), code: z.string() })).optional(),
+      /** `includeSiblings`: the parent's contents were refused resp. did not answer — not "none". */
+      siblingsRefused: z.literal(true).optional(),
+      siblingsUnread: z.literal(true).optional(),
+    }),
     annotations: { readOnlyHint: true },
     handler: async (params) => {
       try {
@@ -50,12 +61,18 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
           maxResults: params.maxResults ?? 8,
           includeSiblings: params.includeSiblings ?? false,
         });
-        if (!related) {
+        if ('seedStatus' in related) {
           // A miss still satisfies the schema: the widget renders its empty
           // state instead of the host failing on a missing structuredContent.
+          // The sentence follows the STATUS: "nicht gefunden" stood here for a
+          // 403 and a 503 too, which told a teacher that a record this login
+          // may not see, or one behind an outage, does not exist.
           return {
-            content: [{ type: 'text' as const, text: `Node ${params.nodeId} nicht gefunden.` }],
-            structuredContent: { total: 0, count: 0, results: [] },
+            content: [{ type: 'text' as const, text: nodeLookupMiss(params.nodeId, related.seedStatus) }],
+            structuredContent: {
+              total: 0, count: 0, results: [],
+              missing: [{ part: params.nodeId, code: codeOfStatus(related.seedStatus) }],
+            },
           };
         }
         // Siblings are extra context for the model; the widget shows the
@@ -64,6 +81,8 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
           total: related.results.length,
           count: related.results.length,
           results: related.results,
+          ...(related.siblingsRefused ? { siblingsRefused: true as const } : {}),
+          ...(related.siblingsUnread ? { siblingsUnread: true as const } : {}),
         };
 
         // The one collection this tool touches — the seed itself when that is a
@@ -102,8 +121,12 @@ Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/S
         lines.push(renderToText(related.results, undefined, noHint) || 'Keine verwandten Inhalte gefunden.');
         if (related.siblings) {
           lines.push('');
-          lines.push(`## Aus derselben Sammlung (${related.siblings.length})`);
-          lines.push(renderToText(related.siblings, undefined, noHint) || 'Keine weiteren Inhalte in der Sammlung.');
+          // "None" is a statement about the collection, and only an answered
+          // listing supports it — a refused or failed one gets its own sentence
+          // and no count.
+          const unlisted = related.siblingsRefused ? SIBLINGS_REFUSED : related.siblingsUnread ? SIBLINGS_UNREAD : '';
+          lines.push(unlisted ? '## Aus derselben Sammlung' : `## Aus derselben Sammlung (${related.siblings.length})`);
+          lines.push(unlisted || renderToText(related.siblings, undefined, noHint) || 'Keine weiteren Inhalte in der Sammlung.');
         }
         return {
           content: [{ type: 'text' as const, text: lines.join('\n') }, ...registryBlock],

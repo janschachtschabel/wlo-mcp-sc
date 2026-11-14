@@ -17,14 +17,16 @@ import {
 import { incompleteNotice, searchCollectionsResult } from '../services/collection-search.js';
 import { rerankNodes } from '../reranker.js';
 import type { FormattedNode } from '../formatter.js';
-import { formatNodes, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
-import { ensureRegistries, refreshRegistries } from '../services/skill-registry-cache.js';
+import { formatNodes, listDisclosures, oneLine, registryHintFor, renderToJson, renderToText } from '../formatter.js';
+import { ensureRegistries } from '../services/skill-registry-cache.js';
 import type { LabeledCriterion } from '../filter-criteria.js';
 import { buildFilterCriteria, formatUnresolvedHint, licenseFilterNotice } from '../filter-criteria.js';
 import { queryMetaContent, subjectRegistryText, toolError } from './shared.js';
-import { searchWithinCollection } from '../services/search.js';
+import { WITHIN_CHILDREN_MAX, searchWithinCollection } from '../services/search.js';
 import {
+  RECURSIVE_FILES_PER_COLLECTION,
   RECURSIVE_SKIP_MAX,
+  RECURSIVE_VISIT_MAX,
   RESTRICTED_NOTICE,
   collectRecursiveContents,
   findCollectionsByTreeTraversal,
@@ -37,7 +39,53 @@ import { nodeMatchesCriteria } from '../node-match.js';
 
 
 /** The node list of a tool that may be called with a collection TITLE instead of its id. */
-const namedCollectionListSchema = nodeListSchema.extend({ resolvedCollection: resolvedCollectionSchema });
+const namedCollectionListSchema = nodeListSchema.extend({
+  resolvedCollection: resolvedCollectionSchema,
+  // What a bounded read did NOT read — declared, because the sentences that say
+  // it reach only a client that reads the text.
+  /** `includeSubcollections`: the walk stopped at its cap on collections; more of the subtree was not read. */
+  walkCapped: z.literal(true).optional(),
+  /** `includeSubcollections`: at least one collection holds more files than were read of it. */
+  contentsCut: z.literal(true).optional(),
+  /** `includeSubcollections`: `total` sums only the collections that were visited. */
+  totalIsLowerBound: z.literal(true).optional(),
+  /**
+   * `includeSubcollections`: paging ends here. Either `skipCount` was past the
+   * largest offset this path takes (the page starts AT that offset), or the list
+   * goes on and the NEXT offset would be — said on the page before, too.
+   */
+  skipLimitReached: z.literal(true).optional(),
+  /** search_wlo_within_collection: only the first children of the collection were searched … */
+  truncated: z.literal(true).optional(),
+  /** … of this many. */
+  collectionTotal: z.number().optional(),
+});
+
+/**
+ * The sentences for what the recursive walk left unread. One per cause that has
+ * a way on: a deeper start, a direct listing. That the total is a floor has
+ * none, and is said where the number is printed (`renderToText`) — as a
+ * sentence it stood under nearly every first page.
+ */
+function walkBoundNotes(walk: { walkCapped?: true; contentsCut?: true }): string[] {
+  return [
+    walk.walkCapped
+      ? `Hinweis: Der Unterbaum wurde nicht vollständig durchlaufen — nach ${RECURSIVE_VISIT_MAX} Sammlungen ist Schluss, `
+        + 'die übrigen wurden nicht gelesen. Für den Rest eine Unter-Sammlung als Start nehmen.'
+      : '',
+    walk.contentsCut
+      ? `Hinweis: Je Sammlung werden hier nur die ersten ${RECURSIVE_FILES_PER_COLLECTION} Inhalte gelesen, und mindestens eine hält mehr. `
+        + 'Eine solche Sammlung direkt auflisten (ohne includeSubcollections, mit skipCount).'
+      : '',
+  ].filter(Boolean);
+}
+
+/** search_wlo_within_collection over a collection larger than the window it reads. */
+const sampleNote = (total: number) =>
+  `_Hinweis: Durchsucht wurden die ersten ${WITHIN_CHILDREN_MAX} von ${total} Inhalten dieser Sammlung._`;
+
+/** Sub-collections of the start node the tree scan reads. A full page means there may be more. */
+const TREE_SCAN_LEVEL1 = 100;
 
 /** Said when the recursive walk met a sub-listing that did not answer. */
 const WALK_INCOMPLETE_NOTE = 'Hinweis: Mindestens eine Unterliste dieser Sammlung ließ sich gerade nicht lesen — '
@@ -81,7 +129,10 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         '"markdown" (default, human-readable) or "json" (structured)'
       ),
     },
-    outputSchema: nodeListSchema,
+    outputSchema: nodeListSchema.extend({
+      /** Only beside an empty result: a bound cut the tree scan, so "none found" covers a part of the tree. */
+      scanCapped: z.literal(true).optional(),
+    }),
     annotations: { readOnlyHint: true },
     handler: async (params) => {
       const maxResults = params.maxResults ?? 5;
@@ -115,16 +166,17 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         // 2 upstream calls per collection, ~1.0–1.4 s (measured 2026-08-10).
         // Through the cache (K-15): the fresh answer replaces the entry, and only
         // ids that really ANSWERED count as checked.
-        const forced = params.includeSkillRegistry ? await refreshRegistries(formatted) : { answered: new Set<string>(), failed: new Set<string>() };
-        // After the cap and after any live pass: free either way, and a cold
-        // collection is queued so the next call for it costs nothing. NOT for a
-        // collection whose forced lookup just failed: the caller asked for the
-        // state NOW, and the remembered one attached in its place would read as it.
-        const remembered = await ensureRegistries(formatted.filter(n => !forced.failed.has(n.nodeId)));
+        // ONE pass, and the cache decides what a forced one may attach: nothing
+        // remembered — neither for a lookup that failed nor for one that
+        // answered "none now" (a personal login got the anonymous scope's older
+        // catalogue lent back when an ordinary pass followed here).
+        const answered = await ensureRegistries(formatted, { force: Boolean(params.includeSkillRegistry) });
         const unchecked = formatted.filter(n => n.nodeType === 'collection' && !n.skillRegistry
-          && !forced.answered.has(n.nodeId) && !remembered.has(n.nodeId));
+          && !answered.has(n.nodeId));
+        // ONE object for the JSON block and the structured answer.
+        const said = listDisclosures({ incomplete, restricted });
         const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(formatted, total, { incomplete, restricted })
+          ? renderToJson(formatted, total, said)
           // The pointer covers exactly the collections whose lookup did NOT
           // answer. Suppressing it whenever the lookup was REQUESTED reported a
           // failed lookup as "checked, none there" (audit 2026-11-12, K-15).
@@ -153,8 +205,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         if ((params.outputFormat ?? 'markdown') === 'json' && restricted) content.push({ type: 'text' as const, text: RESTRICTED_NOTICE });
         content.push(meta);
         return { content, structuredContent: {
-          total, count: formatted.length, results: formatted,
-          ...(incomplete ? { incomplete: true as const } : {}), ...(restricted ? { restricted: true as const } : {}), ...unresolvedField,
+          total, count: formatted.length, results: formatted, ...said, ...unresolvedField,
         } };
       };
 
@@ -183,7 +234,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
           }
         }
 
-        const level1 = await getChildCollectionsResult(startId, 100);
+        const level1 = await getChildCollectionsResult(startId, TREE_SCAN_LEVEL1);
         // An unread listing must not become "nothing found": both answers below
         // are statements about the catalogue ("no collections", "try a broader
         // term") that the caller will act on, and neither is true when the
@@ -205,22 +256,35 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         const restricted = traversal.refused > 0;
 
         if (matches.length === 0) {
+          // The scan is bounded on every level (and so is the listing it starts
+          // from). Where a bound cut it, "none found" covers the part that was
+          // read — said so, instead of the sentence about the catalogue below.
+          const scanCapped = traversal.capped === true || level1.nodes.length >= TREE_SCAN_LEVEL1;
+          const cappedNote = `Hinweis: Durchsucht wurde nur ein Teil des Sammlungsbaums (die Suche liest je Ebene eine begrenzte Zahl von Sammlungen). `
+            + `Darin wurde keine Sammlung für "${query}" gefunden — ob es eine gibt, ist damit offen. `
+            + 'Mit parentNodeId in einem Fachportal starten oder einen übergeordneten Begriff versuchen.';
           // "Keine Sammlungen gefunden" is a statement about the catalogue; with a
           // search index that did not answer it is not ours to make (K-3).
-          const text = searchIncomplete
-            ? [incompleteNotice('Sammlungen', true), ...(restricted ? [RESTRICTED_NOTICE] : [])].join('\n\n')
-            : restricted ? `In den lesbaren Teilen wurde keine Sammlung für "${query}" gefunden.\n\n${RESTRICTED_NOTICE}`
-            : `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`;
+          // Each cause keeps its own sentence, and they are JOINED: a refusal
+          // used to swallow the bound, so a scan that read a part of the tree
+          // AND met a closed branch named the closed branch alone.
+          const text = [
+            searchIncomplete ? incompleteNotice('Sammlungen', true)
+              : restricted ? `In den lesbaren Teilen wurde keine Sammlung für "${query}" gefunden.`
+              : scanCapped ? ''
+              : `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`,
+            restricted ? RESTRICTED_NOTICE : '',
+            scanCapped ? cappedNote : '',
+          ].filter(Boolean).join('\n\n');
+          // ONE object for the JSON block and the structured answer.
+          const said = listDisclosures({ incomplete: searchIncomplete, restricted, scanCapped });
           // JSON mode keeps a parseable first block (an empty list) and carries the
           // sentence as its own block — prose alone broke every client that parses block 0.
           const content = (params.outputFormat ?? 'markdown') === 'json'
-            ? [{ type: 'text' as const, text: renderToJson([], 0, { incomplete: searchIncomplete, restricted }) }, { type: 'text' as const, text }]
+            ? [{ type: 'text' as const, text: renderToJson([], 0, said) }, { type: 'text' as const, text }]
             : [{ type: 'text' as const, text }];
           if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
-          return { content, structuredContent: {
-            total: 0, count: 0, results: [],
-            ...(searchIncomplete ? { incomplete: true as const } : {}), ...(restricted ? { restricted: true as const } : {}), ...unresolvedField,
-          } };
+          return { content, structuredContent: { total: 0, count: 0, results: [], ...said, ...unresolvedField } };
         }
 
         return await renderOut(matches, 'collection_tree_traversal', undefined, searchIncomplete, restricted);
@@ -287,6 +351,7 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         let effectiveSkip = skipCount;
         let walkIncomplete = false;
         let walkRestricted = false;
+        let walkBounds: { walkCapped?: true; contentsCut?: true; totalIsLowerBound?: true } = {};
 
         if (params.includeSubcollections && filter === 'files') {
           // The BFS has no upstream offset, so paginate locally: collect
@@ -298,6 +363,11 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
           totalHits = recursive.totalHits;
           walkIncomplete = recursive.incomplete === true;
           walkRestricted = recursive.restricted === true;
+          walkBounds = {
+            ...(recursive.walkCapped ? { walkCapped: true as const } : {}),
+            ...(recursive.contentsCut ? { contentsCut: true as const } : {}),
+            ...(recursive.totalIsLowerBound ? { totalIsLowerBound: true as const } : {}),
+          };
         } else {
           // Cap the upstream page size: excluded.size is bounded (schema max 200)
           // but we still don't want a caller to force an oversized upstream query.
@@ -317,11 +387,38 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         // with `contentFilter="files"` the children are materials, so the
         // enrichment had nothing to attach to at all.
         const subjectRegistry = await subjectRegistryText(params.nodeId, params.skillContext);
+        const boundNotes = walkBoundNotes(walkBounds);
+        // The recursive path clamps the offset; asked for more, it answered the
+        // page AT the clamp again and again, which pages into a loop.
+        const clamped = effectiveSkip < skipCount;
+        // And the page BEFORE that one says it too: the flag used to appear only
+        // after an offset past the bound had been sent — the caller learned of
+        // the limit from the page it could not have. "Goes on" is read off a
+        // full page with more behind it; a list that ends here is an end.
+        const recursive = Boolean(params.includeSubcollections && filter === 'files');
+        const goesOn = allNodes.length >= maxResults
+          && (totalHits > effectiveSkip + allNodes.length || walkBounds.totalIsLowerBound === true);
+        const nextRefused = recursive && !clamped && goesOn && effectiveSkip + maxResults > RECURSIVE_SKIP_MAX;
+        const skipLimitReached = clamped || nextRefused;
+        if (clamped) {
+          boundNotes.push(`Hinweis: skipCount reicht hier nur bis ${RECURSIVE_SKIP_MAX} — diese Seite beginnt dort, nicht bei ${skipCount}. `
+            + 'Für den Rest eine Unter-Sammlung als Start nehmen.');
+        } else if (nextRefused) {
+          boundNotes.push(`Hinweis: Die Liste geht weiter, aber skipCount reicht hier nur bis ${RECURSIVE_SKIP_MAX} — die nächste Seite `
+            + `(skipCount=${effectiveSkip + maxResults}) ist nicht abrufbar`
+            + (effectiveSkip < RECURSIVE_SKIP_MAX
+              ? `; skipCount=${RECURSIVE_SKIP_MAX} erreicht noch einen Teil davon und wiederholt dabei Einträge dieser Seite. `
+              : '. ')
+            + 'Für den Rest eine Unter-Sammlung als Start nehmen.');
+        }
 
+        // ONE object for the JSON block and the structured answer.
+        const said = listDisclosures({ incomplete: walkIncomplete, restricted: walkRestricted, ...walkBounds, skipLimitReached });
         const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(allNodes, totalHits, { incomplete: walkIncomplete, restricted: walkRestricted })
+          ? renderToJson(allNodes, totalHits, said)
           // "Sammlung ist leer" is a statement about the collection — not over a walk that could not read all of it.
-          : (renderToText(allNodes, totalHits) || (walkIncomplete || walkRestricted ? '' : 'Sammlung ist leer oder nodeId nicht gefunden.'));
+          : (renderToText(allNodes, totalHits, { totalIsLowerBound: walkBounds.totalIsLowerBound })
+            || (walkIncomplete || walkRestricted || boundNotes.length ? '' : 'Sammlung ist leer oder nodeId nicht gefunden.'));
         const meta = queryMetaContent({
           toolName: 'get_collection_contents',
           queryType: params.includeSubcollections ? 'collection_children_recursive' : 'collection_children',
@@ -335,22 +432,29 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         // IS the payload, and German prose glued to it makes JSON.parse throw
         // (the same rule the sibling tools follow for their hints).
         const content = [{ type: 'text' as const, text }].filter(c => c.text);
-        if (walkIncomplete) content.push({ type: 'text' as const, text: WALK_INCOMPLETE_NOTE });
         // Markdown: IN block 0 — a client that hands its model the first block
         // only would otherwise read "0 Treffer" with nothing beside it. JSON:
-        // its own block, block 0 being the payload.
+        // its own block, block 0 being the payload (which carries the flag).
+        // The outage notice was the last of the three still in a block of its own.
+        if (walkIncomplete) {
+          if ((params.outputFormat ?? 'markdown') === 'json' || !content[0]) content.push({ type: 'text' as const, text: WALK_INCOMPLETE_NOTE });
+          else content[0].text += `\n\n${WALK_INCOMPLETE_NOTE}`;
+        }
         if (walkRestricted) {
           if ((params.outputFormat ?? 'markdown') === 'json' || !content[0]) content.push({ type: 'text' as const, text: RESTRICTED_NOTICE });
           else content[0].text += `\n\n${RESTRICTED_NOTICE}`;
+        }
+        // The same placement rule for what the walk's own bounds left unread.
+        if (boundNotes.length) {
+          const notes = boundNotes.join('\n');
+          if ((params.outputFormat ?? 'markdown') === 'json' || !content[0]) content.push({ type: 'text' as const, text: notes });
+          else content[0].text += `\n\n${notes}`;
         }
         if (subjectRegistry) content.push({ type: 'text' as const, text: subjectRegistry });
         content.push(meta);
         return {
           content,
-          structuredContent: {
-            total: totalHits, count: allNodes.length, results: allNodes,
-            ...(walkIncomplete ? { incomplete: true as const } : {}), ...(walkRestricted ? { restricted: true as const } : {}),
-          },
+          structuredContent: { total: totalHits, count: allNodes.length, results: allNodes, ...said },
         };
       } catch (err) {
         return toolError('Fehler beim Abruf der Sammlungsinhalte', err);
@@ -412,13 +516,26 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
           skipCount: params.skipCount,
         });
 
-        const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(res.results, res.pagination.total)
-          : (renderToText(res.results, res.pagination.total) || 'Keine Inhalte in dieser Sammlung gefunden.');
-        // Never let a sampled answer look exhaustive.
-        const sampleHint = res.truncated
-          ? `\n_Hinweis: Durchsucht wurden die ersten 100 von ${res.collectionTotal} Inhalten dieser Sammlung._`
-          : '';
+        const asJson = (params.outputFormat ?? 'markdown') === 'json';
+        // Never let a sampled answer look exhaustive. In Markdown the sentence
+        // stands IN block 0: as a block of its own it left "Keine Inhalte in
+        // dieser Sammlung gefunden." alone in the one block some clients hand
+        // their model — over 100 of N children. And that sentence is a
+        // statement about the collection, so a sample does not get to make it.
+        const listed = renderToText(res.results, res.pagination.total);
+        // The service always knew; ONE object says it in the JSON block and in
+        // the structured answer.
+        const said = listDisclosures(res.truncated ? { truncated: true, collectionTotal: res.collectionTotal } : {});
+        const text = asJson
+          ? renderToJson(res.results, res.pagination.total, said)
+          : res.truncated
+            // (`listed` is never empty when a total is passed — it then prints
+            // the bare count line, which over a sample says the same wrong thing.)
+            ? [res.results.length ? listed : 'Unter den durchsuchten Inhalten dieser Sammlung passt keiner zur Suche — der Rest wurde nicht durchsucht.',
+              sampleNote(res.collectionTotal)].join('\n\n')
+            : (listed || 'Keine Inhalte in dieser Sammlung gefunden.');
+        // JSON: its own block, block 0 being the payload.
+        const sampleHint = res.truncated && asJson ? sampleNote(res.collectionTotal) : '';
 
         // The licence pass can empty this result on its own, and then the sub-
         // collection hint below would send the caller one level down while the
@@ -438,8 +555,13 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
             .catch(() => null);
           const subs = folders?.pagination.total ?? 0;
           if (subs > 0) {
+            // Over a sample the sentence speaks for the part that was read —
+            // "none of the 500" contradicted the note right above it.
+            const searched = res.truncated
+              ? `ersten ${WITHIN_CHILDREN_MAX} von ${res.collectionTotal}`
+              : String(res.collectionTotal);
             emptyHint = res.collectionTotal > 0
-              ? `\n\n_Keiner der ${res.collectionTotal} direkten Inhalte dieser Sammlung passt zur Suche. Sie hat ${subs} Unter-Sammlung(en) — liste sie mit get_collection_contents (contentFilter="folders") auf und suche dann gezielt in einer davon._`
+              ? `\n\n_Keiner der ${searched} direkten Inhalte dieser Sammlung passt zur Suche. Sie hat ${subs} Unter-Sammlung(en) — liste sie mit get_collection_contents (contentFilter="folders") auf und suche dann gezielt in einer davon._`
               : `\n\n_Diese Sammlung enthält keine eigenen Materialien, sondern ${subs} Unter-Sammlung(en). Liste sie mit get_collection_contents (contentFilter="folders") auf und suche dann in einer davon._`;
           }
         }
@@ -479,6 +601,7 @@ Welche Skills für diese Sammlung freigegeben sind, steht bereits in der Antwort
         return {
           content,
           structuredContent: { total: res.pagination.total, count: res.results.length, results: res.results,
+            ...said,
             ...(res.unresolved.length ? { unresolvedFilters: res.unresolved } : {}) },
         };
       } catch (err) {

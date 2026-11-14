@@ -19,7 +19,7 @@ Was die Liste tatsächlich verändert, sind diese Schalter:
 |---|---|
 | **Standard** | 60 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
 | **`WLO_SKILL_TOOL_MODE=one-tool`** | 60 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
-| **`WLO_DISABLE_SKILL_SEARCH=1`** | 51 Tools — ohne `search_skill` (nur der Registry-Weg) |
+| **`WLO_DISABLE_SKILL_SEARCH=1`** | 59 Tools — ohne `search_skill` (nur der Registry-Weg) |
 | **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 64) |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
@@ -724,6 +724,19 @@ festgeschrieben).
 > dort reine Anzeige. Das ist Absicht: ein Button, den der Host nicht einlösen
 > kann, wäre schlimmer als keiner. Lokale Bedienung — Details/Zurück,
 > Baum auf- und zuklappen — funktioniert überall.
+>
+> **Drei Zustände, in jedem Widget:** *lädt* (solange das Ergebnis aussteht),
+> *leer* (das Werkzeug hat geantwortet, es gibt nichts) und *Fehler* (der Aufruf
+> ist fehlgeschlagen, oder nach 30 s ist keine Antwort eingetroffen). Der
+> Fehlerzustand sagt ausdrücklich, dass er kein Befund „nichts vorhanden“ ist,
+> und nennt die Wartezeit, wenn der Server eine mitgegeben hat (`retryAfter`).
+> Laden, Ankunft und Fehler werden über eine Live-Region auch vorgelesen.
+>
+> **Tastatur im Baum (`browse`):** Der Baum ist eine **verschachtelte Liste mit
+> Aufklapp-Schaltflächen** (`aria-expanded`), kein ARIA-`tree`. Bedient wird er
+> wie jede Seite: mit Tab von Schaltfläche zu Schaltfläche, mit Enter oder
+> Leertaste auf- und zuklappen. Pfeiltasten-Navigation gibt es nicht — ein
+> Screenreader liest die Ebenen als Listen mit ihrer Länge vor.
 
 ---
 

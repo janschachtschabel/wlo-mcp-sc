@@ -31,7 +31,7 @@ import { getNodeMetadata, ngsearch, readNodeDownload, readNodeTextContent, strip
 import { log } from '../logger.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode } from '../formatter.js';
-import { nodeMatchesCriteria, queryTerms, termMatches } from '../node-match.js';
+import { comparable, nodeMatchesCriteria, queryTerms, termMatches } from '../node-match.js';
 import type { UnresolvedFilter } from '../filter-criteria.js';
 import { buildFilterCriteria } from '../filter-criteria.js';
 import { SKILL_CONTENT_TYPE_URI, SKILL_PROPS, collectSkillNodes, type IncompleteReason } from './skill-catalogue.js';
@@ -152,9 +152,10 @@ function dedupeByOriginal(skills: SkillSummary[]): SkillSummary[] {
  * hit a word start. A local tokenizer here would be a second, drifting copy.
  */
 function scoreSkill(s: SkillSummary, terms: string[]): number {
-  const title = s.title.toLowerCase();
-  const keywords = s.keywords.join(' ').toLowerCase();
-  const description = s.description.toLowerCase();
+  // `comparable`, as the terms are: one Unicode form on both sides.
+  const title = comparable(s.title);
+  const keywords = comparable(s.keywords.join(' '));
+  const description = comparable(s.description);
   return terms.reduce((sum, t) =>
     sum + (termMatches(t, title) ? 3 : 0)
         + (termMatches(t, keywords) ? 2 : 0)

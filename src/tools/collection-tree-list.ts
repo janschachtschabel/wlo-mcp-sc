@@ -30,6 +30,10 @@ export const TREE_INCOMPLETE_NOTICE = 'Hinweis: Mindestens eine Unterliste ließ
 export const TREE_CAPPED_NOTICE = `Hinweis: Der Lauf hat seine Obergrenze von ${FLAT_TREE_LISTINGS_MAX} Abfragen erreicht — tiefere `
   + 'Ebenen fehlen in dieser Liste. Für den Rest eine Untersammlung als Start nehmen (nodeId aus dieser Liste) oder depth verkleinern.';
 
+/** Said instead of "nächste Seite" when the next page would start past the largest offset the tool takes. */
+export const TREE_SKIP_LIMIT_NOTICE = `Hinweis: Die Liste geht weiter, aber skipCount reicht nur bis ${FLAT_TREE_SKIP_MAX} — die folgenden `
+  + 'Einträge sind von hier aus nicht abrufbar. Für den Rest eine Untersammlung als Start nehmen (nodeId aus dieser Liste) oder depth verkleinern.';
+
 export const collectionTreeListSchema = z.object({
   root: z.object({ nodeId: z.string(), title: z.string() }),
   depth: z.number(),
@@ -50,6 +54,8 @@ export const collectionTreeListSchema = z.object({
     contentsUnread: z.boolean().optional(),
   })),
   more: z.object({ nextSkipCount: z.number() }).optional(),
+  /** The list goes on past the largest `skipCount` this tool takes — never beside `more`. */
+  skipLimitReached: z.literal(true).optional(),
   incomplete: z.literal(true).optional(),
   restricted: z.literal(true).optional(),
   walkCapped: z.literal(true).optional(),
@@ -95,6 +101,7 @@ Statt der nodeId geht der Titel als \`collection\` (gleichnamige: \`discipline\`
           ...(tree.incomplete ? [TREE_INCOMPLETE_NOTICE] : []),
           ...(tree.restricted ? [RESTRICTED_NOTICE] : []),
           ...(tree.walkCapped ? [TREE_CAPPED_NOTICE] : []),
+          ...(tree.skipLimitReached ? [TREE_SKIP_LIMIT_NOTICE] : []),
         ];
         if (params.outputFormat === 'json') {
           // Block 0 is the payload; prose inside it breaks every parser.
@@ -119,7 +126,13 @@ function render(tree: FlatTree, notices: string[]): string {
   // The server's own sentences BEFORE the repository's titles.
   const lines: string[] = [oneLine(head), ...notices];
   if (tree.more) {
-    lines.push(`Es gibt weitere Einträge — nächste Seite mit skipCount=${tree.more.nextSkipCount}.`);
+    // Page sizes that do not divide the largest offset: the last reachable page
+    // starts INSIDE this one. Said, or the repeated rows read as a second set.
+    const overlap = tree.skipCount + tree.count - tree.more.nextSkipCount;
+    lines.push(overlap > 0
+      ? `Es gibt weitere Einträge — nächste Seite mit skipCount=${tree.more.nextSkipCount} (weiter reicht skipCount nicht; `
+        + `die ersten ${overlap} Einträge dort wiederholen das Ende dieser Seite).`
+      : `Es gibt weitere Einträge — nächste Seite mit skipCount=${tree.more.nextSkipCount}.`);
   } else if (!tree.count && !notices.length) {
     lines.push(tree.skipCount ? 'Ab dieser Position gibt es keine weiteren Untersammlungen.' : 'Diese Sammlung hat keine Untersammlungen.');
   }

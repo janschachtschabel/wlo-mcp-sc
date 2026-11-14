@@ -15,6 +15,7 @@ import { getNodeMetadata } from '../../wlo-api.js';
 import { getNodeCollections } from '../node-collections.js';
 import { addToCollection } from './collections.js';
 import { isOutcomeOpen } from './timeouts.js';
+import type { MutationOutcome } from './verify.js';
 
 export interface FilingTarget {
   nodeId: string;
@@ -33,6 +34,10 @@ export interface FilingOutcome {
   nodeId: string;
   status: 'added' | 'already' | 'failed' | 'unverified';
   code?: FilingCode;
+  /** On `failed`, where the repository answered: what it answered. A 4xx wrote nothing, a 5xx is no verdict (`wroteNothing`). */
+  httpStatus?: number;
+  /** On `failed`: the filing request threw before it could leave — nothing of it reached the repository. */
+  neverSent?: true;
 }
 
 /**
@@ -71,6 +76,16 @@ export async function isAlreadyFiled(nodeId: string, collectionId: string): Prom
   }
 }
 
+/**
+ * The repository answered a FILING with "that is in there already". Measured
+ * 2026-11-14: the same filing again answers 409 and makes no second reference.
+ * One reading for the batch step and the single tool — the single tool called
+ * it a refusal ("could not be filed") over a material that is in the collection.
+ */
+export function isDuplicateFiling(outcome: MutationOutcome): boolean {
+  return outcome.status === 'failed' && outcome.httpStatus === 409;
+}
+
 /** File `nodeId` in the collection and report what is now true. Never throws. */
 export async function fileRecord(nodeId: string, target: FilingTarget): Promise<FilingOutcome> {
   const base = { nodeId: target.nodeId };
@@ -80,8 +95,7 @@ export async function fileRecord(nodeId: string, target: FilingTarget): Promise<
       case 'ok': return { ...base, status: 'added' };
       case 'not_visible': return { ...base, status: 'unverified', code: 'not_visible' };
       case 'unverified': return { ...base, status: 'unverified', code: 'upstream_error' };
-      case 'failed': return outcome.httpStatus === 409
-        // Measured 2026-11-14: the same filing again answers 409 and makes no second reference.
+      case 'failed': return isDuplicateFiling(outcome)
         ? { ...base, status: 'already' }
         : {
         ...base,
@@ -89,13 +103,16 @@ export async function fileRecord(nodeId: string, target: FilingTarget): Promise<
         code: outcome.httpStatus === 403 || outcome.httpStatus === 401 ? 'forbidden'
           : outcome.httpStatus === 404 ? 'not_found'
             : outcome.httpStatus === 429 || outcome.httpStatus === 503 ? 'upstream_busy' : 'upstream_error',
+        ...(outcome.httpStatus !== undefined ? { httpStatus: outcome.httpStatus } : {}),
       };
     }
   } catch (err) {
     // An abort hits the RESPONSE, not the work: the filing may well have
     // happened, so it is reported as open, never as failed.
+    // Not open means the request provably never LEFT (`NEVER_SENT`,
+    // `timeouts.ts`) — said, so a caller does not remember it as sent.
     return isOutcomeOpen(err)
       ? { ...base, status: 'unverified', code: 'timeout' }
-      : { ...base, status: 'failed', code: 'upstream_error' };
+      : { ...base, status: 'failed', code: 'upstream_error', neverSent: true };
   }
 }

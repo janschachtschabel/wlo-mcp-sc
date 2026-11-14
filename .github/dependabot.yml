@@ -13,6 +13,14 @@ updates:
     groups:
       production:
         dependency-type: production
+        # NOT these two: each gets a pull request of its own. The code leans on
+        # their internals — `src/apps/output-schema.ts` on zod's `_zod.def` and
+        # its `toJSONSchema` hook, several rules on measured SDK behaviour — which
+        # is also why package.json pins both to a patch range (`~`). An update of
+        # either is read and tested by itself, not waved through in a group.
+        exclude-patterns:
+          - '@modelcontextprotocol/sdk'
+          - 'zod'
       development:
         dependency-type: development
     # Major versions are a decision, not a routine update: TypeScript 7 broke the

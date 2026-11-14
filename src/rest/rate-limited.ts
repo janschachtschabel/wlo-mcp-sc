@@ -15,6 +15,7 @@
 
 import { rateLimitedBody, restRateLimitedBody } from '../client-budget.js';
 import { log } from '../logger.js';
+import { count } from '../metrics.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { logAddress } from '../log-privacy.js';
 
@@ -30,6 +31,8 @@ export interface RefusalResponse {
 export function sendRateLimited(
   res: RefusalResponse, wait: number, message: string, code: 'rate_limited' | 'too_many_logins', shape: RefusalShape,
 ): void {
+  // The label is one of the two codes above — ours, never the caller's.
+  count('wlo_rate_limited_total', { limiter: code });
   res.writeHead(429, {
     'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
     'Retry-After': String(wait),

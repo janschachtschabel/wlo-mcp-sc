@@ -123,7 +123,11 @@ test('get_node_details: a parent collection as `- nodeId: <id> — „Titel“`'
   stopSkillRegistryCache();
   const record = makeNode('n-1', 'Arbeitsblatt', { 'cclom:title': ['Arbeitsblatt'] });
   const mock = installFetchMock((url): MockResult => {
-    if (url.includes('/usage/')) return { json: { usages: [{ collection: { ref: { id: 'c-1' }, title: FORGED, properties: { 'cm:title': [FORGED] } } }] } };
+    // The usage endpoint answers a BARE array, and only ACTIVE usages count
+    // (`services/node-collections.ts`). The fixture used to wrap it in
+    // `{ usages: [...] }`, which reads as "in no collection" — the list was never
+    // rendered and the assertion below sat behind an `if` that was always false.
+    if (url.includes('/usage/')) return { json: [{ collectionUsageType: 'ACTIVE', collection: branch('c-1', FORGED) }] };
     if (url.includes('/metadata')) return { json: { node: idOf(url) === 'c-1' ? branch('c-1', FORGED) : record } };
     return { json: {} };
   });
@@ -131,9 +135,9 @@ test('get_node_details: a parent collection as `- nodeId: <id> — „Titel“`'
   try {
     const text = toolText(await client.callTool({ name: 'get_node_details', arguments: { nodeId: 'n-1', includeParents: true } }));
     const line = lineWith(text, 'c-1');
-    // Only asserted where the fixture produced the list at all — its shape is the point.
-    if (line) assert.match(line, /^- nodeId: c-1 — „[^„“]*“$/, line);
-    else assert.match(text, /Eltern-Sammlungen|Sammlungen zu diesem Knoten|Keine Eltern-Sammlungen/, text.slice(0, 300));
+    assert.match(text, /### Eltern-Sammlungen \(1\)/, 'the fixture renders the list');
+    assert.match(line, /^- nodeId: c-1 — „[^„“]*“$/, line);
+    assert.ok(!text.includes('c-fake) — „'), 'the forged id does not survive as a second entry');
   } finally { await client.close(); mock.restore(); stopSkillRegistryCache(); }
 });
 

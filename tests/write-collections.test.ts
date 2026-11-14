@@ -428,13 +428,14 @@ test('a reference that survives the delete is not reported as removed', async ()
   }
 });
 
-test('a reference listing that cannot be read is unverified, and deletes nothing', async () => {
+test('a reference listing that cannot be read is "not checked", and deletes nothing', async () => {
   // "Not in the collection" is a claim about the collection; a failed listing
-  // supports no claim at all.
+  // supports no claim at all. And it is not `unverified` either: that word is
+  // for a request that was SENT, and none was (audit 2026-11-14, W9).
   const mock = repo({ childrenStatus: 500 });
   try {
     const r = await removeFromCollection(COLLECTION, NODE);
-    assert.equal(r.status, 'unverified');
+    assert.deepEqual([r.status, r.status === 'failed' && r.code], ['failed', 'not_checked']);
     assert.equal(mock.calls.filter(c => c.init?.method === 'DELETE').length, 0);
   } finally {
     mock.restore();
@@ -580,11 +581,14 @@ test('the filing request is a PUT on the reference endpoint, carrying no body', 
   assert.equal(req.body, undefined, 'the node is named in the path; a body is at best ignored');
 });
 
-test('the descriptor and the executing call address the same endpoint', () => {
+test('the descriptor and the executing call address the same endpoint', async () => {
   // The guarantee behind "the browser never gets a second implementation".
   const mock = installFetchMock(() => ({ json: {} }));
   try {
-    void addToCollection(COLLECTION, NODE);
+    // AWAITED: fired with `void`, the call's read-back ran after `mock.restore()`
+    // and reached the real repository (audit 2026-11-14, T2). What it resolves to
+    // is not this test's subject — an empty mock answer may well fail the read-back.
+    await addToCollection(COLLECTION, NODE).catch(() => undefined);
   } finally {
     const sent = mock.calls.find(c => (c.init?.method ?? 'GET') === 'PUT');
     assert.ok(sent, 'the executing path sent a PUT');

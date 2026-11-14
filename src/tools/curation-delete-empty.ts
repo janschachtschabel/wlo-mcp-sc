@@ -17,7 +17,7 @@ import {
 import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan-runner.js';
 import type { WloToolResult } from '../apps/register.js';
 import { previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
-import { planReply } from './curation-plan-reply.js';
+import { planItemLabel, planReply } from './curation-plan-reply.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const KIND = 'delete-empty-collections';
@@ -26,10 +26,7 @@ const STATUS_LABEL: Record<string, string> = {
   deleted: 'gelöscht', not_empty: 'nicht leer — bleibt bestehen', unverified: 'offen — nicht bestätigt',
   failed: 'nicht gelöscht', pending: 'offen',
 };
-// "Not deleted" over an outcome nobody knows is a claim; so is the reverse.
-const label = (s: ItemState) => (s.status === 'failed' && s.outcomeOpen
-  ? 'offen — Ausgang unbekannt, bitte nachsehen'
-  : STATUS_LABEL[s.status] ?? s.status) + (s.code ? ` (${s.code})` : '');
+const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL);
 
 function answer(plan: StoredPlan<DeleteItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Löschen leerer Sammlungen:', report, plan.expiresAt, plan.items.map(i => ({
@@ -82,6 +79,10 @@ Gelöschtes lässt sich nicht verlässlich wiederherstellen. Für EINE Sammlung 
             } };
           }
           const cs = buildChangeSet('delete-empty-collections', 'collection', {}, {}, {
+            // What the key authorises IS a deletion: a client that shows its own
+            // confirmation reads `confirm.preview.action`, and "change" there
+            // undersold the one irreversible batch (audit 2026-11-14, W13).
+            destructive: true,
             action: `Löscht ${candidates.length} leere Sammlungen`
               + (notEmpty.size ? `; ${notEmpty.size} sind nicht leer und bleiben bestehen` : '')
               + '. Eine Sammlung, die beim Löschen doch nicht leer ist, bleibt ebenfalls:',

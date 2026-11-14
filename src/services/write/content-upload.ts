@@ -31,23 +31,70 @@ import { getNodeMetadata } from '../../wlo-node.js';
 import { log } from '../../logger.js';
 import { failureDetail } from './nodes.js';
 import type { UploadFile } from './content-source.js';
+import type { WloNode } from '../../wlo-types.js';
 
 /** Shown in the record's version history as the reason this version exists. */
 const UPLOAD_VERSION_COMMENT = 'Inhalt über den WLO-MCP-Server hochgeladen';
 
 export type UploadOutcome =
-  /** The record reports binary content afterwards. */
+  /** The record reports exactly the bytes that were sent. */
   | { status: 'stored'; size: number }
-  /** The upload was accepted and the record still shows no content. */
-  | { status: 'dropped' }
-  /** The upload was accepted and the record could not be re-read. */
+  /**
+   * The upload was accepted and the record does not show it: no content at all,
+   * or — `holds` — still the file it held before, of that many bytes.
+   */
+  | { status: 'dropped'; holds?: number }
+  /** The upload was accepted and what the record shows does not settle whether it landed. */
   | { status: 'unverified'; detail: string }
-  | { status: 'failed'; detail: string };
+  /** `httpStatus`: a 4xx wrote nothing, a 5xx is no verdict (`wroteNothing`). */
+  | { status: 'failed'; detail: string; httpStatus: number };
+
+/** What a record says about the content it carries — the two values a replacement is judged by. */
+export interface ContentState { size: number | null; hash: string }
 
 /** Does this node report binary content? `size` arrives as a number OR a string. */
 function storedSize(size: unknown): number | null {
   const n = typeof size === 'string' ? Number(size) : size;
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** The content state of a node as read — for a caller that holds the record from BEFORE a replacement. */
+export function contentStateOf(node: Pick<WloNode, 'size' | 'content'>): ContentState {
+  return { size: storedSize(node.size), hash: String(node.content?.hash ?? '') };
+}
+
+/**
+ * Judge an accepted upload by what the record shows afterwards.
+ *
+ * "The record has a size" proves a FIRST upload and nothing about a
+ * replacement — it had one before (audit 2026-11-14, W1). What is compared is
+ * the byte count: measured, the record's size is the uploaded byte count
+ * (tests/live/reference-write, 2026-08-16). `content.hash` is used only to tell
+ * "changed" from "unchanged": what it is a hash OF is not measured, so it is
+ * never compared with a digest of ours.
+ */
+function judge(sent: number, now: ContentState, before: ContentState | undefined): UploadOutcome {
+  if (now.size === null) return { status: 'dropped' };
+  const hashUnchanged = Boolean(before?.hash) && now.hash === before!.hash;
+  if (now.size === sent) {
+    // The one case the size cannot decide: the old file had the same length.
+    // Only a hash on BOTH sides that differs proves a change — a missing one
+    // is no evidence, and fell through to `stored` (review 2026-11-14).
+    const hashChanged = Boolean(before?.hash) && Boolean(now.hash) && now.hash !== before!.hash;
+    if (before?.size === sent && !hashChanged) {
+      return { status: 'unverified', detail: hashUnchanged
+        ? 'Der Datensatz zeigt dieselbe Größe und dieselbe Prüfsumme wie vor dem Hochladen — '
+          + 'ob die neue Datei angekommen ist (oder inhaltsgleich war), lässt sich daran nicht ablesen.'
+        : 'Der Datensatz zeigt dieselbe Größe wie vor dem Hochladen und keine Prüfsumme, an der sich eine Änderung ablesen ließe — '
+          + 'ob die neue Datei angekommen ist, ist offen.' };
+    }
+    return { status: 'stored', size: now.size };
+  }
+  // Still what it held: same size, and no hash that says otherwise.
+  if (before && before.size === now.size && (hashUnchanged || !before.hash || !now.hash)) {
+    return { status: 'dropped', holds: now.size };
+  }
+  return { status: 'unverified', detail: `Der Datensatz zeigt danach ${now.size} Bytes, gesendet wurden ${sent}.` };
 }
 
 /**
@@ -57,9 +104,12 @@ function storedSize(size: unknown): number | null {
  * needs to report its id either way. A thrown error (a timeout, an unreachable
  * repository) still propagates, because "the answer did not arrive" is not the
  * same as "the repository said no" and the caller distinguishes them.
+ *
+ * `before`: what the record held before a REPLACEMENT, from the read the caller
+ * already made. Without it only "the size is what was sent" can be checked.
  */
 export async function uploadContent(
-  nodeId: string, file: UploadFile, timeoutMs?: number,
+  nodeId: string, file: UploadFile, timeoutMs?: number, before?: ContentState,
 ): Promise<UploadOutcome> {
   const form = new FormData();
   // Copied into a plain `Uint8Array`: a `Buffer` may be backed by a
@@ -78,7 +128,7 @@ export async function uploadContent(
     { method: 'POST', headers: { Accept: 'application/json' }, body: form,
       ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) },
   );
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
 
   const node = await getNodeMetadata(nodeId);
   if (!node) {
@@ -87,11 +137,8 @@ export async function uploadContent(
       detail: `Der Datensatz „${nodeId}" war nach dem Hochladen nicht lesbar.`,
     };
   }
-  const size = storedSize(node.size);
-  if (size === null) {
-    log.warn('content upload not visible on the record', { nodeId, mimeType: file.mimeType });
-    return { status: 'dropped' };
-  }
-  log.info('content uploaded', { nodeId, mimeType: file.mimeType, size });
-  return { status: 'stored', size };
+  const outcome = judge(file.bytes.length, contentStateOf(node), before);
+  if (outcome.status === 'stored') log.info('content uploaded', { nodeId, mimeType: file.mimeType, size: outcome.size });
+  else log.warn('content upload not confirmed on the record', { nodeId, mimeType: file.mimeType, outcome: outcome.status });
+  return outcome;
 }

@@ -25,10 +25,9 @@ const CALL_TIMEOUT_MS = 15_000;
  * the renderer speak (ms).
  *
  * Same reasoning as CALL_TIMEOUT_MS: a host that never delivers must not leave
- * the widget in a skeleton for ever — and a tool that FAILS delivers nothing
- * either (`toolError` returns `isError` with no structuredContent), so this is
- * also how long a failed call would show a skeleton before falling back to what
- * the widget showed before this existed.
+ * the widget in a skeleton for ever. (A tool that FAILS does deliver: `isError`
+ * with `structuredContent.error`, which `failure.ts` turns into the error state
+ * at once — the timeout is for a host that delivers nothing at all.)
  *
  * Both directions therefore matter, and the number is measured rather than
  * guessed. Live against the deployed server, 2026-08-21, every widget-bound
@@ -63,6 +62,13 @@ export interface WidgetHost {
    * completes — so there the value IS the only available signal.
    */
   awaitingOutput(): boolean;
+  /**
+   * Whether the wait for a first result EXPIRED with nothing delivered — the
+   * shells' cue for the error state (shared/failure.ts). Its own term for the
+   * same reason as above: `!awaitingOutput()` alone cannot tell "a result
+   * arrived" from "we stopped waiting".
+   */
+  timedOut(): boolean;
   /** Persisted widget state (window.openai only; undefined under the standard bridge). */
   widgetState(): unknown;
   /** Host locale hint, if any. */
@@ -165,6 +171,7 @@ export function createHost(): WidgetHost {
     toolOutput: () => oai()?.toolOutput ?? stdOutput,
     toolMeta: () => oai()?.toolResponseMetadata,
     awaitingOutput: () => !graceExpired && nothingArrived(),
+    timedOut: () => graceExpired && nothingArrived(),
     widgetState: () => oai()?.widgetState,
     locale: () => oai()?.locale,
     onUpdate: (cb) => { updateCbs.push(cb); },

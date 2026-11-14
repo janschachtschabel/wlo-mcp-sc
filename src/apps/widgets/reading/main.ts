@@ -14,6 +14,7 @@ import { resolveLocale } from '../shared/strings.js';
 import { announceArrival } from '../shared/announce.js';
 import { createHost } from '../shared/host.js';
 import { renderLoading } from '../shared/loading.js';
+import { failureOf, failureMessage, renderError } from '../shared/failure.js';
 
 const host = createHost();
 
@@ -29,13 +30,17 @@ function paint(): void {
   // Live region first: the innerHTML swap below destroys any in-root status
   // text (see shared/announce.ts).
   const awaiting = host.awaitingOutput();
-  announceArrival(awaiting, host.toolOutput() != null, locale);
-  // The worst of the four empty states: with no payload the miss-reason falls
-  // back to "Zu diesem Material ist kein Text hinterlegt." — a claim about the
-  // material, asserted before it was read (see shared/loading.ts).
+  const failure = awaiting ? null : failureOf(host.toolOutput(), host.timedOut());
+  announceArrival(awaiting, host.toolOutput() != null, locale, failure ? failureMessage(locale, failure) : undefined);
+  // The worst of the four empty states: with no payload — or a failed call's —
+  // the miss-reason falls back to "Zu diesem Material ist kein Text
+  // hinterlegt." — a claim about the material, asserted without having read it
+  // (see shared/loading.ts, shared/failure.ts).
   root.innerHTML = awaiting
     ? renderLoading(locale)
-    : renderReading(payload(), locale, { canFollowUp: host.canFollowUp() });
+    : failure
+      ? renderError(locale, failure)
+      : renderReading(payload(), locale, { canFollowUp: host.canFollowUp() });
 }
 
 document.addEventListener('click', event => {

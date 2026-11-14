@@ -21,6 +21,7 @@ import { BASE_URL, WLO_FETCH_TIMEOUT_MS } from '../../wlo-config.js';
 import { wloFetch, HEADERS } from '../../wlo-fetch.js';
 import { log } from '../../logger.js';
 import { sanitizeText } from '../../text-sanitize.js';
+import { wroteNothing } from '../../upstream-error.js';
 import type { WloNode } from '../../wlo-types.js';
 import { getNodeMetadata } from '../../wlo-node.js';
 import { WRITABLE_FIELDS } from './fields.js';
@@ -174,6 +175,14 @@ export interface FieldWriteStatus {
   ok: boolean;
   /** Why it failed — the upstream status and, when short enough, its message. */
   detail?: string;
+  /** What the repository answered the failed write with — what a program decides by; `detail` is for a person. */
+  httpStatus?: number;
+}
+
+/** A write the repository answered with an error: the text for a person, the status for the decision. */
+export interface WriteFailure {
+  detail: string;
+  httpStatus: number;
 }
 
 export interface UpdateResult {
@@ -215,14 +224,37 @@ export async function failureDetail(res: Response): Promise<string> {
 }
 
 /**
+ * A failed write as its callers need it: the text AND the status, taken where
+ * the response is in hand. The status used to be parsed back out of the text
+ * (`HTTP nnn` at its head) — a decision resting on the wording of a sentence
+ * (review 2026-11-14, finding 8).
+ */
+async function writeFailure(res: Response): Promise<WriteFailure> {
+  return { detail: await failureDetail(res), httpStatus: res.status };
+}
+
+/**
+ * A field write was answered with an error and the read-back shows the OLD
+ * value: is it KNOWN that nothing landed? Only after a refusal (4xx). A
+ * read-back straight after a 5xx shows the old value also while the write is
+ * still on its way behind a proxy, and 429 is no verdict at all. ONE reading
+ * for `wlo_update_content` and `wlo_update_contents` — they disagreed: the
+ * batch called a 5xx "nothing written" (audit 2026-11-14, W6). A status that
+ * is not known is no proof either.
+ */
+export function rejectedWriteIsOpen(rejected: Pick<FieldWriteStatus, 'httpStatus'>): boolean {
+  return !wroteNothing(rejected.httpStatus ?? 0);
+}
+
+/**
  * Write MDS-routed properties in one call.
- * Returns null on success, or the failure detail.
+ * Returns null on success, or the failure.
  */
 async function writeMetadata(
   nodeId: string,
   properties: Record<string, string[]>,
   opts: UpdateOptions,
-): Promise<string | null> {
+): Promise<WriteFailure | null> {
   const params = new URLSearchParams({ obeyMds: 'false' });
   if (opts.commit) {
     params.set('versionComment', (opts.versionComment ?? '').trim() || DEFAULT_VERSION_COMMENT);
@@ -234,7 +266,7 @@ async function writeMetadata(
     // A write carrying `ccm:wwwurl` waits for the repository's page render.
     signal: AbortSignal.timeout(writeTimeoutMs(properties)),
   });
-  return res.ok ? null : await failureDetail(res);
+  return res.ok ? null : await writeFailure(res);
 }
 
 /**
@@ -245,14 +277,14 @@ async function writeProperty(
   nodeId: string,
   property: string,
   values: string[] | null,
-): Promise<string | null> {
+): Promise<WriteFailure | null> {
   const params = new URLSearchParams({ property });
   const res = await wloFetch(`${nodePath(nodeId, 'property')}?${params}`, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(values),
   });
-  return res.ok ? null : await failureDetail(res);
+  return res.ok ? null : await writeFailure(res);
 }
 
 /**
@@ -270,7 +302,7 @@ export async function setProperty(
   nodeId: string,
   property: string,
   values: string[],
-): Promise<string | null> {
+): Promise<WriteFailure | null> {
   return writeProperty(nodeId, property, values);
 }
 
@@ -283,7 +315,7 @@ export async function setProperty(
  * type is `string[]` and should stay that way — a nullable value there would
  * make every caller think about deletion.
  */
-export async function deleteProperty(nodeId: string, property: string): Promise<string | null> {
+export async function deleteProperty(nodeId: string, property: string): Promise<WriteFailure | null> {
   return writeProperty(nodeId, property, null);
 }
 
@@ -320,10 +352,10 @@ export async function updateNodeMetadata(
       for (const property of mdsNames) statuses.push({ property, ok: true });
     } else if (mdsNames.length === 1) {
       // Nothing to isolate — the single field IS the failure.
-      statuses.push({ property: mdsNames[0]!, ok: false, detail: bulkFailure });
+      statuses.push({ property: mdsNames[0]!, ok: false, ...bulkFailure });
     } else {
       log.warn('bulk metadata write rejected, retrying field by field', {
-        nodeId, properties: mdsNames, detail: bulkFailure,
+        nodeId, properties: mdsNames, detail: bulkFailure.detail,
       });
       // The retry always DRAFTS. With `commit: true` each surviving field would
       // POST its own version, so one bad value out of five would leave four
@@ -334,7 +366,7 @@ export async function updateNodeMetadata(
       for (const property of mdsNames) {
         const failure = await writeMetadata(nodeId, { [property]: mdsFields[property]! }, draft);
         if (failure) {
-          statuses.push({ property, ok: false, detail: failure });
+          statuses.push({ property, ok: false, ...failure });
         } else {
           statuses.push({ property, ok: true });
           landed[property] = mdsFields[property]!;
@@ -347,7 +379,7 @@ export async function updateNodeMetadata(
         if (commitFailure) {
           // The values are stored; only the history entry is missing. Reporting
           // the fields as failed would be worse than saying nothing here.
-          log.warn('fields stored, but the version commit failed', { nodeId, detail: commitFailure });
+          log.warn('fields stored, but the version commit failed', { nodeId, detail: commitFailure.detail });
         }
       }
     }
@@ -355,7 +387,7 @@ export async function updateNodeMetadata(
 
   for (const [property, values] of propertyFields) {
     const failure = await writeProperty(nodeId, property, values);
-    statuses.push(failure ? { property, ok: false, detail: failure } : { property, ok: true });
+    statuses.push(failure ? { property, ok: false, ...failure } : { property, ok: true });
   }
 
   return { statuses };

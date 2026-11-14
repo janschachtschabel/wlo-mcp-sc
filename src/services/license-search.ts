@@ -59,6 +59,17 @@ export type RunSearch = (
   skipCount: number,
 ) => Promise<SearchResponse>;
 
+/**
+ * A search answer under a licence selection.
+ *
+ * `totalIsUpperBound`: the exact count (a facet request) gave no answer, so
+ * `pagination.total` is what the upstream criterion counts — the licence
+ * FAMILY, resp. the sum of the bundle's overlapping families. Measured, that is
+ * 343 for 42 and up to 164 % too many; presented bare it read as the number of
+ * records under the licence asked for.
+ */
+export type LicensedSearchResponse = SearchResponse & { totalIsUpperBound?: true };
+
 export interface LicenseSearchOptions {
   /** The caller's `license` input, unresolved — a label, a key, or the bundle. */
   license: string | undefined;
@@ -95,7 +106,8 @@ export interface LicenseSearchOptions {
  * count it as neither.
  *
  * Returns null when the aggregation gives no answer — the caller then keeps the
- * upstream number rather than turning a working search into a failed one.
+ * upstream number rather than turning a working search into a failed one. An
+ * answered aggregation WITHOUT buckets is an answer: 0.
  */
 async function exactLicenseTotal(
   criteria: SearchCriterion[],
@@ -103,8 +115,17 @@ async function exactLicenseTotal(
 ): Promise<number | null> {
   const resp = await ngsearch(criteria, 'FILES', 1, 0, undefined, [LICENSE_PROPERTY])
     .catch(() => null);
-  const buckets = resp?.facets?.find(f => f.property === LICENSE_PROPERTY)?.values;
-  if (!buckets?.length) return null;
+  if (!resp) return null;
+  // No record matches the query at all (this request carries no licence
+  // criterion): then none carries the licence either, whatever the facet block
+  // looks like for an empty result.
+  if (resp.pagination.total === 0) return 0;
+  // No aggregation in the answer: unknown. An aggregation that ANSWERED with no
+  // bucket is a count, though — zero records carry any licence key (the request
+  // asks with `facetMinCount: 1`). Returning null for it marked every zero-hit
+  // licence search as "exact number not to be had", under "Keine Inhalte gefunden."
+  if (!Array.isArray(resp.facets)) return null;
+  const buckets = resp.facets.find(f => f.property === LICENSE_PROPERTY)?.values ?? [];
   // A full bucket list may have been cut, and a sum over a truncated list
   // understates the corpus while looking exact. We cannot tell "that is every
   // distinct licence there is" from "there were more", so the honest answer is
@@ -136,7 +157,7 @@ async function exactLicenseTotal(
  * the repository can give us, so the limit is DISCLOSED rather than hidden:
  * `licensePagingNotice` says it on every page after the first.
  */
-export async function searchWithLicense(opts: LicenseSearchOptions): Promise<SearchResponse> {
+export async function searchWithLicense(opts: LicenseSearchOptions): Promise<LicensedSearchResponse> {
   const { license, criteria, size, skipCount, run } = opts;
   const wantTotal = opts.withTotal !== false;
   // Asked for, but unresolvable: no search at all, an honest 0 — the same rule
@@ -145,8 +166,12 @@ export async function searchWithLicense(opts: LicenseSearchOptions): Promise<Sea
   const keys = resolveLicenseSelection(license);
   if (!keys) return run([], size, skipCount);
 
-  const withExactTotal = (resp: SearchResponse, exact: number | null): SearchResponse =>
-    exact === null ? resp : { ...resp, pagination: { ...resp.pagination, total: exact } };
+  // The exact count was ASKED for and could not be had: the number that stays
+  // is the family's, and it is marked as what it is. Not marked for a window
+  // that did not ask — its caller reads the total off the first one.
+  const unknownTotal = (exact: number | null) => (wantTotal && exact === null ? { totalIsUpperBound: true as const } : {});
+  const withExactTotal = (resp: SearchResponse, exact: number | null): LicensedSearchResponse =>
+    exact === null ? { ...resp, ...unknownTotal(exact) } : { ...resp, pagination: { ...resp.pagination, total: exact } };
 
   if (keys.length === 1) {
     const [resp, exact] = await Promise.all([
@@ -208,5 +233,13 @@ export async function searchWithLicense(opts: LicenseSearchOptions): Promise<Sea
     pagination: { total: exact ?? summed, from: skipCount, count: nodes.length },
     // The last window only when EVERY key answered and each said so.
     exhausted: lists.length === keys.length && lists.every(a => a.exhausted === true),
+    // A key that failed, or one whose own search lacked a variant, was only
+    // logged: the merge of the others then answered "no hits" over licences
+    // nobody had read. Tolerating the loss is right; not saying it was not.
+    ...(lists.length < keys.length || lists.some(a => a.incomplete === true) ? { incomplete: true } : {}),
+    // An upper bound only when EVERY key contributed its family: a sum that
+    // lacks a lost key's family is neither bound — that family may hold more
+    // than the others together. The answer is `incomplete` then, which says it.
+    ...(lists.length === keys.length ? unknownTotal(exact) : {}),
   };
 }

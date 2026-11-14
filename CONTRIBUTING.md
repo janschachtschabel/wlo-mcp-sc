@@ -48,6 +48,27 @@ validation error from a connection error).
   comments — they are WLO concepts.
 - Comments explain **why**, not what the code plainly does.
 
+## Documentation
+
+Start at [`docs/README.md`](docs/README.md) — it says which document answers
+what, for whom, and in which language.
+
+The tool table exists **by hand in six documents** (`README.md`, `README.de.md`,
+`docs/TOOLS.md`, `docs/TOOLS-KOMPAKT.md`, `docs/INTEGRATION.md`,
+`docs/MCP-REFERENZ.md`). When you add, rename or remove a tool:
+
+1. `npm run docs:tools` prints every registered tool with the first sentence of
+   its description, as a Markdown table, straight from the server
+   (`WLO_BATCH_UPLOAD_ENABLED=1 npm run docs:tools` includes the batch tools).
+   Copy the row from there rather than writing it from memory.
+2. Add it to all six documents and correct the counts they state.
+3. `node --import tsx --test tests/docs-claims.test.ts` fails for any of the six
+   that does not name a registered tool, and for a stated count the server
+   contradicts.
+
+`npm run dump:tools` prints the full `tools/list` answer as JSON (schemas
+included) when you need more than the summary.
+
 ## Tests
 
 - Only mock external boundaries (network via `tests/fetchMock.ts`), never the
@@ -84,12 +105,19 @@ The runtime surface is deliberately two packages (`@modelcontextprotocol/sdk`,
 `zod`). Before adding a third, check whether the standard library, an existing
 dependency, or existing project code already covers it.
 
-In-range updates (`npm update`) are routine. Three majors are held back on
-purpose — reopen them as their own change with its own test run, not as a
-side effect of unrelated work:
+The two runtime packages are pinned to a **patch range** (`~`), and Dependabot
+opens a pull request for each of them separately instead of grouping them: the
+code leans on their internals — `src/apps/output-schema.ts` reads zod's
+`_zod.def` and hooks into its `toJSONSchema`, and several rules rest on measured
+behaviour of one SDK version (a stateless server answering `tools/call` without
+`initialize`, how `structuredContent` is validated). A minor update of either is
+a change to read and test, not a routine bump.
+
+In-range updates of the development packages (`npm update`) are routine. Two
+majors are held back on purpose — reopen them as their own change with its own
+test run, not as a side effect of unrelated work:
 
 | Package | Held at | Why |
 |---|---|---|
 | `@types/node` | 22.x | Must describe the OLDEST supported runtime (`engines.node: ">=22.12.0"`). Newer types would let code typecheck against APIs Node 22 does not have. |
 | `typescript` | 5.x | A compiler major; upgrade it deliberately, with the full suite and the build as the gate. |
-| `zod` | 3.x | Every tool's input schema is written against zod 3. The MCP SDK accepts `^3.25 \|\| ^4.0`, so the SDK is not the blocker — the migration itself is the work. |

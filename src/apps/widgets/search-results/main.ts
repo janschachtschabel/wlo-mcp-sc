@@ -18,6 +18,7 @@ import { announceArrival } from '../shared/announce.js';
 import { createHost } from '../shared/host.js';
 import { installImageFallback } from '../shared/image-fallback.js';
 import { renderLoading } from '../shared/loading.js';
+import { failureOf, failureMessage, renderError } from '../shared/failure.js';
 import type { SearchAllPayload } from '../shared/types.js';
 
 const host = createHost();
@@ -43,12 +44,14 @@ function paint(): void {
   // The live region hears the loading→result transition; the repaint below
   // destroys any in-root status text, so this is the only reliable channel.
   const awaiting = host.awaitingOutput();
-  announceArrival(awaiting, host.toolOutput() != null, locale);
-  // "Keine Treffer gefunden." over a search that has not answered yet is a
-  // statement about the corpus, not about the call (see shared/loading.ts).
-  if (awaiting) {
-    root.innerHTML = renderLoading(locale);
-    focusTarget = null; // nothing to focus in a skeleton
+  const failure = awaiting ? null : failureOf(host.toolOutput(), host.timedOut());
+  announceArrival(awaiting, host.toolOutput() != null, locale, failure ? failureMessage(locale, failure) : undefined);
+  // "Keine Treffer gefunden." over a search that has not answered yet — or
+  // that failed — is a statement about the corpus, not about the call (see
+  // shared/loading.ts, shared/failure.ts).
+  if (awaiting || failure) {
+    root.innerHTML = failure ? renderError(locale, failure) : renderLoading(locale);
+    focusTarget = null; // nothing to focus in a skeleton or an error
     return;
   }
   // The widget-only result meta carries the server-inlined previews for

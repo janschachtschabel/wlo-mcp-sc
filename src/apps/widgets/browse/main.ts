@@ -17,6 +17,7 @@ import { resolveLocale, t } from '../shared/strings.js';
 import { announceArrival } from '../shared/announce.js';
 import { createHost } from '../shared/host.js';
 import { renderLoading } from '../shared/loading.js';
+import { failureOf, failureMessage, renderError } from '../shared/failure.js';
 import type { BrowseNode } from '../shared/types.js';
 
 const host = createHost();
@@ -39,12 +40,14 @@ function paint(): void {
   // Live region first: the repaint below destroys any in-root status text
   // (see shared/announce.ts).
   const awaiting = host.awaitingOutput();
-  announceArrival(awaiting, host.toolOutput() != null, locale);
-  // An empty tree and a tree that has not arrived look identical from `state`
-  // alone, and only one of them is "Keine Treffer" (see shared/loading.ts).
-  if (awaiting) {
-    root.innerHTML = renderLoading(locale);
-    focusNodeId = null; // nothing to focus in a skeleton
+  const failure = awaiting ? null : failureOf(host.toolOutput(), host.timedOut());
+  announceArrival(awaiting, host.toolOutput() != null, locale, failure ? failureMessage(locale, failure) : undefined);
+  // An empty tree, a tree that has not arrived and a tree whose call failed
+  // look identical from `state` alone, and only one of them is "Keine Treffer"
+  // (see shared/loading.ts, shared/failure.ts).
+  if (awaiting || failure) {
+    root.innerHTML = failure ? renderError(locale, failure) : renderLoading(locale);
+    focusNodeId = null; // nothing to focus in a skeleton or an error
     return;
   }
   root.innerHTML = renderBrowse(state, locale, { canFollowUp: host.canFollowUp() });

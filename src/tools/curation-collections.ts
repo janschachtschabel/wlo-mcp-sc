@@ -24,13 +24,22 @@ import {
   addToCollectionRequest,
   removeFromCollection,
   removeFromCollectionRequest,
+  findReference,
+  noReference,
+  IS_ORIGINAL,
 } from '../services/write/collections.js';
+import type { WloToolResult } from '../apps/register.js';
 import type { MutationOutcome } from '../services/write/verify.js';
 import type { PrepareOutcome } from '../services/write/prepared-request.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { resolveWriteTarget } from '../services/write/nodes.js';
-import { isAlreadyFiled, readFilingTarget } from '../services/write/create-filing.js';
+import { isAlreadyFiled, isDuplicateFiling, readFilingTarget } from '../services/write/create-filing.js';
 import { mayWrite, proposeForCollection } from '../services/write/collection-proposals.js';
+import { normTitle, subCollectionsByTitle } from '../services/write/collection-children.js';
+import { wroteNothing } from '../upstream-error.js';
+import { failureFields } from '../services/failure-code.js';
+import { failedWriteReply, refusalCode } from './curation-report.js';
+import { CONFIRM_TOKEN } from './curation-fields.js';
 import { notPublicNote, withNotPublic } from './curation-public.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
@@ -44,6 +53,7 @@ import {
   wrongKind,
   wrongKindReply,
   reportMutation,
+  markWritten,
   preparedReply,
   prependText,
   collectDesired,
@@ -54,9 +64,6 @@ import {
   recordTitle,
   candidatesField,
 } from './curation-shared.js';
-
-const CONFIRM_TOKEN = z.string().optional()
-  .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.');
 
 const WRITE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 
@@ -74,6 +81,22 @@ const COLLECTION_FIELDS: ParamMap = {
 function titleOf(properties: Record<string, string[]> | undefined, fallback: string): string {
   const raw = collectionTitleFromProperties(properties);
   return raw ? sanitizeText(raw) : fallback;
+}
+
+/**
+ * What the preview of a create says about a collection of the same title under
+ * the same parent. A listing that did not answer is SAID: no note would read as
+ * "none found".
+ */
+async function namesakeNotes(parentId: string, title: string): Promise<string[]> {
+  const siblings = await subCollectionsByTitle(parentId);
+  if (!siblings) {
+    return ['Ob es unter dieser Sammlung schon eine Untersammlung gleichen Titels gibt, ließ sich gerade nicht prüfen.'];
+  }
+  const namesake = siblings.get(normTitle(title));
+  return namesake
+    ? [`Unter dieser Sammlung gibt es bereits eine Sammlung mit diesem Titel (${namesake}). Beim Bestätigen entsteht trotzdem eine zweite daneben.`]
+    : [];
 }
 
 /** Preview, or the outcome of redeeming the token. Null means "go ahead". */
@@ -115,6 +138,12 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
             ? codedError('not_found', `Die übergeordnete Sammlung „${sanitizeText(parentId!)}“ wurde nicht gefunden oder ist nicht lesbar. Es wurde nichts angelegt.`)
             : codedError('not_a_collection', `„${sanitizeText(parentId!)}“ ist keine Sammlung — eine Untersammlung braucht eine Sammlung als Eltern. Es wurde nichts angelegt.`);
         }
+        // Known from the parent's own record: refused HERE, as the tree tool
+        // does — nobody approves a create that ends in a 403.
+        if (parent?.ok && parent.target.readOnly) {
+          return codedError('forbidden', `An der übergeordneten Sammlung „${sanitizeText(parent.target.title)}“ darf diese Anmeldung nicht `
+            + 'schreiben — darunter lässt sich nichts anlegen. Es wurde nichts angelegt.', { outcomeOpen: false });
+        }
 
         // The collection does not exist yet, so the change set is anchored on
         // the intended title — that is what identifies it before it has an id.
@@ -128,17 +157,37 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
             ? `Legt die Untersammlung „${sanitizeText(title)}“ unter „${sanitizeText(parent.target.title)}“ (${parentId}) an.`
             : `Legt die Sammlung „${sanitizeText(title)}“ auf oberster Ebene an.`,
         });
-        const refusal = gate(params, cs, 'Zum Anlegen bitte bestätigen.');
+        // A namesake is the person's call (the repository puts both side by
+        // side), so it is a note beside the change set, not a refusal — asked
+        // for the preview only.
+        const notes = parentId && isPreviewCall(params) ? await namesakeNotes(parentId, title) : [];
+        const refusal = gate(params, cs, 'Zum Anlegen bitte bestätigen.', notes);
         if (refusal) return refusal;
 
         const description = collected.desired['cm:description']?.[0];
         const result = await createCollection(parentId, { title, description });
-        if (result.status === 'failed') return errorText(`Die Sammlung konnte nicht angelegt werden: ${result.detail}`);
+        if (result.status === 'failed') {
+          // A refusal created nothing. Anything else — a 5xx, an answer without
+          // an id — is OPEN: said as such, like the content create; "refused"
+          // there read as "start over" and made the second collection.
+          const refused = wroteNothing(result.httpStatus ?? 0);
+          // A BUSY repository (429/503) is said as busy, with its wait — still
+          // open: busy is no verdict on the create. Read from the status,
+          // through the one place that pairs code and wait (`failureFields`).
+          // Everything else that is open stays `unverified`.
+          const busy = failureFields(`HTTP ${result.httpStatus ?? 0}`);
+          const open = busy.code === 'upstream_busy' ? busy : { code: 'unverified' };
+          return codedError(refused ? refusalCode(result.httpStatus ?? 0) : open.code,
+            `Die Sammlung konnte nicht angelegt werden: ${result.detail}`
+              + (refused ? '' : ' Ob sie trotzdem angelegt wurde, ist offen — bitte unter der Elternsammlung nachsehen, bevor der Aufruf wiederholt wird.'),
+            { ...(refused ? {} : open), outcomeOpen: !refused });
+        }
         const created = `Sammlung „${sanitizeText(title)}“ angelegt: ${result.nodeId}`;
         const report = reportMutation(result.check, created, 'Die Sammlung wurde angelegt, aber nicht vollständig');
         // The collection exists whatever the read-back said, so its id leads the
-        // reply — without it nobody can go and look at what did or did not land.
-        return result.check.status === 'ok' ? report : prependText(report, created);
+        // reply AND travels in the error (`markWritten`): without it the spent
+        // key advised "preview again" over a collection this answer names.
+        return result.check.status === 'ok' ? report : markWritten(prependText(report, created), result.nodeId);
       } catch (err) {
         return timeoutOrError('Die Sammlung konnte nicht angelegt werden', err,
           `Ob die Sammlung „${sanitizeText(String(params['title'] ?? ''))}“ angelegt wurde, ist offen`, { preview: isPreviewCall(params) });
@@ -182,6 +231,14 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         const cs = buildChangeSet(nodeId, 'collection', node.properties ?? {}, collected.desired, {
           action: `Ändert die Sammlung „${old}“ (${nodeId}).`,
         });
+        // Title and description as they stand: nothing to approve. The action
+        // sentence alone used to earn a key — for a write that changes nothing
+        // (the answer every other tool gives: `unchanged: true`, no key).
+        // Only for a call WITHOUT a key: a key presented again after its
+        // rename finds the values in place, and "nothing to change" over it
+        // hid what the key check says — the replayed result, or that the key
+        // is unknown and the earlier call may have written (review 2026-11-14).
+        if (cs.changes.length === 0 && isPreviewCall(params)) return previewReply(buildChangeSet(nodeId, 'collection', node.properties ?? {}, collected.desired), '');
         const refusal = gate(params, cs, 'Zum Übernehmen bitte bestätigen.');
         if (refusal) return refusal;
 
@@ -255,6 +312,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
         `Nimmt „${material}“ aus der Sammlung „${collection}“ heraus (${ids}). ` +
         'Das Material selbst bleibt bestehen und wird nicht gelöscht.',
       apply: removeFromCollection,
+      refuseInPreview: removalRefusal,
       prepare: removeFromCollectionRequest,
       done: (material, collection) => `„${material}“ ist nicht mehr in „${collection}“. Das Material selbst besteht weiter.`,
       context: 'Das Material konnte nicht herausgenommen werden',
@@ -274,6 +332,11 @@ interface ReferenceSpec {
   done: (material: string, collection: string) => string;
   context: string;
   /**
+   * What the confirmation would refuse anyway, found out for the PREVIEW — so
+   * no key is issued for an act that cannot happen. Null: go on.
+   */
+  refuseInPreview?: (collection: string, nodeId: string) => Promise<WloToolResult | null>;
+  /**
    * File the ORIGINAL when the id names a collection reference — the rule of the
    * batch tool (`filing-plan.ts`: "the filing PUT takes the original"), which
    * the single tool did not follow (audit 2026-11-12, K-11). Ids from a
@@ -283,6 +346,21 @@ interface ReferenceSpec {
    * removal path resolves that on its own.
    */
   fileOriginal?: true;
+}
+
+/**
+ * The two refusals a removal is known to end in, for the preview: a record
+ * filed DIRECTLY in the collection (taking it out deletes the material —
+ * measured 2026-11-14), and a material that is not in there. Both were refused
+ * only at confirmation, after the person had approved (audit 2026-11-14, W9).
+ * A listing that could not be read refuses nothing here: the confirmation
+ * looks again, and says `not_checked` if it still cannot.
+ */
+async function removalRefusal(collection: string, nodeId: string): Promise<WloToolResult | null> {
+  const found = await findReference(collection, nodeId);
+  if (found.status === 'unknown') return null;
+  if (found.status === 'absent') return codedError('not_in_collection', noReference(found, nodeId), { outcomeOpen: false });
+  return found.direct ? codedError('is_original', IS_ORIGINAL, { outcomeOpen: false }) : null;
 }
 
 /**
@@ -334,6 +412,11 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
       return plainText(`„${materialTitle}“ ist bereits in „${collectionTitle}“ — es wurde nichts gesendet.`);
     }
 
+    if (spec.refuseInPreview && isPreviewCall(params)) {
+      const known = await spec.refuseInPreview(collectionId, nodeId);
+      if (known) return known;
+    }
+
     const ids = sentId === nodeId
       ? `${collectionId} / ${nodeId}`
       : `${collectionId} / Verknüpfung ${nodeId} — aufgenommen wird das Original ${sentId}`;
@@ -368,8 +451,8 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
         case 'unverified':
           return codedError('unverified', `Der Vorschlag wurde angenommen, ließ sich aber nicht bestätigen. ${outcome.detail}`, where);
         default:
-          return codedError(outcome.httpStatus === 403 || outcome.httpStatus === 401 ? 'forbidden' : outcome.httpStatus === 404 ? 'not_found' : 'upstream_error',
-            `Der Vorschlag konnte nicht hinterlegt werden: ${outcome.detail}`, where);
+          // The same reading as `reportMutation`: a refusal proposed nothing and says so.
+          return failedWriteReply(outcome.httpStatus, `Der Vorschlag konnte nicht hinterlegt werden: ${outcome.detail}`, where);
       }
     }
 
@@ -389,11 +472,15 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
       return preparedReply(prepared.request, spec.done(materialTitle, collectionTitle));
     }
 
-    return reportMutation(
-      await spec.apply(collectionId, sentId),
-      spec.done(materialTitle, collectionTitle),
-      spec.context,
-    );
+    const outcome = await spec.apply(collectionId, sentId);
+    // The repository's own "it is in there": the answer the look above gives
+    // when IT finds the filing, and the batch's `already` — one reading
+    // (`isDuplicateFiling`). As a refusal it said "could not be filed" over a
+    // material that is in the collection (review 2026-11-14).
+    if (spec.fileOriginal && isDuplicateFiling(outcome)) {
+      return plainText(`„${materialTitle}“ ist bereits in „${collectionTitle}“ — es wurde nichts geändert.`);
+    }
+    return reportMutation(outcome, spec.done(materialTitle, collectionTitle), spec.context);
   } catch (err) {
     return timeoutOrError(spec.context, err,
       `Ob die Änderung an der Sammlung „${sanitizeText(String(params['collectionId'] ?? ''))}“ gewirkt hat, ist offen`, { preview: isPreviewCall(params) });

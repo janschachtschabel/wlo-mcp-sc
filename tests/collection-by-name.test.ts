@@ -43,6 +43,8 @@ interface RepoOptions {
   downWhenWide?: 'mds' | 'name';
   /** The re-read (`/metadata`) of these ids answers with this status. */
   reReadStatus?: Record<string, number>;
+  /** The subject portals (children of the root) — or the status their listing answers with. */
+  portals?: Coll[] | number;
 }
 
 const FIRST_MDS = 25;
@@ -76,6 +78,9 @@ function repository(colls: Coll[], opts: RepoOptions = {}) {
     }
     if (url.includes('/metadata') && opts.reReadStatus?.[id]) return { status: opts.reReadStatus[id], json: {} };
     if (url.includes('/metadata')) return c ?{ json: { node: node(c) } } : { status: 404, json: {} };
+    if (id === WLO_ROOT_COLLECTION_ID && url.includes('/children') && opts.portals !== undefined) {
+      return typeof opts.portals === 'number' ? { status: opts.portals, json: {} } : listing(opts.portals.map(node));
+    }
     return listing();
   });
 }
@@ -567,7 +572,7 @@ interface Structured {
   resolvedCollection?: { nodeId: string; title: string; path?: string[]; matched?: string; unresolvedDiscipline?: { value: string }; alsoFoundTotal?: number;
     alsoFound?: Array<{ nodeId: string; title: string; disciplineUnknown?: boolean }> };
   error?: {
-    code: string; message: string; reason?: string; disciplineUnverified?: boolean; incomplete?: boolean; windowFull?: boolean;
+    code: string; message: string; reason?: string; disciplineUnverified?: boolean; incomplete?: boolean; windowFull?: boolean; portalsUnread?: boolean;
     candidates?: Array<{ nodeId: string; title: string; path?: string[]; disciplineUnknown?: boolean }>;
   };
 }
@@ -623,7 +628,10 @@ for (const tool of TOOLS) {
       assert.deepEqual(sc.error?.candidates?.map(c => [c.nodeId, c.path]).sort(),
         [['c-gv', ['Biologie']], ['c-mol', ['Biologie']]]);
       assert.match(toolText(r), /Keine Sammlung trägt genau den Titel „Genetik“/);
-      const other = calls.filter(c => !c.url.includes(MDS) && !c.url.includes(NAME) && !c.url.includes('/parents'));
+      // The portal listing belongs to the LOOKUP since 2026-11-14 (a portal is
+      // found there and nowhere else) — it is not a read for a candidate.
+      const other = calls.filter(c => !c.url.includes(MDS) && !c.url.includes(NAME) && !c.url.includes('/parents')
+        && !c.url.includes(`/${WLO_ROOT_COLLECTION_ID}/children`));
       assert.deepEqual(other.map(c => c.url), [], 'nothing was listed or read for a candidate');
       if (format === 'json') assert.equal((JSON.parse(blocks[0]!) as Structured).error?.code, 'ambiguous_collection');
     });
@@ -679,7 +687,9 @@ test('browse_collection_tree: `subject` beside `collection` narrows the lookup i
   const { r, sc, calls } = await call('browse_collection_tree', { collection: 'Energie', subject: 'Physik' }, twins);
   assert.notEqual(r.isError, true, toolText(r));
   assert.equal(sc.resolvedCollection?.nodeId, 'c-en-ph');
-  assert.ok(!calls.some(c => c.url.includes(`/${WLO_ROOT_COLLECTION_ID}/children`)), 'the portal list is not read');
+  // Once, by the name lookup (which looks for a portal of that title) — not a
+  // second time by the tool, which would be the `subject` mode opening a portal.
+  assert.equal(calls.filter(c => c.url.includes(`/${WLO_ROOT_COLLECTION_ID}/children`)).length, 1, 'the tool itself does not read the portal list');
 });
 
 // The id lost its `required` entry on purpose (an id OR a title) — so the
@@ -963,4 +973,87 @@ test('alsoFoundTotal passes the published schema, and the sentence names both nu
   assert.equal(r.isError, undefined, toolText(r));
   assert.deepEqual([sc.resolvedCollection?.alsoFound?.length, sc.resolvedCollection?.alsoFoundTotal], [5, 8]);
   assert.match(toolText(r), /Auch gefunden, Fach unbekannt [^:]* — 5 von 8:/);
+});
+
+// ── The portal listing (review 2026-11-15) ──────────────────────────────────
+
+test('a portal listing that did not answer: the unique hit is NAMED as candidate, and the answer says what was not read', async () => {
+  const mock = repository([OPTIK], { portals: 503 });
+  try {
+    const r = await resolveCollectionByName('Optik');
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    // Not taken: a portal of the same title may exist, and a taken id that may
+    // have a namesake is the guess the rule forbids.
+    // `unreachable` is about the SEARCHES, which answered here (second review round):
+    // the tool said "die Suche war nur teilweise erreichbar" beside the portal sentence.
+    assert.deepEqual([r.reason, r.incomplete, r.unreachable, r.portalsUnread], ['unverified', true, undefined, true]);
+    assert.deepEqual(r.candidates.map(c => c.nodeId), ['c-optik']);
+    assert.equal(r.windowFull, undefined);
+  } finally { mock.restore(); }
+});
+
+test('an index down is not reported as an unread portal list', async () => {
+  const mock = repository([OPTIK], { nameStatus: 503 });
+  try {
+    const r = await resolveCollectionByName('Optik');
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.deepEqual([r.unreachable, r.portalsUnread], [true, undefined]);
+  } finally { mock.restore(); }
+});
+
+test('the tool says the portal list could not be read, beside the candidate', async () => {
+  for (const outputFormat of ['markdown', 'json']) {
+    const { r, sc } = await call('get_collection_contents', { collection: 'Optik', outputFormat }, [OPTIK], { portals: 503 });
+    assert.equal(r.isError, true);
+    assert.match(toolText(r), /Liste der Fachportale ließ sich gerade nicht lesen/);
+    // The searches answered: their outage sentence would be a second, false reason.
+    assert.doesNotMatch(toolText(r), /nur teilweise erreichbar|nicht \(vollständig\) geantwortet|die Suche war unvollständig/);
+    assert.match(toolText(r), /nicht übernommen/);
+    assert.match(toolText(r), /nodeId: c-optik/);
+    assert.equal(sc.error?.portalsUnread, true);
+  }
+  const fine = await call('get_collection_contents', { collection: 'Optik' }, [OPTIK]);
+  assert.doesNotMatch(toolText(fine.r), /Fachportale/);
+});
+
+test('a FULL page of portals may hide one of that title: not taken', async () => {
+  const hundred = Array.from({ length: 100 }, (_, i) => ({ id: `p-${i}`, title: `Portal ${i}` }));
+  const mock = repository([OPTIK], { portals: hundred });
+  try {
+    const r = await resolveCollectionByName('Optik');
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.deepEqual([r.reason, r.incomplete, r.windowFull, r.unreachable], ['unverified', true, true, undefined]);
+    // … and the same from memory: the kept list is as full as the read one.
+    const again = await resolveCollectionByName('Optik');
+    assert.equal(again.ok, false);
+  } finally { mock.restore(); }
+  const below = repository([OPTIK], { portals: hundred.slice(0, 99) });
+  try {
+    assert.equal((await resolveCollectionByName('Optik')).ok, true);
+  } finally { below.restore(); }
+});
+
+test('a portal has no ancestors to name: no empty `path`', async () => {
+  const portal: Coll = { id: 'p-physik', title: 'Physik', under: [] };
+  const mock = repository([], { portals: [portal] });
+  try {
+    const r = await resolveCollectionByName('Physik');
+    assert.deepEqual(r, { ok: true, collection: { nodeId: 'p-physik', title: 'Physik' } });
+    // Remembered all the same: its path WAS read, there is just nothing in it.
+    const before = mock.calls.length;
+    assert.equal((await resolveCollectionByName('Physik')).ok, true);
+    assert.equal(mock.calls.length, before, 'answered from memory');
+  } finally { mock.restore(); }
+  // As a candidate too.
+  const two = repository([{ id: 'c-other', title: 'Physik', under: ['Community'] }], { portals: [portal] });
+  try {
+    const r = await resolveCollectionByName('Physik');
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    const asCandidate = r.candidates.find(c => c.nodeId === 'p-physik');
+    assert.ok(asCandidate && !('path' in asCandidate));
+  } finally { two.restore(); }
 });

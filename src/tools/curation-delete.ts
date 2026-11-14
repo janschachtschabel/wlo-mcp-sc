@@ -25,6 +25,7 @@ import type { MutationOutcome } from '../services/write/verify.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { CONTAINER_TYPE, CONTENT_TYPE } from '../node-kind.js';
 import { sanitizeText } from '../text-sanitize.js';
+import { CONFIRM_TOKEN } from './curation-fields.js';
 import {
   registerCurationTool,
   type WriteAuthChallenge,
@@ -44,8 +45,7 @@ const NO_WAY_BACK =
 
 const deleteSchema = {
   nodeId: z.string().describe('nodeId des zu löschenden Eintrags.'),
-  confirmToken: z.string().optional()
-    .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.'),
+  confirmToken: CONFIRM_TOKEN,
 };
 
 export function registerCurationDeleteTools(server: McpServer, challenge: WriteAuthChallenge): void {

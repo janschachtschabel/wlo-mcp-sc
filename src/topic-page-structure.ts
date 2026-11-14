@@ -13,7 +13,7 @@
  * guarded at runtime (typeof / Array.isArray), which is the actual contract. */
 
 import type { WloNode } from './wlo-api.js';
-import { didNotAnswer, getChildCollectionsResult, getNodeMetadata, stripStoreRef } from './wlo-api.js';
+import { didNotAnswer, getChildCollectionsResult, getNodeMetadata, readNodeMetadata, stripStoreRef } from './wlo-api.js';
 import { nodeTitle } from './node-match.js';
 import { TOPIC_PAGE_PROPS, isUsableVariant, type TargetGroup } from './topic-page-variant.js';
 import { orderVariants, readPageConfigOrder } from './topic-page-config.js';
@@ -77,7 +77,9 @@ function parsePageVariantConfig(raw: string | undefined): Swimlane[] {
  * act instead of guessing: a client was probing three candidate collections in
  * sequence because every miss looked identical (client report 2026-07-27).
  *   - `no_match`            — nothing to resolve from (no id, no query hit)
- *   - `node_not_found`      — the id does not resolve to a node
+ *   - `node_not_found`      — the id does not resolve to a node (the repository said 404)
+ *   - `node_not_readable`   — the repository REFUSED the node (401/403): not readable
+ *                             with this login, which says nothing about the page
  *   - `no_page_config_ref`  — a real collection, but it has no Themenseite
  *   - `no_variant`          — the page config holds no usable (non-template) variant
  *   - `empty_config`        — a variant exists but configures zero swimlanes
@@ -86,10 +88,24 @@ function parsePageVariantConfig(raw: string | undefined): Swimlane[] {
 export type TopicPageMiss =
   | 'no_match'
   | 'node_not_found'
+  | 'node_not_readable'
   | 'no_page_config_ref'
   | 'no_variant'
   | 'empty_config'
   | 'source_unreachable';
+
+/**
+ * Why the node a page is resolved FROM came back empty. Only a 404 is "there is
+ * no such node"; a refusal is about the login, and everything else (5xx, our
+ * own full gate, an unreadable body) is the source not answering — reported as
+ * the outage it is, never as a page that does not exist.
+ */
+function seedMiss(status: number): TopicPageMiss {
+  // A 2xx that names no node is an answer too — the repository replied and
+  // there was nothing under the id.
+  if (status === 404 || (status >= 200 && status < 300)) return 'node_not_found';
+  return status === 401 || status === 403 ? 'node_not_readable' : 'source_unreachable';
+}
 
 export interface TopicPageContentResult {
   structure: TopicPageStructure | null;
@@ -119,11 +135,12 @@ export async function getTopicPageContent(
   // single round-trip, and still yields the header the collection route was
   // chosen for.
   if (opts.variantId && opts.collectionId) {
-    const [variant, collection] = await Promise.all([
-      getNodeMetadata(opts.variantId),
+    const [variantRead, collection] = await Promise.all([
+      readNodeMetadata(opts.variantId),
       getNodeMetadata(opts.collectionId),
     ]);
-    if (!variant) return { structure: null, reason: 'node_not_found' };
+    const variant = variantRead.node;
+    if (!variant) return { structure: null, reason: seedMiss(variantRead.status) };
     const cProps = collection?.properties ?? {};
     return buildTopicPageStructure(variant, opts, {
       collectionTitle: (collection ? nodeTitle(collection) : '') || undefined,
@@ -135,8 +152,9 @@ export async function getTopicPageContent(
   // ccm:page_variant_config) or the owning collection (carries
   // ccm:page_config_ref pointing at the config folder). Handling both makes
   // the tool robust regardless of which id the caller passes.
-  let variantNode: WloNode | null = await getNodeMetadata(seedId);
-  if (!variantNode) return { structure: null, reason: 'node_not_found' };
+  const seedRead = await readNodeMetadata(seedId);
+  let variantNode: WloNode | null = seedRead.node;
+  if (!variantNode) return { structure: null, reason: seedMiss(seedRead.status) };
 
   // Page header data: when the seed is the OWNING collection, its title and
   // description are the Themenseite's real heading + intro text (rendered by

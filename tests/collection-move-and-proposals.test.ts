@@ -323,8 +323,20 @@ test('wlo_decide_collection_proposal accept: a filing that fails marks NOTHING �
     assert.equal(done.isError, true);
     assert.equal(s.repo.proposals.find(p => p.id === 'prop-1')!.status, 'PENDING');
     assert.ok(!s.repo.writes.some(w => w.path.endsWith('/property')));
+    // A refusal is an answer: nothing was written, and the code says which no (review 2026-11-14, finding 1).
+    assert.deepEqual([sc(done).error!.code, sc(done).error!.outcomeOpen], ['forbidden', false]);
   } finally { await s.end(); }
 });
+
+for (const [status, code] of [[429, 'upstream_busy'], [502, 'upstream_error']] as const) {
+  test(`wlo_decide_collection_proposal decline: a mark answered ${status} is ${code} and OPEN — never "nothing written"`, async () => {
+    const s = await scene(withProposals, { intercept: q => (q.method === 'POST' && q.url.includes('/property') ? { status, json: {} } : undefined) });
+    try {
+      const { done } = await s.confirm('wlo_decide_collection_proposal', { collectionId: 'own', nodeId: 'p1', decision: 'decline' });
+      assert.deepEqual([sc(done).error!.code, sc(done).error!.outcomeOpen], [code, true]);
+    } finally { await s.end(); }
+  });
+}
 
 test('wlo_decide_collection_proposal accept: filed, and the mark does not land — said as that, with the material named as there', async () => {
   const s = await scene(withProposals, { intercept: q => (q.method === 'POST' && q.url.includes('/property') ? { status: 500, json: {} } : undefined) });
@@ -457,6 +469,22 @@ test('wlo_decide_collection_proposal accept: a mark that was SENT and cannot be 
     assert.match(toolText(done), /liegt jetzt in „Meine Sammlung“/);
   } finally { await s.end(); }
 });
+
+// Review 2026-11-14 (2), finding 5: "still pending" is a statement about the
+// proposal, and only a REFUSED mark request proves it. A 5xx or 429 may have
+// landed — a proxy answers 502 while the work is done.
+for (const [status, mark, pending] of [[500, 'unverified', false], [429, 'unverified', false], [403, 'failed', true]] as const) {
+  test(`wlo_decide_collection_proposal accept: the mark request answered ${status} — ${pending ? 'the proposal IS still pending' : 'the mark is unconfirmed, not "still pending"'}`, async () => {
+    const s = await scene(withProposals, { intercept: q => (q.method === 'POST' && q.url.includes('/property') ? { status, json: {} } : undefined) });
+    try {
+      const { done } = await s.confirm('wlo_decide_collection_proposal', { collectionId: 'own', nodeId: 'm1', decision: 'accept' });
+      assert.equal(sc(done).error!.code, 'proposal_not_marked');
+      assert.equal((sc(done).error as { mark?: string }).mark, mark);
+      assert.equal(/steht weiter als offen da/.test(toolText(done)), pending);
+      assert.equal(/ließ sich nicht bestätigen/.test(toolText(done)), !pending);
+    } finally { await s.end(); }
+  });
+}
 
 test('wlo_decide_collection_proposal: a material this login cannot read is named in the preview', async () => {
   const s = await scene(withProposals, { intercept: (q) => {

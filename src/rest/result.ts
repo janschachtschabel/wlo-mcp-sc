@@ -14,6 +14,8 @@ export interface RestResult {
   contentType?: string;
   /** Seconds, for a 503/429 that will pass: written as the `Retry-After` header. The JSON carries the same number. */
   retryAfter?: number;
+  /** For a 405: the methods the path does take, written as the `Allow` header (RFC 9110 requires one). */
+  allow?: string;
 }
 
 export const badRequest = (error: string): RestResult => ({ status: 400, json: { error } });

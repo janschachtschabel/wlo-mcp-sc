@@ -78,7 +78,15 @@ Die Laufzeit besteht bewusst aus zwei Paketen (`@modelcontextprotocol/sdk`,
 `zod`). Vor einem dritten prüfen, ob Standardbibliothek, eine vorhandene
 Abhängigkeit oder vorhandener Projektcode das schon abdeckt.
 
-Updates innerhalb der Version (`npm update`) sind Routine. Drei Majors werden
+Die zwei Laufzeitpakete sind auf einen **Patch-Bereich** (`~`) festgelegt, und
+Dependabot öffnet für jedes einen eigenen Pull Request: der Code stützt sich auf
+ihre Interna — `src/apps/output-schema.ts` liest zods `_zod.def` und hängt sich
+in dessen `toJSONSchema`, und mehrere Regeln beruhen auf gemessenem Verhalten
+einer SDK-Version. Ein Minor-Update ist eine Änderung, die gelesen und getestet
+wird, kein Routine-Schritt.
+
+Updates der Entwicklungspakete innerhalb der Version (`npm update`) sind Routine.
+Zwei Majors werden
 absichtlich zurückgehalten — sie gehören in eine eigene Änderung mit eigenem
 Testlauf, nicht als Nebenwirkung fremder Arbeit:
 
@@ -86,4 +94,3 @@ Testlauf, nicht als Nebenwirkung fremder Arbeit:
 |---|---|---|
 | `@types/node` | 22.x | Muss die ÄLTESTE unterstützte Laufzeit beschreiben (`engines.node: ">=22.12.0"`). Neuere Typen ließen Code gegen APIs typprüfen, die Node 22 nicht hat. |
 | `typescript` | 5.x | Ein Compiler-Major; bewusst hochziehen, mit voller Suite und Build als Gate. |
-| `zod` | 3.x | Alle Tool-Eingabeschemata sind gegen zod 3 geschrieben. Das MCP-SDK akzeptiert `^3.25 \|\| ^4.0`, ist also nicht der Blocker — die Migration selbst ist die Arbeit. |

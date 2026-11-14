@@ -288,6 +288,9 @@ test('get_topic_page_content: none of query/collectionId/variantId → error', a
   try {
     const result = await client.callTool({ name: 'get_topic_page_content', arguments: {} });
     assert.equal(result.isError, true);
+    // The code: `isError` alone is also what an outage or a thrown TypeError gives.
+    assert.equal((result.structuredContent as { error?: { code?: string } }).error?.code, 'invalid_input');
+    assert.match((result.content as Array<{ text: string }>)[0]!.text, /query, collectionId oder variantId/);
   } finally {
     await client.close();
   }

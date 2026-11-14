@@ -97,12 +97,12 @@ traversal a tool would otherwise inline belongs in `services/`
 | `src/server.ts` | the factory; the only place tools are assembled |
 | `src/stdio.ts`, `src/http.ts` | transports |
 | `src/http-app.ts`, `src/rest/*` | HTTP routing, REST endpoints, auth/OAuth pages |
-| `src/tools/*` (40 files) | one module per tool group; schema + rendering |
+| `src/tools/*` | one module per tool group; schema + rendering |
 | `src/tools/shared.ts` | tool-layer helpers (`toolError`, `codedErrorResult`, `queryMetaContent`, `subjectRegistryText`) |
 | `src/tools/curation-shared.ts` | `registerCurationTool` — the write gate every curation tool passes |
-| `src/services/*` (31 files) | search, traversal, skills, compendium, collection search, overviews, counts |
-| `src/services/write/*` (27 files) | the shared write pipeline, plan runner and batch filing (§7) |
-| `src/auth/*` (13 files) | access blocks, OAuth 2.1, ticket exchange, identity |
+| `src/services/*` | search, traversal, skills, compendium, collection search, overviews, counts |
+| `src/services/write/*` | the shared write pipeline, plan runner and batch filing (§7) |
+| `src/auth/*` | access blocks, OAuth 2.1, ticket exchange, identity |
 | `src/apps/*` | the Apps-SDK seam: `register.ts`, `outputSchemas.ts`, `resources.ts`, `tool-defaults.ts`, `widgets/` |
 | `src/wlo-api.ts` | barrel over the edu-sharing client |
 | `src/wlo-fetch.ts` | **the credential boundary** — the only place a password is attached |
@@ -378,6 +378,30 @@ The resource URI is **content-addressed** over HTML *and* metadata, so a pure
 configuration change cannot get stuck in a stale host cache. `registerWidgets`
 degrades gracefully when `dist-widgets/` is absent — tests and a build without
 `build:widgets` simply get tools without widget metadata.
+
+**Three states, decided by the shell.** Every widget shows *loading*
+(`shared/loading.ts`), *empty* (the renderer's own) or *error*
+(`shared/failure.ts`). The shell (`main.ts`, `shared/mount.ts`) asks the host
+which one applies BEFORE the renderer runs — `awaitingOutput()`, then
+`failureOf(output, timedOut())` — because a renderer handed a payload without
+results answers "Keine Treffer gefunden.", and over a pending or failed call
+that is a claim about the catalogue. A failed tool call arrives as
+`structuredContent.error` (or a bare `isError`); a host that never delivers
+ends in the same error state after 30 s. The transition is spoken through one
+live region that lives outside the repainted root (`shared/announce.ts`).
+
+**The collection tree is a nested list, not an ARIA tree.** Disclosure buttons
+with `aria-expanded`, reached with Tab and toggled with Enter/Space; there is no
+arrow-key navigation, and no `role="tree"` that would promise it.
+
+**UI copy lives in three places, on purpose.** The widgets have
+`src/apps/widgets/shared/strings.ts` (bundled into each widget by esbuild); the
+sign-in pages share `public/auth-i18n.js` (a browser module served as a file,
+under a policy that allows no inline script); the launcher keeps its own table
+inside its script (`public/launcher.html`, mirrored in `public/launcher.js`).
+They are three build worlds — a bundle, a served module, a self-contained
+page — and merging them would couple the password pages' script to the widget
+build. A string needed in two of them is written twice.
 
 ---
 

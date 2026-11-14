@@ -185,6 +185,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `LOG_LEVEL` | `info` | alle | Niedrigste Stufe, die geloggt wird: `debug`, `info`, `warn` oder `error` (auf `debug` wird heute keine Zeile geschrieben). Ein unbekannter Wert wird mit einer Warnung ignoriert. Das Log ist ein JSON-Objekt je Zeile — `timestamp`, `level`, `service`, `message`, dazu `trace_id`/`span_id`, wenn der Aufrufer B3-Kopfzeilen sendet, und `req`, die Anfrage-Kennung. Über HTTP geht es nach **stdout**, unter stdio nach **stderr** (dort ist stdout der Protokollkanal). |
 | `LOG_PERSONAL_DATA` | _(nicht gesetzt)_ | alle | Was das Log über eine Person sagt. Nicht gesetzt: Client-Adresse, WLO-Kontoname und Suchbegriff stehen als kurze **Pseudonyme** im Log (ein Schlüssel-Hash, der nur in diesem Prozess gilt — „dieselbe Adresse wieder“ bleibt sichtbar, der Wert nicht). `plain` schreibt sie im Klartext. Betrifft nur das Log; Limits und Zugangsliste arbeiten im Speicher in beiden Fällen mit den echten Werten. |
 | `INTERNAL_PORT` | _(nicht gesetzt)_ | http | Ein zweiter Port, der **nur** `GET /health`, `GET /ready` und `GET /metrics` bedient — für Proben und den Scraper, abseits des öffentlichen Proxys. Ein Zusatz: die drei Pfade bleiben auch auf `PORT`. `/metrics` braucht hier kein Token, solange `METRICS_TOKEN` nicht gesetzt ist; der Port darf deshalb nicht veröffentlicht werden. Anfragen hier zählen nicht in `wlo_http_requests_total`. |
+| `INTERNAL_BIND_ADDR` | _(nicht gesetzt)_ | http | Die Schnittstelle, auf der `INTERNAL_PORT` lauscht. Nicht gesetzt = alle Schnittstellen (ein Scraper oder eine Probe in einem anderen Container muss ihn erreichen). `127.0.0.1` beschränkt ihn auf die Maschine selbst. Ohne Loopback-Adresse hier und ohne `METRICS_TOKEN` meldet der Start eine Warnung: `/metrics` liest dann, wer den Port erreicht. |
 | `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(nicht gesetzt)_ | alle | Optionales Dienstkonto. Nicht gesetzt (Standard) → der Server liest **anonym**, nur öffentliche Inhalte, exakt wie bisher. Beide gesetzt → jeder Aufruf meldet sich per HTTP Basic mit diesem einen Konto an, **alle** Nutzenden dieses MCP sehen also dieselben erweiterten Inhalte. Dafür ein eigens angelegtes, schreibgeschütztes Konto verwenden: was es sieht, sieht jede:r, und im edu-sharing-Protokoll steht das Dienstkonto statt der Person. Eine halbe Angabe gilt als keine. **Falsche Zugangsdaten schalten nicht auf „nur öffentlich“ zurück** — das Repository antwortet mit `401` (gemessen gegen die Produktion am 2026-07-31, auf dem Identitäts- wie auf dem Such-Endpunkt), damit schlägt jede Abfrage fehl und der Server liefert gar nichts. Wer anonym lesen will, lässt beide Variablen weg. Mit dem Werkzeug `wlo_auth_status` prüfen: `mode: "service"` zusammen mit `authenticated: false` und `upstream: "ok"` heißt, die Zugangsdaten werden abgelehnt (`upstream: "unreachable"` heißt, das Repository hat nicht geantwortet — kein Urteil über die Zugangsdaten). HTTP Basic, weil es neben dem Session-Cookie das einzige Schema ist, das die edu-sharing-OpenAPI deklariert. **Geltungsbereich:** Das Dienstkonto gilt nur für den MCP-Endpunkt. Die öffentliche REST-Schnittstelle (`GET /api/*`) und die Launcher-Seite bleiben bewusst anonym — sie sind ohne Anmeldung aus dem Internet erreichbar; würden sie das Konto erben, wäre alles, was es sieht, für jede:n lesbar. Bei einer Repository-URL ohne `https` gehen die Zugangsdaten im Klartext über die Leitung (Basic ist base64, keine Verschlüsselung); der Server warnt darüber beim Start. |
 | `WLO_ALLOW_SERVICE_WRITES` | _(nicht gesetzt)_ | alle | Erlaubt dem **Dienstkonto** die kuratierenden (schreibenden) Werkzeuge. Standardmäßig aus: eine Änderung unter einem gemeinsamen Konto ist niemandem zuzuordnen — in der Historie des Repositorys steht der Kontoname, nicht die Person, die sie angefordert hat. Wer sich mit dem eigenen WLO-Login meldet, darf immer schreiben und braucht hier nichts; anonyme Aufrufende dürfen nie — sie sehen die Werkzeuge (nur so lernt ihr Client, eine Anmeldung anzubieten), und jeder Aufruf wird abgelehnt. Gilt ebenso für den stdio-Modus, wo die Zugangsdaten aus der Umgebung kommen und daher als Dienstkonto gelten. Gültige Werte: `1`, `true`, `yes`, `on`; alles andere (auch `false`) lässt es aus. Siehe [Kuratieren](#kuratieren-schreiben-in-wlo). |
 | `WLO_AUTH_PRIVATE_KEY` | _(nicht gesetzt)_ | http | PKCS#8-PEM, das **persönliche Zugangsblöcke** einschaltet: Wer sich unter `/auth` einen verschlüsselten Block holt, trägt ihn einmal als `Bearer …` in das Authorization-Feld seines KI-Programms ein und kann ihn unter `/auth-revoke.html` (oder `/auth/revoke` — dieselbe Seite) sperren: entweder durch Einfügen des Blocks oder per WLO-Anmeldung, die alle Zugänge des Kontos auf einmal beendet. Der zweite Weg ist der einzige für OAuth-Nutzer, die ihren Block nie zu sehen bekommen. Pro Konto gelten die zehn zuletzt geholten Blöcke. Nicht gesetzt heißt: Funktion komplett aus — die `/auth/…`-Endpunkte antworten 404, die Seiten sagen es, ein Bearer-Header wird abgelehnt wie bisher. Der öffentliche Schlüssel wird hieraus **abgeleitet**, es gibt also keine zweite Variable, die auseinanderdriften könnte. Erzeugen mit `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **Dieser Schlüssel entschlüsselt jeden ausgestellten Block zu einem lebenden WLO-Passwort** — er gehört in die `.env` auf dem Server, nie ins Image und nie ins Repository. |
@@ -1197,84 +1198,26 @@ Rückfallebene kosten.
 
 ## Architektur
 
-```
-wlo-mcp-server/
-├── src/
-│   ├── server.ts             # factory: registers all 60 tools (transport-agnostic)
-│   ├── tools/                # tool definitions, grouped by responsibility
-│   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
-│   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection
-│   │   ├── content-search.ts #   search_wlo_content, search_wlo_all
-│   │   ├── node-details.ts   #   get_node_details, get_nodes_details
-│   │   ├── node-relations.ts #   get_related_content, get_node_breadcrumb
-│   │   ├── collection-stats.ts #  get_collection_stats
-│   │   ├── skills.ts         #   search_skill, get_skill (bzw. get_skill_for_task)
-│   │   ├── vocabulary.ts     #   lookup_wlo_vocabulary, lookup_wlo_publishers
-│   │   ├── topic-pages.ts    #   search_wlo_topic_pages
-│   │   ├── topic-page-content.ts # get_topic_page_content
-│   │   ├── browse.ts         #   get_subject_portals, browse_collection_tree
-│   │   ├── compendium.ts     #   get_compendium_text
-│   │   ├── wikipedia.ts      #   get_wikipedia_summary
-│   │   ├── knowledge.ts      #   search, fetch (ChatGPT knowledge tools)
-│   │   └── health.ts         #   wlo_health_check
-│   ├── services/             # business logic reused by tools + REST + widgets
-│   │   ├── search.ts         #   searchAll (combined search + opt-in enrichments)
-│   │   ├── compendium.ts     #   getCompendiumTexts
-│   │   ├── compendium-view.ts #   Inhaltsverzeichnis, Abschnitts-Deckel, BM25-Passagenauswahl
-│   │   ├── publishers.ts     #   lookupPublishers (facet-based counts)
-│   │   ├── related.ts        #   getRelatedContent
-│   │   ├── stats.ts          #   getCollectionStats
-│   │   ├── skills.ts         #   findSkills (list + rank + fetch raw Markdown)
-│   │   └── topic-page.ts     #   resolveTopicPageSwimlanes
-│   ├── apps/                 # OpenAI Apps-SDK seam + widgets
-│   │   ├── register.ts       #   registerWloTool (outputSchema/annotations/_meta.ui)
-│   │   ├── tool-defaults.ts  #   applyReadOnlyToolDefaults: noauth _meta + required hints + status, on every tool
-│   │   ├── tool-status.ts    #   per-tool openai/toolInvocation status strings (DE)
-│   │   ├── outputSchemas.ts  #   zod structuredContent schemas
-│   │   ├── resources.ts      #   ui:// widget resources (loads dist-widgets/)
-│   │   ├── instructions.ts   #   server instructions block
-│   │   └── widgets/          #   vanilla-TS widgets (esbuild → dist-widgets/*.html)
-│   ├── vocabs.ts             # label ↔ URI mappings (6 vocabularies)
-│   ├── vocabs-hochschule.ts  # university-subject URI→label (display-only; NOT in resolveVocab)
-│   ├── vocab-suggest.ts      # fuzzy vocab suggestions (levenshtein, ≤2 edits)
-│   ├── wlo-api.ts            # barrel re-export of the edu-sharing REST client
-│   ├── wlo-config.ts         #   env config + shared types + wloFetch + DISPLAY_PROPS
-│   ├── wlo-search.ts         #   search endpoints (ngsearch, collection keyword search)
-│   ├── wlo-node.ts           #   node endpoints (children/metadata/text/download/breadcrumb) + URL builders
-│   ├── topic-page-api.ts     # topic-page discovery (page_variant search, variant→collection)
-│   ├── topic-page-structure.ts # one page's content: variant → swimlanes
-│   ├── wikipedia-api.ts      # Wikipedia REST summary client (search title fallback)
-│   ├── wikipedia-relevance.ts # picks which fuzzy candidate the query is about
-│   ├── reranker.ts           # RRF-Merge + Quality-Scoring (pure)
-│   ├── query-expand.ts       # Query → gewichtete Backend-Varianten (Synonyme, Stoppwörter)
-│   ├── node-match.ts         # lokales Node-Matching (Text + Kriterien) für /children-Fallbacks
-│   ├── text-bm25.ts          # Okapi BM25 über einen kleinen In-Memory-Korpus (pure)
-│   ├── formatter.ts          # WloNode → FormattedNode → markdown / json
-│   ├── logger.ts             # minimal structured JSON logger (stdout over HTTP, stderr under stdio)
-│   ├── rate-limit.ts         # in-memory per-IP rate limiter + client-IP resolution
-│   ├── read-body.ts          # bounded request-body reader (413 support)
-│   ├── mcp-transport.ts      # Streamable-HTTP-Transport-Optionen (MCP_SSE → JSON vs SSE)
-│   ├── rest/                 # public read-only REST layer (GET /api/*) over the services
-│   │   ├── validate.ts       #   input validation (query/nodeId/id-count caps, int clamp, fields)
-│   │   ├── project.ts        #   field projection for /api/{search,collection} (?fields=)
-│   │   ├── result.ts         #   RestResult shape + badRequest helper
-│   │   ├── handlers.ts       #   the per-endpoint handlers (handleSearch, handleCollection, …)
-│   │   ├── routes.ts         #   routeRestRequest (pure router) + handleRestRequest (http.ts adapter)
-│   │   ├── skills.ts         #   skill registry + raw loader (GET /api/skills[/<id>])
-│   │   └── static.ts         #   resolveStaticRoute (pure) + handleStaticRequest (serves /launcher.html)
-│   ├── stdio.ts              # entry: stdio transport
-│   └── http.ts               # entry: Streamable HTTP (CORS, rate/body limits, routing)
-├── public/                   # static assets served by http.ts
-│   ├── launcher.html         #   bilingual prompt launcher (self-contained; GET /launcher.html, GET /)
-│   ├── bookmarklet.md        #   selection → launcher bookmarklet (install docs, DE/EN)
-│   └── skills/               #   AI-app skills served raw via GET /api/skills/<id>
-├── tests/                    # offline unit/smoke tests (node:test): npm test
-│   ├── fetchMock.ts          #   the in-memory MCP client + upstream fetch stub every tool test uses
-│   └── netguard.mjs          #   fails any unmocked non-loopback fetch — enforces "no network required"
-├── scripts/                  # tooling (not shipped): run-tests.mjs (npm test), vocab generation, measurements
-├── docs/                     # DEPLOYMENT.md, PRIVACY.md, TOOLS.md, apps-sdk-submission-checklist.md, apps-sdk-golden-prompts.md, plans/
-├── Dockerfile · docker-compose.yml · .dockerignore · .env.example
-```
+Der Quelltext ist nach Schichten geordnet; jedes Verzeichnis hat eine Aufgabe. Die
+Karte auf Modulebene — welche Datei welche Regel hält, und warum — steht in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| Verzeichnis | Was dort liegt |
+|---|---|
+| `src/` (oberste Ebene) | Die zwei Einstiegspunkte (`stdio.ts`, `http.ts`), die Server-Fabrik (`server.ts`), der HTTP-Verteiler (`http-app.ts`), der edu-sharing-Client (`wlo-*.ts`, mit `wlo-fetch.ts` als der einen Stelle, die Zugangsdaten anhängt) und die Blattmodule, die jede Schicht nutzt: Vokabulare, Textbehandlung, Reranking, Begrenzungen, Logging, Metriken, Herunterfahren. |
+| `src/tools/` | Ein Modul je Werkzeuggruppe: Eingabeschema, Darstellung, Registrierung. Keine Algorithmen — die liegen in `services/`. `curation-*.ts` sind die schreibenden Werkzeuge. |
+| `src/services/` | Was Werkzeuge und REST-Routen gemeinsam aufrufen: Suche, Sammlungen, Themenseiten, Skills und Skill-Registry, Kompendium, Volltext. Kein Import des MCP-SDK. |
+| `src/services/write/` | Die Schreibstrecke, durch die jede Änderung läuft: Zugangsprüfung, Feldregeln, Änderungsmenge, zweistufige Bestätigung, Zurücklesen, Pläne für Stapel. |
+| `src/auth/` | Persönlicher Zugang: der verschlüsselte Zugangsblock, seine Erlaubnisliste (die einzige Datei, die zur Laufzeit geschrieben wird), OAuth 2.1, der Ticket-Tausch für eingebettete Widgets. |
+| `src/rest/` | Die HTTP-Oberfläche neben MCP: `/api/*`, die Anmelde- und OAuth-Seiten, `/health`, `/ready`, `/metrics`, die statischen Dateien. Beschrieben in `docs/openapi.yaml`. |
+| `src/apps/` | Die eine Naht, über die jedes Werkzeug registriert wird (`register.ts`), Ausgabeschemata und die Apps-SDK-Widgets. |
+| `src/apps/widgets/` | Vier HTML-Widgets (Suchergebnisse, Sammlungsbaum, Themenseite, Leseansicht), reines TypeScript, von esbuild nach `dist-widgets/` gebündelt. |
+| `public/` | Statische Seiten, unverändert ausgeliefert: der Prompt-Launcher, die Anmelde- und Widerrufsseiten, `llms.txt`, `robots.txt`. |
+| `tests/` | Die Offline-Tests (`node:test`; das Repository wird durch `fetchMock.ts` ersetzt, jeder andere Netzzugriff scheitert an `netguard.mjs`). `tests/live/` läuft gegen ein echtes Staging-Repository und gehört nie zu `npm test`. |
+| `scripts/` | Werkzeug, das nicht ausgeliefert wird: der Testläufer, Erzeugung und Abgleich der Vokabulare, Messungen, `dump-tools.ts` / `docs-tools.ts`. |
+| `docs/` | Dokumentation nach Leser — Einstieg ist [docs/README.md](docs/README.md). `docs/plans/` enthält Entwürfe und die Messungen, auf denen sie stehen. |
+| `deploy/` | Ein Entwurf eines Helm-Charts (`deploy/helm/wlo-mcp/`, noch nirgends installiert). |
+| Wurzelverzeichnis | `Dockerfile`, `docker-compose.yml`, `.env.example` (jede Einstellung, kommentiert), CI für GitHub und GitLab. |
 
 **Datenfluss:** Transport-Einstieg (`stdio.ts` / `http.ts`) →
 `createMcpServer()` (`server.ts`) → ein Tool-Handler (`tools/*`) →
@@ -1362,6 +1305,7 @@ Codes), gruppiert nach Modul.
 
 ## Weitere Dokumente
 
+- **[docs/README.md](docs/README.md)** — das Verzeichnis: welches Dokument welche Frage beantwortet, nach Rolle (Betrieb, Integration, Entwicklung, Redaktion; auf Englisch).
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — die Entwicklerkarte: Schichten, Nahtstellen, Invarianten und die gemessenen Randbedingungen, die eine Änderung einhalten muss (auf Englisch).
 - **[CHANGELOG.md](CHANGELOG.md)** — nennenswerte Änderungen.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — Beitragsleitfaden.

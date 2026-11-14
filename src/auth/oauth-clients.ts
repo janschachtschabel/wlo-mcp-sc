@@ -121,10 +121,25 @@ export function redirectUriMatches(registered: string, presented: string): boole
  * reason `decodeAccessToken` tries the previous key.
  */
 function derivedKeys(keys: AuthKeys): Buffer[] {
-  return keys.privateKeys.map((k: KeyObject) =>
-    Buffer.from(hkdfSync('sha256', k.export({ type: 'pkcs8', format: 'der' }), Buffer.alloc(0),
-      'wlo-oauth-client-id-v1', KEY_BYTES)));
+  return keys.privateKeys.map((k: KeyObject) => {
+    let derived = derivedByKey.get(k);
+    if (!derived) {
+      derived = Buffer.from(hkdfSync('sha256', k.export({ type: 'pkcs8', format: 'der' }), Buffer.alloc(0),
+        'wlo-oauth-client-id-v1', KEY_BYTES));
+      derivedByKey.set(k, derived);
+    }
+    return derived;
+  });
 }
+
+/**
+ * Derived once per key object. Every `client_id` opened — one per request on
+ * `/oauth/authorize` and `/oauth/token`, which anyone may call — exported the
+ * private key as DER and ran HKDF again (audit 2026-11-14, S5). Weak, so a
+ * rotated-out key takes its derivation with it; the value is as secret as the
+ * key it sits beside and no more.
+ */
+const derivedByKey = new WeakMap<KeyObject, Buffer>();
 
 /** Produce a `client_id` that carries this registration. */
 export function encodeClientId(client: OAuthClient, keys: AuthKeys): string {

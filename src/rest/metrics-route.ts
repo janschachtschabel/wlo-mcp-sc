@@ -13,8 +13,33 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 
 import { renderMetrics } from '../metrics.js';
+import { cacheSize } from '../services/skill-registry-cache.js';
+import { confirmStoreSize } from '../services/write/confirm.js';
+import { replayStoreSize } from '../services/write/confirm-replay.js';
+import { heldFulltextBytes } from '../services/write/fulltext-plan.js';
+import { planStoreSize } from '../services/write/plan-runner.js';
+import { uploadStoreBytes } from '../services/write/upload-slot.js';
 import { upstreamGateStats } from '../upstream-gate.js';
 import { SERVER_VERSION } from '../version.js';
+
+/**
+ * The bounded in-memory stores, read at the moment of the scrape. Each is
+ * capped in its own module; the gauge is how an operator sees how close to the
+ * cap a deployment runs. To add one: a size getter in the store's module and a
+ * line here — no label, the name says which store.
+ */
+const STORE_GAUGES: ReadonlyArray<{ name: string; help: string; read: () => number }> = [
+  { name: 'wlo_skill_registry_cache_entries', help: 'Skill-registry answers held in memory (capped at CACHE_MAX_ENTRIES).', read: cacheSize },
+  { name: 'wlo_fulltext_held_bytes', help: 'Bytes of full text held for unfinished records, across every live plan.', read: heldFulltextBytes },
+  { name: 'wlo_plans_held', help: 'Batch plans held in memory (finished ones until they expire).', read: planStoreSize },
+  { name: 'wlo_confirm_tokens_held', help: 'Confirmation keys held, including expired ones not yet swept.', read: confirmStoreSize },
+  { name: 'wlo_confirm_replays_held', help: 'Results kept so a re-presented confirmation key replays instead of writing twice.', read: replayStoreSize },
+  { name: 'wlo_upload_held_bytes', help: 'Bytes of uploaded files held for a batch that has not been filed yet.', read: uploadStoreBytes },
+];
+
+function storeGauges(): string[] {
+  return STORE_GAUGES.flatMap(({ name, help, read }) => [`# HELP ${name} ${help}`, `# TYPE ${name} gauge`, `${name} ${read()}`]);
+}
 
 export const METRICS_PATH = '/metrics';
 
@@ -106,6 +131,7 @@ function gauges(): string {
     '# HELP wlo_upstream_limit The configured bound on open repository calls (WLO_UPSTREAM_CONCURRENCY).',
     '# TYPE wlo_upstream_limit gauge',
     `wlo_upstream_limit ${gate.limit}`,
+    ...storeGauges(),
   ].join('\n') + '\n';
 }
 

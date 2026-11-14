@@ -24,7 +24,7 @@ import { nodeMatchesCriteria, nodeMatchesText } from '../node-match.js';
 import { log } from '../logger.js';
 import { enrichStoredText, searchContent, type StoredTextReport } from './content-search.js';
 import { getCompendiumTexts } from './compendium.js';
-import { ensureRegistries, refreshRegistries } from './skill-registry-cache.js';
+import { ensureRegistries } from './skill-registry-cache.js';
 import type { SwimlanePayload } from './topic-page.js';
 import { resolveTopicPageSwimlanes } from './topic-page.js';
 import { searchTopicPageCollectionsResult } from '../topic-page-api.js';
@@ -73,7 +73,7 @@ export interface SearchWithinCollectionResult {
  * the same "up to 100" bound the stats service uses, keeping this to a single
  * upstream call. `truncated` discloses when a collection exceeds it.
  */
-const WITHIN_CHILDREN_MAX = 100;
+export const WITHIN_CHILDREN_MAX = 100;
 
 export async function searchWithinCollection(
   opts: SearchWithinCollectionOptions,
@@ -206,6 +206,8 @@ export interface SearchAllEnvelope {
     more?: { nextSkipCount: number };
     /** A query variant of the content search did not answer. */
     incomplete?: true;
+    /** A licence was asked and its exact count could not be had: `total` counts the licence family. */
+    totalIsUpperBound?: true;
     /** Hits whose full text was not read (bound) resp. could not be read. */
     textContentSkipped?: string[];
     textContentUnreadable?: string[];
@@ -366,20 +368,24 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // Enrichments run in parallel once the base results are known; each touches a
   // distinct field, so they cannot conflict on shared nodes. All are opt-in.
   let textReport: StoredTextReport | undefined;
-  let forcedAnswered = new Set<string>();
-  let forcedFailed = new Set<string>();
+  const registryNodes = [...collectionsFmt, ...topicPagesFmt];
+  let forcedAnswered: Set<string> | undefined;
   await Promise.all([
     opts.includeTextContent ? enrichStoredText(contentFmt).then((report) => { textReport = report; }) : Promise.resolve(),
     opts.includeCompendium ? enrichCompendium([...collectionsFmt, ...topicPagesFmt]) : Promise.resolve(),
     opts.includeTopicPageContent ? enrichTopicPageContent(topicPagesFmt, opts.maxPerSwimlane ?? 3) : Promise.resolve(),
     forceLiveRegistry
-      ? refreshRegistries([...collectionsFmt, ...topicPagesFmt]).then((forced) => { forcedAnswered = forced.answered; forcedFailed = forced.failed; })
+      ? ensureRegistries(registryNodes, { force: true }).then((answered) => { forcedAnswered = answered; })
       : Promise.resolve(),
   ]);
 
-  // AFTER the forced pass, so a fresh answer is never overwritten. A cache hit
-  // is a map lookup; a miss falls back to the children listing so the answer
-  // carries the catalogue either way (bounded, pooled — one round-trip).
+  // ONE pass, forced or ordinary — never the ordinary one after the forced one.
+  // That sequence attached a remembered catalogue over a fresh "none now": for
+  // a personal login the anonymous scope's older positive was lent back, and
+  // the call site only kept the FAILED ids away from it. The cache decides now
+  // (`ensureRegistries`, `force`). Ordinary: a cache hit is a map lookup; a
+  // miss falls back to the children listing so the answer carries the
+  // catalogue either way (bounded, pooled — one round-trip).
   //
   // ONE call over BOTH buckets, since 2026-08-19: a Themenseite IS a `ccm:map`
   // and can hold a registry like any collection (the live Optik page holds
@@ -387,9 +393,7 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // search returned for it named none of them. One call, not two, because the
   // buckets then share the live-fallback cap — two calls would double the
   // upstream budget a single search may spend.
-  // Not for a collection whose FORCED lookup just failed: the remembered
-  // catalogue in its place would read as the fresh one that was asked for.
-  const registriesAnswered = await ensureRegistries([...collectionsFmt, ...topicPagesFmt].filter(n => !forcedFailed.has(n.nodeId)));
+  const registriesAnswered = forcedAnswered ?? await ensureRegistries(registryNodes);
   // "Checked" means the CHILDREN listing answered for every node of THAT
   // bucket, live or remembered. Anything less and the caller keeps its pointer
   // line: a collection without a registry carries no field, so the results
@@ -399,11 +403,11 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
   // not "2 of 2 collections", and a count-based union marks the NORMAL (mixed)
   // search unchecked while its catalogues are right there in the answer.
   //
-  // The forced pass is its own term — but per ID, the ids that really answered
-  // (`refreshRegistries`): taking the pass as a whole for an answer reported a
-  // lookup that FAILED as "checked, none there" (audit 2026-11-12, K-15).
+  // A forced pass counts per ID too — only the ids that really answered:
+  // taking the pass as a whole for an answer reported a lookup that FAILED as
+  // "checked, none there" (audit 2026-11-12, K-15).
   const bucketChecked = (bucket: readonly FormattedNode[]): boolean =>
-    bucket.length > 0 && bucket.every(n => forcedAnswered.has(n.nodeId) || registriesAnswered.has(n.nodeId));
+    bucket.length > 0 && bucket.every(n => registriesAnswered.has(n.nodeId));
   const registryChecked = bucketChecked(collectionsFmt);
   const topicPagesChecked = bucketChecked(topicPagesFmt);
 
@@ -415,6 +419,7 @@ export async function searchAll(opts: SearchAllOptions): Promise<SearchAllEnvelo
       results: contentFmt,
       ...(contentResp?.more ? { more: contentResp.more } : {}),
       ...(contentResp?.incomplete ? { incomplete: true as const } : {}),
+      ...(contentResp?.totalIsUpperBound ? { totalIsUpperBound: true as const } : {}),
       ...(textReport?.skipped.length ? { textContentSkipped: textReport.skipped } : {}),
       ...(textReport?.unreadable.length ? { textContentUnreadable: textReport.unreadable } : {}),
       // Only when the content leg actually ran: with `include: ['collections']`

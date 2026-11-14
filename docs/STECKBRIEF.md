@@ -35,6 +35,14 @@ B-API-Schlüssel:
 | Person, Ticket | ein eingebettetes Widget tauscht ein edu-sharing-Ticket an `POST /auth/ticket` gegen einen Block (12 h gültig) | `WLO_AUTH_PRIVATE_KEY` |
 | Person, Basic | `Authorization: Basic …` wird ans Repository durchgereicht | keine (nicht empfohlen: der Wert ist das Passwort) |
 
+**Was „anonym“ mit einem Dienstkonto bedeutet — eine Entscheidung des Betreibers.** Ist ein
+Dienstkonto eingerichtet, liest eine `/mcp`-Anfrage OHNE `Authorization`-Kopf mit diesem Konto, nicht
+als Gast. Alles, was das Konto über die öffentlichen Inhalte hinaus lesen darf, ist damit für jeden
+lesbar, der `/mcp` erreicht. Immer anonym bleibt nur die REST-Oberfläche `/api/*` (und der Launcher).
+Das Dienstkonto also so berechtigen, wie man es jedem Besucher zugestehen würde — oder `/mcp` nur
+einem bekannten Kreis zugänglich machen. Ein Kopf, der sich nicht verwenden lässt, fällt dagegen auf
+Gast zurück, nie auf das Dienstkonto.
+
 **Woher OAuth die öffentliche Adresse nimmt** (`resolveIssuer`, `src/auth/oauth-metadata.ts`): Ist
 `WLO_PUBLIC_BASE_URL` gesetzt, gilt allein dieser Wert — auch dann, wenn er sich nicht als Adresse
 lesen lässt; dann ist OAuth aus, es wird **nicht** auf den Kopf ausgewichen. Ist die Variable leer,
@@ -221,9 +229,13 @@ Labels tragen nie einen Aufrufer, einen Pfad oder eine Suchanfrage.
 | `wlo_http_request_duration_seconds` | Histogramm | `route` |
 | `wlo_tool_calls_total` | Zähler | `tool`, `outcome` (`ok`, `error` = mit isError beantwortet, `thrown`) |
 | `wlo_tool_duration_seconds` | Histogramm | `tool` |
+| `wlo_tool_errors_total` | Zähler | `tool`, `code` (Fehlercode der Antwort; unbekannte als `other`, fehlende als `uncoded`) |
 | `wlo_upstream_requests_total` | Zähler | `outcome` (`2xx`…`5xx`, `error` = keine Antwort, `cancelled`, `shed` = nicht gesendet, eigene Schranke) |
 | `wlo_upstream_duration_seconds` | Histogramm | `outcome` |
+| `wlo_upstream_gate_wait_seconds` | Histogramm | `outcome` (`granted`, `shed`) — nur Aufrufe, die an der eigenen Schranke warten mussten |
 | `wlo_upstream_in_flight`, `wlo_upstream_waiting`, `wlo_upstream_limit` | Messwert | — |
+| `wlo_rate_limited_total` | Zähler | `limiter` (eigene 429: `rate_limited`, `too_many_logins`, `upload_…`) |
+| `wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes` | Messwert | — (begrenzte Speicher im Prozess, beim Abruf gelesen) |
 | `wlo_build_info` | Messwert | `version` |
 | `process_*`, `nodejs_heap_*`, `nodejs_external_memory_bytes`, `nodejs_eventloop_lag_seconds` | übliche Prozesswerte | — |
 

@@ -20,6 +20,10 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { ChangeSet } from './change-set.js';
 import { currentCredential } from '../../auth/credential.js';
 import { lookupReplayInCall, markRedeemed } from './confirm-replay.js';
+import { budgetOf, poolShare, type StoreBudget, type TrustPool } from './store-budget.js';
+
+// Its home is `store-budget.ts` now, beside the rule it is one case of; callers keep importing it from here.
+export { accountBudget } from './store-budget.js';
 
 /** How long a preview stays valid. Long enough to read, short enough to matter. */
 export const TOKEN_TTL_MS = 10 * 60 * 1000;
@@ -28,8 +32,12 @@ export const TOKEN_TTL_MS = 10 * 60 * 1000;
  * Upper bound on pending previews. Each entry is tiny, but the map is fed by an
  * internet-facing endpoint, so it needs a ceiling that does not depend on
  * callers behaving. Oldest first — a token nobody used is the one to drop.
+ *
+ * The TOTAL of two pools (`store-budget.ts`, `poolShare`): a preview needs no
+ * proven login, so counted in one pool, twenty invented names × fifty previews
+ * evicted the oldest key of everybody (review 2026-11-14).
  */
-const MAX_PENDING = 1000;
+export const MAX_PENDING = 1000;
 
 /**
  * Upper bound on pending previews per IDENTITY. The global bound evicts the
@@ -51,7 +59,12 @@ export type ConfirmOutcome = 'ok' | 'unknown' | 'expired' | 'mismatch' | 'replay
 interface Pending {
   hash: string;
   expiresAt: number;
+  /** Who may redeem it (`currentIdentity`). */
   identity: string;
+  /** Whose share of the store it counts against (`budgetIdentity`). */
+  budget: string;
+  /** Which half of the store it lives in — and the only half it may be evicted FOR. */
+  pool: TrustPool;
 }
 
 /**
@@ -69,7 +82,51 @@ export function currentIdentity(): string {
   return cred.jti ? `jti:${cred.jti}` : `${cred.source}:${cred.label}`;
 }
 
+/**
+ * The account a credential stands for where it NAMES the confirmed one
+ * (`acct`), else the name as typed. One login has several accepted spellings
+ * (measured 2026-11-12), and a cap per spelling is no cap per person. A
+ * credential without the field (`Basic`, an entry listed before the account
+ * was recorded) behaves exactly as before.
+ */
+export function accountOf(cred: { label: string; acct?: string }): string {
+  return cred.acct || cred.label;
+}
+
+/**
+ * Whose BUDGET a pending preview counts against: the confirmed account where
+ * the credential names one, else `currentIdentity`. Kept apart from the
+ * identity a key is BOUND to on purpose — that one stays the credential the
+ * approval was given under; this one only decides whose oldest preview makes
+ * room (audit 2026-11-14, W14).
+ *
+ * The confirmed account has a namespace of its OWN (`acct:`), which no other
+ * credential can produce: `currentIdentity` answers `jti:`, `user:`, `service:`
+ * or `anonymous`. Keyed `user:<acct>` it was the very string a `Basic` header
+ * with that name typed gets — and `Basic` is never proven before a preview, so
+ * fifty previews under `Basic maria:anything` evicted every pending key of the
+ * person whose confirmed account is `maria` (review 2026-11-14).
+ *
+ * The same review, one step on: a typed name shared the budget of the REAL
+ * `Basic` user of that name too. So for an unproven credential the key is no
+ * longer `currentIdentity` but name plus a keyed digest of the whole header —
+ * decided in `store-budget.ts`, for previews, plans and batches alike.
+ */
+export function budgetIdentity(): string {
+  return currentBudget().key;
+}
+
+/** Budget key AND trust pool of the credential in scope (`store-budget.ts`). */
+export function currentBudget(): StoreBudget {
+  return budgetOf(currentCredential());
+}
+
 const pending = new Map<string, Pending>();
+
+/** Previews waiting for their confirmation right now — for a metric. Reads only. */
+export function confirmStoreSize(): number {
+  return pending.size;
+}
 
 /**
  * Expired tokens, kept as a bare id for an hour so they answer `expired` and not
@@ -120,7 +177,7 @@ function fingerprint(cs: ChangeSet, identity: string): string {
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-function prune(now: number, identity: string): void {
+function prune(now: number, { key: budget, pool }: StoreBudget): void {
   for (const [token, entry] of pending) {
     if (entry.expiresAt <= now) { pending.delete(token); bury(token, now); }
   }
@@ -132,22 +189,34 @@ function prune(now: number, identity: string): void {
   // (audit 2026-11-12, S-12). It gets a share of its own — half of everything —
   // rather than none: without any, one visitor of a service-write deployment
   // could fill the store and push out every PERSON's pending key.
-  const cap = identity.startsWith('service:') ? MAX_PENDING_SHARED_IDENTITY : MAX_PENDING_PER_IDENTITY;
-  const own = [...pending].filter(([, entry]) => entry.identity === identity);
+  const cap = budget.startsWith('service:') ? MAX_PENDING_SHARED_IDENTITY : MAX_PENDING_PER_IDENTITY;
+  const own = [...pending].filter(([, entry]) => entry.budget === budget);
   for (let i = 0; i <= own.length - cap; i++) pending.delete(own[i]![0]);
-  while (pending.size >= MAX_PENDING) {
-    const oldest = pending.keys().next();
-    if (oldest.done) break;
-    pending.delete(oldest.value);
+  // Room in the caller's POOL, never in the store as a whole: whoever fills the
+  // unproven half with invented names evicts among the unproven, and a key
+  // minted under a confirmed account is out of their reach (`store-budget.ts`).
+  // Within the pool the minter pays first, with its OWN oldest key: the service
+  // identity's cap is as large as its whole pool, so below that cap its next
+  // key would otherwise cost a PERSON theirs — the very thing its own share
+  // exists to prevent (S-12).
+  const inPool = [...pending].filter(([, entry]) => entry.pool === pool);
+  for (let over = inPool.length - poolShare(MAX_PENDING, pool) + 1; over > 0; over--) {
+    const at = Math.max(0, inPool.findIndex(([, entry]) => entry.budget === budget));
+    const [victim] = inPool.splice(at, 1);
+    if (!victim) break;
+    pending.delete(victim[0]);
   }
 }
 
 /** Issue a single-use token for this exact change. */
 export function mintToken(cs: ChangeSet, now: number = Date.now()): string {
   const identity = currentIdentity();
-  prune(now, identity);
+  const budget = currentBudget();
+  prune(now, budget);
   const token = randomBytes(18).toString('base64url');
-  pending.set(token, { hash: fingerprint(cs, identity), expiresAt: now + TOKEN_TTL_MS, identity });
+  pending.set(token, {
+    hash: fingerprint(cs, identity), expiresAt: now + TOKEN_TTL_MS, identity, budget: budget.key, pool: budget.pool,
+  });
   return token;
 }
 
@@ -181,7 +250,10 @@ export function consumeToken(token: string, cs: ChangeSet, now: number = Date.no
   // against it gains them nothing — the identity is part of every fingerprint.
   if (entry.identity !== identity) return 'mismatch';
   pending.delete(token);
-  if (entry.expiresAt <= now) return 'expired';
+  // Buried like an entry `prune` drops, so the NEXT presentation answers
+  // `expired` too. Without it the first answer was "expired — nothing was
+  // written" and the second "unknown — look first", for the same key.
+  if (entry.expiresAt <= now) { bury(token, now); return 'expired'; }
   if (!sameHash(entry.hash, fingerprint(cs, identity))) return 'mismatch';
   markRedeemed(token, identity, now);
   return 'ok';

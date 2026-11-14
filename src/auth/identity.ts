@@ -22,6 +22,7 @@ import { wloFetch } from '../wlo-fetch.js';
 import { readJson } from '../read-json.js';
 import { ANONYMOUS_AUTHORITY, currentCredential, isInsecureCredentialTransport } from './credential.js';
 import { log } from '../logger.js';
+import { logAccount } from '../log-privacy.js';
 import { sanitizeText } from '../text-sanitize.js';
 
 export interface WloIdentity {
@@ -140,19 +141,25 @@ export async function verifyConfiguredCredential(repositoryUrl: string = WLO_REP
 
   const id = await checkIdentity();
   if (id.authenticated) {
-    log.info('repository credential verified', { configuredAs: cred.label, authority: id.authority });
+    // Account names are a person's (or the operator's choice of one): pseudonymised
+    // like every other log field that can carry one (`log-privacy.ts`).
+    log.info('repository credential verified', {
+      configuredAs: logAccount(cred.label), ...(id.authority ? { authority: logAccount(id.authority) } : {}),
+    });
   } else if (id.unreachable) {
     // Not a verdict on the password — sending the operator to fix one that is
     // right is the cost of saying otherwise.
     log.warn('repository credential could not be verified — the repository is unreachable at startup. ' +
       'Check the repository, not the password; wlo_auth_status or GET /auth/status tells the two apart later.',
-    { configuredAs: cred.label });
+    { configuredAs: logAccount(cred.label) });
   } else {
     log.warn(
       'repository credential is configured but NOT accepted — every upstream call will fail with 401 and the ' +
       'server can answer nothing at all, not even public content. Remove the credentials to run anonymously, ' +
       'or fix WLO_SERVICE_USER/WLO_SERVICE_PASSWORD. A "#" in an unquoted password truncates it silently.',
-      { configuredAs: cred.label, authority: id.authority ?? 'rejected' },
+      // Not the authority itself: on this branch it is the guest account or
+      // nothing, and which of the two is all an operator reads it for.
+      { configuredAs: logAccount(cred.label), answeredAs: id.authority === ANONYMOUS_AUTHORITY ? 'guest' : 'nobody' },
     );
   }
   return { checked: true, ok: id.authenticated, authority: id.authority };

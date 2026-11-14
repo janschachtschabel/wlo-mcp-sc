@@ -1200,6 +1200,17 @@ paths:
         '200': { $ref: '#/components/responses/Html' }
         '405': { $ref: '#/components/responses/UseGet' }
         '500': { $ref: '#/components/responses/InternalError' }
+  /launcher.js:
+    get:
+      tags: [pages]
+      operationId: launcherJs
+      summary: Script of the launcher page (`text/javascript`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /bookmarklet.md:
     get:
       tags: [pages]

@@ -35,6 +35,15 @@
  */
 
 import { sharedAcrossRequests } from '../request-scope.js';
+import {
+  configuredServiceCredential,
+  currentCredential,
+  runAnonymous,
+  runWithCredential,
+  sharedReadScope,
+} from '../auth/credential.js';
+import { keyedDigest } from '../keyed-digest.js';
+import { SHORT_CACHE_MS, shortCache } from '../short-cache.js';
 import type { WloNode } from '../wlo-api.js';
 import type { FormattedNode } from '../formatter.js';
 import { capText } from '../text-cap.js';
@@ -112,6 +121,15 @@ export interface CacheEntry {
    */
   oversized?: true;
   /**
+   * Set when the listing was REFUSED (401/403) for the rights it was asked
+   * with. An answer for that scope — asking again on every tick cannot change
+   * it, and it used to be re-queued for ever, with a warning each time — but
+   * not a finding of absence: the caller keeps its "nicht geprüft" line. Never
+   * lent to another scope (`held` lends positives only): whoever is refused as
+   * nobody may well be allowed as themselves.
+   */
+  refused?: true;
+  /**
    * The registry's general instruction — the prose above its first H2, capped.
    *
    * Held HERE and deliberately not on `CachedRegistry`: that type IS the field a
@@ -144,6 +162,82 @@ export type CachedRegistry = NonNullable<FormattedNode['skillRegistry']>;
  */
 export const CACHE_MAX_ENTRIES = 2000;
 
+/**
+ * Whose rights an answer was read with, as far as it may be SHARED.
+ *
+ * A children listing answers differently for the service account (`/mcp`
+ * without a login, and the background tick), for nobody (`/api/*`) and for a
+ * person. Keyed by collection alone, the catalogue the service account read was
+ * handed to an anonymous caller, and an anonymous "none there" answered for
+ * everyone else. So every entry, every queued id and every lookup in flight
+ * belongs to ONE scope — and a personal login has none: its answers are never
+ * SHARED. The same rule, from the same function, as `short-cache.ts`.
+ *
+ * What a personal login may BORROW is the anonymous scope's POSITIVE answers
+ * (`held`): a registry nobody-in-particular can read is readable by everyone.
+ * Never a negative — a person may see a registry an anonymous reader is refused
+ * — and never anything of the service account's, which may see more than the
+ * person. What its OWN lookups answered it gets back from `personalMemo`, for a
+ * minute and for that identity alone.
+ */
+type Scope = NonNullable<ReturnType<typeof sharedReadScope>>;
+
+const SCOPES: readonly Scope[] = ['anonymous', 'service'];
+
+/** The key an id is held under in the caller's scope, or `null` when nothing of this caller's may be held. */
+function scopedKey(collectionId: string): string | null {
+  const scope = sharedReadScope();
+  return scope ? keyIn(scope, collectionId) : null;
+}
+
+const keyIn = (scope: Scope, collectionId: string): string => `${scope}:${collectionId}`;
+
+/** A key taken apart again — for the tick, which must ask with the rights the key names. */
+function parseKey(key: string): { scope: Scope; collectionId: string } {
+  const at = key.indexOf(':');
+  return { scope: key.slice(0, at) as Scope, collectionId: key.slice(at + 1) };
+}
+
+/** How many of `keys` belong to `scope` — the caps below are per scope. */
+function countIn(keys: Iterable<string>, scope: Scope): number {
+  const prefix = `${scope}:`;
+  let n = 0;
+  for (const key of keys) if (key.startsWith(prefix)) n++;
+  return n;
+}
+
+/**
+ * Whether one more key of `scope` is past `max`. The total (`size`) is looked
+ * at first: no scope can be at its cap while both together are below it, so the
+ * count — a walk over the keys — is paid only by a map that is nearly full.
+ */
+const atCap = (keys: Iterable<string>, scope: Scope, max: number, size: number): boolean =>
+  size >= max && countIn(keys, scope) >= max;
+
+/** Whether the tick can read with a scope's rights at all. */
+const canEnter = (scope: Scope): boolean => scope === 'anonymous' || configuredServiceCredential() !== null;
+
+/**
+ * Run `fn` with the rights of a scope, whatever the caller's own are.
+ *
+ * The background work has no caller: left to the ambient credential it would
+ * read every queued collection with the service account and file the answers
+ * under whichever scope had asked. `null` when the scope cannot be entered — a
+ * `service` key outliving its account must not be answered with other rights.
+ */
+function inScope<T>(scope: Scope, fn: () => T): T | null {
+  if (scope === 'anonymous') return runAnonymous(fn);
+  const service = configuredServiceCredential();
+  return service ? runWithCredential(service, fn) : null;
+}
+
+/**
+ * Both maps are keyed by `scopedKey`, and `CACHE_MAX_ENTRIES` / `QUEUE_MAX`
+ * apply PER SCOPE: shared, the open `/api` surface could fill the queue or push
+ * the service account's answers out. A personal login stores nothing HERE (its
+ * own answers live in `personalMemo`, with its own bound), so the total is
+ * bounded by two scopes × the cap.
+ */
 const entries = new Map<string, CacheEntry>();
 const queue = new Set<string>();
 
@@ -160,21 +254,86 @@ export function cacheSize(): number {
  * bookkeeping. A copy per path is how a bound comes to apply to two of three
  * writers.
  */
-function remember(collectionId: string, entry: CacheEntry): void {
-  if (!entries.has(collectionId) && entries.size >= CACHE_MAX_ENTRIES) evictOldest();
-  entries.set(collectionId, entry);
-  queue.delete(collectionId);
+function remember(key: string, entry: CacheEntry): void {
+  const { scope } = parseKey(key);
+  if (!entries.has(key) && atCap(entries.keys(), scope, CACHE_MAX_ENTRIES, entries.size)) evictOldest(scope);
+  entries.set(key, entry);
+  queue.delete(key);
+}
+
+/**
+ * Answers one PERSONAL login's own lookups got, held for that identity alone.
+ *
+ * Without it a signed-in caller was never served a negative: the scope caches
+ * keep nothing of a person's, and only the anonymous scope's POSITIVES are lent.
+ * So every signed-in search and collection answer paid the live listing again
+ * (up to `LIVE_FALLBACK_MAX` per request, ~1.0–1.4 s) for every collection
+ * WITHOUT a registry — the common case, and every widget user is a personal
+ * login.
+ *
+ * Four things keep it from becoming the leak the scopes exist to prevent:
+ *
+ *  - the key is a keyed digest of the credential (`keyed-digest.ts`) — never the
+ *    credential, never logged, and useless outside this process;
+ *  - one identity never reads another's entry, and no shared scope reads any;
+ *  - it is SHORT (a minute, as `short-cache.ts`) — a person's rights change
+ *    with a group membership, and nothing here is told about that;
+ *  - it is bounded over ALL identities together (the oldest goes), and holds a
+ *    `CacheEntry` — the summary and the capped general instruction the scope
+ *    caches hold, never the registry document.
+ *
+ * Only an ANSWER is written (the callers write what `entryFrom` returned), and
+ * a forced lookup replaces the entry.
+ */
+export const PERSONAL_MEMO_MAX = 1000;
+const personalMemo = shortCache<CacheEntry>(PERSONAL_MEMO_MAX, SHORT_CACHE_MS);
+
+/** The memo key of the calling PERSON for a collection; `null` for the shared scopes. */
+function personalKey(collectionId: string): string | null {
+  const cred = currentCredential();
+  if (!cred || cred.source === 'service') return null;
+  return `${keyedDigest(`registry-memo:${cred.header}`)}:${collectionId}`;
+}
+
+/** File an answer where the CALLER's later requests find it: its scope's cache, or its own memo. */
+function rememberForCaller(collectionId: string, entry: CacheEntry): void {
+  const key = scopedKey(collectionId);
+  if (key) { remember(key, entry); return; }
+  const own = personalKey(collectionId);
+  if (own) personalMemo.set(own, entry);
+}
+
+/**
+ * What the caller may be answered from memory for a collection.
+ *
+ * Its own scope's entry. For a personal login: what its OWN lookup answered
+ * within the last minute — first, because that is the more specific and the
+ * fresher answer (a forced "none now" must not be papered over with the
+ * anonymous scope's older catalogue) — else the anonymous scope's entry when
+ * that one FOUND a registry. A negative, a refusal, a capped scan or an
+ * oversized document is not lent: each says "an anonymous reader saw none", and
+ * the person may see more.
+ */
+function held(collectionId: string): CacheEntry | undefined {
+  const key = scopedKey(collectionId);
+  if (key) return entries.get(key);
+  const own = personalKey(collectionId);
+  const mine = own ? personalMemo.get(own) : undefined;
+  if (mine) return mine;
+  const lent = entries.get(keyIn('anonymous', collectionId));
+  return lent?.registry ? lent : undefined;
 }
 
 /**
  * Drop the answer checked longest ago, and say so. A cap nobody can see reads
  * as a complete memory that quietly forgets.
  */
-function evictOldest(): void {
+function evictOldest(scope: Scope): void {
+  const prefix = `${scope}:`;
   let oldestId: string | undefined;
   let oldestAt = Infinity;
   for (const [id, entry] of entries) {
-    if (entry.checkedAt < oldestAt) { oldestAt = entry.checkedAt; oldestId = id; }
+    if (id.startsWith(prefix) && entry.checkedAt < oldestAt) { oldestAt = entry.checkedAt; oldestId = id; }
   }
   if (!oldestId) return;
   entries.delete(oldestId);
@@ -197,22 +356,27 @@ const inFlight = new Map<string, Promise<RegistryLookup>>();
 type RegistryLookup = Awaited<ReturnType<typeof loadSkillRegistry>>;
 
 function lookupOnce(collectionId: string): Promise<RegistryLookup> {
-  const running = inFlight.get(collectionId);
+  const key = scopedKey(collectionId);
+  // A personal login shares nothing — not even a lookup in flight, which would
+  // hand one person's listing to whoever asked a moment later. It stays bound to
+  // its own request, too: nobody else waits for it.
+  if (!key) return loadSkillRegistry(collectionId, { resolveHeads: false });
+  const running = inFlight.get(key);
   if (running) return running;
   // Outside the request scope: this promise is SHARED by every caller wanting the
   // collection, and its result feeds the cache — one of them hanging up must not
   // fail the others.
   const pending = sharedAcrossRequests(() => loadSkillRegistry(collectionId, { resolveHeads: false }));
-  inFlight.set(collectionId, pending);
+  inFlight.set(key, pending);
   // `then(done, done)` rather than `finally`, which would leave the rejection of
   // its own derived promise unhandled.
-  const done = () => { if (inFlight.get(collectionId) === pending) inFlight.delete(collectionId); };
+  const done = () => { if (inFlight.get(key) === pending) inFlight.delete(key); };
   void pending.then(done, done);
   return pending;
 }
 
-/** Whether an entry ANSWERS the question — a capped scan and an oversized document are held, and answer nothing. */
-const settles = (entry: CacheEntry): boolean => !entry.scanTruncated && !entry.oversized;
+/** Whether an entry ANSWERS the question — a capped scan, an oversized document and a refusal are held, and answer nothing. */
+const settles = (entry: CacheEntry): boolean => !entry.scanTruncated && !entry.oversized && !entry.refused;
 
 /**
  * What a finished lookup means for the cache, or `null` when it means nothing.
@@ -222,11 +386,17 @@ const settles = (entry: CacheEntry): boolean => !entry.scanTruncated && !entry.o
  * stays absent and the collection is queued again, because an outage must never
  * become "this collection has no approved skills". A scan cut short at the file
  * cap DID reply: re-reading the same first page cannot produce a different
- * answer, so it is remembered — but marked, so it settles nothing.
+ * answer, so it is remembered — but marked, so it settles nothing. The same
+ * goes for an oversized document and for a listing the repository REFUSED
+ * (401/403): asked again with the same rights, it refuses again.
  */
 function entryFrom(result: RegistryLookup | null, checkedAt: number): CacheEntry | null {
   if (!result) return null;
-  if (result.reason === 'unreadable') return result.tooLarge ? { registry: null, checkedAt, oversized: true } : null;
+  if (result.reason === 'unreadable') {
+    if (result.tooLarge) return { registry: null, checkedAt, oversized: true };
+    if (result.refused) return { registry: null, checkedAt, refused: true };
+    return null;
+  }
   const general = result.registry?.general.instruction;
   return {
     registry: result.registry ? toRegistrySummary(result.registry) : null,
@@ -244,7 +414,7 @@ function entryFrom(result: RegistryLookup | null, checkedAt: number): CacheEntry
  * question open, the other answers it.
  */
 export function lookupCachedRegistry(collectionId: string): CacheEntry | undefined {
-  return entries.get(collectionId);
+  return held(collectionId);
 }
 
 /**
@@ -255,12 +425,23 @@ export function lookupCachedRegistry(collectionId: string): CacheEntry | undefin
  * not the caller's.
  */
 export function queueCollections(collectionIds: string[]): void {
+  // A personal login's own answer is kept for nobody, and the tick must never
+  // read with a person's rights. What the tick CAN do for it is look as nobody:
+  // a registry found that way is one the person is served next time (`held`).
+  const scope = sharedReadScope() ?? 'anonymous';
   let dropped = 0;
+  let waiting = -1;                            // counted once, and only when the queue is nearly full
   for (const raw of collectionIds) {
     const id = raw?.trim();
-    if (!id || entries.has(id) || queue.has(id)) continue;
-    if (queue.size >= QUEUE_MAX) { dropped++; continue; }
-    queue.add(id);
+    if (!id) continue;
+    const key = keyIn(scope, id);
+    if (entries.has(key) || queue.has(key)) continue;
+    if (queue.size >= QUEUE_MAX) {
+      if (waiting < 0) waiting = countIn(queue, scope);
+      if (waiting >= QUEUE_MAX) { dropped++; continue; }
+      waiting++;
+    }
+    queue.add(key);
   }
   if (dropped) {
     log.warn('skill-registry-cache: queue full — collections stay unchecked for now', {
@@ -300,7 +481,7 @@ export function attachCachedRegistries(nodes: FormattedNode[]): Set<string> {
     // A registry already on the node came from the live path, which read the
     // listing just now; this entry may be minutes old. Fresher wins.
     if (node.skillRegistry) { answered.add(node.nodeId); continue; }
-    const entry = entries.get(node.nodeId);
+    const entry = held(node.nodeId);
     if (!entry) { cold.push(node.nodeId); continue; }
     if (entry.registry) { node.skillRegistry = entry.registry; answered.add(node.nodeId); continue; }
     // Held so the capped page is not read again, but it answered nothing: a
@@ -343,11 +524,24 @@ const LIVE_FALLBACK_MAX = 10;
  * `WLO_SKILL_CACHE=off` short-circuits this to an empty set: the operator's
  * switch covers the request path as well as the background timer.
  *
+ * `force` — the caller asked for the state NOW (`includeSkillRegistry`). Every
+ * collection is then looked up fresh and NOTHING remembered is attached: not
+ * for an id whose lookup failed (the remembered catalogue would read as the
+ * fresh one), and not for one that answered "none" (for a personal login the
+ * anonymous scope's older positive was lent back in its place). It is a mode of
+ * THIS function, not a second call the call sites make before it, because the
+ * rule "what the forced pass touched is closed to the ordinary pass" was
+ * re-derived per call site and got one half of it wrong at each of them.
+ *
  * @returns the nodeIds now answered authoritatively (see
  *   `attachCachedRegistries` for why ids rather than a count). A node missing
  *   from the set means the caller keeps its pointer line for it.
  */
-export async function ensureRegistries(nodes: FormattedNode[]): Promise<Set<string>> {
+export async function ensureRegistries(nodes: FormattedNode[], opts: { force?: boolean } = {}): Promise<Set<string>> {
+  // Before the switch: a forced lookup is what was asked for, and works with
+  // the cache switched off — only the remembering depends on the switch.
+  if (opts.force) return (await refreshRegistries(nodes)).answered;
+
   // The operator's switch covers the REQUEST path too, not only the background
   // tick. It is flipped because of the cost, and a live fallback that kept
   // running would charge every request the full children listing while no tick
@@ -356,7 +550,7 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<Set<stri
 
   const answered = attachCachedRegistries(nodes);
   const cold = nodes.filter(n => n.nodeType === 'collection' && !n.skillRegistry
-    && !entries.has(n.nodeId));
+    && !held(n.nodeId));
   if (!cold.length) return answered;
 
   const live = cold.slice(0, LIVE_FALLBACK_MAX);
@@ -366,7 +560,7 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<Set<stri
   live.forEach((node, i) => {
     const entry = entryFrom(results[i], checkedAt);
     if (!entry) return;                        // nothing learned; stays queued
-    remember(node.nodeId, entry);
+    rememberForCaller(node.nodeId, entry);
     if (entry.registry) node.skillRegistry = entry.registry;
     if (settles(entry)) answered.add(node.nodeId);
   });
@@ -385,12 +579,16 @@ export async function ensureRegistries(nodes: FormattedNode[]): Promise<Set<stri
  *  - and a lookup that FAILED counted as "checked, none there", because the
  *    forced pass as a whole was taken for an answer.
  *
- * So: each answer replaces the entry — a registry that is gone leaves an entry
- * saying so, and the ordinary pass that follows attaches nothing — and only the
- * ids that really answered are returned — a failed or
- * inconclusive lookup leaves the node to the ordinary pass and its "nicht
- * geprüft" line. Works with the cache switched off too: the lookup is what was
- * asked for; only the remembering depends on the switch.
+ * So: each answer replaces the entry (for a personal login: its own memo entry)
+ * — a registry that is gone leaves an entry saying so — and only the ids that
+ * really answered are returned: a failed or inconclusive lookup leaves the node
+ * without a field and with its "nicht geprüft" line. Works with the cache
+ * switched off too: the lookup is what was asked for; only the remembering
+ * depends on the switch.
+ *
+ * Call sites go through `ensureRegistries(nodes, { force: true })`. Following
+ * this with an ordinary pass over the same nodes is the mistake that mode
+ * exists to rule out.
  */
 export async function refreshRegistries(nodes: FormattedNode[]): Promise<{ answered: Set<string>; failed: Set<string> }> {
   const answered = new Set<string>();
@@ -405,7 +603,7 @@ export async function refreshRegistries(nodes: FormattedNode[]): Promise<{ answe
   targets.forEach((node, i) => {
     const entry = entryFrom(results[i], checkedAt);
     if (!entry) { failed.add(node.nodeId); return; }   // did not answer: nothing is claimed
-    if (WLO_SKILL_CACHE) remember(node.nodeId, entry);
+    if (WLO_SKILL_CACHE) rememberForCaller(node.nodeId, entry);
     if (!settles(entry)) return;               // capped scan / oversized: held, but no answer
     if (entry.registry) node.skillRegistry = entry.registry;
     answered.add(node.nodeId);
@@ -434,7 +632,7 @@ export function cachedRegistriesFor(ids: string[]): Map<string, CachedRegistry> 
   if (!WLO_SKILL_CACHE) return found;
   const cold: string[] = [];
   for (const id of ids) {
-    const entry = entries.get(id);
+    const entry = held(id);
     if (!entry) { cold.push(id); continue; }
     if (entry.registry) found.set(id, entry.registry);
   }
@@ -470,7 +668,7 @@ export async function ensureRegistryFor(
   collectionId: string,
 ): Promise<{ registry: CachedRegistry | null; answered: boolean; generalInstruction?: string }> {
   if (!WLO_SKILL_CACHE || !collectionId) return { registry: null, answered: false };
-  const known = entries.get(collectionId);
+  const known = held(collectionId);
   if (known) {
     return {
       registry: known.registry,
@@ -488,7 +686,11 @@ export async function ensureRegistryFor(
     queueCollections([collectionId]);
     return { registry: null, answered: false };
   }
-  remember(collectionId, entry);
+  rememberForCaller(collectionId, entry);
+  // A personal login's answer is held for a minute and for that identity only —
+  // so the anonymous lookup is asked for as well: what it finds serves every
+  // signed-in caller after that.
+  if (!scopedKey(collectionId)) queueCollections([collectionId]);
   return {
     registry: entry.registry,
     answered: settles(entry),
@@ -528,7 +730,7 @@ function expireStale(now: number): number {
   let expired = 0;
   for (const [id, entry] of entries) {
     if (now - entry.checkedAt <= WLO_SKILL_CACHE_TTL_MS || queue.has(id)) continue;
-    if (queue.size >= QUEUE_MAX) break;
+    if (atCap(queue, parseKey(id).scope, QUEUE_MAX, queue.size)) continue;
     queue.add(id);
     expired++;
   }
@@ -559,6 +761,21 @@ export function runCacheTick(opts: { now?: number } = {}): Promise<CacheTickRepo
   return ticking;
 }
 
+/**
+ * The keys one tick resolves: the scopes take turns, so a queue full of ids
+ * from the open surface cannot make the other scope wait ten ticks.
+ */
+function nextBatch(): string[] {
+  const perScope = SCOPES.map(scope => [...queue].filter(key => key.startsWith(`${scope}:`)));
+  const batch: string[] = [];
+  for (let i = 0; batch.length < TICK_BATCH_MAX && perScope.some(keys => i < keys.length); i++) {
+    for (const keys of perScope) {
+      if (i < keys.length && batch.length < TICK_BATCH_MAX) batch.push(keys[i]!);
+    }
+  }
+  return batch;
+}
+
 let ticking: Promise<CacheTickReport> | null = null;
 /** Raised by every stop, so a tick in flight can tell that its cache is gone. */
 let generation = 0;
@@ -567,7 +784,11 @@ async function tick(opts: { now?: number }): Promise<CacheTickReport> {
   const startedAt = Date.now();
   // Injected so a test can age the cache instead of sleeping through the TTL.
   const expired = expireStale(opts.now ?? startedAt);
-  const batch = [...queue].slice(0, TICK_BATCH_MAX);
+  // A key whose scope cannot be entered — a `service` key outliving its account
+  // — is DROPPED here. Treated as a failed lookup it was queued again on every
+  // tick, for ever, and took a place in each batch.
+  for (const key of [...queue]) if (!canEnter(parseKey(key).scope)) queue.delete(key);
+  const batch = nextBatch();
   for (const id of batch) queue.delete(id);
 
   let found = 0;
@@ -575,7 +796,12 @@ async function tick(opts: { now?: number }): Promise<CacheTickReport> {
   let inconclusive = 0;
 
   const mine = generation;
-  const results = await mapPool(batch, CACHE_POOL, (id) => lookupOnce(id));
+  // Each key is asked with the rights of the scope it was queued FOR — the tick
+  // itself has no caller, and its ambient credential is the service account's.
+  const results = await mapPool(batch, CACHE_POOL, async (key): Promise<RegistryLookup | null> => {
+    const { scope, collectionId } = parseKey(key);
+    return inScope(scope, () => lookupOnce(collectionId));
+  });
   // Stopped (or reset) while this tick was out: what it learned belongs to a
   // cache that no longer exists, and writing it would refill the new one.
   if (mine !== generation) return { resolved: 0, found: 0, failed: 0, inconclusive: 0, expired, queueLeft: queue.size, ms: Date.now() - startedAt };
@@ -637,7 +863,16 @@ let warmup: Promise<void> = Promise.resolve();
  * folder id never matches one. And an adopted entry expires like any other, at
  * which point the children listing re-checks it and gets the last word.
  */
-async function seedFromCorpus(): Promise<void> {
+function seedFromCorpus(): Promise<void> {
+  // Named rather than inherited: the seed fills ONE scope's entries, and which
+  // one must not depend on where `startSkillRegistryCache` happened to be called
+  // from. The widest shared scope there is — the other one is warmed by its own
+  // callers through the listing.
+  const scope: Scope = configuredServiceCredential() ? 'service' : 'anonymous';
+  return inScope(scope, () => seedScope(scope)) ?? Promise.resolve();
+}
+
+async function seedScope(scope: Scope): Promise<void> {
   const res = await ngsearch(
     [{ property: 'ccm:oeh_extendedType', values: [REGISTRY_CONTENT_TYPE_URI] }],
     'FILES', CORPUS_PAGE_MAX, 0, SKILL_PROPS,
@@ -662,12 +897,13 @@ async function seedFromCorpus(): Promise<void> {
     // children listing — the authority — and this comes from the index, which
     // may only ever produce a POSITIVE for a collection nobody has looked at.
     // The TTL brings it back to the listing soon enough.
-    if (entries.has(parent)) return;
+    const key = keyIn(scope, parent);
+    if (entries.has(key)) return;
     const { registry, reason } = await buildRegistryFrom(picked, parent, { resolveHeads: false });
     // The record exists but its text could not be read: nothing to publish, and
     // nothing learned either — leave it unknown so the listing tries later.
     if (reason === 'unreadable') return;
-    remember(parent, { registry: toRegistrySummary(registry), checkedAt: Date.now() });
+    remember(key, { registry: toRegistrySummary(registry), checkedAt: Date.now() });
     adopted++;
   });
 
@@ -736,4 +972,5 @@ export function stopSkillRegistryCache(): void {
   entries.clear();
   queue.clear();
   inFlight.clear();
+  personalMemo.clear();
 }

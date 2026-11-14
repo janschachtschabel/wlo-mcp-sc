@@ -28,7 +28,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const html = readFileSync(fileURLToPath(new URL('../public/launcher.html', import.meta.url)), 'utf8');
+// Page and script file together: the script moved out of the page (audit 2026-11-14).
+const html = ['../public/launcher.html', '../public/launcher.js']
+  .map(rel => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')).join('\n');
 
 /** Slice out a top-level `function <name>(…) { … }` by brace-matching its body. */
 function extractFunction(source: string, name: string): string {

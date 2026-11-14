@@ -30,6 +30,7 @@ import { getNodeCollections } from '../node-collections.js';
 import { failureDetail, updateNodeMetadata } from './nodes.js';
 import { WRITABLE_FIELDS } from './fields.js';
 import { confirmDeleted, type MutationOutcome } from './verify.js';
+import { LISTING_PAGE, readWholeListing } from './collection-children.js';
 import { toRepositoryPath, type PreparedRequest, type PrepareOutcome } from './prepared-request.js';
 
 /** Where a top-level collection is created. Sub-collections name their parent. */
@@ -63,7 +64,12 @@ export type CreateCollectionOutcome =
        */
       check: MutationOutcome;
     }
-  | { status: 'failed'; detail: string };
+  /**
+   * `httpStatus` where the repository answered non-OK: a 4xx created nothing, a
+   * 5xx is no proof of that (measured 2026-11-06: a create answered 500 while
+   * the collection existed). Absent for an answer without an id — open too.
+   */
+  | { status: 'failed'; detail: string; httpStatus?: number };
 
 function collectionPath(collection: string, suffix = ''): string {
   return `${BASE_URL}/collection/v1/collections/-home-/${encodeURIComponent(collection)}${suffix}`;
@@ -211,7 +217,7 @@ export async function createCollection(
     headers: HEADERS,
     body: collectionBody(fields),
   });
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
 
   // An unparseable body takes the same route as one carrying no id: the POST was
   // accepted, so something may exist — reporting a plain failure would invite a
@@ -268,7 +274,7 @@ export async function renameCollection(
     headers: HEADERS,
     body: collectionBody(fields, collection),
   });
-  if (!res.ok) return { status: 'failed', detail: await failureDetail(res) };
+  if (!res.ok) return { status: 'failed', detail: await failureDetail(res), httpStatus: res.status };
   return await finishCollection(collection, fields);
 }
 
@@ -308,9 +314,6 @@ export async function addToCollection(collection: string, nodeId: string): Promi
   log.info('content added to collection', { collection, nodeId });
   return await confirmReference(collection, nodeId, 'present');
 }
-
-/** One page of a collection's child listing. Large enough that one call usually suffices. */
-const REFERENCE_PAGE = 100;
 
 /**
  * How far into a collection the reference lookup will page before giving up.
@@ -355,7 +358,7 @@ export async function findReference(collection: string, nodeId: string): Promise
   for (;;) {
     let page;
     try {
-      page = await getCollectionContents(collection, 'files', REFERENCE_PAGE, scanned, ['ccm:original']);
+      page = await getCollectionContents(collection, 'files', LISTING_PAGE, scanned, ['ccm:original']);
     } catch (err) {
       return {
         status: 'unknown',
@@ -408,29 +411,25 @@ export interface CollectionMember {
 export async function listMembers(
   collection: string, opts: { max: number; stored?: boolean },
 ): Promise<CollectionMember[] | 'unread' | 'too_many'> {
-  const out: CollectionMember[] = [];
   const props = ['ccm:original', 'cclom:title', 'cm:title', 'cm:name', ORDER_POSITION_PROPERTY];
-  for (let skip = 0; skip <= opts.max; skip += REFERENCE_PAGE) {
-    let nodes;
+  const nodes = await readWholeListing(async (skip, size) => {
     try {
-      nodes = (await getCollectionContents(collection, 'files', REFERENCE_PAGE, skip, props, { stored: opts.stored === true })).nodes;
-    } catch { return 'unread'; }
-    for (const node of nodes) {
-      const referenceId = node.ref?.id;
-      if (!referenceId) continue;
-      const original = node.originalId ?? node.properties?.['ccm:original']?.[0];
-      out.push({
-        referenceId,
-        // The property points at the record ITSELF on an original — compared, not trusted.
-        materialId: original && original !== referenceId ? original : referenceId,
-        title: sanitizeText(titleFromProperties(node.properties) || node.name || node.title || referenceId),
-        hasPosition: node.properties?.[ORDER_POSITION_PROPERTY]?.[0] !== undefined,
-      });
-    }
-    if (out.length > opts.max) return 'too_many';
-    if (nodes.length < REFERENCE_PAGE) return out;
-  }
-  return 'too_many';
+      return (await getCollectionContents(collection, 'files', size, skip, props, { stored: opts.stored === true })).nodes;
+    } catch { return null; }
+  }, LISTING_PAGE, opts.max);
+  if (typeof nodes === 'string') return nodes;
+  return nodes.flatMap((node) => {
+    const referenceId = node.ref?.id;
+    if (!referenceId) return [];
+    const original = node.originalId ?? node.properties?.['ccm:original']?.[0];
+    return [{
+      referenceId,
+      // The property points at the record ITSELF on an original — compared, not trusted.
+      materialId: original && original !== referenceId ? original : referenceId,
+      title: sanitizeText(titleFromProperties(node.properties) || node.name || node.title || referenceId),
+      hasPosition: node.properties?.[ORDER_POSITION_PROPERTY]?.[0] !== undefined,
+    }];
+  });
 }
 
 /**
@@ -445,7 +444,7 @@ export const IS_ORIGINAL = 'Dieses Material liegt nicht als Verweis, sondern als
   + 'herauszunehmen würde das Material selbst löschen — das tut dieses Werkzeug nicht. Es wurde nichts geändert. '
   + '(Zum wirklichen Löschen: wlo_delete_content.)';
 
-function noReference(found: { status: 'absent' } | { status: 'unknown'; detail: string }, nodeId: string): string {
+export function noReference(found: { status: 'absent' } | { status: 'unknown'; detail: string }, nodeId: string): string {
   return found.status === 'unknown'
     ? found.detail
     : `Das Material „${sanitizeText(nodeId)}“ ist nicht in dieser Sammlung enthalten — es wurde nichts geändert.`;
@@ -490,10 +489,11 @@ export async function removeFromCollectionRequest(
 export async function removeFromCollection(collection: string, nodeId: string): Promise<MutationOutcome> {
   const found = await findReference(collection, nodeId);
   if (found.status !== 'found') {
-    return {
-      status: found.status === 'unknown' ? 'unverified' : 'failed',
-      detail: noReference(found, nodeId),
-    };
+    // Both are OUR refusals — no request left for the repository — and each has
+    // its own code. As `unverified` the unread listing was worded "Die Anfrage
+    // wurde angenommen …", and "not in there" was an `upstream_error` that a
+    // spent key called open; the batch tool calls it `absent` (audit 2026-11-14, W9).
+    return { status: 'failed', detail: noReference(found, nodeId), code: found.status === 'unknown' ? 'not_checked' : 'not_in_collection' };
   }
   if (found.direct) return { status: 'failed', detail: IS_ORIGINAL, code: 'is_original' };
 

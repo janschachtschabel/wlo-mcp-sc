@@ -15,7 +15,7 @@ deliberately *not* listed in the GPT store yet; a version on a proper domain com
 later. Everything below therefore splits into two groups:
 
 - **Ready now** — the server-side requirements. The tool surface was re-verified
-  with the official MCP Inspector CLI on 2026-08-03: 25 tools, **0 objections**
+  with the official MCP Inspector CLI on 2026-08-03 (the surface then had 25 tools; the current count is in `docs/TOOLS.md`, and every tool added since is held to the same checks by `tests/server.test.ts`): **0 objections**
   across title, description, hints, invocation status strings, `securitySchemes`
   and `inputSchema`. The golden prompts' mechanics pass delivered 17 of 17.
 - **Deliberately deferred** — everything that depends on the final domain
@@ -36,7 +36,7 @@ switch is a redeploy with changed env variables.
 | MCP server over Streamable HTTP | ✅ | `src/http.ts` (`POST /mcp`) |
 | Real SSE streaming for ChatGPT developer mode | ✅ | `MCP_SSE=1` → `enableJsonResponse:false` (`src/mcp-transport.ts`); image defaults it on; smoke-verified (`content-type: text/event-stream`) |
 | Reverse proxy must not buffer SSE | ⬜ | Documented in `docker-compose.yml` + README; operator configures nginx `proxy_buffering off;` |
-| Stateless server | ✅ | one server+transport per request; no MCP session state. Process-level state exists only for writes in progress — confirmation keys (10 min), approved plans and, with `WLO_BATCH_UPLOAD_ENABLED`, upload slots and batch approvals (30 min), all in memory — so the server runs as one instance. The 33 read tools all carry `readOnlyHint:true` (`wlo_list_my_batches`, registered with the curation tools, too). **Not read-only as a whole:** the server also lists 16 curation tools (20 with batch filing), which refuse at call time without a write identity — see the row below |
+| Stateless server | ✅ | one server+transport per request; no MCP session state. Process-level state exists only for writes in progress — confirmation keys (10 min), approved plans and, with `WLO_BATCH_UPLOAD_ENABLED`, upload slots and batch approvals (30 min), all in memory — so the server runs as one instance. The 34 read tools all carry `readOnlyHint:true` (`wlo_list_my_batches`, registered with the curation tools, too). **Not read-only as a whole:** the server also lists 26 curation tools (30 with batch filing), which refuse at call time without a write identity — see the row below |
 | Server `instructions` block (fast path vs deep-dive vs search/fetch) | ✅ | `src/apps/instructions.ts`; asserted non-empty in `tests/server.test.ts` |
 | Health endpoint | ✅ | `GET /health` → `200` (`src/http.ts`) |
 
@@ -45,7 +45,7 @@ switch is a redeploy with changed env variables.
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
 | Clear tool names + "Use this when… / Do not use for…" descriptions | ✅ | tool registrations in `src/tools/*`; disambiguation asserted in `tests/server.test.ts` |
-| `annotations.readOnlyHint` on every tool | ✅ | asserted for every registered tool in `tests/server.test.ts` (25 read tools in the suite's configuration) |
+| `annotations.readOnlyHint` on every tool | ✅ | asserted for every registered tool in `tests/server.test.ts` |
 | `annotations.openWorldHint` where a tool leaves WLO | ✅ | `get_wikipedia_summary` (`src/tools/wikipedia.ts`) and `get_url_text` (`src/tools/url-text.ts`) — the two that reach a source outside WLO |
 | `outputSchema` + `structuredContent` on display tools | ✅ | `src/apps/register.ts` seam + `src/apps/outputSchemas.ts`; `tests/apps-structured-content.test.ts` |
 | ChatGPT `search` + `fetch` tools with the fixed shapes | ✅ | `src/tools/knowledge.ts`; `tests/tools-knowledge.test.ts` |
@@ -89,7 +89,7 @@ switch is a redeploy with changed env variables.
 |-------------|--------|----------|
 | Privacy policy | ✅ | `docs/PRIVACY.md` — covers the anonymous read path, the optional credential and its forwarding, the curation (write) tools, and the third-party recipients. Operator adds contact + which mode the deployment runs in |
 | No third-party asset/IP leakage in public pages | ✅ | `public/launcher.html` fully self-contained (P6) |
-| Least privilege / write scope | ✅ | Anonymous callers get a read-only surface in effect: the 16 curation tools (20 with `WLO_BATCH_UPLOAD_ENABLED`) are listed for every caller (since 2026-08-05 — a tool a model never sees is a login that never starts) and each **refuses at call time** without a write-capable identity, carrying the `WWW-Authenticate` challenge that asks the host to offer a login. Every mutation is two-step — preview, then a single-use token bound to a fingerprint of exactly that change — and is read back from the repository before anything is reported. Writes under the shared service account are off unless the operator sets `WLO_ALLOW_SERVICE_WRITES`. Container runs as non-root |
+| Least privilege / write scope | ✅ | Anonymous callers get a read-only surface in effect: the 26 curation tools (30 with `WLO_BATCH_UPLOAD_ENABLED`) are listed for every caller (since 2026-08-05 — a tool a model never sees is a login that never starts) and each **refuses at call time** without a write-capable identity, carrying the `WWW-Authenticate` challenge that asks the host to offer a login. Every mutation is two-step — preview, then a single-use token bound to a fingerprint of exactly that change — and is read back from the repository before anything is reported. Writes under the shared service account are off unless the operator sets `WLO_ALLOW_SERVICE_WRITES`. Container runs as non-root |
 
 ## Remaining before submission (operator actions)
 
@@ -124,7 +124,7 @@ switch is a redeploy with changed env variables.
 | Publicly accessible domain, no local/testing endpoint | ⬜ | ⚠️ **Choose the FINAL domain before the first submission.** The MCP server origin (scheme/host/port) is LOCKED across versions — changing it later means a brand-new app + review. A `nip.io`/raw-IP URL is a testing endpoint in reviewers' eyes AND would chain the app to that IP forever. Use e.g. `mcp.wirlernenonline.de` from the start |
 | CSP declared for the exact fetch domains | ✅ | `_meta.ui.csp` = the edu-sharing origin only (`src/apps/resources.ts`) |
 | Scan Tools imports the advertised metadata as a locked snapshot | ✅ | Everything it reads is complete: names, titles, descriptions, schemas, `_meta.securitySchemes`, annotations, UI-resource CSP, server `instructions` (verified with the MCP Inspector CLI 2026-07-17) |
-| Annotation justifications match server-advertised values | ⬜ | All read tools are `readOnlyHint:true`, `destructiveHint:false`. Two carry `openWorldHint:true` in the MCP-spec sense (they query an open external source): `get_wikipedia_summary` and `get_url_text`; justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state*. Note that `get_url_text` is declared **unsafe** and is switched off by default in the shipped deployment config — a submission should state whether it is enabled. The 16 curation tools (20 with batch filing) are not part of this read-only surface: they declare `readOnlyHint:false` and refuse at call time without a write-capable identity. |
+| Annotation justifications match server-advertised values | ⬜ | All read tools are `readOnlyHint:true`, `destructiveHint:false`. Two carry `openWorldHint:true` in the MCP-spec sense (they query an open external source): `get_wikipedia_summary` and `get_url_text`; justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state*. Note that `get_url_text` is declared **unsafe** and is switched off by default in the shipped deployment config — a submission should state whether it is enabled. The 26 curation tools (30 with batch filing) are not part of this read-only surface: they declare `readOnlyHint:false` and refuse at call time without a write-capable identity. |
 | Response minimization (no telemetry/session/trace IDs in tool output) | ✅ | Responses carry only content metadata; the `_queryMeta` block is subject-matter context (search term, resolved criteria, pagination, repository URL) — no user identifiers, no session/request IDs |
 | Test prompts + expected responses for the form | ✅ | [`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md); must pass on ChatGPT web AND mobile |
 | Screenshots | ⬜ | Optional and only because the app HAS a UI — capture the three rendered widgets in developer mode |
