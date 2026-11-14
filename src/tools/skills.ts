@@ -353,14 +353,16 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
         // An unresolved filter was DROPPED from the query, so the result set is
         // wider than asked for — stated as its own block, ahead of the listing.
         const hint = formatUnresolvedHint(unresolved);
-        return { content: [{ type: 'text' as const, text:
-          (hint ? `${hint}
-
-` : '') + (skills.length || !(restricted || incomplete) ? renderCatalogue(skills, params.query) : '') + (incomplete ? `
-
-${incompleteWalkNote(incompleteReason)}` : '') + (restricted ? `
-
-${RESTRICTED_NOTICE}` : '') }] };
+        // Parts joined, never concatenated: an omitted part must not leave its
+        // blank lines behind. "Keine Skills gefunden" is a statement about the
+        // catalogue — not made beside a closed skillset. The merely INCOMPLETE
+        // empty list keeps the sentence it always had (review 2026-11-14).
+        const catalogue = skills.length || !restricted ? renderCatalogue(skills, params.query) : '';
+        return { content: [{ type: 'text' as const, text: [
+          hint, catalogue,
+          incomplete ? incompleteWalkNote(incompleteReason) : '',
+          restricted ? RESTRICTED_NOTICE : '',
+        ].filter(Boolean).join('\n\n') }] };
       } catch (err) {
         return toolError('Fehler bei der Skill-Suche', err);
       }
@@ -443,12 +445,13 @@ Arbeitsablauf passt. Nicht für gewöhnliche OER-Inhalte — dafür \`search_wlo
         const alternatives = picked.alternatives.length
           ? ['', '## Weitere Kandidaten', ...picked.alternatives.map(a => oneLine(`- ${a.title} (nodeId: ${a.nodeId})`))]
           : [];
-        return { content: [
-          // Its own block and FIRST: after the untrusted document a server
-          // sentence is indistinguishable from one the document forged.
-          ...(restricted ? [{ type: 'text' as const, text: RESTRICTED_NOTICE }] : []),
-          { type: 'text' as const, text: [renderSkill(picked.skill), ...alternatives].join('\n') },
-        ] };
+        // ONE block, the notice as its first lines: at least one real client
+        // hands its model block 0 only, and in a block of its own the notice
+        // pushed the whole instruction out of sight. Ahead of the untrusted
+        // document all the same — after it, a server sentence is
+        // indistinguishable from one the document forged.
+        return { content: [{ type: 'text' as const, text:
+          [...(restricted ? [RESTRICTED_NOTICE, ''] : []), renderSkill(picked.skill), ...alternatives].join('\n') }] };
       } catch (err) {
         return toolError('Fehler beim Laden des Skills', err);
       }

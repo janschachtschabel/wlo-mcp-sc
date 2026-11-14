@@ -336,7 +336,13 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         // (the same rule the sibling tools follow for their hints).
         const content = [{ type: 'text' as const, text }].filter(c => c.text);
         if (walkIncomplete) content.push({ type: 'text' as const, text: WALK_INCOMPLETE_NOTE });
-        if (walkRestricted) content.push({ type: 'text' as const, text: RESTRICTED_NOTICE });
+        // Markdown: IN block 0 — a client that hands its model the first block
+        // only would otherwise read "0 Treffer" with nothing beside it. JSON:
+        // its own block, block 0 being the payload.
+        if (walkRestricted) {
+          if ((params.outputFormat ?? 'markdown') === 'json' || !content[0]) content.push({ type: 'text' as const, text: RESTRICTED_NOTICE });
+          else content[0].text += `\n\n${RESTRICTED_NOTICE}`;
+        }
         if (subjectRegistry) content.push({ type: 'text' as const, text: subjectRegistry });
         content.push(meta);
         return {

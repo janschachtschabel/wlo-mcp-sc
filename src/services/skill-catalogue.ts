@@ -135,6 +135,9 @@ export async function collectSkillNodes(
         : Promise.resolve({ nodes: [] as WloNode[], reachable: true }),
     ]));
 
+    // A refused ROOT is an error whatever lies below it — nothing more is read for it.
+    if (rootRefused !== null) break;
+
     const next: string[] = [];
     for (const result of results) {
       if (!result) { failed += 1; continue; }   // mapPool nulls a failed collection

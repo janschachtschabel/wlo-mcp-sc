@@ -5081,7 +5081,7 @@ Sie haben die Arbeitskopie gelesen (Stand `8cbc051`), der Chatbot verträgt die 
 - **Punkt 5:** `wlo_update_compendium` nennt die Sammlung in der ersten Zeile; `target.kind` bleibt `compendium`.
 - **Kleinere:** `find_content_by_url` 404 → `not_found`; `previewUrl` an `search_wlo_content_many`; Absatz zum
   Python-SDK in `docs/INTEGRATION.md` §3.5. Die Größe der Werkzeugliste bleibt (bewusst, siehe Entscheidung zu A-3).
-- 27 neue Tests (`refused-branch-is-said` 19, `chatbot-followup-1114` 8), jede Korrektur mit Gegenprobe rot gesehen.
+- Neue Tests: `refused-branch-is-said` (31), `chatbot-followup-1114` (8), `refused-branch-review` (15); jede Korrektur mit Gegenprobe rot gesehen.
 - **Unabhängiges Review (0 kritisch, 2 groß, 5 klein, 3 Randnotizen) — behoben:** mit `includeContentCounts` /
   `includeContentPreview` (und immer in `get_collection_overview`) verschwand ein Knoten, dessen Inhalte abgelehnt
   wurden oder nicht antworteten, GANZ aus dem Baum (`mapPool` macht aus dem Wurf `null`) — jetzt bleibt er, mit
@@ -5091,3 +5091,15 @@ Sie haben die Arbeitskopie gelesen (Stand `8cbc051`), der Chatbot verträgt die 
   (nicht lesbare Varianten = „keine Variante"). Nicht geändert, weil nichts Falsches gesagt wird: Geschwister in
   `get_related_content`, Zähler der Fachportal-Liste. 3372 Tests, 3371 grün, 1 übersprungen.
 - Antwort ans Team mit den neuen Formen: `docs/plans/2026-11-14-antwort-an-chatbot-team-2.md`.
+- **Zweites Review auf Wunsch des Nutzers (0 kritisch, 3 groß, 9 klein, 4 Randnotizen) — behoben.** Alle drei großen
+  lagen in den KORREKTUREN nach dem ersten Review: `get_skill_for_task` setzte den Hinweis als eigenen ERSTEN Block,
+  die Anleitung rutschte in Block 1 (ein Client, der nur Block 0 weiterreicht, verlor sie) — jetzt ein Block, Hinweis
+  als erste Zeilen; `search_skill` hatte den bestehenden Fall „leer + nur unvollständig" verändert (Satz weg, Text
+  begann mit Leerzeilen) — wiederhergestellt, Teile werden verbunden statt verkettet; das Suchergebnis-Widget zeigte
+  über einer leeren `restricted`-Antwort „Keine Treffer gefunden." — beide Widgets kennen die Marken jetzt. Ferner:
+  `contentsUnread`/`contentsRefused` nie zusammen und nie neben einer gelieferten Vorschau; ein fehlgeschlagener
+  Inhaltsabruf im Baum wird geloggt; eine abgelehnte Skill-Wurzel beendet den Lauf sofort (vorher wurde der Unterbaum
+  noch gelesen); `contentsUnread` auch in der Übersicht; Markdown-Hinweis von `get_collection_contents` im ersten
+  Block. Nicht geändert: der Code `not_found` an `find_content_by_url` (vom Team so erbeten) — die Antwort ans Team
+  sagt jetzt ausdrücklich, dass er dort NICHT „kein Datensatz" heißt. Die Wendung „mit dieser Anmeldung nicht
+  lesbar" ist per Test festgeschrieben (Bitte des Teams, §7 ihrer Antwort).

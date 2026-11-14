@@ -1756,7 +1756,16 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   (`readNodeContents`: count, preview) marks the node (`contentsRefused` /
   `contentsUnread`) and never removes it — thrown through `mapPool` it became a
   `null` that was filtered out, and the branch was gone. Whoever adds a walk
-  answers three cases, not two. Deliberately different: a Themenseite whose
+  answers three cases, not two. Three rules from the second review of the same
+  day: a notice goes INTO the first Markdown block (as its first lines where
+  an untrusted document follows) — a block of its own ahead of the answer
+  pushed a whole skill instruction out of the one block some clients read; the
+  parts of an answer are JOINED (`filter(Boolean).join`), never concatenated,
+  and an EXISTING case keeps its sentence when a neighbouring one loses it;
+  and the widgets are renderers too — `restricted` dropped in `toEnvelope`
+  showed "Keine Treffer gefunden." over a closed branch. The phrase „mit
+  dieser Anmeldung nicht lesbar" is what the chatbot recognises a refusal by
+  (pinned in `tests/refused-branch-is-said.test.ts`). Deliberately different: a Themenseite whose
   variants this login may not read reports "no variant" — for that login there
   is no page to show. The four notice wordings a client recognises are pinned in
   `tests/refused-is-not-unreachable.test.ts` — change them only with notice.

@@ -26,6 +26,7 @@ const STRINGS = {
     noResults: 'Keine Treffer gefunden.',
     noResultsMore: 'Auf dieser Seite keine weiteren Treffer — der Katalog hält mehr.',
     sourceUnreachable: 'Die Suche war nicht vollständig erreichbar — das ist kein Befund „nichts vorhanden“.',
+    restricted: 'Ein Teil des durchsuchten Bereichs ist mit dieser Anmeldung nicht lesbar und fehlt hier.',
     // Split from the count so the number can be composed in without an
     // interpolating `t()`; both halves are one sentence in the rendering.
     noResultsLicense: 'Kein Treffer mit genau der gewählten Lizenz.',
@@ -70,6 +71,8 @@ const STRINGS = {
     // Auswahl in der Kachelansicht
     selectLabel: 'Auswählen',
     treeMore: '… mehr vorhanden',
+    treeRefused: 'mit dieser Anmeldung nicht lesbar',
+    treeUnread: 'gerade nicht lesbar',
     selectionCount: 'ausgewählt',
     selectionUse: 'Ausgewählte weiterverwenden',
     selectionClear: 'Auswahl aufheben',
@@ -109,6 +112,7 @@ const STRINGS = {
     noResults: 'No results found.',
     noResultsMore: 'No further results on this page — the catalogue holds more.',
     sourceUnreachable: 'The search was not fully reachable — this is not a finding of “nothing there”.',
+    restricted: 'Part of the searched area is not readable with this login and is missing here.',
     noResultsLicense: 'Nothing carries exactly the licence you asked for.',
     licenseCandidatesChecked: 'candidates checked',
     licenseFamilyHint: 'The repository can only filter licence families — the exact selection happens afterwards.',
@@ -149,6 +153,8 @@ const STRINGS = {
     // Tile selection
     selectLabel: 'Select',
     treeMore: '… more available',
+    treeRefused: 'not readable with this login',
+    treeUnread: 'could not be read just now',
     selectionCount: 'selected',
     selectionUse: 'Use selected',
     selectionClear: 'Clear selection',

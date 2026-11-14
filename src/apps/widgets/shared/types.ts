@@ -56,6 +56,8 @@ export interface NodeList {
   more?: { nextSkipCount: number };
   /** A source of this bucket did not answer. */
   incomplete?: true;
+  /** A walk met a branch the repository refused to open: missing here, and no retry changes that. */
+  restricted?: true;
 }
 
 export interface WikiSummary {
@@ -110,4 +112,10 @@ export interface BrowseNode extends WidgetNode {
    * a capped branch that looks complete misrepresents the catalogue.
    */
   hasMoreChildren?: boolean;
+  /** The repository refused this branch's sub-topics / its contents: unknown, not empty. */
+  childrenRefused?: boolean;
+  contentsRefused?: boolean;
+  /** They did not answer this time. */
+  childrenUnread?: boolean;
+  contentsUnread?: boolean;
 }

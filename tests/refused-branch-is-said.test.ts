@@ -410,3 +410,17 @@ test('the picked-skill path carries restricted too — nothing picked beside a c
     assert.deepEqual([r.picked, r.incomplete, r.restricted], [null, false, true]);
   } finally { mock.restore(); }
 });
+
+test('the phrase the chatbot recognises a refusal by is still in every sentence that states one', async () => {
+  // Their note of 2026-11-14 (§7): the client passes a sentence with
+  // "mit dieser Anmeldung nicht lesbar" on to the model and does NOT count it as
+  // an outage. Rewording one of these is a change of contract in practice:
+  // tell them first, then change this test.
+  const { readFileSync } = await import('node:fs');
+  const src = (file: string) => readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
+  const PHRASE = /mit dieser Anmeldung nicht lesbar/g;
+  assert.match(RESTRICTED_NOTICE, PHRASE);
+  assert.equal(src('tools/browse.ts').match(PHRASE)?.length, 2, 'the two tree lines: sub-topics and contents');
+  assert.equal(src('tools/collection-overview.ts').match(PHRASE)?.length, 1);
+  assert.match(src('services/collection-traversal.ts'), /nicht gefunden oder ist mit dieser Anmeldung nicht lesbar/);
+});

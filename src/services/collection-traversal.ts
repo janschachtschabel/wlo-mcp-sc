@@ -24,7 +24,7 @@ import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
 import { failureStatus } from './failure-code.js';
 import { isRefusal } from '../upstream-error.js';
-import { ClientGoneError } from '../request-scope.js';
+import { isClientGone } from '../request-scope.js';
 import { logTerm } from '../log-privacy.js';
 
 /**
@@ -272,9 +272,9 @@ export type CollectionTreeNode = FormattedNode & {
   childrenUnread?: boolean;
   /** The repository REFUSED that listing (not readable for this login, or gone): unknown too, and no retry helps. */
   childrenRefused?: boolean;
-  /** The node's own CONTENTS were refused: no count, no preview — the node itself stays in the tree. */
+  /** A read of the node's own CONTENTS was refused — the node itself stays in the tree. */
   contentsRefused?: boolean;
-  /** The read of its contents did not answer: no count or preview this time. */
+  /** No read of its contents answered (count and preview alike): none this time. Never beside `contentsRefused`. */
   contentsUnread?: boolean;
 };
 
@@ -287,12 +287,26 @@ export type CollectionTreeNode = FormattedNode & {
  */
 async function readNodeContents<T>(node: CollectionTreeNode, read: () => Promise<T>): Promise<T | null> {
   try {
-    return await read();
+    const out = await read();
+    // The contents WERE read: an "unread" mark an earlier read left behind
+    // would stand beside the items it says could not be read.
+    delete node.contentsUnread;
+    return out;
   } catch (err) {
-    if (err instanceof ClientGoneError) throw err;
+    if (isClientGone(err)) throw err;
     const status = failureStatus(err);
-    if (status !== null && isRefusal(status)) node.contentsRefused = true;
-    else node.contentsUnread = true;
+    if (status !== null && isRefusal(status)) {
+      // Refused is the answer; "try again" beside it would contradict it.
+      delete node.contentsUnread;
+      node.contentsRefused = true;
+    } else {
+      node.contentsUnread = true;
+      // Marked in the answer AND logged: `mapPool` used to log the throw, and a
+      // repository down for every one of these reads must not leave no line.
+      log.warn('collection tree: a node\'s contents could not be read', {
+        nodeId: node.nodeId, status, error: err instanceof Error ? err.message : String(err),
+      });
+    }
     return null;
   }
 }

@@ -79,6 +79,8 @@ type FlatNodeList = {
   more?: { nextSkipCount: number };
   /** search_wlo_collections: a collection index did not answer. */
   incomplete?: true;
+  /** A walk met a branch the repository refused to open. */
+  restricted?: true;
 };
 
 /**
@@ -112,6 +114,8 @@ function toEnvelope(payload: SearchAllPayload | FlatNodeList | undefined): Searc
     collections: {
       ...(colls.length ? { ...bucket(colls), total: items.length ? colls.length : payload.total ?? colls.length } : bucket([])),
       ...(payload.incomplete ? { incomplete: true as const } : {}),
+      // Dropped here, an empty restricted list rendered as "no results".
+      ...(payload.restricted ? { restricted: true as const } : {}),
     },
     topicPages: bucket([]),
   };
@@ -149,7 +153,8 @@ export function renderSearchResults(
     // "No results" is a statement about the catalogue. Not made over a page that
     // is merely exhausted, nor over a source that did not answer.
     const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete;
-    const headline = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable' : 'noResults';
+    const headline = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable'
+      : payload?.collections?.restricted ? 'restricted' : 'noResults';
     return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, headline))}</p>${reason}</div>`;
   }
 
@@ -184,10 +189,15 @@ export function renderSearchResults(
       `</div>`
     : '';
 
+  // Above the hits: a list with a closed branch is not the whole list.
+  const restrictedNote = payload?.collections?.restricted
+    ? `<p class="wlo-empty__reason">${escapeHtml(t(locale, 'restricted'))}</p>`
+    : '';
+
   // The bar precedes the grid: without a scrollport sticky cannot hold it in
   // view, so placing it after the results hid it behind the whole list.
   return (
-    `<div class="wlo-results">${heading}${band}${selectionBar}` +
+    `<div class="wlo-results">${heading}${restrictedNote}${band}${selectionBar}` +
     section('sectionContent', content, locale, {
       detail: true,
       selectable: state.canSelect,

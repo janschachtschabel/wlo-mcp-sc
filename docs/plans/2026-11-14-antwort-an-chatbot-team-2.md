@@ -124,3 +124,40 @@ keine Seite zu zeigen. Wenn ihr auch hier ein eigenes Kennzeichen wollt, sagt es
   etwas, bekommt ihr es vorher.
 
 Nachlesen: `CHANGELOG.md` („Unreleased", oberste zwei Abschnitte), `docs/MCP-REFERENZ.md`.
+
+## Nachtrag nach einem zweiten Review (14.11., abends)
+
+Ein zweites, unabhängiges Review hat an dieser Antwort und am Code noch Ungenauigkeiten
+gefunden. An den Formen von Punkt 1 und 4 ändert sich nichts; die Wendung „mit dieser
+Anmeldung nicht lesbar" bleibt in allen Sätzen und ist jetzt per Test festgeschrieben.
+
+**Was oben nicht genau stimmte:**
+
+- **„Keine bestehende Form ändert sich"** gilt mit einer Ausnahme: `find_content_by_url`
+  kennt je Eintrag den zusätzlichen Code `not_found`. Wichtig: Er heißt dort **nicht**
+  „kein Datensatz vorhanden", sondern „das Repository hat die Suche mit 404 beantwortet;
+  ob es einen Datensatz gibt, ist offen". Die einzige Verneinung ist `matches: []` ohne
+  `error`.
+- **`contentsRefused` „nur ohne `fileCount`":** Die Marke heißt „ein Abruf der Inhalte
+  wurde abgelehnt". `contentsRefused` und `contentsUnread` stehen nie zusammen an einem
+  Knoten, und `contentsUnread` steht nie neben einer gelieferten Vorschau.
+- **Der Satz als „eigener Block vor `_queryMeta`"** gilt im JSON-Modus der beiden
+  Sammlungs-Werkzeuge. Im Markdown steht er im **ersten** Block, damit ein Client, der
+  nur diesen weiterreicht, ihn sieht.
+- **`get_skill_for_task`:** Im Markdown sind Hinweis und Anleitung **ein** Block, der
+  Hinweis zuerst. Die Felder `restricted` / `restrictedNote` gibt es nur, wenn ein Skill
+  gewählt wurde; ohne Wahl ist die Antwort in beiden Formaten der Hinweissatz als Text.
+- **„In den lesbaren Teilen wurde keine Sammlung … gefunden"** steht nur, wenn die
+  Baumsuche nichts fand und nichts ausgefallen ist. Kommt ein Ausfall dazu, steht der
+  bekannte Ausfall-Satz und danach der Hinweis.
+- **`wlo_update_compendium`:** Bei einer Umleitung steht die Zeile „Achtung: …
+  Verknüpfung" weiter vor der `Sammlung:`-Zeile.
+
+**Was zusätzlich dazukam:**
+
+- `get_collection_overview` führt je Eintrag in `subcollections` auch `contentsUnread: true`
+  (Anzahl ließ sich gerade nicht lesen).
+- `search_skill`: Eine leere, nur unvollständige Liste (`incomplete` ohne `restricted`)
+  liest sich wieder genau wie vor dem 14.11. — „Keine Skills gefunden …" und danach der
+  Hinweis. Das hatte unsere erste Korrektur versehentlich verändert.
+- Die beiden Widgets (Trefferliste, Themenbaum) zeigen den Hinweis jetzt ebenfalls.

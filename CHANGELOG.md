@@ -13,11 +13,15 @@ to [Semantic Versioning](https://semver.org/).
   closed branch looked complete. Now: a tree node carries `childrenRefused: true` (`browse_collection_tree`), and a
   list answer carries `restricted: true` with one sentence that promises no retry (`search_wlo_collections` in its
   tree search, `get_collection_contents` with `includeSubcollections`, `search_skill`, `get_skill_for_task`) — in
-  `structuredContent`, in the JSON text and in Markdown. "Keine Sammlungen gefunden" / "Sammlung ist leer" /
-  "Keine Skills gefunden" is not printed over such an answer.
+  the JSON text and in Markdown, and in `structuredContent` for the two collection tools (the skill tools have
+  none). "Keine Sammlungen gefunden" / "Keine Skills gefunden" is not printed over such an answer; an empty and
+  merely `incomplete` skill list reads exactly as before. In Markdown the sentence is in the FIRST block
+  (`get_skill_for_task`: the first lines, ahead of the instruction), so a client handing its model one block sees
+  it. Both widgets show it: the result list instead of "Keine Treffer gefunden.", the tree as a mark on the branch.
 - **A branch whose own contents could not be read no longer vanishes from the tree.** With `includeContentCounts`
   or `includeContentPreview` (and always in `get_collection_overview`) a refused or failed read of one node's
-  contents removed the node itself. It stays now, marked `contentsRefused` or `contentsUnread`, without a count.
+  contents removed the node itself. It stays now, marked `contentsRefused` or `contentsUnread` (never both; a
+  failed read is logged). `get_collection_overview` carries the same two marks per entry of `subcollections`.
 - **The same refusal no longer ends a recursive listing.** A sub-collection whose CONTENTS the repository refused
   aborted `get_collection_contents` with `forbidden` / `not_found`, while a refused sub-LISTING passed for empty.
   Both are now left out and marked `restricted`, and the rest is delivered. A refused START node stays an error; an

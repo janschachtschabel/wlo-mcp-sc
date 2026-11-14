@@ -63,9 +63,13 @@ function renderNode(node: BrowseNode, state: BrowseState, locale: Locale, opts: 
   const children = state.childrenById[id] ?? [];
   // The server capped this branch. Say so in the tree, not only in the text the
   // model reads — an unmarked branch reads as "this is everything".
-  const more = node.hasMoreChildren
-    ? `<span class="wlo-tree__more">${escapeHtml(t(locale, 'treeMore'))}</span>`
-    : '';
+  // A branch the server could not open says so the same way: unmarked it is a
+  // plain childless one. Refused outranks unread — the two are never both true.
+  const mark = (key: 'treeMore' | 'treeRefused' | 'treeUnread') =>
+    `<span class="wlo-tree__more">${escapeHtml(t(locale, key))}</span>`;
+  const more = (node.hasMoreChildren ? mark('treeMore') : '')
+    + (node.childrenRefused || node.contentsRefused ? mark('treeRefused')
+      : node.childrenUnread || node.contentsUnread ? mark('treeUnread') : '');
 
   // Childless collection: no local toggle — offer the follow-up button (when
   // the host supports it) plus the external open link.
