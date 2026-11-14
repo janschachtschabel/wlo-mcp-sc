@@ -413,6 +413,12 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
               : codedError('not_found', `Die Sammlung „${sanitizeText(collectionId)}“ wurde nicht gefunden oder ist nicht lesbar. Es wurde nichts angelegt.`);
           }
           target = found.target;
+          // Known from the collection's own record: refused HERE, nothing is created for a filing that must fail.
+          if (target.readOnly) {
+            return codedError('forbidden', `An der Sammlung „${sanitizeText(target.title)}“ darf diese Anmeldung nicht schreiben — der Datensatz `
+              + 'ließe sich dort nicht aufnehmen. Es wurde nichts angelegt. (Ohne addToCollectionId anlegen und das Material danach mit '
+              + 'wlo_add_to_collection für die Sammlung vorschlagen.)', { outcomeOpen: false });
+          }
           if (source.kind === 'url') {
             const existing = await findByUrl(source.url);
             if (existing) return fileExistingRecord(existing, target, token);

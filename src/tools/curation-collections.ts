@@ -30,6 +30,8 @@ import type { PrepareOutcome } from '../services/write/prepared-request.js';
 import { getNodeMetadata } from '../wlo-node.js';
 import { resolveWriteTarget } from '../services/write/nodes.js';
 import { isAlreadyFiled, readFilingTarget } from '../services/write/create-filing.js';
+import { mayWrite, proposeForCollection } from '../services/write/collection-proposals.js';
+import { notPublicNote, withNotPublic } from './curation-public.js';
 import { sanitizeText } from '../text-sanitize.js';
 import {
   registerCurationTool,
@@ -75,9 +77,9 @@ function titleOf(properties: Record<string, string[]> | undefined, fallback: str
 }
 
 /** Preview, or the outcome of redeeming the token. Null means "go ahead". */
-function gate(params: Record<string, unknown>, cs: ChangeSet, whatHappensNext: string) {
+function gate(params: Record<string, unknown>, cs: ChangeSet, whatHappensNext: string, notes: string[] = []) {
   const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
-  if (!token) return previewReply(cs, whatHappensNext);
+  if (!token) return previewReply(cs, whatHappensNext, notes);
   return confirmOrExplain(token, cs);
 }
 
@@ -207,7 +209,9 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       'Nimm ein vorhandenes Material in eine WLO-Sammlung auf. Das Material bleibt dabei dort, wo es ist — ' +
       'eine Sammlung enthält Verweise, es wird nichts verschoben oder kopiert. Die id einer Verknüpfung (aus ' +
       'einer Sammlungsliste) wird aufs Original umgeleitet; liegt das Material schon in der Sammlung, wird ' +
-      'nichts gesendet. ZWEISTUFIG: ohne confirmToken nur Vorschau. Erfordert eine Anmeldung.',
+      'nichts gesendet. Darf die Anmeldung an der Sammlung nur lesen, wird das Material stattdessen VORGESCHLAGEN ' +
+      '(Status proposed; es liegt dann noch nicht in der Sammlung). Die Vorschau sagt, wenn das Material noch nicht ' +
+      'öffentlich ist. ZWEISTUFIG: ohne confirmToken nur Vorschau. Erfordert eine Anmeldung.',
     inputSchema: {
       collectionId: z.string().describe('nodeId der Sammlung.'),
       nodeId: z.string().describe('nodeId des Materials.'),
@@ -334,11 +338,40 @@ async function referenceHandler(params: Record<string, unknown>, spec: Reference
       ? `${collectionId} / ${nodeId}`
       : `${collectionId} / Verknüpfung ${nodeId} — aufgenommen wird das Original ${sentId}`;
 
+    // The caller may READ the collection and not write it: a filing would be
+    // refused, a proposal is taken (S8, measured 2026-11-14). Decided HERE, so
+    // the preview says which of the two the key authorises. Not on the prepare
+    // route: there the request is sent by somebody else, with their rights.
+    const propose = Boolean(spec.fileOriginal) && route !== 'prepare' && mayWrite(collection) === false;
+    // Filed, it is still invisible to others (S9): said before the key.
+    const notPublic = Boolean(spec.fileOriginal) && sent.isPublic === false;
+
     const cs = buildChangeSet(`${collectionId}/${sentId}`, 'collection', {}, {}, {
-      action: spec.action(materialTitle, collectionTitle, ids),
+      action: propose
+        ? `SCHLÄGT „${materialTitle}“ für die Sammlung „${collectionTitle}“ VOR (${ids}). An dieser Sammlung darf diese Anmeldung `
+          + 'nicht schreiben: aufgenommen ist das Material erst, wenn die Redaktion den Vorschlag annimmt.'
+        : spec.action(materialTitle, collectionTitle, ids),
     });
-    const refusal = gate(params, cs, `Zum ${spec.verb} bitte bestätigen.`);
-    if (refusal) return refusal;
+    const refusal = gate(params, cs, propose ? 'Zum Vorschlagen bitte bestätigen.' : `Zum ${spec.verb} bitte bestätigen.`, notPublic ? [notPublicNote(1, 1)] : []);
+    if (refusal) return notPublic ? withNotPublic(refusal, [nodeId]) : refusal;
+
+    if (propose) {
+      const outcome = await proposeForCollection(collectionId, sentId);
+      const where = { collectionId, nodeId, ...(sentId !== nodeId ? { filedId: sentId } : {}) };
+      switch (outcome.status) {
+        case 'proposed':
+          return { ...plainText(`„${materialTitle}“ ist für „${collectionTitle}“ vorgeschlagen. Es liegt noch NICHT in der Sammlung — die Redaktion entscheidet.`),
+            structuredContent: { ...where, status: 'proposed' } };
+        case 'already_proposed':
+          return codedError('already_proposed', `„${materialTitle}“ war für „${collectionTitle}“ schon vorgeschlagen (offen oder bereits entschieden) — `
+            + 'ein Paar lässt sich nur einmal vorschlagen. Es liegt nicht in der Sammlung; es wurde nichts geändert.', { ...where, outcomeOpen: false });
+        case 'unverified':
+          return codedError('unverified', `Der Vorschlag wurde angenommen, ließ sich aber nicht bestätigen. ${outcome.detail}`, where);
+        default:
+          return codedError(outcome.httpStatus === 403 || outcome.httpStatus === 401 ? 'forbidden' : outcome.httpStatus === 404 ? 'not_found' : 'upstream_error',
+            `Der Vorschlag konnte nicht hinterlegt werden: ${outcome.detail}`, where);
+      }
+    }
 
     if (route === 'prepare') {
       // Never fall through to the write: without a descriptor this call would

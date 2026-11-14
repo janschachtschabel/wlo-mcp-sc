@@ -136,6 +136,10 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
               ? codedError('not_found', `Die Elternsammlung ${parentId} wurde nicht gefunden.`)
               : codedError('not_a_collection', `${parentId} ist keine Sammlung.`) };
           }
+          if (target.target.readOnly) {
+            return { reply: codedError('forbidden', `An der Elternsammlung „${sanitizeText(target.target.title)}“ darf diese Anmeldung nicht schreiben — `
+              + 'darunter lässt sich nichts anlegen. Es wurde nichts geändert.', { outcomeOpen: false }) };
+          }
           const walk = await findExisting(parentId, items);
           if (!walk.ok) {
             return { reply: codedError('not_checked', `Die Unterordner von ${walk.unreadable} ließen sich nicht lesen. Ohne diesen Blick kann `

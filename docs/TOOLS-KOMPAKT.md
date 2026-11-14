@@ -88,7 +88,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `search` | Leichte Belegstellen-Treffer für belegte Antworten. |
 | `fetch` | Der Volltext zu einem Treffer per id. |
 
-## Kuratierend (27)
+## Kuratierend (30)
 
 ### Inhalte
 
@@ -112,6 +112,9 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_submit_contents` | Reicht viele Datensätze mit einer Bestätigung zur redaktionellen Prüfung ein. |
 | `wlo_remove_from_collections` | Nimmt viele Materialien mit einer Bestätigung aus Sammlungen heraus. |
 | `wlo_order_collection` | Setzt die Reihenfolge der Untersammlungen oder der Inhalte einer Sammlung. |
+| `wlo_move_collection` | Hängt eine Sammlung samt Untersammlungen unter eine andere Elternsammlung. |
+| `wlo_list_collection_proposals` | Zeigt, welche Materialien für eine Sammlung vorgeschlagen wurden. |
+| `wlo_decide_collection_proposal` | Nimmt einen Vorschlag an eine Sammlung an oder lehnt ihn ab. |
 | `wlo_delete_collections` | Löscht viele Sammlungen mit einer Bestätigung, aber nur leere. |
 | `wlo_update_contents` | Ändert Metadaten vieler Datensätze mit einer Bestätigung (schreibt bzw. schlägt vor). |
 | `wlo_attach_fulltext` | Legt einen Volltext im textContent eines Datensatzes ab. |

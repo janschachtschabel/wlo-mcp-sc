@@ -19,6 +19,12 @@ import { isOutcomeOpen } from './timeouts.js';
 export interface FilingTarget {
   nodeId: string;
   title: string;
+  /**
+   * The caller may READ this collection and not WRITE it (`access` on its DTO,
+   * measured 2026-11-14): a filing would answer 403, a proposal 200. Absent
+   * where the DTO does not say — then nothing is assumed.
+   */
+  readOnly?: true;
 }
 
 export type FilingCode = 'forbidden' | 'not_found' | 'timeout' | 'not_visible' | 'upstream_busy' | 'upstream_error';
@@ -45,7 +51,10 @@ export async function readFilingTarget(
   const p = node.properties ?? {};
   return {
     ok: true,
-    target: { nodeId: collectionId, title: collectionTitleFromProperties(p) || collectionId },
+    target: {
+      nodeId: collectionId, title: collectionTitleFromProperties(p) || collectionId,
+      ...(Array.isArray(node.access) && !node.access.includes('Write') ? { readOnly: true as const } : {}),
+    },
   };
 }
 

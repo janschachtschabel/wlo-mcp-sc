@@ -195,6 +195,8 @@ export function collectionRepo(opts: RepoOptions = {}) {
     }
     if ((m = /\/node\/v1\/nodes\/-home-\/([^/]+)\/metadata$/.exec(path)) && method === 'GET') {
       const n = nodes.get(m[1]!);
+      const proposal = proposals.find(x => x.id === m![1]);
+      if (proposal) return { json: { node: { ref: { id: proposal.id, repo: '-home-' }, type: 'ccm:collection_proposal', properties: { 'ccm:collection_proposal_status': [proposal.status] } } } };
       return n ? { json: { node: dto(n) } } : { status: 404, json: {} };
     }
     if ((m = /\/usage\/v1\/usages\/node\/([^/]+)\/collections$/.exec(path))) {
@@ -203,7 +205,12 @@ export function collectionRepo(opts: RepoOptions = {}) {
       const lag = usageLag.get(original) ?? 0;
       if (lag > 0) { usageLag.set(original, lag - 1); return { status: 500, json: { message: 'UsageException' } }; }
       const used = [...nodes.values()].filter(r => r.kind === 'reference' && r.original === original);
-      return { json: used.map(r => ({ collectionUsageType: 'ACTIVE', collection: { ref: { id: r.parent, repo: '-home-' } } })) };
+      // A pending proposal is listed too, as what it is (chatbot team's measurement) — it is NOT a filing.
+      const proposed = proposals.filter(x => x.material === original && x.status === 'PENDING');
+      return { json: [
+        ...used.map(r => ({ collectionUsageType: 'ACTIVE', collection: { ref: { id: r.parent, repo: '-home-' } } })),
+        ...proposed.map(x => ({ collectionUsageType: 'PROPOSAL_PENDING', collection: { ref: { id: x.collection, repo: '-home-' } } })),
+      ] };
     }
     return { json: {} };
   });

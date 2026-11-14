@@ -77,6 +77,13 @@ export interface FormattedNode {
    * How many materials the collection holds — present only when the search DTO
    * carried `collection.childReferencesCount` (the collections query does; a
    * metadata read does not — measured 2026-08-22). Absent = unknown, never 0.
+   *
+   * It is the repository's own COUNTER, and that is all it is (chatbot team,
+   * 2026-11-14): it lags by seconds behind a filing or removal, and at a
+   * collection with sub-collections it counted their references too. Good for
+   * "roughly how much is here"; never the read-back of a write — the tools that
+   * need the number read the listing (`list_collection_tree`
+   * `includeContentCounts`, `browse_collection_tree` `includeContentCounts`).
    */
   contentsCount?: number;
   /** MIME type if the node has a binary attachment, e.g. `application/pdf`. */

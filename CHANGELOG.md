@@ -6,6 +6,32 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — collection structures, package 4: moving a collection, proposals, "not public yet" (wishes S5, S8, S9, 2026-11-14)
+
+Three more curation tools (26, 60 in all; 64 with the batch upload). Measured with two accounts before it was
+built, and run live against staging afterwards (`tests/live/collection-move-and-proposals.test.ts`).
+
+- **`wlo_move_collection`** hangs a collection under another parent, with its sub-collections and contents; the id
+  stays. Measured: locally set permissions stay, and the repository does NOT refuse a namesake at the target — two
+  collections of one title would stand side by side. The tool refuses that (`exists`), a target in the own
+  sub-tree, and "already there", before any key.
+- **Proposing for a collection.** The question the chatbot team could not measure with one account is answered:
+  who may READ a collection and not write it may propose a material for it (`?asProposal=true` answers 200 where a
+  filing answers 403); without read permission both are refused. `wlo_add_to_collection` and
+  `wlo_add_to_collections` therefore propose where the collection's own record says the caller may not write it —
+  and the preview says which of the two the key authorises. Status `proposed`: the material is NOT in the
+  collection. The proposer cannot list proposals (that needs write permission), so the read-back is the one thing
+  observable: the same request again is refused as a duplicate (409).
+- **`wlo_list_collection_proposals`** and **`wlo_decide_collection_proposal`** for whoever may write the
+  collection (an admin is not needed — measured). Accepting files the material and reads it back FIRST and marks
+  the proposal THEN; the filing alone leaves it pending, the mark alone files nothing.
+- **"Filed, but not visible yet."** The previews of both filing tools name the materials that are not public
+  (`isPublic: false`), in a sentence and as `confirm.preview.notPublic`. No tool sets permissions.
+- **Known before the key now, from the collection's own record:** `wlo_create_content` with `addToCollectionId`, the
+  parent of `wlo_create_collection_tree` and both ends of a move refuse a collection the caller may not write
+  (`forbidden`) instead of handing out a key that ends in a 403 — or, for the create, in a record that then could
+  not be filed.
+
 ### Added — collection structures, package 3: maintaining a tree (wishes S1 set, S6, S7, 2026-11-14)
 
 Three more curation tools (23, 57 in all; 61 with the batch upload). Measured first, with two accounts

@@ -12,7 +12,7 @@ Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
 
-Dazu kommen **27 kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`; Anlegen, Bearbeiten,
+Dazu kommen **30 kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`; Anlegen, Bearbeiten,
 Einreichen, Sammlungen, Kompendialtexte, Metadaten-Vorschläge, welche Variante
 eine Themenseite rendert, Löschen). Sie
 werden für alle Aufrufenden *gelistet* — nur so erfährt ein Client, dass sich
@@ -76,7 +76,7 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   `get_skill_for_task` — `get_skill` bleibt in jedem Modus. Dazu kommt
   `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
   deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
-- **27 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
+- **30 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
   anlegen, ändern, einreichen und löschen; Sammlungen anlegen, umbenennen,
   befüllen, leeren und löschen; Kompendialtexte schreiben; Metadaten
   vorschlagen, auflisten und entscheiden. Jede Änderung läuft über eine
@@ -174,7 +174,7 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | alle | edu-sharing-Instanz, mit der der Server kommuniziert. **Die Vorgabe ist STAGING; die Produktion muss ausdrücklich hingeschrieben werden** (geändert am 2026-08-06 — eine `.env` ohne diese Zeile legte einen Datensatz in der Live-Instanz an, während alles drumherum „staging" sagte). Die Pfade sind über alle Instanzen hinweg identisch, daher ist diese Basis-URL der einzige Umschalter zwischen Prod / Staging / einem eigenen Repository. Die Eingabe ist fehlertolerant: Leerzeichen, abschließende Slashes und ein abschließendes `/rest` werden entfernt; ein fehlendes Protokoll wird zu `https://`; ein reiner Host bekommt `/edu-sharing` angehängt. Verdächtige Werte (tiefe `/components/...`-Links, doppeltes `/edu-sharing`) erzeugen beim Start eine Warnung. Ein Wert, an den sich gar keine Anfrage senden lässt — nicht lesbar, nicht http(s), mit Zugangsdaten oder Query, oder mit vertipptem Schema wie `htps://` — **bricht den Start ab** (Exit-Code 1, Logzeile nennt die Variable). |
 | `WLO_ROOT_COLLECTION_ID` | pro Host | alle | Wurzelknoten der Sammlungshierarchie — **an das Repository gebunden**. Die bekannten WLO-Hosts (Prod `redaktion.openeduhub.net`, Staging `repository.staging.openeduhub.net`) bekommen automatisch einen Host-Default (heute auf beiden dieselbe ID, live verifiziert 2026-07-17, aber pro Host gepflegt). Jede **andere** edu-sharing-Instanz muss den Wert explizit setzen — sonst loggt der Server eine Start-Warnung und fällt auf die WLO-ID zurück, die dort nicht existiert. |
 | `WLO_SKILLS_COLLECTION_ID` | _(nicht gesetzt)_ | alle | nodeId der WLO-Sammlung mit den Launcher-**Skills** (hochgeladene Markdown-Dateien). Wenn gesetzt, nutzt `GET /api/collection` ohne `nodeId` diese als Default, und `search_skill` grenzt auf diesen Teilbaum ein. Nicht gesetzt → Aufrufer geben `?nodeId=` explizit an. |
-| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` durch `get_skill_for_task`, das in einem Aufruf auswählt und lädt — die Zahl bleibt 57, und `get_skill` bleibt in jedem Modus: Registry und Sammlungstreffer geben nodeIds aus, die nur es laden kann. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt die Suche stehen. |
+| `WLO_SKILL_TOOL_MODE` | _(nicht gesetzt)_ | alle | `one-tool` ersetzt `search_skill` durch `get_skill_for_task`, das in einem Aufruf auswählt und lädt — die Zahl bleibt 60, und `get_skill` bleibt in jedem Modus: Registry und Sammlungstreffer geben nodeIds aus, die nur es laden kann. Weniger Roundtrips, weniger Kontrolle über die Auswahl. Jeder andere Wert lässt die Suche stehen. |
 | `WLO_SKILL_CACHE` | _an_ | alle | Hält den Katalog freigegebener Skills je Sammlung im Hintergrund warm, damit ein Sammlungs-Ergebnis ihn für **0** Zusatzabrufe mitbringt. Auf `off` (oder `0`/`false`/`no`) gesetzt, entfällt die Hintergrundarbeit **und** der Live-Rückfall je Anfrage — die Ausgabe trägt dann wieder den kostenlosen Hinweis auf `get_skill_registry`. Siehe [Der Skill-Registry-Cache](#der-skill-registry-cache). |
 | `WLO_SKILL_CACHE_REFRESH_MS` | `300000` | alle | Wie oft der Hintergrund-Takt die Warteschlange abarbeitet und abgelaufene Einträge erneuert. Begrenzt auf 60 000 – 3 600 000. |
 | `WLO_SKILL_CACHE_TTL_MS` | `600000` | alle | Wie lange eine gemerkte Antwort gilt, bevor sie neu geprüft wird. Nie kleiner als das Takt-Intervall. Eine vor zwei Minuten angelegte Registry erscheint also verzögert — `get_skill_registry` und `includeSkillRegistry: true` lesen live und kennen sie sofort. |
@@ -844,8 +844,8 @@ OAuth-Verbindung. Es gibt kein `refresh_token` und keine Ablauffrist: der Zugang
 endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
 
 **Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
-`Authorization` bekommt die **vollständige** Liste — alle 57 Werkzeuge, die
-23 Kurations-Werkzeuge eingeschlossen (61 und 27 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
+`Authorization` bekommt die **vollständige** Liste — alle 60 Werkzeuge, die
+26 Kurations-Werkzeuge eingeschlossen (64 und 30 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
 verweigern erst beim Aufruf, mit einer OAuth-Aufforderung: genau daran bietet
 ein Host die Anmeldung an, denn ein Modell, das nie ein Schreibwerkzeug sieht,
 fragt auch nie danach. Der `401` entsteht nur bei einem vorgelegten, aber
@@ -931,6 +931,9 @@ bezeugen, dass eine Person hingesehen hat. |
 | `wlo_submit_contents` | Reicht bis zu 200 Datensätze `{nodeId}` mit EINER Bestätigung zur redaktionellen Prüfung ein, gleiche Planmechanik. Ein Datensatz, der schon vorliegt, kommt als `already` zurück und wird nie doppelt eingereicht (geprüft für die Vorschau und noch einmal unmittelbar vor dem Schreiben); `not_stored` = mit Erfolg beantwortet, aber kein Workflow-Status am Datensatz; ein gescheiterter Eintrag hält die übrigen nicht auf. Die Notiz gilt für alle und ist Teil der Bestätigung |
 | `wlo_remove_from_collections` | Nimmt bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aus Sammlungen heraus, gleiche Planmechanik. Nur der Verweis geht; das Material bleibt. Beide Kennungen gelten (die des Materials oder die des Verweises). Ein Paar, das nicht in seiner Sammlung liegt, kommt als `absent` zurück |
 | `wlo_order_collection` | Setzt die Reihenfolge der Untersammlungen ODER der Inhalte einer Sammlung. Die Liste muss ALLE Einträge dieser Art nennen (eine unvollständige wird abgelehnt und nennt, was fehlt); bei Inhalten werden die Kennungen der Verweise gesendet, gleich welche genannt wurde. Zurückgelesen aus der sortierten Liste |
+| `wlo_move_collection` | Hängt eine Sammlung unter eine andere Elternsammlung — samt Untersammlungen und Inhalten; ihre Kennung bleibt. Lokal gesetzte Rechte bleiben, geerbte kommen von der neuen Elternsammlung. Vor jedem Schlüssel abgelehnt: ein Ziel im eigenen Teilbaum, eine gleichnamige Sammlung am Ziel (`exists` — das Repository würde beide nebeneinander stellen), schon dort (`no_change`). Zurückgelesen wird der neue Pfad |
+| `wlo_list_collection_proposals` | Die Materialien, die für EINE Sammlung vorgeschlagen wurden — von Personen, die dort lesen, aber nicht schreiben dürfen. Ein Vorschlag ist keine Aufnahme. Die Liste sieht, wer an der Sammlung schreiben darf |
+| `wlo_decide_collection_proposal` | Entscheidet einen OFFENEN Vorschlag. Annehmen nimmt das Material auf und liest es zurück, ERST DANN wird der Vorschlag markiert; Ablehnen markiert ihn und nimmt nichts auf |
 | `wlo_delete_collections` | Löscht bis zu 200 Sammlungen mit EINER Bestätigung — aber nur LEERE (keine Untersammlung, kein Verweis, kein eigenes Material). Eine Sammlung, deren einziger Inhalt mitgenannte leere Untersammlungen sind, zählt als leer; Kinder zuerst. Alles andere bleibt und kommt als `not_empty` zurück. „Leer“ wird aus den Listen gelesen, für die Vorschau und noch einmal unmittelbar vor jedem Löschen |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung, gleiche Planmechanik. Der Server entscheidet je Feld: Titel, Beschreibung, Schlagworte, Fach, Bildungsstufe und Inhaltstyp werden GESCHRIEBEN und zurückgelesen; Lizenz, Urheber, Herausgeber, Quell-URL, Sprache, Zielgruppe und Qualität werden als VORSCHLAG für die Redaktion hinterlegt. Eine Verknüpfung wird am Original geändert. |
 | `wlo_attach_fulltext` | Legt einen Markdown-Volltext im `textContent` eines Datensatzes ab — dort, wo `get_wlo_content_text` ihn liest —, zweistufig und zurückgelesen. Schon in der Vorschau abgelehnt: ein Datensatz mit Datei (`would_replace_file` — der Text würde die Datei ersetzen, gemessen 2026-11-13; möglich ist es an einem Datensatz ohne Datei), ein verlinkter Datensatz (`link_record`), ein vorhandener Text ohne `replace` (`exists`), derselbe Text (`nothing_to_change`), mehr als 2 MB (`too_large`). Eine Verknüpfung wird am Original geändert. |
@@ -1119,7 +1122,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Sitzungsspeicher, App-Signatur, nur OAuth), samt dem, was das Konzept
   **nicht** schützt.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **die Übergabe für das Team und
-  für Chatbot-Entwicklung**: alle 57 Werkzeuge gruppiert, jede von außen
+  für Chatbot-Entwicklung**: alle 60 Werkzeuge gruppiert, jede von außen
   aufrufbare Adresse (MCP, REST, Seiten, OAuth) und das Verhalten, das eine
   Integration kennen muss — Lizenzfilter, Offenlegungs-Felder, zweistufiges
   Schreiben, Grenzen, und was es bewusst nicht gibt.
@@ -1197,7 +1200,7 @@ Rückfallebene kosten.
 ```
 wlo-mcp-server/
 ├── src/
-│   ├── server.ts             # factory: registers all 57 tools (transport-agnostic)
+│   ├── server.ts             # factory: registers all 60 tools (transport-agnostic)
 │   ├── tools/                # tool definitions, grouped by responsibility
 │   │   ├── shared.ts         #   _queryMeta, toolError, title fallbacks
 │   │   ├── collections.ts    #   search_wlo_collections, get_collection_contents, search_wlo_within_collection

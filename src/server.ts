@@ -53,6 +53,8 @@ import { registerCurationSubmitManyTool } from './tools/curation-submit-many.js'
 import { registerCurationDeleteEmptyTool } from './tools/curation-delete-empty.js';
 import { registerCurationRemoveManyTool } from './tools/curation-remove-many.js';
 import { registerCurationOrderTool } from './tools/curation-order.js';
+import { registerCurationMoveTool } from './tools/curation-move.js';
+import { registerCurationProposalTools } from './tools/curation-proposals.js';
 import { registerCurationUpdateManyTool } from './tools/curation-update-many.js';
 import { registerCurationFulltextTools } from './tools/curation-fulltext.js';
 import { writeAuthChallenge } from './auth/oauth-metadata.js';
@@ -178,6 +180,8 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   registerCurationAddManyTool(server, challenge);     // wlo_add_to_collections
   registerCurationRemoveManyTool(server, challenge);  // wlo_remove_from_collections
   registerCurationOrderTool(server, challenge);       // wlo_order_collection
+  registerCurationMoveTool(server, challenge);        // wlo_move_collection
+  registerCurationProposalTools(server, challenge);   // wlo_list_collection_proposals, wlo_decide_collection_proposal
   registerCurationSubmitManyTool(server, challenge);  // wlo_submit_contents
   registerCurationCompendiumTool(server, challenge);  // wlo_update_compendium
   registerCurationTopicPageTool(server, challenge);   // wlo_set_topic_page — the one whose result is immediately public

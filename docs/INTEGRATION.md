@@ -3,7 +3,7 @@
 Für das Team und für Entwicklerinnen und Entwickler, die einen Chatbot oder eine
 andere Anwendung anbinden. Ein Dokument, drei Fragen:
 
-1. **[Welche Werkzeuge gibt es?](#1-die-57-mcp-werkzeuge)** — alle 57, gruppiert.
+1. **[Welche Werkzeuge gibt es?](#1-die-60-mcp-werkzeuge)** — alle 60, gruppiert.
 2. **[Welche Adressen kann ich von außen aufrufen?](#2-alle-adressen-von-außen)** — MCP, REST, Seiten, OAuth.
 3. **[Was muss ich über das Verhalten wissen?](#3-verhalten-das-die-integration-betrifft)** — die Regeln, an denen Integrationen sonst scheitern.
 
@@ -22,7 +22,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 57 — 34 lesend, 23 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 61 (vier für die Stapel-Ablage) |
+| **Werkzeuge** | 60 — 34 lesend, 26 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 64 (vier für die Stapel-Ablage) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -32,7 +32,7 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 
 ---
 
-## 1. Die 57 MCP-Werkzeuge
+## 1. Die 60 MCP-Werkzeuge
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -110,11 +110,11 @@ immer anonym.
 > für **diese** Sammlung vorgesehen ist. Beide enden bei `get_skill`.
 >
 > `WLO_SKILL_TOOL_MODE=one-tool` ersetzt **nur die Suche** durch
-> `get_skill_for_task` (die Zahl bleibt bei 57). `get_skill` und
+> `get_skill_for_task` (die Zahl bleibt bei 60). `get_skill` und
 > `get_skill_registry` bleiben — die Freigabeliste besteht aus nodeIds, und
 > `get_skill` ist das einzige Werkzeug, das eine annimmt.
 >
-> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 56), wenn
+> `WLO_DISABLE_SKILL_SEARCH=1` nimmt `search_skill` heraus (dann 59), wenn
 > Skills ausschließlich über die freigebende Sammlung gefunden werden sollen.
 >
 > **Der Katalog kommt bei Sammlungs-Ergebnissen mit — ohne Zusatzabruf.** Ein
@@ -152,7 +152,7 @@ immer anonym.
 | `wlo_health_check` | Erreichbarkeit des Repositorys |
 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf |
 
-### 1.2 Kuratieren — 23 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
+### 1.2 Kuratieren — 26 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
 
 Alle verlangen eine Anmeldung, alle laufen **zweistufig**: erst Vorschau mit
 Änderungsmenge und Einmal-Token, dann Bestätigung. Jeder Schreibvorgang wird
@@ -175,6 +175,9 @@ aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 | `wlo_submit_contents` | Bis zu 200 Datensätze mit **einer** Bestätigung zur redaktionellen Prüfung einreichen |
 | `wlo_remove_from_collections` | Bis zu 200 Materialien mit **einer** Bestätigung aus Sammlungen herausnehmen |
 | `wlo_order_collection` | Reihenfolge der Untersammlungen oder der Inhalte einer Sammlung setzen |
+| `wlo_move_collection` | Eine Sammlung samt Untersammlungen und Inhalten unter eine andere Elternsammlung hängen |
+| `wlo_list_collection_proposals` | Vorschläge an eine Sammlung ansehen (braucht Schreibrecht an ihr) |
+| `wlo_decide_collection_proposal` | Einen Vorschlag annehmen (aufnehmen, dann markieren) oder ablehnen |
 | `wlo_delete_collections` | Bis zu 200 Sammlungen mit **einer** Bestätigung löschen — nur leere |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit **einer** Bestätigung: beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt |
 | `wlo_attach_fulltext` | Einen Volltext (Markdown) im `textContent` eines Datensatzes ablegen; Datensätze mit Datei werden abgelehnt (`would_replace_file`): der Text würde die Datei ersetzen (gemessen 2026-11-13) |
@@ -322,7 +325,7 @@ Nur mit `WLO_BATCH_UPLOAD_ENABLED`; sonst gibt es die Adresse nicht.
 
 ### 3.1 Ausgabeformat
 
-23 der 57 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+23 der 60 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).

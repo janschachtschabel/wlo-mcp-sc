@@ -24,22 +24,25 @@ import type { WloToolResult } from '../apps/register.js';
 import { previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
 import { planReply } from './curation-plan-reply.js';
 import { runPlannedCall } from './curation-plan.js';
+import { notPublicNote, withNotPublic } from './curation-public.js';
 
 const KIND = 'add-to-collections';
 
 const STATUS_LABEL: Record<string, string> = {
   added: 'aufgenommen', already: 'war schon enthalten', unverified: 'offen — nicht bestätigt',
   failed: 'nicht aufgenommen', pending: 'offen', moved: 'umsortiert — aufgenommen und aus der Quelle genommen',
+  proposed: 'VORGESCHLAGEN — liegt noch nicht in der Sammlung, die Redaktion entscheidet',
 };
 /** What a code says about the SOURCE of a move — the status alone names only the filing. */
 const CODE_NOTE: Record<string, string> = {
   not_removed: 'NICHT aus der Quelle genommen — liegt jetzt in BEIDEN Sammlungen',
   not_in_source: 'war in der Quelle nicht enthalten',
+  already_proposed: 'war für diese Sammlung schon vorgeschlagen (offen oder bereits entschieden) — liegt NICHT in der Sammlung',
   source_is_original: 'liegt in der Quelle als Original, nicht als Verweis — dort NICHT herausgenommen (das würde das Material löschen); liegt jetzt in BEIDEN',
 };
 // "Not filed" over an outcome nobody knows sends a model to file again.
 const label = (s: ItemState) => (s.status === 'failed' && s.outcomeOpen
-  ? 'offen — Ausgang unbekannt, bitte in der Sammlung prüfen'
+  ? 'offen — Ausgang unbekannt, bitte prüfen'
   : STATUS_LABEL[s.status] ?? s.status) + (s.code ? ` (${CODE_NOTE[s.code] ?? s.code})` : '');
 
 function answer(plan: StoredPlan<FilingItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
@@ -61,10 +64,11 @@ export function registerCurationAddManyTool(server: McpServer, challenge: WriteA
     name: 'wlo_add_to_collections',
     title: 'WLO Materialien in Sammlungen aufnehmen',
     description: `Nimm viele vorhandene Materialien in Sammlungen auf — bis zu ${FILING_MAX_PAIRS} Paare {nodeId, collectionId} mit EINER Bestätigung. Eine Sammlung enthält Verweise; das Material selbst bleibt, wo es ist.
-Ohne Schlüssel: Vorschau mit jedem Paar. Mit confirmToken: läuft bis zu ~40 s je Aufruf; ist es nicht fertig, kommt complete: false mit continuationToken (fortsetzen ohne neue Bestätigung, 30 min ab Bestätigung). Ein Schlüssel darf erneut vorgelegt werden — er setzt fort oder liefert dasselbe Ergebnis.
-Eine Verknüpfungs-id wird als ihr Original aufgenommen; schon enthaltene Paare kommen als already zurück; ein gescheitertes Paar hält die übrigen nicht auf. Antwort: pairs [{nodeId, collectionId, filedId?, status, code?}].
-UMSORTIEREN: je Paar optional removeFrom (Sammlung, aus der das Material danach herausgenommen wird) — erst aufnehmen und zurücklesen, dann entfernen; Status moved. Scheitert das Entfernen: added/already mit Code not_removed — es liegt dann in BEIDEN.
-Für ein einzelnes Material: wlo_add_to_collection.`,
+Ohne Schlüssel: Vorschau mit jedem Paar. Mit confirmToken: bis zu ~40 s je Aufruf; ist es nicht fertig, kommt complete: false mit continuationToken (fortsetzen ohne neue Bestätigung, 30 min). Ein Schlüssel darf erneut vorgelegt werden.
+Eine Verknüpfungs-id wird als ihr Original aufgenommen; schon Enthaltenes kommt als already zurück; ein gescheitertes Paar hält die übrigen nicht auf. Antwort: pairs [{nodeId, collectionId, filedId?, status, code?}].
+UMSORTIEREN: je Paar optional removeFrom — erst aufnehmen und zurücklesen, dann aus dieser Sammlung nehmen (moved). Scheitert das Entfernen: Code not_removed, es liegt dann in BEIDEN.
+Darf die Anmeldung an einem Ziel nur lesen, wird dort VORGESCHLAGEN (proposed, noch nicht aufgenommen). Die Vorschau nennt, was noch nicht öffentlich ist.
+Einzeln: wlo_add_to_collection.`,
     inputSchema: {
       pairs: z.array(z.object({
         nodeId: z.string().min(1).max(200),
@@ -96,10 +100,14 @@ Für ein einzelnes Material: wlo_add_to_collection.`,
             action: `Führt ${items.length} Aufnahmen aus (${new Set(items.map(i => i.filedId)).size} Materialien, `
               + `${new Set(items.map(i => i.collection.nodeId)).size} Sammlungen)`
               + (items.some(i => i.source) ? `; ${items.filter(i => i.source).length} davon werden danach aus ihrer bisherigen Sammlung herausgenommen` : '')
+              + (items.some(i => i.propose) ? `; ${items.filter(i => i.propose).length} gehen als VORSCHLAG an eine Sammlung, an der diese Anmeldung nicht schreiben darf` : '')
               + '. Die Materialien selbst werden nicht verändert:',
             items: items.map(filingLine),
           });
-          return { draft: { cs, items, preview: () => previewReply(cs, 'Zum Aufnehmen bitte bestätigen.') } };
+          // Not public: said before the key, as a sentence and as data (S9). Counted per MATERIAL.
+          const notPublic = [...new Set(items.filter(i => i.notPublic).map(i => i.requestedId))];
+          const notes = notPublic.length ? [notPublicNote(notPublic.length, new Set(items.map(i => i.requestedId)).size)] : [];
+          return { draft: { cs, items, preview: () => withNotPublic(previewReply(cs, 'Zum Aufnehmen bitte bestätigen.', notes), notPublic) } };
         },
         context: 'Fehler beim Aufnehmen in Sammlungen',
         whatIsOpen: 'Ob schon Materialien aufgenommen wurden',

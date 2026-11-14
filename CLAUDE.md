@@ -1670,7 +1670,7 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   convention shape therefore stays first and untouched in both modes, pinned by
   `tests/tools-knowledge-rich.test.ts`;
   `search_skill` becomes `get_skill_for_task` under
-  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 23 curation tools (`curation-*.ts`,
+  `WLO_SKILL_TOOL_MODE=one-tool`, while `get_skill` stays registered) plus the 26 curation tools (`curation-*.ts`,
   registered unconditionally and gated at call time; `curation-shared.ts` holds
   `registerCurationTool` (the gate + the `oauth2` declaration) and the
   two-step preview/confirm conversation they share — split 2026-11-13: the
@@ -1812,6 +1812,25 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   one. They travel as `CollectionFields.extra` beside the description — one
   metadata write, one read-back — and a collection taken over by `merge` gets
   none of it, which the preview line says.
+- **Moving a collection, and proposals (S5 / S8 / S9, 2026-11-14).** Measured
+  with TWO accounts (`npm run measure:moves` and the plan's third table —
+  re-measure before contradicting). `_move` keeps id, sub-tree and locally set
+  permissions, and the repository does NOT refuse a namesake at the target, so
+  `planMove` (`services/write/collection-move.ts`) refuses it, a target inside
+  the moved sub-tree (the repository answers 500) and "already there" before
+  any key. Whether the CALLER may write a collection is on its DTO
+  (`access` holds `Write`); who may read and not write may PROPOSE
+  (`?asProposal=true` → 200 where a filing → 403). So the two filing tools
+  propose there (`FilingTarget.readOnly`, decided in `readFilingTarget` /
+  `mayWrite`), and the PREVIEW says which of the two the key authorises — a
+  proposal is not a filing, and a move into such a target is refused. A
+  proposer cannot read a proposal back (listing 403, usage empty); the
+  read-back is the same PUT answering 409 (`proposeForCollection`) — do not
+  "simplify" that second request away. Accepting is two writes in ONE order:
+  file and read back, THEN mark (`decideProposal`), the rule the metadata
+  suggestions follow. `isPublic: false` means "only its owner"; `true` promises
+  nothing (a collection shared with one account reports `true` to it), so the
+  filing previews say the NEGATIVE only (`tools/curation-public.ts`).
 - **Maintaining a tree (S1 set / S6 / S7, 2026-11-14).** Four measurements
   bind it (`npm run measure:moves`, re-measure before contradicting): `POST
   …/order` positions ONLY the ids it is given (an incomplete list leaves two

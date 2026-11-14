@@ -169,4 +169,4 @@ umsetzen → Review → Befunde beheben → STATUS, CHANGELOG, Doku → Commit u
 | P1 | umgesetzt 2026-11-14 (Live-Probe gegen Staging: Physik, 144 Sammlungen über vier Ebenen in 6,4 s) |
 | P2 | umgesetzt 2026-11-14 (S3 live gegen Staging bestätigt) |
 | P3 | umgesetzt 2026-11-14 (live gegen Staging: Reihenfolge der Inhalte, Umsortieren, Entfernen, nur Leere löschen) |
-| P4 | offen |
+| P4 | umgesetzt 2026-11-14 (live gegen Staging mit zwei Konten: Umhängen; vorschlagen als Lesender, annehmen durch den Schreibenden) |

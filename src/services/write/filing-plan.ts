@@ -24,6 +24,9 @@ import { nodeTitle } from '../../node-match.js';
 import { resolveWriteTarget } from './nodes.js';
 import { fileRecord, isAlreadyFiled, readFilingTarget, type FilingTarget } from './create-filing.js';
 import { removalOf } from './remove-plan.js';
+import { proposeForCollection } from './collection-proposals.js';
+import { failureCode } from '../failure-code.js';
+import { isOutcomeOpen } from './timeouts.js';
 import type { ItemState, PlanItem, Step } from './plan-runner.js';
 
 /** Chatbot frame (2026-11-06). */
@@ -48,6 +51,15 @@ export interface FilingItem extends PlanItem {
   source?: FilingTarget;
   /** The removal from `source` left for the repository (its answer may be missing). */
   removalSent?: boolean;
+  /**
+   * The caller may not write the target: the material is PROPOSED for it
+   * (S8, 2026-11-14) — it is not in the collection until an editor decides.
+   */
+  propose?: true;
+  /** OUR proposal left for the repository (its answer may be missing). */
+  proposalSent?: boolean;
+  /** `isPublic: false` on the material: filed, it is still invisible to others (S9). */
+  notPublic?: true;
   /** A move's filing is CONFIRMED: later calls do not file again, and no state of this step is "not filed". */
   filed?: 'added' | 'already';
   /** How often the removal came back open — the step ends it itself, as filed. */
@@ -77,7 +89,15 @@ export async function resolvePairs(
   ]);
   const reasons: string[] = [];
   const refused: PairRefusal[] = [];
-  const material = new Map<string, { filedId: string; title: string }>();
+  // "Public" is asked of what is FILED: for a reference that is its original
+  // (the single tool reads it there too). One more read per reference named.
+  const originals = new Map<string, boolean>();
+  await mapPool(nodeIds.map((id, i) => ({ id, node: materials[i] })).filter(m => m.node && resolveWriteTarget(m.node, m.id).targetId !== m.id), READ_POOL, async (m) => {
+    const original = await getNodeMetadata(resolveWriteTarget(m.node!, m.id).targetId);
+    if (original) originals.set(m.id, original.isPublic === false);
+    return null;
+  });
+  const material = new Map<string, { filedId: string; title: string; notPublic: boolean }>();
   nodeIds.forEach((id, i) => {
     const node = materials[i];
     if (!node) {
@@ -94,7 +114,7 @@ export async function resolvePairs(
       refused.push({ nodeId: id, code: wrong.code });
       return;
     }
-    material.set(id, { filedId: resolveWriteTarget(node, id).targetId, title: sanitizeText(nodeTitle(node) || id) });
+    material.set(id, { filedId: resolveWriteTarget(node, id).targetId, title: sanitizeText(nodeTitle(node) || id), notPublic: originals.get(id) ?? node.isPublic === false });
   });
   const target = new Map<string, FilingTarget>();
   collectionIds.forEach((id, i) => {
@@ -107,11 +127,16 @@ export async function resolvePairs(
       refused.push({ collectionId: id, code: notOne ? 'not_a_collection' : 'not_found' });
       return;
     }
-    target.set(id, { nodeId: t.target.nodeId, title: sanitizeText(t.target.title) });
+    target.set(id, { nodeId: t.target.nodeId, title: sanitizeText(t.target.title), ...(t.target.readOnly ? { readOnly: true as const } : {}) });
   });
   for (const p of pairs) {
     if (p.removeFrom?.trim() && p.removeFrom.trim() === p.collectionId.trim()) {
       reasons.push(`Bei „${sanitizeText(p.nodeId.trim())}“ sind Ziel und Quelle dieselbe Sammlung (${sanitizeText(p.collectionId.trim())}).`);
+    }
+    // A proposal is not a filing: the material would leave the source and be in no collection.
+    if (p.removeFrom?.trim() && target.get(p.collectionId.trim())?.readOnly) {
+      reasons.push(`„${sanitizeText(p.nodeId.trim())}“: an der Ziel-Sammlung ${sanitizeText(p.collectionId.trim())} darf diese Anmeldung nicht schreiben — `
+        + 'dorthin ginge nur ein Vorschlag, und ein Vorschlag ist keine Aufnahme. Umsortieren (removeFrom) braucht Schreibrecht am Ziel.');
     }
   }
   if (reasons.length) return { ok: false, reasons, refused };
@@ -132,7 +157,10 @@ export async function resolvePairs(
       continue;
     }
     seen.set(key, source?.nodeId ?? '');
-    items.push({ key, requestedId: p.nodeId.trim(), filedId: m.filedId, collection, materialTitle: m.title, ...(source ? { source } : {}) });
+    items.push({
+      key, requestedId: p.nodeId.trim(), filedId: m.filedId, collection, materialTitle: m.title, ...(source ? { source } : {}),
+      ...(collection.readOnly ? { propose: true as const } : {}), ...(m.notPublic ? { notPublic: true as const } : {}),
+    });
   }
   return { ok: true, items };
 }
@@ -142,11 +170,39 @@ export function filingLine(item: FilingItem): string {
   const via = item.requestedId !== item.filedId
     ? ` (Verknüpfung ${item.requestedId} — aufgenommen wird das Original ${item.filedId})`
     : ` (${item.filedId})`;
-  return `„${item.materialTitle}“${via} → „${item.collection.title}“ (${item.collection.nodeId})`
-    + (item.source ? `; danach heraus aus „${item.source.title}“ (${item.source.nodeId})` : '');
+  return `„${item.materialTitle}“${via} → ${item.propose ? 'als VORSCHLAG an ' : ''}„${item.collection.title}“ (${item.collection.nodeId})`
+    + (item.propose ? ' — dort darf diese Anmeldung nicht schreiben; aufgenommen ist es erst, wenn die Redaktion annimmt' : '')
+    + (item.source ? `; danach heraus aus „${item.source.title}“ (${item.source.nodeId})` : '')
+    + (item.notPublic ? ' — noch nicht öffentlich' : '');
+}
+
+/** Propose instead of filing. The proposer's only read-back is the repository refusing the same proposal as a duplicate. */
+async function propose(item: FilingItem): Promise<ItemState> {
+  try {
+    const before = Boolean(item.proposalSent);
+    item.proposalSent = true;
+    const outcome = await proposeForCollection(item.collection.nodeId, item.filedId);
+    switch (outcome.status) {
+      case 'proposed': return { status: 'proposed' };
+      // A duplicate after OUR request left is our proposal; else it was there before (open, or decided).
+      // (If our first request did NOT land and a proposal existed before, this says `proposed` over
+      // somebody else's — the repository gives a proposer no way to tell the two apart.)
+      case 'already_proposed': return before ? { status: 'proposed' } : { status: 'already', code: 'already_proposed' };
+      case 'unverified': return { status: 'unverified', outcomeOpen: true };
+      default: {
+        const s = outcome.httpStatus;
+        if (s >= 400 && s < 500 && s !== 429) return { status: 'failed', code: failureCode(outcome.detail), outcomeOpen: false };
+        return { status: 'pending', code: failureCode(outcome.detail) };
+      }
+    }
+  } catch (err) {
+    if (isOutcomeOpen(err)) return { status: 'pending', code: 'timeout' };
+    return { status: 'failed', code: failureCode(err), outcomeOpen: true };
+  }
 }
 
 async function file(item: FilingItem): Promise<ItemState> {
+  if (item.propose) return propose(item);
   if (await isAlreadyFiled(item.filedId, item.collection.nodeId) === true) return { status: 'already' };
   const outcome = await fileRecord(item.filedId, item.collection);
   // An abort hits the answer, not the work: the step stays OPEN, and the next

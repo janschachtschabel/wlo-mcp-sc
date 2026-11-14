@@ -5219,3 +5219,25 @@ Sie bestätigen beide Korrekturen an der Titel-Auflösung (24 Titel mit Fach: 13
   geordnet, wenn ihr letzter Schritt scheiterte. Das Test-Repository war an vier Stellen freundlicher als das
   echte (zweites PUT 200 statt 409, Rückwärtssuche nach dem Entfernen ohne Ausfall, kein direkt abgelegtes
   Original) — angeglichen. 13 Mutationsproben, 12 rot (die 13. ist die Zwillingsstelle einer geprüften).
+- **P3 gepusht als `74538f2`.**
+- **P4 Umbau und Einsortieren ohne Schreibrecht (S5, S8, S9) — umgesetzt (2026-11-14).** `wlo_move_collection`,
+  `wlo_list_collection_proposals`, `wlo_decide_collection_proposal`; `wlo_add_to_collection(s)` schlagen vor, wo die
+  Anmeldung an der Sammlung nur lesen darf, und nennen in der Vorschau, was noch nicht öffentlich ist.
+  Dritte Messung (zwei Konten, im Plan): das Feld `access` am Datensatz der Sammlung sagt, ob die Anmeldung
+  schreiben darf; ein Schreibender ohne Admin-Rechte kann Vorschläge auflisten und entscheiden; `isPublic: false`
+  ist verlässlich „nur für mich", `true` kein Versprechen des Gegenteils — gesagt wird deshalb nur das Negative.
+  Der Vorschlagende kann seinen Vorschlag nicht zurücklesen (Liste 403, Rückwärtssuche leer); als Rücklesen dient,
+  dass dieselbe Anfrage danach als Dublette abgelehnt wird (409, gemessen).
+  Live gegen Staging grün (2 Tests, zwei Konten): Umhängen samt Unterbaum; vorschlagen als Lesender, annehmen
+  durch den Schreibenden. 34 Lesewerkzeuge, 26 Kuratier-Werkzeuge, 60 insgesamt (64 mit Stapel-Ablage).
+  Nicht gebaut: S10 (Teilbaum kopieren, vom Team selbst als nachrangig eingestuft).
+- **Review zu P4 (0 kritisch, 3 groß, 9 klein, 4 Randnotizen) — behoben.** Groß: `proposal_not_marked` behauptete
+  „steht weiter als offen da", auch wenn die Markierung gesendet und nur nicht bestätigt war (jetzt wird am
+  Vorschlags-Knoten selbst zurückgelesen, und `error.mark` trennt beides); ein 409 beim Aufnehmen ließ das Annehmen
+  scheitern, obwohl das Material schon in der Sammlung lag; die Namensvetter-Prüfung beim Umhängen verglich zwei
+  verschiedene Titelketten (`cclom:title` gegen `cm:title`) und einen gekappten gegen einen ungekappten Titel — genau
+  der Fall, den sie verhindern soll, wäre durchgegangen. Ferner: eine Sammlung der obersten Ebene heißt jetzt so
+  (kein leerer Name, keine Ordner-Kennung); kein Schreibrecht ist vor dem Schlüssel bekannt und wird dort abgelehnt
+  (Umhängen, `addToCollectionId`, Elternsammlung des Baums); die Zahl der mitziehenden Untersammlungen sagt
+  „mindestens", wo sie nicht bis zum Grund gezählt hat; „nicht öffentlich" wird am Original gelesen, auch im Stapel.
+  21 Mutationsproben, alle rot (zwei erst nach je einem ergänzten Test).

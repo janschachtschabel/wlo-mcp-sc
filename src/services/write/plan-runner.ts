@@ -59,7 +59,9 @@ export type ItemStatus = 'pending' | 'created' | 'existing' | 'added' | 'already
   // Maintaining collections (S6/S7, 2026-11-14): `absent` = was not in the
   // collection, `moved` = filed in the target AND taken out of the source,
   // `not_empty` = a collection that is kept because it holds something.
-  | 'removed' | 'absent' | 'moved' | 'deleted' | 'not_empty';
+  | 'removed' | 'absent' | 'moved' | 'deleted' | 'not_empty'
+  // Proposed for a collection the caller may not write (S8): NOT in the collection.
+  | 'proposed';
 
 /** How often a step may come back open (`pending`) before it is ended as failed-and-open. */
 export const MAX_OPEN_TRIES = 3;
