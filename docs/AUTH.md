@@ -667,5 +667,7 @@ refactor.
 Design documents and the measurements behind them:
 `docs/plans/2026-08-04-mcp-access-token-design.md`,
 `docs/plans/2026-08-05-mcp-oauth-design.md`,
-`docs/plans/2026-07-31-write-support-research.md`. Live progress and the dated
-findings: `docs/plans/STATUS.md`.
+`docs/plans/2026-07-31-write-support-research.md`. The rules that bind a change
+here, with dates and reasons: `docs/rules/auth.md`. Current state:
+`docs/plans/STATUS.md`; the dated findings are in its archive,
+`docs/plans/archive/`.

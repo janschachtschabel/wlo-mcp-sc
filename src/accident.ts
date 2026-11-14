@@ -24,3 +24,6 @@ export function isAccident(err: unknown): boolean {
   if (err instanceof TypeError) return !NETWORK_TYPE_ERRORS.has(err.message);
   return err instanceof RangeError || err instanceof ReferenceError || err instanceof SyntaxError;
 }
+
+/** What a caller reads instead of an accident's own message; the detail is in the log. */
+export const INTERNAL_ERROR_TEXT = 'Interner Fehler — die Einzelheiten stehen im Server-Protokoll, nicht in dieser Antwort.';

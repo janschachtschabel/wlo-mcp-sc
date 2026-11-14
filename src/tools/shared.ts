@@ -9,7 +9,7 @@
  * label→URI filter builder (`../filter-criteria.ts`).
  */
 
-import { isAccident } from '../accident.js';
+import { INTERNAL_ERROR_TEXT, isAccident } from '../accident.js';
 import { isClientGone } from '../request-scope.js';
 import { oneLine, registrySummaryLines, quotedTitle, nodeIdLine } from '../formatter.js';
 import { ensureRegistryFor } from '../services/skill-registry-cache.js';
@@ -418,7 +418,7 @@ export function codedErrorResult(code: string, text: string, extra: Record<strin
 }
 
 /** What a caller is told about an error this server did not raise on purpose. */
-export const INTERNAL_ERROR_TEXT = 'Interner Fehler — die Einzelheiten stehen im Server-Protokoll, nicht in dieser Antwort.';
+export { INTERNAL_ERROR_TEXT };
 
 /**
  * Said ahead of a text somebody else wrote — a web page the caller chose, an

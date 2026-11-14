@@ -273,6 +273,14 @@ prompt launcher. Read-only, `CORS *` for `GET`, per-IP rate-limited
 (`API_RATE_LIMIT_RPM`, default 30/min), inputs validated server-side (query ≤
 200 chars, nodeId ≤ 50, ≤ 25 ids). Responses are JSON with `Cache-Control:
 no-store` + `nosniff`; errors are `{ "error": "…" }` with a `4xx`/`5xx` status.
+A failed repository read is classified rather than a blanket `500`: `404`
+(`not_found`), `403` (`forbidden` — not readable without a login), `503` with
+`Retry-After` (`upstream_busy`), `504` (`timeout`) or `502` (`upstream_error`),
+each as `{ "error", "code", "retryAfter"? }`; a `429` has the same shape, a
+`405` carries `Allow: GET`, and only a fault of this server itself stays a `500`
+without a code. Every response of the server also carries
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and an
+`X-Request-Id`.
 One deliberate exception: `GET /api/search` **without a term** returns a `200`
 guidance envelope (empty buckets + `warnings`) instead of a `400` — AI fetch
 layers strip query strings from model-built URLs and surface only the status,
@@ -395,20 +403,26 @@ server advertises cross-tool usage `instructions`. See [`docs/plans/`](docs/plan
 tree traversal from the root/parent.
 
 **2. `search_wlo_content`** — `query` (required), `educationalContext?`,
-`discipline?`, `userRole?`, `learningResourceType?`, `publisher?`, `maxResults?`
-(1–50, default 8), `excludeNodeIds?` (≤200), `includeTextContent?` (default
+`discipline?`, `userRole?`, `learningResourceType?`, `publisher?`, `license?`, `maxResults?`
+(1–50, default 8), `skipCount?` (paging), `excludeNodeIds?` (≤200), `includeTextContent?` (default
 false — also fetch each result's stored full text, capped; for the first 20
 results only — the rest are named in `textContentSkipped`, a failed read in
 `textContentUnreadable`), `includeFacets?` (default false — facet counts in `_queryMeta.facets`,
 run in parallel), `outputFormat?`. Multi-query expansion + quality reranking.
 
-**3. `get_collection_contents`** — `nodeId` (required), `query?`, `contentFilter?`
+**3. `get_collection_contents`** — `nodeId?` **or** `collection?` (the
+collection's exact title instead of its id, with `discipline?` to tell namesakes
+apart — one of the two is required; exactly one collection of that title is
+taken, anything else is refused with the candidates), `query?`, `contentFilter?`
 (`files` | `folders` | `both`, default `files`), `includeSubcollections?`
 (recursive, files only), `maxResults?` (1–100, default 20), `skipCount?`,
-`excludeNodeIds?` (≤200), `outputFormat?`.
+`excludeNodeIds?` (≤200), `skillContext?`, `outputFormat?`.
 
-**4. `get_node_details`** — `nodeId` (required), `includeTextContent?`,
-`includeParents?`, `includeRaw?`, `outputFormat?`. Returns the same
+**4. `get_node_details`** — `nodeId?` **or** `nodeIds?` (1–50; one of the two),
+`includeTextContent?`, `includeParents?`, `includeRaw?`, `includeQualityInfo?`
+(the editorial ratings), `includeAccessInfo?` (access, cost, advertising,
+accessibility, OER status — both without a further request), `skillContext?`,
+`outputFormat?`. Returns the same
 `FormattedNode` shape as search tools, plus optional stored full text, parent
 collections, and raw `ccm:*`/`cclom:*` URIs. For collections with a curated
 **compendium text** (`ccm:oeh_collection_compendium_text`), it comes back as
@@ -423,6 +437,7 @@ carry the full text (`-all-` query); collection search/list/browse also carry it
 `_queryMeta.facets`, run in parallel), and the opt-in enrichment flags
 `includeCompendium?` / `includeTextContent?` / `includeWikipedia?` /
 `includeTopicPageContent?` (+ `maxPerSwimlane?`, 1–10, default 3),
+`includeSkillRegistry?` (forces a fresh registry lookup per collection),
 `outputFormat?` (default `markdown` — compact text; the full bucket envelope
 always rides in `structuredContent`, and `json` puts it in the text too). Runs
 content, collection, and (when requested)
@@ -463,7 +478,8 @@ actually renders comes first and is flagged `isDefault`.
 **9. `browse_collection_tree`** — `nodeId?` **or** `subject?` (at least one; give
 a subject/Fachportal name like `"Mathematik"`/`"Mathe"` and it is resolved to its
 portal server-side — no `get_subject_portals` round-trip needed; an unknown
-subject returns the list of available portals), `depth?` (1–3, default 1),
+subject returns the list of available portals) **or** `collection?` (a
+collection's exact title, with `discipline?` for namesakes), `depth?` (1–3, default 1),
 `includeContentCounts?`, `includeContentPreview?` (1–5 — attach the first N
 content items of each sub-collection as `contentPreview`, bounded pass),
 `maxResults?` (1–100, default 50), `order?` (`title` default — alphabetical; `stored` —
@@ -474,14 +490,16 @@ the repository's own order: the position an editor set, else the order of creati
 resolved root title.
 
 **11. `get_nodes_details`** — `nodeIds` (array, 1–50, required),
-`includeTextContent?` (default false), `includeParents?` (default false). Bulk
+`includeTextContent?` (default false), `includeParents?` (default false),
+`includeQualityInfo?`, `includeAccessInfo?` (both default false). Bulk
 metadata (the same `FormattedNode` shape, keyed by nodeId), optionally enriched
 per node like `get_node_details`. Failed lookups are returned in a `failed`
 array, not as an overall error.
 
-**12. `get_topic_page_content`** — `collectionId?` **or** `variantId?` (at least
-one required), `targetGroup?`, `outputFormat?`, `maxPerSwimlane?` (1–10, default
-3). Returns the topic page's swimlane sections. In JSON mode each swimlane is
+**12. `get_topic_page_content`** — `query?` (a topic name; the best matching
+page is resolved in the same call), `collectionId?` **or** `variantId?` (at least
+one of the three), `targetGroup?`, `skillContext?`, `outputFormat?`,
+`maxPerSwimlane?` (1–10, default 3). Returns the topic page's swimlane sections. In JSON mode each swimlane is
 **render-ready**: it carries its heading plus up to `maxPerSwimlane` real content
 cards, resolved by executing the swimlane widget's saved query, with a `hasMore`
 flag and a `topicPageUrl` jump link. Use after `search_wlo_topic_pages`.
@@ -505,7 +523,8 @@ not about. No extraction service is involved. For encyclopedic context
 alongside WLO material — not for OER material search.
 `readOnlyHint` + `openWorldHint`.
 
-**14. `get_compendium_text`** — `nodeId?` **or** `nodeIds?` (array, ≤25),
+**14. `get_compendium_text`** — `nodeId?` **or** `nodeIds?` (array, ≤25) **or**
+`collection?` (exact title, with `discipline?` for namesakes),
 `query?`, `outputFormat?`. Returns the editorial compendium text of the given
 collection(s) — the authoritative prose overview — for when a collection result
 shows only the 500-char preview. Every answer opens with the **outline** of the
@@ -515,9 +534,12 @@ occur nowhere in the text are named; without it the whole text, each main
 section capped at `WLO_COMPENDIUM_SECTION_MAX` characters (default 2000).
 `compendiumText` is `null` for nodes without the property.
 
-**15. `search_wlo_within_collection`** — `nodeId` (required, the collection),
-`query?`, the six vocab filters (incl. `license`), `maxResults?` (1–50,
-default 10), `skipCount?`, `outputFormat?`. Query and filters are matched
+**15. `search_wlo_within_collection`** — `nodeId?` (the collection) **or**
+`collection?` (its exact title, with `collectionDiscipline?` for namesakes — one
+of the two is required), `query?`, the six vocab filters (`educationalContext?`,
+`discipline?`, `userRole?`, `learningResourceType?`, `publisher?`, `license?`),
+`maxResults?` (1–50, default 10), `skipCount?`, `excludeNodeIds?`,
+`skillContext?`, `outputFormat?`. Query and filters are matched
 LOCALLY against the collection's own contents listing — up to 100 direct
 children, and the output says so when there are more. Not a subtree search and
 not `virtual:primaryparent_nodeid`: the backend answers 400 for that criterion
@@ -542,7 +564,7 @@ aggregation over the live index (largest first). Optionally scoped to a topic /
 subject / level. Use it to discover valid values for the `publisher` filter.
 
 **19. `get_related_content`** — `nodeId` (required, the seed), `maxResults?`
-(1–30, default 8), `includeSiblings?` (default `false`), `outputFormat?`. Reads
+(1–30, default 8), `includeSiblings?` (default `false`), `skillContext?`, `outputFormat?`. Reads
 the seed's disciplines + educational contexts and finds other material with the
 same profile (the seed excluded); `includeSiblings` also returns the other
 contents of the seed's primary parent collection. "Was passt noch dazu?"
@@ -630,7 +652,9 @@ and has known gaps (protected or bot-blocked pages, pure media files). The
 reported `url` is the **normalised** one — what was actually requested, which is
 not always the string that was passed in.
 
-**28. `get_skill_registry`** — `collectionId`, `context?`, `outputFormat?`. The
+**28. `get_skill_registry`** — `collectionId`, `context?`, `task?` (hands over
+the one fitting approved skill with its instruction, or says `ambiguous`),
+`outputFormat?`. The
 skills **one collection has approved**, which is the reverse of what 22 answers:
 not "which skills exist" but "which apply *here*". An editorial team files a
 registry document in the collection — an `ai_prompt` record with an attached
@@ -885,7 +909,7 @@ names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_create_collection` | Create a collection (a curated topic page), top-level or as a sub-collection. |
 | `wlo_rename_collection` | Change a collection's title and description. |
 | `wlo_add_to_collection` | Put existing material into a collection. Nothing is moved or copied — a collection holds references. |
-| `wlo_remove_from_collection` | Take material out of one collection. The material itself survives and stays in every other collection. |
+| `wlo_remove_from_collection` | Take material out of one collection. The material itself survives and stays in every other collection. Refused in the preview, before any key: `not_in_collection`, `is_original` (the record lies in the collection directly, not as a reference — removing it would delete the material), `not_checked`. |
 | `wlo_create_collection_tree` | Create a whole tree of sub-collections (≤ 250 nodes, depth 4, ≤ 15 children) under ONE approval. Runs in ~40 s slices; an unfinished plan returns a `continuationToken`, and a key presented again by the same identity continues or replays — never creates twice. `onExisting: merge` reuses a same-titled sub-collection. Each node may carry `discipline`, `educationalContext`, `keywords`; `shared` sets them for the whole tree and a node's own value replaces the shared one. A collection that is taken over stays untouched. |
 | `wlo_add_to_collections` | File up to 200 `{nodeId, collectionId}` pairs under ONE approval, same plan mechanics. A reference id is filed as its original; a pair already in place is `already`; one failed pair does not stop the rest. Not yet live-verified (staging filing regression, 2026-11-06). |
 | `wlo_submit_contents` | Submit up to 200 records `{nodeId}` to the editorial queue under ONE approval, same plan mechanics. A record already in the queue comes back as `already` and is never submitted twice (checked for the preview and again right before the write); `not_stored` = answered with success but no workflow status on the record; one failed entry does not stop the rest. The note applies to all and is part of the approval |

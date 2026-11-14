@@ -6,6 +6,20 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — documentation checked against the code (2026-11-15)
+
+- Both READMEs called `nodeId` required on `get_collection_contents`, `search_wlo_within_collection` and
+  `get_node_details`, and did not document `collection` (a collection by its title) at all; `README.de.md` gave
+  `search_wlo_all` the wrong default output format. A test now fails a parameter the README calls required and the
+  schema leaves optional.
+- The reference said every batch tool lists its results as `items`; it is `nodes` for the tree, `pairs` for adding
+  and removing, `items` for the rest. Error-code table, environment variables (`INTERNAL_BIND_ADDR`,
+  `INTERNAL_PORT`, `LOG_PERSONAL_DATA`, `TICKET_CREDENTIAL_LIMIT`), metric lists and the OpenAPI responses of the
+  repository-backed `/api` routes (403/404/502/503/504) completed; pointers into the old `CLAUDE.md` now lead to
+  `docs/rules/`.
+- A tool that throws past its own error handling answers `internal_error` without the raw message, as `toolError`
+  does (it still went out as `upstream_error` with the text).
+
 ### Changed — full audit of 2026-11-14: every finding fixed, two finds of the chatbot team, control documents
 
 No tool, parameter, endpoint, variable or metric was renamed or removed. What a client or an operator can observe

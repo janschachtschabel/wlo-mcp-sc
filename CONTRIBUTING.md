@@ -51,7 +51,8 @@ validation error from a connection error).
 ## Documentation
 
 Start at [`docs/README.md`](docs/README.md) — it says which document answers
-what, for whom, and in which language.
+what, for whom, and in which language. The binding rules by area, with the
+measurements behind them, are in [`docs/rules/`](docs/rules/README.md).
 
 The tool table exists **by hand in six documents** (`README.md`, `README.de.md`,
 `docs/TOOLS.md`, `docs/TOOLS-KOMPAKT.md`, `docs/INTEGRATION.md`,

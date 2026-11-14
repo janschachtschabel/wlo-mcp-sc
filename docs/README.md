@@ -30,8 +30,9 @@ One line per document: the question it answers. Pick your role.
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How is it put together — layers, the dependency rule, the write pipeline, caching — and which rules does a change have to respect? |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | How do I work here: tests, language, commits, dependencies, keeping the six tool tables in step (`npm run docs:tools`). |
-| `CLAUDE.md` (repository root, local — not published) | The working instructions for coding agents: the active plans and every measured rule, with dates. |
-| [`plans/`](plans/) | The design documents and the measurements they rest on; `plans/STATUS.md` is the progress log. |
+| `CLAUDE.md` (repository root, local — not published) | The working instructions for coding agents: what binds every change, in short form. |
+| [`rules/`](rules/README.md) | The binding rules by area — write support, auth, skills, search, reading collections, the chatbot contract, unsafe tools, modules — each with the measurement, date and reason behind it. Read the file of the area you are about to change. |
+| [`plans/`](plans/) | The design documents and the measurements they rest on; `plans/STATUS.md` is the short current state, its history is in `plans/archive/`. |
 | [`AUTH-CONCEPT.md`](AUTH-CONCEPT.md) (German) | Why the sign-in looks the way it does, and how it compares with the alternatives that were measured and rejected. |
 | [`../PERFORMANCE.md`](../PERFORMANCE.md) | Where the time goes, and what was measured. |
 

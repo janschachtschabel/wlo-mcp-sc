@@ -316,9 +316,14 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/SearchEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/UpstreamForbidden' }
+        '404': { $ref: '#/components/responses/UpstreamNotFound' }
         '405': { $ref: '#/components/responses/UseGet' }
         '429': { $ref: '#/components/responses/ApiRateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '502': { $ref: '#/components/responses/UpstreamFailed' }
+        '503': { $ref: '#/components/responses/UpstreamBusy' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
   /api/search/{term}:
     get:
       tags: [rest]
@@ -362,9 +367,14 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/SearchEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/UpstreamForbidden' }
+        '404': { $ref: '#/components/responses/UpstreamNotFound' }
         '405': { $ref: '#/components/responses/UseGet' }
         '429': { $ref: '#/components/responses/ApiRateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '502': { $ref: '#/components/responses/UpstreamFailed' }
+        '503': { $ref: '#/components/responses/UpstreamBusy' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
   /api/collection:
     get:
       tags: [rest]
@@ -432,9 +442,14 @@ paths:
                       type: object
                       additionalProperties: true
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/UpstreamForbidden' }
+        '404': { $ref: '#/components/responses/UpstreamNotFound' }
         '405': { $ref: '#/components/responses/UseGet' }
         '429': { $ref: '#/components/responses/ApiRateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '502': { $ref: '#/components/responses/UpstreamFailed' }
+        '503': { $ref: '#/components/responses/UpstreamBusy' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
   /api/compendium:
     get:
       tags: [rest]
@@ -472,9 +487,14 @@ paths:
                         compendiumText: { type: [string, 'null'] }
                       additionalProperties: true
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/UpstreamForbidden' }
+        '404': { $ref: '#/components/responses/UpstreamNotFound' }
         '405': { $ref: '#/components/responses/UseGet' }
         '429': { $ref: '#/components/responses/ApiRateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '502': { $ref: '#/components/responses/UpstreamFailed' }
+        '503': { $ref: '#/components/responses/UpstreamBusy' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
   /api/topic-page:
     get:
       tags: [rest]
@@ -520,9 +540,14 @@ paths:
                   reason: {}
                 additionalProperties: true
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/UpstreamForbidden' }
+        '404': { $ref: '#/components/responses/UpstreamNotFound' }
         '405': { $ref: '#/components/responses/UseGet' }
         '429': { $ref: '#/components/responses/ApiRateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '502': { $ref: '#/components/responses/UpstreamFailed' }
+        '503': { $ref: '#/components/responses/UpstreamBusy' }
+        '504': { $ref: '#/components/responses/UpstreamTimeout' }
   /api/wikipedia:
     get:
       tags: [rest]
@@ -1473,9 +1498,11 @@ components:
     Error:
       description: >-
         The REST error shape. `code` and `retryAfter` are present on a `429`
-        and on a `503` from a login check; a plain refusal carries `error`
-        only. On `/auth*` and `/oauth/authorize` `error` is a German sentence
-        for a person.
+        and on a `503` from a login check; a failed repository read under
+        `/api/*` carries `code` (and `retryAfter` when it is busy); a plain
+        refusal carries `error` only, and so does a `500` of this server
+        itself. On `/auth*` and `/oauth/authorize` `error` is a German
+        sentence for a person.
       type: object
       required: [error]
       properties:
@@ -1484,7 +1511,9 @@ components:
           type: string
           description: >-
             `rate_limited`, `too_many_logins`, `upstream_unreachable`,
-            `origin_not_allowed`.
+            `origin_not_allowed`; under `/api/*` for a failed repository
+            read: `not_found`, `forbidden`, `upstream_busy`, `timeout`,
+            `upstream_error`.
         retryAfter: { type: integer, description: Seconds; equals the `Retry-After` header. }
     UploadRefusal:
       description: '`/api/uploads` only: `error` is the code string itself.'
@@ -1640,7 +1669,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     UseGet:
-      description: 'Method not allowed — GET only. (Static files add `Allow: GET`.)'
+      description: 'Method not allowed — GET only; the answer carries `Allow: GET`.'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1697,6 +1726,40 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     InternalError:
       description: Internal failure; the reason is in the server log only.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamForbidden:
+      description: >-
+        `forbidden` — the repository refused the read (401/403): not readable
+        without a login. Retrying changes nothing.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamNotFound:
+      description: '`not_found` — the repository answered 404 for what was asked.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamFailed:
+      description: >-
+        `upstream_error` — the repository could not be read (another error
+        status, an unreadable body, a connection that never opened).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamBusy:
+      description: >-
+        `upstream_busy` — the repository answered 429 or 503, or this server's
+        own bound on open repository calls was full. `retryAfter` is the
+        repository's `Retry-After`, else an estimate (10 s).
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UpstreamTimeout:
+      description: '`timeout` — the repository did not answer in time.'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

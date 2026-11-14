@@ -107,7 +107,8 @@ traversal a tool would otherwise inline belongs in `services/`
 | `src/wlo-api.ts` | barrel over the edu-sharing client |
 | `src/wlo-fetch.ts` | **the credential boundary** — the only place a password is attached |
 | `src/formatter.ts` | node → Markdown / JSON rendering |
-| `docs/plans/` | design documents and `STATUS.md`, the live progress tracker |
+| `docs/plans/` | design documents and `STATUS.md`, the short current state (its history is in `docs/plans/archive/`) |
+| `docs/rules/` | the binding rules with their measurements, one file per area (`README.md` there is the index) |
 
 ---
 
@@ -145,6 +146,11 @@ without a code gets `refused`; a thrown error becomes `upstream_error`; and the
 errors the SDK builds itself before a handler runs (`McpServer.createToolError`:
 wrong arguments, unknown tool) get `invalid_input` / `unknown_tool`. A tool that
 knows the cause codes it itself (`codedErrorResult`); the net only fills gaps.
+A tool's own `catch` goes through `toolError` (`tools/shared.ts`), which codes
+by what the repository said (`services/failure-code.ts`: `timeout`,
+`forbidden`, `not_found`, `upstream_busy`, `upstream_error`) and answers a
+mistake of ours — JavaScript's own error classes — as `internal_error` with a
+generic sentence, the detail going to the log only.
 
 ### The output contract
 
@@ -398,7 +404,9 @@ arrow-key navigation, and no `role="tree"` that would promise it.
 `src/apps/widgets/shared/strings.ts` (bundled into each widget by esbuild); the
 sign-in pages share `public/auth-i18n.js` (a browser module served as a file,
 under a policy that allows no inline script); the launcher keeps its own table
-inside its script (`public/launcher.html`, mirrored in `public/launcher.js`).
+inside its script, which since 2026-11-14 is a served file too
+(`public/launcher.js`, loaded by `public/launcher.html` — the page's policy is
+`script-src 'self'`, no inline script on the origin that takes passwords).
 They are three build worlds — a bundle, a served module, a self-contained
 page — and merging them would couple the password pages' script to the widget
 build. A string needed in two of them is written twice.
@@ -503,8 +511,9 @@ code — [`.env.example`](../.env.example) is the annotated template, and
 
 These are not opinions, and re-deriving them from first principles will produce
 the wrong answer. Each is measured; if you must contradict one, **measure
-again** first. The full evidence is in `docs/plans/`, and `CLAUDE.md` carries
-the condensed list.
+again** first. The full evidence is in `docs/plans/`; the rules with their
+dates and reasons are in [`docs/rules/`](rules/README.md), one file per area,
+and `CLAUDE.md` carries the short form.
 
 - **`ccm:commonlicense_key` matches a licence FAMILY, not a licence.** `CC_BY`
   returns CC BY-ND and CC BY-NC-ND too, and the surplus is *more* restrictive

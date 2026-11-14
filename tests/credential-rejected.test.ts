@@ -243,6 +243,18 @@ test('a thrown error is coded upstream_error', async () => {
   } finally { await c.close(); }
 });
 
+test('a thrown ACCIDENT is internal_error, and its message stays in the log', async () => {
+  // A tool that throws past its own `toolError` must not hand out what
+  // `toolError` withholds (documentation check 2026-11-15).
+  const c = await oneToolClient(s => s.tool('breaks', 'test', {}, async () => { throw new TypeError("Cannot read properties of undefined (reading 'ref')"); }));
+  try {
+    const r = await c.callTool({ name: 'breaks', arguments: {} });
+    assert.equal(r.isError, true);
+    assert.equal(errorOf(r)?.code, 'internal_error');
+    assert.doesNotMatch(toolText(r), /Cannot read|undefined/);
+  } finally { await c.close(); }
+});
+
 test('a successful answer gets no error field', async () => {
   const c = await oneToolClient(s => s.tool('fine', 'test', {}, async () => ({ content: [{ type: 'text', text: 'ok' }] })));
   try {

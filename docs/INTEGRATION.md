@@ -411,10 +411,11 @@ Fassung für das Modell.
   und denselben Argumenten liefert 30 Minuten lang die erste Antwort erneut
   (`replayed: true`), ohne erneut zu schreiben; läuft sie noch, `inProgress: true`.
   War die erste Antwort ein offener `timeout`, bleibt auch die Wiederholung offen.
-- **Pläne** (`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_remove_from_collections`, `wlo_submit_contents`, `wlo_delete_collections`): eine
+- **Pläne** (`wlo_create_collection_tree`, `wlo_add_to_collections`, `wlo_remove_from_collections`, `wlo_submit_contents`, `wlo_delete_collections`, `wlo_update_contents`, `wlo_attach_fulltexts`): eine
   Bestätigung für alles; der Server arbeitet in Abschnitten von ~40 s. Die
-  Antwort trägt `complete`, `progress {done, total}`, die Schritte (`nodes` bzw.
-  `pairs`, je `status`/`code`/`nodeId`) und, solange etwas offen ist,
+  Antwort trägt `complete`, `progress {done, total}`, die Schritte (`nodes` beim
+  Baum, `pairs` beim Aufnehmen und Herausnehmen, sonst `items` — je
+  `status`/`code`/`nodeId`) und, solange etwas offen ist,
   `continuationToken`. Mit denselben Angaben und diesem Schlüssel weiter
   aufrufen, bis `complete: true`. Ein Plan gilt 30 Minuten ab Bestätigung;
   derselbe Schlüssel ist sicher wiederholbar, es wird nie doppelt angelegt.
@@ -425,7 +426,18 @@ Fassung für das Modell.
   Parameter: `invalid_input`). Auf den Code verzweigen, nie auf den Text. Ist
   edu-sharing selbst ausgelastet, kommt `upstream_busy` mit `retryAfter`
   (Sekunden) — ein Versuch danach lohnt sich, ein `upstream_error` nicht. Ein
-  `internal_error` ist ein Fehler im Server selbst: nicht wiederholen. Trägt
+  `internal_error` ist ein Fehler im Server selbst: nicht wiederholen. Eine
+  Ablehnung des Repositorys heißt in jedem Werkzeug gleich (seit 2026-11-14,
+  vorher pauschal `upstream_error`): 401/403 → `forbidden`, 404 → `not_found`,
+  jedes andere 4xx → `refused` — bei einem Schreibaufruf mit `outcomeOpen:
+  false`, es wurde nichts geschrieben; 429/503 → `upstream_busy`, nach einem
+  eingelösten Schlüssel offen (`outcomeOpen: true`). Vor dem Schlüssel lehnt
+  `wlo_remove_from_collection` mit `not_in_collection`, `is_original` (das
+  Material liegt als Original in der Sammlung — Herausnehmen würde es löschen)
+  oder `not_checked` ab; ein Hochladen, das nicht ankam, steht als
+  `error.upload` im Fehler; `proposal_not_marked` trägt `error.mark`; in den
+  Plan-Werkzeugen sind `not_removed` und `order_not_set` Schritt-Codes über
+  einem Schritt, der sonst gelungen ist. Trägt
   der Fehler `requiresNewPreview: true`, war der Schlüssel schon eingelöst:
   denselben Aufruf nicht wiederholen. Ob schon geschrieben wurde, sagt dann
   allein `outcomeOpen`, das jeder solche Fehler trägt: `false` = nichts
@@ -582,28 +594,28 @@ Läufe zu verschiedenen Zeitpunkten gegen verschiedene Instanzen; sie sind keine
 Zusage. Was die Dauer bestimmt, ist fast immer edu-sharing: der Server wartet
 (gemessen 0,3 Kerne unter Last, `DEPLOYMENT.md` §5.0.2), und die Antwortzeit
 von Staging schwankt stark — ein einzelner Suchlauf brauchte dort 7,0 s
-(`CLAUDE.md`, Abschnitt Skill-Registry).
+(`docs/rules/skills.md`, Abschnitt Skill-Registry).
 
 ### 7.1 Gemessene Dauern
 
 | Werkzeug / Gruppe | typisch | ungünstigster gemessener Fall | Instanz · Quelle |
 |---|---|---|---|
-| `search_wlo_all` | 1,3 s (voller Aufruf); 2,4 s | 7,0 s (einzelner Lauf); **15,5 s** als erster Aufruf nach dem Start | Staging · `docs/plans/STATUS.md` (2026-08-21), `CLAUDE.md`; `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
+| `search_wlo_all` | 1,3 s (voller Aufruf); 2,4 s | 7,0 s (einzelner Lauf); **15,5 s** als erster Aufruf nach dem Start | Staging · `docs/plans/archive/STATUS-2026-08-15-bis-2026-11-14.md` (2026-08-21), `docs/rules/skills.md`; `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
 | `search_wlo_content` (mit `license: OER`) | 1,5 s | 2,4 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
-| `search_wlo_collections` | 1,2 s; die Abfrage des zweiten Index kostet für sich +0,6 bis +1,2 s | 4,0 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen); `CLAUDE.md` (2026-08-11) |
+| `search_wlo_collections` | 1,2 s; die Abfrage des zweiten Index kostet für sich +0,6 bis +1,2 s | 4,0 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen); `docs/rules/search.md` (2026-08-11) |
 | `search_wlo_topic_pages` mit `query` | 1,2 s (Produktion); 1,6 s (Staging, zweiter Lauf) | 3,5 s (Staging, erster Lauf) | Produktion · `PERFORMANCE.md` O9; Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
 | `search_wlo_topic_pages` ohne `query` (Liste) | 0,66 s / 1,4 s bei `maxResults` 5 / 10; 0,55 s mit `educationalContext` | 3,2 s bei `maxResults` 20 | Produktion · `PERFORMANCE.md` O8 |
-| `get_topic_page_content` mit `query` | 2,2 s | 2,2 s (langsamstes der Werkzeuge mit Widget) | Produktion · `PERFORMANCE.md` O9; Staging · `STATUS.md` (2026-08-21) |
+| `get_topic_page_content` mit `query` | 2,2 s | 2,2 s (langsamstes der Werkzeuge mit Widget) | Produktion · `PERFORMANCE.md` O9; Staging · STATUS-Archiv (`docs/plans/archive/`) (2026-08-21) |
 | `browse_collection_tree` | 0,9 s (Tiefe 1), 2,0 s (Tiefe 2) | 4,0 s (Tiefe 2 mit Zählung), 6,5 s (Tiefe 2 mit Inhaltsvorschau) | Produktion · `PERFORMANCE.md` O9, O10 |
 | `get_compendium_text` | 0,47–0,83 s mit `query` | 1,1 s ohne `query` am größten Text (65 250 Zeichen) | Staging · `PERFORMANCE.md` O11 |
-| `get_node_details` | 0,3 s für vier ids | nicht gemessen | Staging · `STATUS.md` |
-| `resolve_wlo_filters` | 0,1 s | nicht gemessen | Staging · `STATUS.md` |
-| `find_content_by_url` | 0,8 s für vier Adressen | nicht gemessen | Staging · `STATUS.md` |
-| `get_url_text` | nicht gemessen | 1,6 s (eine schwere Wikipedia-Seite) | Staging · `STATUS.md` (2026-08-21) |
-| Sammlungs-Werkzeuge mit benanntem `skillContext` | +1,0 bis +1,4 s gegenüber dem Aufruf ohne | nicht gemessen | Staging · `CLAUDE.md` (2026-08-18) |
-| `wlo_create_collection` (Anlegen + Zurücklesen) | 1,2 s (Median, n = 12) | 1,4 s; 2,8 s auf oberster Ebene | Staging · `STATUS.md` |
-| `wlo_create_content` **ohne** Quell-URL | 0,5 s (Anlegen) | nicht gemessen | Staging · `CLAUDE.md` (2026-08-17) |
-| `wlo_create_content` / `wlo_update_content` **mit** `ccm:wwwurl` | 8,8 s (Adresse schon gerendert) | 46,5 s (Adresse zum ersten Mal); über vier Läufe 12,2–18,6 s | Staging · `CLAUDE.md` (2026-08-17) |
+| `get_node_details` | 0,3 s für vier ids | nicht gemessen | Staging · STATUS-Archiv (`docs/plans/archive/`) |
+| `resolve_wlo_filters` | 0,1 s | nicht gemessen | Staging · STATUS-Archiv (`docs/plans/archive/`) |
+| `find_content_by_url` | 0,8 s für vier Adressen | nicht gemessen | Staging · STATUS-Archiv (`docs/plans/archive/`) |
+| `get_url_text` | nicht gemessen | 1,6 s (eine schwere Wikipedia-Seite) | Staging · STATUS-Archiv (`docs/plans/archive/`) (2026-08-21) |
+| Sammlungs-Werkzeuge mit benanntem `skillContext` | +1,0 bis +1,4 s gegenüber dem Aufruf ohne | nicht gemessen | Staging · `docs/rules/skills.md` (2026-08-18) |
+| `wlo_create_collection` (Anlegen + Zurücklesen) | 1,2 s (Median, n = 12) | 1,4 s; 2,8 s auf oberster Ebene | Staging · STATUS-Archiv (`docs/plans/archive/`) |
+| `wlo_create_content` **ohne** Quell-URL | 0,5 s (Anlegen) | nicht gemessen | Staging · `docs/rules/write-support.md` (2026-08-17) |
+| `wlo_create_content` / `wlo_update_content` **mit** `ccm:wwwurl` | 8,8 s (Adresse schon gerendert) | 46,5 s (Adresse zum ersten Mal); über vier Läufe 12,2–18,6 s | Staging · `docs/rules/write-support.md` (2026-08-17) |
 | `get_subject_portals` | 0,6 s | 0,6 s | Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
 | `lookup_wlo_vocabulary` | unter 0,05 s | — | **keine Instanz:** das Werkzeug ruft nichts auf, es liest die im Code hinterlegten Vokabulare — die Zahl ist die Laufzeit des Servers selbst · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |
 | `get_wikipedia_summary` | 0,2 s | 0,2 s | **Wikipedia, nicht das Repository:** das Werkzeug ruft `de.wikipedia.org` auf und sagt nichts über Staging · `DEPLOYMENT.md` §5.0.2 (2026-11-13, je ein Aufruf in zwei Läufen) |

@@ -88,6 +88,11 @@ tracked compose file. The full list with defaults is in
 | `UPLOAD_MAX_TOTAL_BYTES` | `134217728` (128 MB) | All open upload slots together — the memory the batch path may hold at once (also 20 slots per identity, and one login holds at most half of the bytes, never less than one file of `UPLOAD_MAX_BYTES`). |
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` (at most 28000) | How long one upload body may take. Kept below the server-wide 30 s request timeout so the route answers 408 itself. |
 | `AUTH_CREDENTIAL_LIMIT` | `10` | Distinct secrets per identity before the guessing guard refuses: per address for `Basic`, per access id for a `wlo2.` block — on `/mcp` and on `/api/uploads` alike. A chatbot backend is one address for all its users, so with `Basic` this has to fit the number of people; with blocks it does not. |
+| `TICKET_CREDENTIAL_LIMIT` | `200` | The same guard for `POST /auth/ticket`, in its own buckets: distinct tickets per address in ten minutes. A backstop — `API_RATE_LIMIT_RPM` bounds the address first. `0` disables it. |
+| `INTERNAL_PORT` / `INTERNAL_BIND_ADDR` | _(unset)_ / _(unset = every interface)_ | A second listener for `/health`, `/ready` and `/metrics` only, and the interface it binds (§5.0.1). `127.0.0.1` keeps it on the machine itself; a scraper in another container needs the default. Without a loopback address and without `METRICS_TOKEN` the start logs a warning, because `/metrics` then answers without a token to whoever reaches the port. |
+| `LOG_PERSONAL_DATA` | _(unset)_ | Unset: a client address, an account name and a search term are logged as pseudonyms (`~` + 12 hex characters, stable for one process run). `plain` writes them in clear. The log only — limiters and the allow-list use the real values in memory. |
+| `PORT` | `3000` | The port the server listens on inside the container. Compose maps `HOST_PORT` to it; leave it alone there. |
+| _the rest_ | see [`.env.example`](../.env.example) | Not deployment decisions, each documented with its default in `.env.example` and in [MCP-REFERENZ.md §3 and §7](MCP-REFERENZ.md#7-konfiguration): `WLO_ROOT_COLLECTION_ID`, the skill switches (`WLO_SKILLS_COLLECTION_ID`, `WLO_SKILL_TOOL_MODE`, `WLO_DISABLE_SKILL_SEARCH`, `WLO_SKILL_CACHE`, `WLO_SKILL_CACHE_REFRESH_MS`, `WLO_SKILL_CACHE_TTL_MS`), `WLO_SEARCH_OUTPUT_MODE`, the extraction service (`WLO_TEXT_EXTRACTION_URL`, `WLO_TEXT_EXTRACTION_API_KEY`, `WLO_TEXT_TIMEOUT_MS`), tuning (`WLO_POOL_SIZE`, `WLO_TOPIC_POOL`) and the widget metadata (`WLO_WIDGET_DOMAIN`, `WLO_WIDGET_MIME`, `WLO_WIDGET_IMAGE_DOMAINS`). |
 
 ### 3.1 The one thing to back up
 
@@ -281,7 +286,9 @@ collection's listing), then start from a new preview.
   in-memory stores, read at the moment of the scrape
   (`wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`,
   `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes`), for the upstream
-  queue and the usual process metrics (`process_*`, `nodejs_heap_*`,
+  queue (`wlo_upstream_in_flight`, `wlo_upstream_waiting`, `wlo_upstream_limit`),
+  `wlo_build_info{version}` and the usual process metrics (`process_*`,
+  `nodejs_heap_*`, `nodejs_external_memory_bytes`,
   `nodejs_eventloop_lag_seconds`). Counters start at zero with the process.
   Labels never carry a caller, a path or a query.
 - **A port for probes and the scraper.** `INTERNAL_PORT` opens a second

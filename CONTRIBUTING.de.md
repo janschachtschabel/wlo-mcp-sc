@@ -45,6 +45,28 @@ nicht von einem Verbindungsfehler).
   Nutzer-sichtbare Tool-Beschreibungen dürfen Deutsch sein (Zielgruppe WLO).
 - Kommentare erklären **warum**, nicht was der Code offensichtlich tut.
 
+## Dokumentation
+
+Einstieg ist [`docs/README.md`](docs/README.md) — dort steht, welches Dokument
+welche Frage beantwortet, für wen und in welcher Sprache. Die bindenden Regeln
+je Bereich stehen in [`docs/rules/`](docs/rules/README.md).
+
+Die Werkzeugtabelle steht **von Hand in sechs Dokumenten** (`README.md`,
+`README.de.md`, `docs/TOOLS.md`, `docs/TOOLS-KOMPAKT.md`, `docs/INTEGRATION.md`,
+`docs/MCP-REFERENZ.md`). Wer ein Werkzeug hinzufügt, umbenennt oder entfernt:
+
+1. `npm run docs:tools` gibt jedes registrierte Werkzeug mit dem ersten Satz
+   seiner Beschreibung als Markdown-Tabelle aus, direkt vom Server
+   (`WLO_BATCH_UPLOAD_ENABLED=1 npm run docs:tools` nimmt die Stapel-Werkzeuge
+   dazu). Die Zeile von dort kopieren, nicht aus dem Gedächtnis schreiben.
+2. In alle sechs Dokumente eintragen und die dort genannten Zahlen korrigieren.
+3. `node --import tsx --test tests/docs-claims.test.ts` schlägt fehl, wenn eines
+   der sechs ein registriertes Werkzeug nicht nennt oder eine Zahl nennt, der
+   der Server widerspricht.
+
+`npm run dump:tools` gibt die ganze `tools/list`-Antwort als JSON aus (mit
+Schemata), wenn die Kurzfassung nicht reicht.
+
 ## Tests
 
 - Nur externe Grenzen mocken (Netzwerk via `tests/fetchMock.ts`), nie die zu

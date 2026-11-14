@@ -99,7 +99,10 @@ Parameter eines Aufrufs. Gründe:
 - `/health`, `/ready` und `/metrics` gibt es weiterhin auch auf dem öffentlichen Port (`/metrics`
   dort nur mit `METRICS_TOKEN`).
 - Auf dem internen Port verlangt `/metrics` kein Token, solange `METRICS_TOKEN` nicht gesetzt ist;
-  ist es gesetzt, gilt es auf beiden Ports.
+  ist es gesetzt, gilt es auf beiden Ports. `INTERNAL_BIND_ADDR` legt fest, auf welcher
+  Schnittstelle der interne Port lauscht (leer = alle; `127.0.0.1` = nur die Maschine selbst — im
+  Cluster nicht setzen, Proben und Scraper kommen von außerhalb des Pods). Ohne Loopback-Adresse
+  und ohne `METRICS_TOKEN` warnt der Start.
 - **Der Proxy muss die echte Client-Adresse sehen** (aus dem Code abgeleitet — `clientKey`,
   `src/rate-limit.ts` —, **nicht auf einem Cluster gemessen**). Mit `TRUST_PROXY=1` (Vorgabe in
   Compose und Chart) zählt der Server jede Grenze nach dem **letzten** Eintrag von
@@ -314,7 +317,7 @@ Eingetragen ist nur, was im Repository belegt ist; leere Felder sind nicht gemes
 
 Bekannter Zustand auf Staging (2026-11-06): das Repository lehnt Inhalts-Uploads und das Ablegen in
 Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit nicht live prüfbar
-(`docs/plans/STATUS.md`).
+(`docs/plans/archive/STATUS-2026-08-15-bis-2026-11-14.md`).
 
 ## 14. Offen / zu entscheiden
 

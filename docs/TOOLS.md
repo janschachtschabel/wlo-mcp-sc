@@ -583,7 +583,7 @@ zurück.
 | `wlo_create_collection` | Sammlung anlegen (eine kuratierte Themenseite), oberste Ebene oder Untersammlung | *„Leg eine Sammlung ‚Bruchrechnung Klasse 6‘ an“* |
 | `wlo_rename_collection` | Titel und Beschreibung einer Sammlung ändern | *„Benenne diese Sammlung um in …“* |
 | `wlo_add_to_collection` | Vorhandenes Material in eine Sammlung aufnehmen. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise. Eine Verknüpfungs-id wird aufs Original umgeleitet (die Vorschau nennt es); schon Enthaltenes wird nicht erneut gesendet | *„Nimm dieses Video in meine Sammlung auf“* |
-| `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen | *„Nimm dieses Material aus der Sammlung heraus“* |
+| `wlo_remove_from_collection` | Material aus einer Sammlung herausnehmen. Das Material bleibt bestehen und in allen anderen Sammlungen. Liegt es dort nicht (`not_in_collection`) oder als Original statt als Verweis (`is_original` — Herausnehmen würde es löschen), lehnt schon die Vorschau ab | *„Nimm dieses Material aus der Sammlung heraus“* |
 | `wlo_create_collection_tree` | Ganzen Baum von Untersammlungen mit EINER Bestätigung anlegen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder). Abschnitte von ~40 s, `continuationToken` bis fertig; ein erneut vorgelegter Schlüssel setzt fort, legt nie doppelt an. Je Knoten optional Fach, Bildungsstufe, Schlagworte (`shared` für den ganzen Baum). Antwort `nodes [{path, nodeId, status, code}]` | *„Lege unter Optik diese Gliederung als Sammlungen an“* |
 | `wlo_add_to_collections` | Bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung aufnehmen; Verknüpfung → Original (`filedId`), schon Enthaltenes `already`, Einzelfehler halten den Rest nicht auf. Noch nicht live geprüft | *„Nimm diese zwölf Materialien in die passenden Sammlungen auf“* |
 | `wlo_submit_contents` | Bis zu 200 Datensätze `{nodeId}` mit EINER Bestätigung zur redaktionellen Prüfung einreichen, gleiche Planmechanik; schon Eingereichtes kommt als `already` zurück, ein gescheiterter Eintrag hält die übrigen nicht auf | *„Reiche alle Dateien aus dem Upload zur Prüfung ein“* |
@@ -730,6 +730,13 @@ festgeschrieben).
 > ist fehlgeschlagen, oder nach 30 s ist keine Antwort eingetroffen). Der
 > Fehlerzustand sagt ausdrücklich, dass er kein Befund „nichts vorhanden“ ist,
 > und nennt die Wartezeit, wenn der Server eine mitgegeben hat (`retryAfter`).
+> Seit 2026-11-14 liest jedes Widget dafür `structuredContent.error`: ein
+> fehlgeschlagener Aufruf zeigte vorher „Keine Treffer gefunden.“. Eine
+> Ablehnung (`not_found`, `forbidden` …) bekommt ihren eigenen Satz („nicht
+> vorhanden oder mit dieser Anmeldung nicht lesbar“), ein Ausfall einen anderen;
+> und eine LEERE Liste über einer gekappten oder nur stichprobenhaft gelesenen
+> Antwort (`scanCapped`, `contentsCut`, `truncated`, `restricted`, `incomplete`)
+> sagt das, statt „Keine Treffer“ zu melden.
 > Laden, Ankunft und Fehler werden über eine Live-Region auch vorgelesen.
 >
 > **Tastatur im Baum (`browse`):** Der Baum ist eine **verschachtelte Liste mit

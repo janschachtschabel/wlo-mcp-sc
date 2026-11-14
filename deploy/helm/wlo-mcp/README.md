@@ -174,6 +174,16 @@ a key (rotation window: `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, DEPLOYMENT.md §3.1).
   `monitoring.serviceMonitor.bearerToken`.
 - **Alert thresholds are proposals** without operating history. The rules use
   only series the server exports (plus `up`).
+- **What `/metrics` exports** (declared in `src/metrics.ts` and
+  `src/rest/metrics-route.ts`): the counters `wlo_http_requests_total{route,status}`,
+  `wlo_tool_calls_total{tool,outcome}`, `wlo_tool_errors_total{tool,code}`,
+  `wlo_upstream_requests_total{outcome}`, `wlo_rate_limited_total{limiter}`; the
+  histograms `wlo_http_request_duration_seconds{route}`,
+  `wlo_tool_duration_seconds{tool}`, `wlo_upstream_duration_seconds{outcome}`,
+  `wlo_upstream_gate_wait_seconds{outcome}`; the gauges `wlo_upstream_in_flight`,
+  `wlo_upstream_waiting`, `wlo_upstream_limit`, `wlo_build_info{version}` and
+  the six store gauges below; plus `process_*`, `nodejs_heap_*`,
+  `nodejs_external_memory_bytes` and `nodejs_eventloop_lag_seconds`.
 - **Six gauges have no rule yet:** `wlo_skill_registry_cache_entries`,
   `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`,
   `wlo_confirm_replays_held` and `wlo_upload_held_bytes` report how full the

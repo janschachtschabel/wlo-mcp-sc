@@ -42,6 +42,8 @@ import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { SCOPES } from '../auth/oauth-metadata.js';
 import { isCurrentCredentialRejected } from '../auth/credential.js';
 import { toolStatusMeta } from './tool-status.js';
+import { INTERNAL_ERROR_TEXT, isAccident } from '../accident.js';
+import { log } from '../logger.js';
 
 /**
  * The declaration for a tool that works BOTH ways.
@@ -163,10 +165,14 @@ function reportRejectedLogin(tool: RegisteredTool, challenge: string | undefined
       // becomes the same error result HERE, coded `upstream_error`. An
       // `McpError` is the SDK's own protocol signal and passes through.
       if (err instanceof McpError) throw err;
-      const text = err instanceof Error ? err.message : String(err);
+      // A throw that got past a tool's own `toolError` goes by the same rule:
+      // an accident of ours answers without its message (`src/accident.ts`).
+      const accident = isAccident(err);
+      if (accident) log.error('tool threw past its own error handling', { error: err instanceof Error ? err.message : String(err) });
+      const text = accident ? INTERNAL_ERROR_TEXT : err instanceof Error ? err.message : String(err);
       if (!isCurrentCredentialRejected()) {
         return { content: [{ type: 'text', text }], isError: true,
-          structuredContent: { error: { code: 'upstream_error', message: text } } };
+          structuredContent: { error: { code: accident ? 'internal_error' : 'upstream_error', message: text } } };
       }
       result = { content: [{ type: 'text', text }] };
     }

@@ -293,7 +293,15 @@ Nicht-MCP-KI-Werkzeuge und den Prompt-Launcher. Nur lesend, `CORS *` für `GET`,
 pro IP rate-limitiert (`API_RATE_LIMIT_RPM`, Standard 30/min), Eingaben
 serverseitig validiert (Query ≤ 200 Zeichen, nodeId ≤ 50, ≤ 25 IDs). Antworten
 sind JSON mit `Cache-Control: no-store` + `nosniff`; Fehler sind
-`{ "error": "…" }` mit `4xx`/`5xx`-Status. Eine bewusste Ausnahme:
+`{ "error": "…" }` mit `4xx`/`5xx`-Status. Ein gescheiterter Abruf am
+Repository wird eingeordnet statt pauschal mit `500` beantwortet: `404`
+(`not_found`), `403` (`forbidden` — ohne Anmeldung nicht lesbar), `503` mit
+`Retry-After` (`upstream_busy`), `504` (`timeout`) oder `502`
+(`upstream_error`), jeweils als `{ "error", "code", "retryAfter"? }`; ein `429`
+hat dieselbe Form, ein `405` trägt `Allow: GET`, und nur ein Fehler dieses
+Servers selbst bleibt ein `500` ohne Code. Jede Antwort des Servers trägt
+außerdem `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` und
+eine `X-Request-Id`. Eine bewusste Ausnahme:
 `GET /api/search` **ohne Suchbegriff** liefert statt 400 ein `200`-Hinweis-
 Envelope (leere Buckets + `warnings`) — KI-Abrufschichten entfernen bei
 selbst gebauten URLs den Query-String und zeigen dem Modell nur den Status,
@@ -414,20 +422,27 @@ Tool-`outputSchema` validiert) und tragen `annotations` (`readOnlyHint`;
 begrenzte Baum-Traversierung ab Wurzel/Elternknoten.
 
 **2. `search_wlo_content`** — `query` (erforderlich), `educationalContext?`,
-`discipline?`, `userRole?`, `learningResourceType?`, `publisher?`, `maxResults?`
-(1–50, Standard 8), `excludeNodeIds?` (≤200), `includeTextContent?` (Standard
+`discipline?`, `userRole?`, `learningResourceType?`, `publisher?`, `license?`, `maxResults?`
+(1–50, Standard 8), `skipCount?` (Blättern), `excludeNodeIds?` (≤200), `includeTextContent?` (Standard
 false — holt zusätzlich den gespeicherten Volltext je Treffer, gekappt; ein
 Round-Trip pro Treffer), `includeFacets?` (Standard false — Facetten-Zähler in
 `_queryMeta.facets`, laufen parallel), `outputFormat?`.
 Multi-Query-Expansion + Qualitäts-Reranking.
 
-**3. `get_collection_contents`** — `nodeId` (erforderlich), `query?`, `contentFilter?`
+**3. `get_collection_contents`** — `nodeId?` **oder** `collection?` (der genaue
+Titel der Sammlung statt ihrer id, mit `discipline?` zum Unterscheiden
+gleichnamiger — eines von beiden ist erforderlich; genommen wird genau EINE
+Sammlung dieses Titels, alles andere wird mit den Kandidaten abgelehnt),
+`query?`, `contentFilter?`
 (`files` | `folders` | `both`, Standard `files`), `includeSubcollections?`
 (rekursiv, nur Dateien), `maxResults?` (1–100, Standard 20), `skipCount?`,
-`excludeNodeIds?` (≤200), `outputFormat?`.
+`excludeNodeIds?` (≤200), `skillContext?`, `outputFormat?`.
 
-**4. `get_node_details`** — `nodeId` (erforderlich), `includeTextContent?`,
-`includeParents?`, `includeRaw?`, `outputFormat?`. Gibt dieselbe
+**4. `get_node_details`** — `nodeId?` **oder** `nodeIds?` (1–50; eines von
+beiden), `includeTextContent?`, `includeParents?`, `includeRaw?`,
+`includeQualityInfo?` (die redaktionellen Bewertungen), `includeAccessInfo?`
+(Zugang, Kosten, Werbung, Barrierefreiheit, OER-Status — beides ohne weiteren
+Abruf), `skillContext?`, `outputFormat?`. Gibt dieselbe
 `FormattedNode`-Struktur zurück wie die Suchtools, dazu optional gespeicherten
 Volltext, Eltern-Sammlungen und rohe `ccm:*`/`cclom:*`-URIs. Bei Sammlungen mit
 gepflegtem **kompendialem Text** (`ccm:oeh_collection_compendium_text`) kommt
@@ -443,7 +458,9 @@ Sammlungszusammenfassung. Die Detail-Tools liefern den vollen Text
 in `_queryMeta.facets`, laufen parallel) sowie die optionalen Anreicherungs-Flags
 `includeCompendium?` / `includeTextContent?` / `includeWikipedia?` /
 `includeTopicPageContent?` (+ `maxPerSwimlane?`, 1–10, Standard 3),
-`outputFormat?` (Standard `json`). Führt Inhalts-, Sammlungs- und (bei Bedarf)
+`includeSkillRegistry?` (erzwingt eine frische Registry-Abfrage je Sammlung),
+`outputFormat?` (Standard `markdown` — kompakter Text; die vollständige
+Bucket-Hülle steht immer in `structuredContent`, mit `json` auch im Text). Führt Inhalts-, Sammlungs- und (bei Bedarf)
 Wikipedia-Suche parallel aus und gibt drei Buckets zurück (+ optional
 `wikipedia`); Anreicherungen laufen gebündelt/parallel über die Ergebnisse.
 Hinweis zu `total`: `content.total` ist die tatsächliche Backend-Trefferzahl;
@@ -482,7 +499,9 @@ angezeigte vorn und trägt `isDefault`.
 **9. `browse_collection_tree`** — `nodeId?` **oder** `subject?` (mindestens eines;
 gib einen Fachportal-Namen wie `"Mathematik"`/`"Mathe"` an, der server-seitig zum
 Portal aufgelöst wird — kein `get_subject_portals`-Round-Trip nötig; ein
-unbekanntes Fach liefert die Liste der verfügbaren Portale), `depth?` (1–3,
+unbekanntes Fach liefert die Liste der verfügbaren Portale) **oder**
+`collection?` (der genaue Titel einer Sammlung, mit `discipline?` für
+gleichnamige), `depth?` (1–3,
 Standard 1), `includeContentCounts?`, `includeContentPreview?` (1–5 — hängt je
 Untersammlung die ersten N Inhalte als `contentPreview` an, gebündelter Durchlauf),
 `maxResults?` (1–100, Standard 50), `order?` (`title` Standard — alphabetisch; `stored` —
@@ -493,13 +512,16 @@ die Reihenfolge des Repositorys: gesetzte Position, sonst Anlege-Reihenfolge),
 und aufgelösten Wurzel-Titel zurück.
 
 **11. `get_nodes_details`** — `nodeIds` (Array, 1–50, erforderlich),
-`includeTextContent?` (Standard false), `includeParents?` (Standard false).
+`includeTextContent?` (Standard false), `includeParents?` (Standard false),
+`includeQualityInfo?`, `includeAccessInfo?` (beide Standard false).
 Metadaten im Bulk (dieselbe `FormattedNode`-Struktur, nach nodeId indiziert),
 je Knoten optional angereichert wie `get_node_details`. Fehlgeschlagene Abfragen
 werden in einem `failed`-Array zurückgegeben, nicht als Gesamtfehler.
 
-**12. `get_topic_page_content`** — `collectionId?` **oder** `variantId?` (mindestens
-eines erforderlich), `targetGroup?`, `outputFormat?`, `maxPerSwimlane?` (1–10,
+**12. `get_topic_page_content`** — `query?` (ein Themenname; die am besten
+passende Seite wird im selben Aufruf aufgelöst), `collectionId?` **oder**
+`variantId?` (mindestens eines der drei), `targetGroup?`, `skillContext?`,
+`outputFormat?`, `maxPerSwimlane?` (1–10,
 Standard 3). Gibt die Swimlane-Abschnitte der Themenseite zurück. Im JSON-Modus ist
 jede Swimlane **render-fertig**: Sie trägt ihre Überschrift plus bis zu
 `maxPerSwimlane` echte Inhaltskarten, aufgelöst durch Ausführen der gespeicherten
@@ -519,7 +541,8 @@ genau der Preis dieser Prüfung. Kein Extraktionsdienst beteiligt.
 Für enzyklopädischen Kontext neben
 WLO-Material — nicht für die OER-Materialsuche. `readOnlyHint` + `openWorldHint`.
 
-**14. `get_compendium_text`** — `nodeId?` **oder** `nodeIds?` (Array, ≤25),
+**14. `get_compendium_text`** — `nodeId?` **oder** `nodeIds?` (Array, ≤25)
+**oder** `collection?` (genauer Titel, mit `discipline?` für gleichnamige),
 `query?`, `outputFormat?`. Gibt den redaktionellen Kompendiumstext der
 angegebenen Sammlung(en) zurück — die maßgebliche Prosa-Übersicht — für den Fall,
 dass ein Sammlungstreffer nur die 500-Zeichen-Vorschau zeigt. Jede Antwort
@@ -530,9 +553,12 @@ benannt; ohne `query` der ganze Text, je Hauptabschnitt auf
 `WLO_COMPENDIUM_SECTION_MAX` Zeichen gekappt (Standard 2000). `compendiumText`
 ist `null` für Knoten ohne die Eigenschaft.
 
-**15. `search_wlo_within_collection`** — `nodeId` (erforderlich, die Sammlung),
-`query?`, die sechs Vokabular-Filter (inkl. `license`), `maxResults?` (1–50,
-Standard 10), `skipCount?`, `outputFormat?`. Suchbegriff und Filter werden
+**15. `search_wlo_within_collection`** — `nodeId?` (die Sammlung) **oder**
+`collection?` (ihr genauer Titel, mit `collectionDiscipline?` für gleichnamige —
+eines von beiden ist erforderlich), `query?`, die sechs Vokabular-Filter
+(`educationalContext?`, `discipline?`, `userRole?`, `learningResourceType?`,
+`publisher?`, `license?`), `maxResults?` (1–50,
+Standard 10), `skipCount?`, `excludeNodeIds?`, `skillContext?`, `outputFormat?`. Suchbegriff und Filter werden
 LOKAL gegen die Inhaltsliste der Sammlung geprüft — bis zu 100 direkte Kinder,
 und die Ausgabe sagt es, wenn es mehr sind. Kein Teilbaum und kein
 `virtual:primaryparent_nodeid`: dieses Kriterium beantwortet das Backend mit 400
@@ -556,7 +582,7 @@ Worten fragt, sind die reichhaltigeren Werkzeuge oben die bessere Wahl.
 um gültige Werte für den `publisher`-Filter zu finden.
 
 **19. `get_related_content`** — `nodeId` (erforderlich, der Seed), `maxResults?`
-(1–30, Standard 8), `includeSiblings?` (Standard `false`), `outputFormat?`. Liest
+(1–30, Standard 8), `includeSiblings?` (Standard `false`), `skillContext?`, `outputFormat?`. Liest
 Fächer + Bildungsstufen des Seed-Nodes und findet anderes Material mit gleichem
 Profil (der Seed wird ausgeschlossen); `includeSiblings` liefert zusätzlich die
 übrigen Inhalte der primären Eltern-Sammlung. „Was passt noch dazu?“
@@ -654,7 +680,9 @@ anderen `method`: der Dienst rendert mit Playwright und hat bekannte Lücken
 ist die **normalisierte** — die tatsächlich angefragte, die nicht immer die
 übergebene Zeichenkette ist.
 
-**28. `get_skill_registry`** — `collectionId`, `context?`, `outputFormat?`.
+**28. `get_skill_registry`** — `collectionId`, `context?`, `task?` (übergibt den
+einen passenden freigegebenen Skill samt Anleitung, oder sagt `ambiguous`),
+`outputFormat?`.
 Welche Skills **eine Sammlung freigegeben** hat — die Umkehrung dessen, was 22
 beantwortet: nicht „welche Skills gibt es", sondern „welche gelten *hier*". Eine
 Redaktion legt dazu ein Registry-Dokument in die Sammlung — ein
@@ -926,7 +954,7 @@ bezeugen, dass eine Person hingesehen hat. |
 | `wlo_create_collection` | Legt eine Sammlung an (eine kuratierte Themenseite), auf oberster Ebene oder als Untersammlung. |
 | `wlo_rename_collection` | Ändert Titel und Beschreibung einer Sammlung. |
 | `wlo_add_to_collection` | Nimmt vorhandenes Material in eine Sammlung auf. Nichts wird verschoben oder kopiert — eine Sammlung enthält Verweise. |
-| `wlo_remove_from_collection` | Nimmt Material aus einer Sammlung heraus. Das Material bleibt bestehen und in allen anderen Sammlungen. |
+| `wlo_remove_from_collection` | Nimmt Material aus einer Sammlung heraus. Das Material bleibt bestehen und in allen anderen Sammlungen. Abgelehnt wird schon in der Vorschau, vor jedem Schlüssel: `not_in_collection`, `is_original` (der Datensatz liegt direkt in der Sammlung, nicht als Verweis — das Herausnehmen würde das Material löschen), `not_checked`. |
 | `wlo_create_collection_tree` | Legt einen ganzen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4, ≤ 15 Kinder) mit EINER Bestätigung an. Läuft in Abschnitten von ~40 s; ein unfertiger Plan liefert einen `continuationToken`, und ein erneut vorgelegter Schlüssel derselben Anmeldung setzt fort oder wiederholt das Ergebnis — legt nie doppelt an. `onExisting: merge` übernimmt eine Untersammlung gleichen Titels. Je Knoten optional `discipline`, `educationalContext`, `keywords`; `shared` setzt sie für den ganzen Baum, der eigene Wert eines Knotens ersetzt den gemeinsamen. Eine übernommene Sammlung bleibt unverändert. |
 | `wlo_add_to_collections` | Nimmt bis zu 200 Paare `{nodeId, collectionId}` mit EINER Bestätigung auf, gleiche Planmechanik. Eine Verknüpfungs-id wird als Original aufgenommen; schon Enthaltenes kommt als `already`; ein gescheitertes Paar hält die übrigen nicht auf. Noch nicht live geprüft (Staging-Regression beim Aufnehmen, 06.11.2026). |
 | `wlo_submit_contents` | Reicht bis zu 200 Datensätze `{nodeId}` mit EINER Bestätigung zur redaktionellen Prüfung ein, gleiche Planmechanik. Ein Datensatz, der schon vorliegt, kommt als `already` zurück und wird nie doppelt eingereicht (geprüft für die Vorschau und noch einmal unmittelbar vor dem Schreiben); `not_stored` = mit Erfolg beantwortet, aber kein Workflow-Status am Datensatz; ein gescheiterter Eintrag hält die übrigen nicht auf. Die Notiz gilt für alle und ist Teil der Bestätigung |

@@ -537,6 +537,50 @@ test('the READMEs document no parameter the schema does not have', async () => {
 });
 
 /**
+ * A parameter the READMEs call REQUIRED that the schema leaves optional.
+ *
+ * Found 2026-11-15: `get_collection_contents`, `search_wlo_within_collection`
+ * and `get_node_details` were documented with `nodeId` (required) long after
+ * the tools took a collection by title (`collection`) or a list (`nodeIds`)
+ * instead — a reader never learned the alternative existed. The check above
+ * cannot see that: it looks at `name?` only. This one reads the documents' other
+ * convention, `` `name` (required … `` / `` `name` (erforderlich … ``, and
+ * compares it with the schema's `required` list.
+ */
+test('the READMEs call no parameter required that the schema leaves optional', async () => {
+  const client = await connectedClient();
+  let required: Map<string, Set<string>>;
+  try {
+    required = new Map((await client.listTools()).tools.map(t => [
+      t.name,
+      new Set((t.inputSchema as { required?: string[] }).required ?? []),
+    ]));
+  } finally {
+    await client.close();
+  }
+
+  const wrong: string[] = [];
+  let claims = 0;
+  for (const doc of ['README.md', 'README.de.md']) {
+    const entries = [...read(doc).matchAll(/\*\*\d+\.\s+`([a-z_]+)`\*\*([\s\S]{0,900}?)(?=\r?\n\r?\n)/g)];
+    assert.ok(entries.length > 20, `${doc}: only ${entries.length} tool entries parsed — the scan is broken`);
+    for (const entry of entries) {
+      const [, tool, blob] = entry;
+      const must = required.get(tool!);
+      if (!must) continue;
+      // `(array, 1–50, required)` as well as `(required, the seed)`: the word anywhere inside the parenthesis.
+      for (const p of blob!.matchAll(/`([a-zA-Z][a-zA-Z0-9_]*)`\s*\((?:[^()]*?\b)?(?:required|erforderlich)\b/g)) {
+        claims += 1;
+        if (!must.has(p[1]!)) wrong.push(`${doc}: ${tool} does not require \`${p[1]}\``);
+      }
+    }
+  }
+  // 11 on the day this was written (5 + 6); far fewer means the pattern stopped matching.
+  assert.ok(claims >= 6, `only ${claims} "required" claims parsed — the scan is broken`);
+  assert.deepEqual(wrong, [], 'a parameter called required hides the alternative the tool takes');
+});
+
+/**
  * A setting the server reads and no table names (audit 2026-11-12, D-3).
  *
  * Eight variables were missing from both README tables — every one of them
