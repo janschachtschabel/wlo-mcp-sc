@@ -134,7 +134,7 @@ test('nothing picked over a collection read in part is reported as incomplete â€
     return { json: {} };
   });
   try {
-    assert.deepEqual(await pickBestSkillResult({ collectionId: 'skills-root', query: 'Stunde planen' }), { picked: null, incomplete: true });
+    assert.deepEqual(await pickBestSkillResult({ collectionId: 'skills-root', query: 'Stunde planen' }), { picked: null, incomplete: true, restricted: false });
   } finally { mock.restore(); }
 });
 

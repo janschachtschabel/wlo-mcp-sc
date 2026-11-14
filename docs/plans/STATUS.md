@@ -5067,3 +5067,27 @@ bereits (Fehlercodes, Wartezeiten, „nicht gefunden / nicht erreichbar / abgele
 Werkzeug; weitere Schemata nützen nur streng prüfenden Clients und vergrößern die Werkzeugliste (heute ~26 000 Tokens je
 Anfrage). Wieder aufgreifen nur gezielt, wenn ein Abnehmer eine konkrete Uneinheitlichkeit als Hindernis meldet.
 Der Alias „Gemeinschaftskunde → Politik" ist bestätigt; er war seit Z1 eingetragen (`src/vocabs.ts`).
+
+**Antwort des Chatbot-Teams vom 2026-11-14 — alle acht Punkte umgesetzt.**
+Sie haben die Arbeitskopie gelesen (Stand `8cbc051`), der Chatbot verträgt die sechs Verhaltensänderungen.
+- **Punkt 1 (schwerster Befund, berechtigt):** eine abgelehnte Unterliste UNTERHALB des Startknotens galt seit D6 still
+  als leer — vorher fälschlich „später erneut", danach gar nichts. Jetzt: `childrenRefused: true` am Baumknoten,
+  `restricted: true` + `RESTRICTED_NOTICE` an den drei Listenantworten (Baumsuche von `search_wlo_collections`,
+  `get_collection_contents` rekursiv, `search_skill`), in beiden Formaten.
+- **Punkt 2:** die Ablehnung des INHALTS einer Untersammlung bricht den rekursiven Lauf nicht mehr ab; ausgelassen,
+  gekennzeichnet, Rest geliefert. Startknoten bleibt Fehler, Ausfall (5xx) bleibt Ausfall.
+- **Punkt 3:** `confirm.preview.notes[]` — dieselben Zeichenketten wie die ⚠-Zeilen, aus `previewReply`.
+- **Punkt 4:** `error.reason` (`several`/`none`/`unverified`) an `ambiguous_collection`; der Wert hieß intern schon so.
+- **Punkt 5:** `wlo_update_compendium` nennt die Sammlung in der ersten Zeile; `target.kind` bleibt `compendium`.
+- **Kleinere:** `find_content_by_url` 404 → `not_found`; `previewUrl` an `search_wlo_content_many`; Absatz zum
+  Python-SDK in `docs/INTEGRATION.md` §3.5. Die Größe der Werkzeugliste bleibt (bewusst, siehe Entscheidung zu A-3).
+- 27 neue Tests (`refused-branch-is-said` 19, `chatbot-followup-1114` 8), jede Korrektur mit Gegenprobe rot gesehen.
+- **Unabhängiges Review (0 kritisch, 2 groß, 5 klein, 3 Randnotizen) — behoben:** mit `includeContentCounts` /
+  `includeContentPreview` (und immer in `get_collection_overview`) verschwand ein Knoten, dessen Inhalte abgelehnt
+  wurden oder nicht antworteten, GANZ aus dem Baum (`mapPool` macht aus dem Wurf `null`) — jetzt bleibt er, mit
+  `contentsRefused` / `contentsUnread`; `get_skill_for_task` kannte `restricted` nicht; „Keine Skills gefunden" stand
+  über einer eingeschränkten Antwort; der Hinweis heißt „Ein Teil des durchsuchten Bereichs …"; der Skill-Durchlauf
+  liest unterhalb einer Sammlung mit abgelehntem Inhalt weiter. Bewusst anders gelassen und benannt: Themenseiten
+  (nicht lesbare Varianten = „keine Variante"). Nicht geändert, weil nichts Falsches gesagt wird: Geschwister in
+  `get_related_content`, Zähler der Fachportal-Liste. 3372 Tests, 3371 grün, 1 übersprungen.
+- Antwort ans Team mit den neuen Formen: `docs/plans/2026-11-14-antwort-an-chatbot-team-2.md`.

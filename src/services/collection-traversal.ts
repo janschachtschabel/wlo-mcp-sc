@@ -22,7 +22,20 @@ import { formatNode, formatNodes } from '../formatter.js';
 import { nodeMatchesText } from '../node-match.js';
 import { mapPool } from '../concurrency.js';
 import { log } from '../logger.js';
+import { failureStatus } from './failure-code.js';
+import { isRefusal } from '../upstream-error.js';
+import { ClientGoneError } from '../request-scope.js';
 import { logTerm } from '../log-privacy.js';
+
+/**
+ * Said wherever a walk met a branch the repository REFUSED to open (401, 403,
+ * 404): not an outage — asking again changes nothing — and not an empty branch
+ * either. Left unsaid, a tree with a closed branch looks complete, and a model
+ * answers "there is nothing more there" (chatbot team, 2026-11-14). ONE wording
+ * for the list answers; the tree says it per node (`childrenRefused`).
+ */
+export const RESTRICTED_NOTICE = 'Hinweis: Ein Teil des durchsuchten Bereichs ist mit dieser Anmeldung nicht lesbar und fehlt in '
+  + 'dieser Antwort — ob dort etwas liegt, ist offen. Ein erneuter Aufruf ändert daran nichts.';
 
 /**
  * Fallback collection search by tree traversal, used when the direct
@@ -32,7 +45,9 @@ import { logTerm } from '../log-privacy.js';
  * stop the fallback from turning into a 100+-parallel-call avalanche; direct
  * level-1 matches are always preserved.
  */
-export async function findCollectionsByTreeTraversal(level1: WloNode[], query: string): Promise<{ matches: WloNode[]; unread: number }> {
+export async function findCollectionsByTreeTraversal(
+  level1: WloNode[], query: string,
+): Promise<{ matches: WloNode[]; unread: number; refused: number }> {
   // De-dup by nodeId at insertion (audit Q-2): the same node can be reached more
   // than once across levels, and duplicates would make rows and `total` lie.
   const seen = new Set<string>();
@@ -58,6 +73,8 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
   // Listings that did not answer are COUNTED: "no collections found" over
   // twenty-five unread sub-lists is not a statement about the catalogue.
   let unread = 0;
+  // Sub-lists the repository REFUSED: no outage, and not "no sub-collections" either.
+  let refused = 0;
   const level2Results = await Promise.allSettled(
     level2Parents.map(parent => getChildCollectionsResult(parent.ref?.id ?? '', 50))
   );
@@ -67,9 +84,11 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
       allLevel2Nodes.push(...r.value.nodes);
       addMatches(r.value.nodes);
     } else if (r.status === 'rejected' || didNotAnswer(r.value)) {
-      // A REFUSED sub-list (not readable for this login) is not counted: it is
-      // no outage, and "try again" over it would be wrong for good (D6).
+      // A REFUSED sub-list (not readable for this login) is not counted HERE: it
+      // is no outage, and "try again" over it would be wrong for good (D6).
       unread++;
+    } else {
+      refused++;
     }
   }
 
@@ -95,10 +114,11 @@ export async function findCollectionsByTreeTraversal(level1: WloNode[], query: s
     for (const r of level3Results) {
       if (r.status === 'fulfilled' && r.value.reachable) addMatches(r.value.nodes);
       else if (r.status === 'rejected' || didNotAnswer(r.value)) unread++;
+      else refused++;
     }
   }
 
-  return { matches, unread };
+  return { matches, unread, refused };
 }
 
 /**
@@ -144,7 +164,7 @@ export async function collectRecursiveContents(
   maxResults: number,
   excluded: Set<string>,
   query: string | undefined,
-): Promise<{ nodes: FormattedNode[]; totalHits: number; incomplete?: true }> {
+): Promise<{ nodes: FormattedNode[]; totalHits: number; incomplete?: true; restricted?: true }> {
   const visited = new Set<string>();
   const seenNodes = new Set<string>(); // de-dup result rows across sub-collections
   const nodes: FormattedNode[] = [];
@@ -152,6 +172,9 @@ export async function collectRecursiveContents(
   let level = [rootId];
   let unread = 0;
   let unreadSubs = 0;
+  // Branches the repository refused to open — a sub-listing or a
+  // sub-collection's contents alike: left out, and said (`restricted`).
+  let refusedBranches = 0;
 
   // Level by level, a few collections at a time. The walk used to read one
   // collection after the other — two requests each, up to a hundred in series
@@ -176,7 +199,15 @@ export async function collectRecursiveContents(
       // loop below REACHES it. The serial walk never asked for a collection
       // past the one that filled the page, so its failing must not fail the call.
       const read = await Promise.allSettled(group.map(cid => Promise.all([
-        getCollectionContents(cid, 'files', 50),
+        // A REFUSED sub-collection is left out like a refused sub-listing — the
+        // same answer of the repository must not end the call in one place and
+        // pass for "empty" in the other. The START node stays an error: the
+        // caller named it, and a list without it would be a list of nothing.
+        getCollectionContents(cid, 'files', 50).catch((err: unknown) => {
+          const status = failureStatus(err);
+          if (cid === rootId || status === null || !isRefusal(status)) throw err;
+          return null;
+        }),
         getChildCollectionsResult(cid),
       ])));
       for (let g = 0; g < group.length; g++) {
@@ -187,8 +218,9 @@ export async function collectRecursiveContents(
         const settled = read[g]!;
         if (settled.status === 'rejected') throw settled.reason;
         const [filesResp, subs] = settled.value;
-        totalHits += filesResp.pagination.total;
-        let fileNodes = filesResp.nodes;
+        if (!filesResp) refusedBranches += 1;
+        totalHits += filesResp?.pagination.total ?? 0;
+        let fileNodes = filesResp?.nodes ?? [];
         if (excluded.size) fileNodes = fileNodes.filter(n => !excluded.has(n.ref?.id ?? ''));
         // Drop a node already emitted from an earlier sub-collection.
         fileNodes = fileNodes.filter(n => {
@@ -205,6 +237,8 @@ export async function collectRecursiveContents(
         // gate) is not walked — and that is said, not passed off as "no
         // sub-collections" (chatbot feedback 2026-11-13).
         if (didNotAnswer(subs)) unreadSubs += 1;
+        // Counted once per collection: one that refused its contents refuses its listing too.
+        else if (subs.refused && filesResp) refusedBranches += 1;
         for (const sub of subs.nodes) {
           const subId = sub.ref?.id ?? sub.properties?.['sys:node-uuid']?.[0];
           if (subId && !visited.has(subId) && !next.includes(subId)) next.push(subId);
@@ -219,7 +253,11 @@ export async function collectRecursiveContents(
       rootId, visited: visited.size, queued: unread,
     });
   }
-  return { nodes: nodes.slice(0, maxResults), totalHits, ...(unreadSubs > 0 ? { incomplete: true as const } : {}) };
+  return {
+    nodes: nodes.slice(0, maxResults), totalHits,
+    ...(unreadSubs > 0 ? { incomplete: true as const } : {}),
+    ...(refusedBranches > 0 ? { restricted: true as const } : {}),
+  };
 }
 
 /** One node of the browse tree: a formatted collection plus what the walk learned about it. */
@@ -232,7 +270,32 @@ export type CollectionTreeNode = FormattedNode & {
   hasMoreChildren?: boolean;
   /** The listing of this node's sub-collections did not answer — they are unknown, not absent. */
   childrenUnread?: boolean;
+  /** The repository REFUSED that listing (not readable for this login, or gone): unknown too, and no retry helps. */
+  childrenRefused?: boolean;
+  /** The node's own CONTENTS were refused: no count, no preview — the node itself stays in the tree. */
+  contentsRefused?: boolean;
+  /** The read of its contents did not answer: no count or preview this time. */
+  contentsUnread?: boolean;
 };
+
+/**
+ * A read of ONE node's contents inside the tree walk. A failure marks the node
+ * and never removes it: thrown through `mapPool` it became a `null` that was
+ * filtered out, so a branch this login may not read — or one read that timed
+ * out — vanished from a tree that then looked complete (review 2026-11-14).
+ * Only "nobody waits any more" still ends the walk.
+ */
+async function readNodeContents<T>(node: CollectionTreeNode, read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof ClientGoneError) throw err;
+    const status = failureStatus(err);
+    if (status !== null && isRefusal(status)) node.contentsRefused = true;
+    else node.contentsUnread = true;
+    return null;
+  }
+}
 
 export interface CollectionTreeOptions {
   parentId: string;
@@ -347,8 +410,8 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
     const f = formatNode(n) as CollectionTreeNode;
     const id = n.ref?.id;
     if (includeContentCounts && id) {
-      const filesResp = await getCollectionContents(id, 'files', 1, 0);
-      f.fileCount = filesResp.pagination.total;
+      const filesResp = await readNodeContents(f, () => getCollectionContents(id, 'files', 1, 0));
+      if (filesResp) f.fileCount = filesResp.pagination.total;
     }
     if (level < depth && id) {
       // Fetch one more than shown: the extra hit proves there IS more
@@ -357,6 +420,8 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
       const fetched = listing.nodes;
       // Not read is not empty: the branch may have children this tree does not show.
       if (didNotAnswer(listing)) f.childrenUnread = true;
+      // Refused is not empty either — and it is no "later" (chatbot team, 2026-11-14).
+      else if (listing.refused) f.childrenRefused = true;
       if (fetched.length > childSlice) f.hasMoreChildren = true;
       // Claim each child in `visited` at SCHEDULING time (synchronously in
       // this filter), not when its own enrichOne starts — otherwise two
@@ -394,8 +459,10 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
     // One call per node in the (now bounded) tree — the widest fan-out
     // this walk can produce, so it runs at the level-1 width rather than 5.
     await mapPool(flat, TREE_CONCURRENCY, async (node) => {
-      const resp = await getCollectionContents(node.nodeId, 'files', contentPreview, 0);
-      node.contentPreview = formatNodes(resp.nodes).slice(0, contentPreview);
+      // A node whose count was just refused is not asked again.
+      if (node.contentsRefused) return null;
+      const resp = await readNodeContents(node, () => getCollectionContents(node.nodeId, 'files', contentPreview, 0));
+      if (resp) node.contentPreview = formatNodes(resp.nodes).slice(0, contentPreview);
       return null;
     });
   }

@@ -23,6 +23,7 @@ import { getSkill, pickBestSkillResult, searchSkillsDetailed, type SkillDocument
 import { formatUnresolvedHint } from '../filter-criteria.js';
 import { DESCRIPTIONS_ONLY_NOTE, nodeIdLine, oneLine } from '../formatter.js';
 import { toolError } from './shared.js';
+import { RESTRICTED_NOTICE } from '../services/collection-traversal.js';
 
 /** Which tool surface is registered — see `WLO_SKILL_TOOL_MODE`. */
 export type SkillToolMode = 'two-tool' | 'one-tool';
@@ -327,7 +328,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
     { readOnlyHint: true },
     async (params) => {
       try {
-        const { skills, unresolved, incomplete, incompleteReason } = await searchSkillsDetailed({
+        const { skills, unresolved, incomplete, incompleteReason, restricted } = await searchSkillsDetailed({
           query: params.query,
           maxResults: params.maxResults ?? 10,
           discipline: params.discipline,
@@ -345,6 +346,7 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
           return { content: [{ type: 'text' as const, text: JSON.stringify({
             query: params.query ?? null, skills, unresolved,
             ...(incomplete ? { incomplete: true, incompleteReason, incompleteNote: incompleteWalkNote(incompleteReason) } : {}),
+            ...(restricted ? { restricted: true, restrictedNote: RESTRICTED_NOTICE } : {}),
             ...(skills.length ? { hint: DESCRIPTIONS_ONLY_NOTE } : {}),
           }) }] };
         }
@@ -354,9 +356,11 @@ ist, ist \`get_skill_registry\` das richtige — es liest die Freigabeliste der 
         return { content: [{ type: 'text' as const, text:
           (hint ? `${hint}
 
-` : '') + renderCatalogue(skills, params.query) + (incomplete ? `
+` : '') + (skills.length || !(restricted || incomplete) ? renderCatalogue(skills, params.query) : '') + (incomplete ? `
 
-${incompleteWalkNote(incompleteReason)}` : '') }] };
+${incompleteWalkNote(incompleteReason)}` : '') + (restricted ? `
+
+${RESTRICTED_NOTICE}` : '') }] };
       } catch (err) {
         return toolError('Fehler bei der Skill-Suche', err);
       }
@@ -421,7 +425,7 @@ Arbeitsablauf passt. Nicht für gewöhnliche OER-Inhalte — dafür \`search_wlo
     { readOnlyHint: true },
     async (params) => {
       try {
-        const { picked, incomplete } = await pickBestSkillResult({
+        const { picked, incomplete, restricted } = await pickBestSkillResult({
           query: params.task,
           discipline: params.discipline,
           educationalContext: params.educationalContext,
@@ -429,17 +433,22 @@ Arbeitsablauf passt. Nicht für gewöhnliche OER-Inhalte — dafür \`search_wlo
         });
         if (!picked) {
           return { content: [{ type: 'text' as const, text: incomplete
-            ? INCOMPLETE_WALK_NOTE
+            ? [INCOMPLETE_WALK_NOTE, ...(restricted ? [RESTRICTED_NOTICE] : [])].join('\n\n')
+            : restricted ? RESTRICTED_NOTICE
             : oneLine(`Keine Skills gefunden (Suche: „${params.task}“).`) }] };
         }
         if ((params.outputFormat ?? 'markdown') === 'json') {
-          return { content: [{ type: 'text' as const, text: JSON.stringify(picked) }] };
+          return { content: [{ type: 'text' as const, text: JSON.stringify(restricted ? { ...picked, restricted: true, restrictedNote: RESTRICTED_NOTICE } : picked) }] };
         }
         const alternatives = picked.alternatives.length
           ? ['', '## Weitere Kandidaten', ...picked.alternatives.map(a => oneLine(`- ${a.title} (nodeId: ${a.nodeId})`))]
           : [];
-        return { content: [{ type: 'text' as const, text:
-          [renderSkill(picked.skill), ...alternatives].join('\n') }] };
+        return { content: [
+          // Its own block and FIRST: after the untrusted document a server
+          // sentence is indistinguishable from one the document forged.
+          ...(restricted ? [{ type: 'text' as const, text: RESTRICTED_NOTICE }] : []),
+          { type: 'text' as const, text: [renderSkill(picked.skill), ...alternatives].join('\n') },
+        ] };
       } catch (err) {
         return toolError('Fehler beim Laden des Skills', err);
       }

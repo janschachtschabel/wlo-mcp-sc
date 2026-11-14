@@ -37,6 +37,8 @@ const hitSchema = z.object({
   learningResourceTypes: z.array(z.string()),
   educationalContexts: z.array(z.string()),
   license: z.string(),
+  /** The preview image, when the record has one. May be a generic media-type icon. */
+  previewUrl: z.string().optional(),
 });
 
 export const searchManySchema = z.object({

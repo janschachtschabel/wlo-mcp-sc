@@ -181,7 +181,7 @@ function rankSkills(skills: SkillSummary[], query: string | undefined): SkillSum
  */
 export async function searchSkillsDetailed(
   opts: SearchSkillsOptions,
-): Promise<{ skills: SkillSummary[]; unresolved: UnresolvedFilter[]; incomplete?: true; incompleteReason?: IncompleteReason }> {
+): Promise<{ skills: SkillSummary[]; unresolved: UnresolvedFilter[]; incomplete?: true; incompleteReason?: IncompleteReason; restricted?: true }> {
   const query = (opts.query ?? '').trim();
   const maxResults = opts.maxResults ?? 10;
   const collectionId = (opts.collectionId ?? '').trim();
@@ -218,6 +218,8 @@ export async function searchSkillsDetailed(
     // The walk hit one of its bounds (a page, the depth, the visit cap, a read
     // that failed): the list may lack skills, and an empty one is no finding.
     ...(walk?.incomplete ? { incomplete: true as const, incompleteReason: walk.reason ?? 'limit' } : {}),
+    // A skillset this login may not open: its skills are missing, and no retry brings them.
+    ...(walk?.restricted ? { restricted: true as const } : {}),
   };
 }
 
@@ -375,10 +377,11 @@ export async function pickBestSkill(
  */
 export async function pickBestSkillResult(
   opts: SearchSkillsOptions,
-): Promise<{ picked: { skill: SkillDocument; alternatives: SkillSummary[] } | null; incomplete: boolean }> {
-  const { skills: ranked, incomplete } = await searchSkillsDetailed({ ...opts, maxResults: opts.maxResults ?? 5 });
+): Promise<{ picked: { skill: SkillDocument; alternatives: SkillSummary[] } | null; incomplete: boolean; restricted: boolean }> {
+  const { skills: ranked, incomplete, restricted } = await searchSkillsDetailed({ ...opts, maxResults: opts.maxResults ?? 5 });
   const best = ranked[0];
-  if (!best) return { picked: null, incomplete: incomplete === true };
+  // A closed skillset is the same kind of "not the whole picture" as a bound (2026-11-14).
+  if (!best) return { picked: null, incomplete: incomplete === true, restricted: restricted === true };
   const skill = await getSkill(best.nodeId);
   // The record was listed a moment ago; if it cannot be read now, the summary
   // still answers what was found — only the instructions are missing. Nothing
@@ -386,5 +389,6 @@ export async function pickBestSkillResult(
   return {
     picked: { skill: skill ?? { ...best, content: null, activation: null, references: [] }, alternatives: ranked.slice(1) },
     incomplete: incomplete === true,
+    restricted: restricted === true,
   };
 }

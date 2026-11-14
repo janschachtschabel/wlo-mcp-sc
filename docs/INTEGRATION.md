@@ -388,8 +388,10 @@ Fassung für das Modell.
 - **Vorschau:** `structuredContent.confirm` mit `token`, `expiresAt`
   (10 Minuten), `preview.action`, `preview.tool`, `preview.target`,
   `preview.fields[]` (`name`, `label`, `old`, `new`, bei Vokabularen auch
-  `oldLabels`/`newLabels`) und bei mehreren Schritten `preview.items[]`. Nichts
-  zu ändern: `{"confirm": null, "unchanged": true}`.
+  `oldLabels`/`newLabels`) und bei mehreren Schritten `preview.items[]`. Die
+  ⚠-Hinweise des Vorschautexts (Alias, mögliche Dublette, gleicher Titel am
+  Ablageort) stehen wortgleich in `preview.notes[]` — das Feld fehlt, wenn es
+  keine gibt. Nichts zu ändern: `{"confirm": null, "unchanged": true}`.
 - **Wiederholen nach Netzfehler:** derselbe Aufruf mit demselben `confirmToken`
   und denselben Argumenten liefert 30 Minuten lang die erste Antwort erneut
   (`replayed: true`), ohne erneut zu schreiben; läuft sie noch, `inProgress: true`.
@@ -445,6 +447,17 @@ deutscher Satz für Menschen. `/api/uploads` behält `error` als Code-Zeichenket
 öffentlich, und CORS lässt den Kopf bewusst nicht zu. Ein zustandsloser Server beantwortet
 `tools/call` auch als ersten POST ohne `initialize` — ein Werkzeugaufruf braucht
 also nur einen POST.
+
+**Eine Sitzung je Gespräch, nicht je Aufruf.** Gemessen vom Chatbot-Team mit dem
+MCP-Python-SDK 1.30.0: `ClientSession.call_tool` holt `tools/list`, sobald die
+Sitzung das Werkzeug noch nicht kennt — bei jedem Werkzeug, mit oder ohne
+Ausgabeschema. Ein Client, der je Aufruf eine neue Sitzung öffnet, lädt also bei
+jedem Aufruf die ganze Werkzeugliste: gegen Staging in 18 von 18 Aufrufen
+0,25–0,33 s und 171 KiB zusätzlich. Das SDK prüft außerdem eine Antwort OHNE
+Fehler gegen das veröffentlichte Ausgabeschema des Werkzeugs; eine Antwort mit
+`isError: true` wird nicht geprüft. Empfehlung: eine Sitzung je Gespräch halten —
+oder die Werkzeugliste zwischenspeichern bzw. die Prüfung abschalten, wenn der
+Client die Antworten selbst auswertet. Beides beschreibt das Python-SDK; der TypeScript-Client des SDK prüft auch eine Antwort mit `isError`, weshalb die veröffentlichten Ausgabeschemata einen Fehlerzweig tragen.
 
 ### 3.6 Wer was darf
 

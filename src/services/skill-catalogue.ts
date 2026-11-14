@@ -101,7 +101,7 @@ export type IncompleteReason = 'unreachable' | 'limit';
 
 export async function collectSkillNodes(
   rootId: string, includeSubcollections: boolean,
-): Promise<{ nodes: WloNode[]; incomplete: boolean; reason?: IncompleteReason }> {
+): Promise<{ nodes: WloNode[]; incomplete: boolean; reason?: IncompleteReason; restricted?: true }> {
   const visited = new Set<string>([rootId]);
   const found: WloNode[] = [];
   let candidates = 0;
@@ -110,6 +110,7 @@ export async function collectSkillNodes(
   let skipped = 0;   // sub-collections the visit cap refused
   let failed = 0;    // collections whose read threw
   let read = 0;      // collections successfully read
+  let refused = 0;   // sub-collections the repository refused to open (contents or listing)
   let cutShort = 0;  // collections holding more files than one page reads
   let rootRefused: number | null = null;
 
@@ -139,17 +140,22 @@ export async function collectSkillNodes(
       if (!result) { failed += 1; continue; }   // mapPool nulls a failed collection
       read += 1;
       const [listing, subListing] = result;
-      if (!listing) continue;   // refused: nothing to read here, and nothing to retry
+      // Refused: nothing to read here and nothing to retry — but it is SAID,
+      // or a tree with a closed skillset looks complete (chatbot team, 2026-11-14).
+      // Its sub-collections are still walked when THEIR listing answered — as
+      // the recursive contents walk does.
+      if (!listing) refused += 1;
       // Sub-collections that could not be LISTED are skillsets nobody looked into.
       // A REFUSED listing is not one of them — it is no outage (D6).
       if (didNotAnswer(subListing)) failed += 1;
+      else if ('refused' in subListing && subListing.refused && listing) refused += 1;
       const subs = subListing.nodes;
-      candidates += listing.nodes.length;
+      candidates += listing?.nodes.length ?? 0;
       // ONE page per collection. A collection holding more than that was read
       // in part, and the skill wanted may be on the part that was not — which
       // nothing said (audit 2026-11-12, K-16).
-      if ((listing.pagination?.total ?? 0) > listing.nodes.length) cutShort += 1;
-      for (const n of listing.nodes) {
+      if (listing && (listing.pagination?.total ?? 0) > listing.nodes.length) cutShort += 1;
+      for (const n of listing?.nodes ?? []) {
         if (nodeMatchesCriteria(n, [{ property: 'ccm:oeh_extendedType', values: [SKILL_CONTENT_TYPE_URI] }])) {
           found.push(n);
         }
@@ -196,5 +202,9 @@ export async function collectSkillNodes(
       rootId, candidates, expected: SKILL_CONTENT_TYPE_URI,
     });
   }
-  return { nodes: found, incomplete, ...(incomplete ? { reason: failed > 0 ? 'unreachable' as const : 'limit' as const } : {}) };
+  return {
+    nodes: found, incomplete,
+    ...(incomplete ? { reason: failed > 0 ? 'unreachable' as const : 'limit' as const } : {}),
+    ...(refused > 0 ? { restricted: true as const } : {}),
+  };
 }

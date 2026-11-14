@@ -37,7 +37,11 @@ export const collectionOverviewSchema = z.object({
   skills: z.array(z.object({
     nodeId: z.string(), title: z.string(), context: z.string().optional(), description: z.string().optional(),
   })).optional(),
-  subcollections: z.array(z.object({ nodeId: z.string(), title: z.string(), contentCount: z.number().optional() })).optional(),
+  subcollections: z.array(z.object({
+    nodeId: z.string(), title: z.string(), contentCount: z.number().optional(),
+    /** Its contents are not readable for this login (401/403/404) — no count, and no retry changes that. */
+    contentsRefused: z.literal(true).optional(),
+  })).optional(),
   subcollectionsTruncated: z.literal(true).optional(),
   contents: z.object({
     total: z.number(), truncated: z.boolean(),
@@ -120,7 +124,7 @@ function render(o: CollectionOverview): string {
   }
   if (o.subcollections?.length) {
     lines.push(`Untersammlungen: ${o.subcollections
-      .map(s => `${s.title} (${s.contentCount ?? '?'}) — ${s.nodeId}`).join('; ')}${o.subcollectionsTruncated ? ' …' : ''}`);
+      .map(s => `${s.title} (${s.contentsRefused ? 'mit dieser Anmeldung nicht lesbar' : s.contentCount ?? '?'}) — ${s.nodeId}`).join('; ')}${o.subcollectionsTruncated ? ' …' : ''}`);
   }
   if (o.contents) {
     lines.push(`Inhalte (${o.contents.items.length} von ${o.contents.total}):`);

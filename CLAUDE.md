@@ -1745,7 +1745,20 @@ reuse; add ChatGPT `search`/`fetch` tools; Docker/vServer deploy with real SSE.
   `wlo_set_topic_page`). A refused START node is an error that says so
   (`notReadable`, which carries `HTTP <status>` so `failureCode` answers
   `not_found` / `forbidden` — a 404 is `not_found` wherever a failure is coded,
-  never the `upstream_error` of an outage). The four notice wordings a client recognises are pinned in
+  never the `upstream_error` of an outage). **And refused is not EMPTY either
+  (chatbot team, 2026-11-14):** D6 took the outage report away and put nothing
+  in its place, so a tree with a closed branch looked complete. A refusal met
+  BELOW the start node is said: `childrenRefused` on a tree node,
+  `restricted` + `RESTRICTED_NOTICE` (`services/collection-traversal.ts`, one
+  wording, no promise of a retry) on a list answer — and a sub-collection's
+  refused CONTENTS are treated like its refused listing: left out and marked,
+  never the end of the call. A read of ONE node's contents inside the tree walk
+  (`readNodeContents`: count, preview) marks the node (`contentsRefused` /
+  `contentsUnread`) and never removes it — thrown through `mapPool` it became a
+  `null` that was filtered out, and the branch was gone. Whoever adds a walk
+  answers three cases, not two. Deliberately different: a Themenseite whose
+  variants this login may not read reports "no variant" — for that login there
+  is no page to show. The four notice wordings a client recognises are pinned in
   `tests/refused-is-not-unreachable.test.ts` — change them only with notice.
 - **A collection by NAME (Z3, 2026-11-13)** — `services/collection-by-name.ts`,
   wrapped around five read tools by `tools/collection-arg.ts`. EXACTLY ONE

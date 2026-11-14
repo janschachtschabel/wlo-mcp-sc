@@ -6,6 +6,37 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — chatbot team's answer of 2026-11-14
+
+- **A branch the repository refuses to open is SAID — it was silently an empty one.** Since 2026-11-13 a
+  sub-listing answered 401/403/404 is no longer reported as an outage; nothing took its place, so a tree with a
+  closed branch looked complete. Now: a tree node carries `childrenRefused: true` (`browse_collection_tree`), and a
+  list answer carries `restricted: true` with one sentence that promises no retry (`search_wlo_collections` in its
+  tree search, `get_collection_contents` with `includeSubcollections`, `search_skill`, `get_skill_for_task`) — in
+  `structuredContent`, in the JSON text and in Markdown. "Keine Sammlungen gefunden" / "Sammlung ist leer" /
+  "Keine Skills gefunden" is not printed over such an answer.
+- **A branch whose own contents could not be read no longer vanishes from the tree.** With `includeContentCounts`
+  or `includeContentPreview` (and always in `get_collection_overview`) a refused or failed read of one node's
+  contents removed the node itself. It stays now, marked `contentsRefused` or `contentsUnread`, without a count.
+- **The same refusal no longer ends a recursive listing.** A sub-collection whose CONTENTS the repository refused
+  aborted `get_collection_contents` with `forbidden` / `not_found`, while a refused sub-LISTING passed for empty.
+  Both are now left out and marked `restricted`, and the rest is delivered. A refused START node stays an error; an
+  outage (5xx) keeps its behaviour.
+- **`find_content_by_url` codes a 404 as `not_found`** (it collapsed every code but `upstream_busy` into
+  `upstream_error`).
+
+### Added — chatbot team's answer of 2026-11-14
+
+- **`preview.notes: string[]`** in the structured confirmation of every curation preview: the ⚠ lines of the text
+  (an alias written under another name, a possible duplicate under a cleaned address, a namesake at the filing
+  place) — the same strings, absent when there are none.
+- **`error.reason`** on `ambiguous_collection`: `several`, `none` or `unverified`.
+- **`wlo_update_compendium`'s preview opens with `Sammlung: „Titel“ (id)`**, like `wlo_update_content`'s.
+- **`previewUrl`** (optional) per hit of `search_wlo_content_many`.
+- `docs/INTEGRATION.md` §3.5: what the MCP Python SDK does per session (measured by the chatbot team) — it fetches
+  `tools/list` before the first call of every tool, so a client opening a session per call downloads the whole
+  list each time (0.25–0.33 s, 171 KiB), and it validates a non-error answer against a published output schema.
+
 ### Fixed — 2026-11-13 (upload and full-text measurement)
 
 - **A stored full text is read under a byte bound** (`TEXT_CONTENT_MAX_BYTES`, 4 MiB). `GET …/textContent`

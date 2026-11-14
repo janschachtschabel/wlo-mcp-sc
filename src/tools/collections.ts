@@ -25,6 +25,7 @@ import { queryMetaContent, subjectRegistryText, toolError } from './shared.js';
 import { searchWithinCollection } from '../services/search.js';
 import {
   RECURSIVE_SKIP_MAX,
+  RESTRICTED_NOTICE,
   collectRecursiveContents,
   findCollectionsByTreeTraversal,
   notReadable,
@@ -100,7 +101,7 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
       const keepNode = (n: WloNode) =>
         !(excluded.size && excluded.has(n.ref?.id ?? '')) && nodeMatchesCriteria(n, collCriteria);
 
-      const renderOut = async (nodes: WloNode[], qType: string, emptyMsg = 'Keine Sammlungen gefunden.', incomplete = false) => {
+      const renderOut = async (nodes: WloNode[], qType: string, emptyMsg = 'Keine Sammlungen gefunden.', incomplete = false, restricted = false) => {
         const kept = nodes.filter(keepNode);
         // Shown-set semantics: after local exclusion + criteria filtering the
         // pre-filter backend count would overstate the result.
@@ -123,13 +124,14 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         const unchecked = formatted.filter(n => n.nodeType === 'collection' && !n.skillRegistry
           && !forced.answered.has(n.nodeId) && !remembered.has(n.nodeId));
         const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(formatted, total, { incomplete })
+          ? renderToJson(formatted, total, { incomplete, restricted })
           // The pointer covers exactly the collections whose lookup did NOT
           // answer. Suppressing it whenever the lookup was REQUESTED reported a
           // failed lookup as "checked, none there" (audit 2026-11-12, K-15).
           : [renderToText(formatted, total, { registryHint: false }) || (incomplete ? '' : emptyMsg),
             ...registryHintFor(unchecked).map(oneLine),
-            ...(incomplete ? [incompleteNotice('Sammlungen', formatted.length === 0)] : [])].filter(Boolean).join('\n\n');
+            ...(incomplete ? [incompleteNotice('Sammlungen', formatted.length === 0)] : []),
+            ...(restricted ? [RESTRICTED_NOTICE] : [])].filter(Boolean).join('\n\n');
         const baseCriteria: LabeledCriterion[] = params.query?.trim()
           ? [{ property: 'ngsearchword', values: [params.query] }]
           : [];
@@ -148,8 +150,12 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         if ((params.outputFormat ?? 'markdown') === 'json' && incomplete) {
           content.push({ type: 'text' as const, text: incompleteNotice('Sammlungen', formatted.length === 0) });
         }
+        if ((params.outputFormat ?? 'markdown') === 'json' && restricted) content.push({ type: 'text' as const, text: RESTRICTED_NOTICE });
         content.push(meta);
-        return { content, structuredContent: { total, count: formatted.length, results: formatted, ...(incomplete ? { incomplete: true as const } : {}), ...unresolvedField } };
+        return { content, structuredContent: {
+          total, count: formatted.length, results: formatted,
+          ...(incomplete ? { incomplete: true as const } : {}), ...(restricted ? { restricted: true as const } : {}), ...unresolvedField,
+        } };
       };
 
       // A collection index did not answer (set in the direct-search branch).
@@ -195,23 +201,29 @@ Filter (discipline, educationalContext) nehmen deutsche Labels oder URIs und wir
         const matches = traversal.matches;
         // Sub-lists that did not answer: the traversal's "nothing" is then not a finding either.
         searchIncomplete ||= traversal.unread > 0;
+        // Sub-lists the repository refused: no outage, and no "nothing there" either.
+        const restricted = traversal.refused > 0;
 
         if (matches.length === 0) {
           // "Keine Sammlungen gefunden" is a statement about the catalogue; with a
           // search index that did not answer it is not ours to make (K-3).
           const text = searchIncomplete
-            ? incompleteNotice('Sammlungen', true)
+            ? [incompleteNotice('Sammlungen', true), ...(restricted ? [RESTRICTED_NOTICE] : [])].join('\n\n')
+            : restricted ? `In den lesbaren Teilen wurde keine Sammlung für "${query}" gefunden.\n\n${RESTRICTED_NOTICE}`
             : `Keine Sammlungen gefunden für "${query}". Versuche einen übergeordneten Begriff (z.B. "Mathematik" statt "Bruchrechnung") oder frag nach verfügbaren Sammlungen ohne Suchbegriff.`;
           // JSON mode keeps a parseable first block (an empty list) and carries the
           // sentence as its own block — prose alone broke every client that parses block 0.
           const content = (params.outputFormat ?? 'markdown') === 'json'
-            ? [{ type: 'text' as const, text: renderToJson([], 0, { incomplete: searchIncomplete }) }, { type: 'text' as const, text }]
+            ? [{ type: 'text' as const, text: renderToJson([], 0, { incomplete: searchIncomplete, restricted }) }, { type: 'text' as const, text }]
             : [{ type: 'text' as const, text }];
           if (unresolvedHint) content.push({ type: 'text' as const, text: unresolvedHint });
-          return { content, structuredContent: { total: 0, count: 0, results: [], ...(searchIncomplete ? { incomplete: true as const } : {}), ...unresolvedField } };
+          return { content, structuredContent: {
+            total: 0, count: 0, results: [],
+            ...(searchIncomplete ? { incomplete: true as const } : {}), ...(restricted ? { restricted: true as const } : {}), ...unresolvedField,
+          } };
         }
 
-        return await renderOut(matches, 'collection_tree_traversal', undefined, searchIncomplete);
+        return await renderOut(matches, 'collection_tree_traversal', undefined, searchIncomplete, restricted);
       } catch (err) {
         return toolError('Fehler bei der Sammlungssuche', err);
       }
@@ -274,6 +286,7 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         let totalHits = 0;
         let effectiveSkip = skipCount;
         let walkIncomplete = false;
+        let walkRestricted = false;
 
         if (params.includeSubcollections && filter === 'files') {
           // The BFS has no upstream offset, so paginate locally: collect
@@ -284,6 +297,7 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
           allNodes = recursive.nodes.slice(effectiveSkip);
           totalHits = recursive.totalHits;
           walkIncomplete = recursive.incomplete === true;
+          walkRestricted = recursive.restricted === true;
         } else {
           // Cap the upstream page size: excluded.size is bounded (schema max 200)
           // but we still don't want a caller to force an oversized upstream query.
@@ -305,9 +319,9 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         const subjectRegistry = await subjectRegistryText(params.nodeId, params.skillContext);
 
         const text = (params.outputFormat ?? 'markdown') === 'json'
-          ? renderToJson(allNodes, totalHits, { incomplete: walkIncomplete })
+          ? renderToJson(allNodes, totalHits, { incomplete: walkIncomplete, restricted: walkRestricted })
           // "Sammlung ist leer" is a statement about the collection — not over a walk that could not read all of it.
-          : (renderToText(allNodes, totalHits) || (walkIncomplete ? '' : 'Sammlung ist leer oder nodeId nicht gefunden.'));
+          : (renderToText(allNodes, totalHits) || (walkIncomplete || walkRestricted ? '' : 'Sammlung ist leer oder nodeId nicht gefunden.'));
         const meta = queryMetaContent({
           toolName: 'get_collection_contents',
           queryType: params.includeSubcollections ? 'collection_children_recursive' : 'collection_children',
@@ -322,11 +336,15 @@ Statt der nodeId kann der Titel der Sammlung als \`collection\` angegeben werden
         // (the same rule the sibling tools follow for their hints).
         const content = [{ type: 'text' as const, text }].filter(c => c.text);
         if (walkIncomplete) content.push({ type: 'text' as const, text: WALK_INCOMPLETE_NOTE });
+        if (walkRestricted) content.push({ type: 'text' as const, text: RESTRICTED_NOTICE });
         if (subjectRegistry) content.push({ type: 'text' as const, text: subjectRegistry });
         content.push(meta);
         return {
           content,
-          structuredContent: { total: totalHits, count: allNodes.length, results: allNodes, ...(walkIncomplete ? { incomplete: true as const } : {}) },
+          structuredContent: {
+            total: totalHits, count: allNodes.length, results: allNodes,
+            ...(walkIncomplete ? { incomplete: true as const } : {}), ...(walkRestricted ? { restricted: true as const } : {}),
+          },
         };
       } catch (err) {
         return toolError('Fehler beim Abruf der Sammlungsinhalte', err);

@@ -150,6 +150,8 @@ export interface ShortHit {
   learningResourceTypes: string[];
   educationalContexts: string[];
   license: string;
+  /** `FormattedNode.previewUrl` when it is set; no key otherwise. For display only — not in the text. */
+  previewUrl?: string;
 }
 
 export interface ManyQueryResult {
@@ -338,6 +340,7 @@ function shortHit(n: FormattedNode): ShortHit {
     learningResourceTypes: n.learningResourceTypes,
     educationalContexts: n.educationalContexts,
     license: n.license,
+    ...(n.previewUrl ? { previewUrl: n.previewUrl } : {}),
   };
 }
 

@@ -357,7 +357,7 @@ export function previewReply(cs: ChangeSet, whatHappensNext: string, notes: stri
       `${whatHappensNext} Dazu denselben Aufruf mit confirmToken: ${token} wiederholen.`,
       'Der Schlüssel gilt einmalig und zehn Minuten lang.',
     ].join('\n'),
-  ), structuredConfirm(cs, token, now));
+  ), structuredConfirm(cs, token, now, notes));
 }
 
 /**
@@ -370,8 +370,13 @@ export function previewReply(cs: ChangeSet, whatHappensNext: string, notes: stri
  * the stored ones (URIs, not labels) — the text is where they are made legible.
  * No `outputSchema` on these tools (see `preparedReply`), so nothing validates
  * it away.
+ *
+ * `notes` are the SAME strings the text prints as its ⚠ lines (an alias that
+ * is written under another name, a possible duplicate, a namesake at the filing
+ * place) — handed over by `previewReply`, never derived again: a program that
+ * shows its own confirmation otherwise drops what the person was warned about.
  */
-function structuredConfirm(cs: ChangeSet, token: string, mintedAt: number) {
+function structuredConfirm(cs: ChangeSet, token: string, mintedAt: number, notes: string[]) {
   const values = (v: string[] | null) => v?.map(flattenText) ?? null;
   // Labels from the SAME lookup the text preview uses, and only where one names
   // something the value does not already say (a URI, a rating) — so a client
@@ -389,7 +394,8 @@ function structuredConfirm(cs: ChangeSet, token: string, mintedAt: number) {
       target: {
         nodeId: cs.nodeId,
         // What the node IS where the tool said so: the metadata tools take collections too.
-        kind: cs.named === 'Sammlung' ? 'collection' : cs.kind,
+        // Only for `content`: a tool with a kind of its own (compendium) keeps it.
+        kind: cs.kind === 'content' && cs.named === 'Sammlung' ? 'collection' : cs.kind,
         title: flattenText(cs.title),
         ...(cs.redirectedFrom ? { redirectedFrom: cs.redirectedFrom } : {}),
       },
@@ -411,6 +417,7 @@ function structuredConfirm(cs: ChangeSet, token: string, mintedAt: number) {
           ...(addedLabels ? { addedLabels } : {}),
         };
       }),
+      ...(notes.length > 0 ? { notes } : {}),
     },
   };
 }

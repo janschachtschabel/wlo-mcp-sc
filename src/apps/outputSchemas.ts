@@ -121,6 +121,8 @@ export const nodeListSchema = z.object({
   ...contentSearchDisclosures,
   /** search_wlo_collections: a collection index did not answer — the list may lack hits (K-3). */
   incomplete: z.literal(true).optional(),
+  /** A walk met a branch the repository refused to open (401/403/404): it is missing here, and no retry changes that. */
+  restricted: z.literal(true).optional(),
   /**
    * Content type derived from a medium word in the query (never set for an
    * explicit `learningResourceType`). Declared here because an undeclared key
@@ -274,6 +276,11 @@ export type BrowseTreeNode = z.infer<typeof formattedNodeSchema> & {
   hasMoreChildren?: boolean;
   /** The listing of this node's sub-collections did not answer. */
   childrenUnread?: boolean;
+  /** The repository refused that listing: not readable for this login, or gone. */
+  childrenRefused?: boolean;
+  /** The node's own contents were refused / did not answer: no count, no preview. */
+  contentsRefused?: boolean;
+  contentsUnread?: boolean;
 };
 
 const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
@@ -283,6 +290,9 @@ const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
     children: z.array(browseTreeNodeSchema).optional(),
     hasMoreChildren: z.boolean().optional(),
     childrenUnread: z.boolean().optional(),
+    childrenRefused: z.boolean().optional(),
+    contentsRefused: z.boolean().optional(),
+    contentsUnread: z.boolean().optional(),
   }),
 );
 

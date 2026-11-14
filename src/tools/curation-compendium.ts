@@ -106,6 +106,10 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
         if (!validated.ok) return errorText(validated.reason);
 
         const cs = buildChangeSet(target.targetId, 'compendium', before, { [PROPERTY]: validated.values }, {
+          // The preview opens with WHICH collection, as `wlo_update_content`'s
+          // does. The title is the one the change set held before (so the
+          // fingerprint, which covers title and id, is what it was).
+          subject: { collection: true, title: collectionTitleFromProperties(before) },
           ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
         });
         const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';

@@ -315,6 +315,15 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
             if (n.childrenUnread) {
               lines.push(`${pad}  … die Unterthemen ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt. Später erneut: browse_collection_tree mit nodeId=${n.nodeId}`);
             }
+            if (n.contentsRefused) {
+              lines.push(oneLine(`${pad}  … die Inhalte von „${n.title}“ sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
+            } else if (n.contentsUnread) {
+              lines.push(oneLine(`${pad}  … die Inhalte von „${n.title}“ ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt.`));
+            }
+            if (n.childrenRefused) {
+              // The title is repository-supplied: one line, like every other value here.
+              lines.push(oneLine(`${pad}  … die Unterthemen von „${n.title}“ sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
+            }
             if (n.hasMoreChildren) {
               lines.push(`${pad}  … weitere Unterthemen vorhanden — zum Öffnen: browse_collection_tree mit nodeId=${n.nodeId}`);
             }

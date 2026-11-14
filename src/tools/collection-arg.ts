@@ -92,6 +92,9 @@ function ambiguousResult(name: string, miss: Miss, param: string, json: boolean)
     disciplineHint(miss, param),
   ].filter(Boolean).join('\n');
   const result = codedErrorResult('ambiguous_collection', text, {
+    // Which of the three cases the one code stands for — the value the sentence
+    // above was chosen by, so a program need not read the wording.
+    reason: miss.reason,
     candidates: miss.candidates,
     ...(miss.incomplete ? { incomplete: true } : {}),
     ...(miss.windowFull ? { windowFull: true } : {}),

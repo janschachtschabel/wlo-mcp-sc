@@ -40,7 +40,7 @@ export const urlLookupSchema = z.object({
     normalized: z.string().optional(),
     matches: z.array(matchSchema),
     error: z.object({
-      code: z.enum(['invalid_url', 'upstream_busy', 'upstream_error']), message: z.string(),
+      code: z.enum(['invalid_url', 'upstream_busy', 'not_found', 'upstream_error']), message: z.string(),
       retryAfter: z.number().optional(),
     }).optional(),
   })),
@@ -58,16 +58,19 @@ async function lookUp(url: string, includeCollections: boolean): Promise<Entry> 
     found = await findUrlMatches(url, normalized);
   } catch (err) {
     log.warn('url lookup failed', { error: err instanceof Error ? err.message : String(err) });
-    // Busy is told apart from broken here as everywhere else (`failureFields`);
-    // a timeout or a refusal stays `upstream_error`, the code this entry had.
+    // Busy is told apart from broken here as everywhere else (`failureFields`),
+    // and so is a 404: an ANSWER, not an outage — as `upstream_error` a client
+    // retried what never comes (chatbot follow-up 2026-11-14). A timeout or a
+    // 401/403 stays `upstream_error`, the code this entry had.
     const fields = failureFields(err);
-    const busy = fields.code === 'upstream_busy';
     return {
       url, normalized, matches: [],
-      error: busy
+      error: fields.code === 'upstream_busy'
         ? { code: 'upstream_busy', retryAfter: fields.retryAfter,
           message: 'Das Repository ist gerade überlastet; ob es einen Datensatz gibt, ist offen.' }
-        : { code: 'upstream_error', message: 'Die Suche im Repository ist fehlgeschlagen; ob es einen Datensatz gibt, ist offen.' },
+        : fields.code === 'not_found'
+          ? { code: 'not_found', message: 'Das Repository hat die Suche mit „nicht gefunden“ (HTTP 404) beantwortet — keine Störung, erneutes Versuchen ändert nichts; ob es einen Datensatz gibt, ist offen.' }
+          : { code: 'upstream_error', message: 'Die Suche im Repository ist fehlgeschlagen; ob es einen Datensatz gibt, ist offen.' },
     };
   }
   // Bounded: twenty copies of one address are forty reads, and four addresses
@@ -96,7 +99,7 @@ export function registerFindByUrlTool(server: McpServer): void {
     name: 'find_content_by_url',
     title: 'WLO Datensatz zur Adresse',
     description: `Prüfe für bis zu ${MAX_URLS} Web-Adressen, ob es in WLO schon einen Datensatz dazu gibt (Feld ccm:wwwurl) — vor dem Erschließen oder Anlegen einer Seite.
-Je Treffer "match": "exact" = dieselbe Adresse (bis auf Groß-/Kleinschreibung) — als Dublette behandeln; "normalized" = gleich erst nach Bereinigung (Schrägstrich am Ende, Fragment, utm_*/fbclid/gclid entfernt) — nachfragen, nicht still als Dublette werten. Kein Volltext-Vergleich: eine andere Seite derselben Domain ist kein Treffer. Es erscheint nur, was die anfragende Anmeldung lesen darf. Fehler stehen je Eintrag ("invalid_url", "upstream_error"), nicht für den ganzen Aufruf.
+Je Treffer "match": "exact" = dieselbe Adresse (bis auf Groß-/Kleinschreibung) — als Dublette behandeln; "normalized" = gleich erst nach Bereinigung (Schrägstrich am Ende, Fragment, utm_*/fbclid/gclid entfernt) — nachfragen, nicht still als Dublette werten. Kein Volltext-Vergleich: eine andere Seite derselben Domain ist kein Treffer. Es erscheint nur, was die anfragende Anmeldung lesen darf. Fehler stehen je Eintrag ("invalid_url", "upstream_busy", "not_found", "upstream_error"), nicht für den ganzen Aufruf.
 includeCollections=true zählt je Treffer die Sammlungen (kostet je Treffer zwei Abrufe).
 Nicht für die thematische Suche — dafür search_wlo_content.`,
     inputSchema: {

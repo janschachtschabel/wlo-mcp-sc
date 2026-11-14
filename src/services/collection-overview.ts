@@ -72,7 +72,7 @@ export interface CollectionOverview {
     byLevel: Array<{ label: string; count: number }>;
   };
   skills?: Array<{ nodeId: string; title: string; context?: string; description?: string }>;
-  subcollections?: Array<{ nodeId: string; title: string; contentCount?: number }>;
+  subcollections?: Array<{ nodeId: string; title: string; contentCount?: number; contentsRefused?: true }>;
   /** Set only when there are more sub-collections than were listed. */
   subcollectionsTruncated?: true;
   contents?: {
@@ -192,6 +192,8 @@ export async function getCollectionOverview(collectionId: string, opts: Overview
       });
       overview.subcollections = tree.nodes.map(n => ({
         nodeId: n.nodeId, title: n.title, ...(n.fileCount !== undefined ? { contentCount: n.fileCount } : {}),
+        // Not readable for this login: listed all the same — without it the list looked complete.
+        ...(n.contentsRefused ? { contentsRefused: true as const } : {}),
       }));
       if (tree.truncated) overview.subcollectionsTruncated = true;
     },
