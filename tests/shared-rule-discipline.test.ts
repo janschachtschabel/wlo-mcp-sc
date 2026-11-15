@@ -232,8 +232,18 @@ test('an address a CLIENT names is read only where its key was checked', () => {
   assert.match(app, /forwarderBudget\([^;()]*(?:\([^;()]*\)[^;()]*)*?forwardedClientKey\(/,
     'and there only as the address forwarderBudget weighs against the key');
   const lib = readFileSync(join(srcDir, 'rate-limit.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-  assert.deepEqual(lib.match(/[^\n]*\bforwardedClientKey\([^\n]*/g)?.map(l => l.trim().slice(0, 40)),
-    ['export function forwardedClientKey(forwa'], 'rate-limit.ts only defines it');
+  assert.deepEqual(lib.match(/[^\n]*\bforwardedClientKey\(/g)?.map(l => l.trim()),
+    ['export function forwardedClientKey('], 'rate-limit.ts only defines it');
+  // The header of our own (`X-WLO-Client-Address`) the same way: its constant is
+  // defined in client-budget.ts and used once, as forwardedClientKey's first
+  // argument; its literal nowhere else.
+  assert.deepEqual(offenders(/\bCLIENT_ADDRESS_HEADER\b|['"]x-wlo-client-address['"]/i, ['client-budget.ts', 'http-app.ts']), [],
+    'the client-named address header is read only in http-app.ts');
+  assert.equal(app.match(/\bCLIENT_ADDRESS_HEADER\b/g)?.length, 2, 'imported once, read once');
+  assert.match(app, /forwardedClientKey\(req\.headers\[CLIENT_ADDRESS_HEADER\]/, 'and read only as forwardedClientKey\'s first argument');
+  // …and lazily: forwarderBudget calls it only behind a known key, so for anyone
+  // else the header is not even parsed (review 2026-11-15).
+  assert.match(app, /\(\) => forwardedClientKey\(/, 'passed as a thunk, read only behind a key');
 });
 
 /**

@@ -980,7 +980,7 @@ paths:
         host may forward the exchange here server to server: with its
         `X-WLO-Client-Key` the request spends that client's protocol budget,
         and the guessing guard counts per address it names in
-        `X-Forwarded-For` (the hop it added).
+        `X-WLO-Client-Address` (else in the `X-Forwarded-For` hop it added).
       x-requires-env: WLO_AUTH_PRIVATE_KEY, WLO_SESSION_EXCHANGE
       x-cors: none
       security: []
@@ -994,6 +994,7 @@ paths:
           required: true
           schema: { type: string }
         - $ref: '#/components/parameters/ClientKey'
+        - $ref: '#/components/parameters/ClientAddress'
       requestBody:
         required: false
         description: Not read; send `{}` with `Content-Type: application/json` (the declared JSON type is what forces a preflight).
@@ -1475,6 +1476,17 @@ components:
       name: X-WLO-Client-Key
       in: header
       description: A trusted client's key (`TRUSTED_CLIENT_KEYS`); selects its own budget instead of the address's.
+      schema: { type: string }
+    ClientAddress:
+      name: X-WLO-Client-Address
+      in: header
+      description: >-
+        With a valid `X-WLO-Client-Key` only: the address of the person a
+        trusted client forwards for — one IP address, no port, IPv6 without
+        brackets, no zone id. The distinct-session guard counts per this
+        address. When it is sent, `X-Forwarded-For` is not read, and a value
+        that is not a usable address names nobody (the client counts as one
+        address). Ignored without a key.
       schema: { type: string }
     Q:
       name: q

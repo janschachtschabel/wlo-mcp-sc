@@ -32,7 +32,7 @@ import { proveLogin, unreachableFailure, type LoginFailure, type VerifyDeps } fr
 import type { WloCredential } from './credential.js';
 import { isSessionCookieString, sessionCredentialHeader, sessionJti } from './upstream-auth.js';
 import { log } from '../logger.js';
-import { logAccount } from '../log-privacy.js';
+import { logAccount, logAddress } from '../log-privacy.js';
 
 export { sessionCookiesFrom } from './upstream-auth.js';
 
@@ -102,7 +102,9 @@ export async function exchangeSession(
     { v: 2, jti, u: identity.authority, secret: session.cookie, iat: listed.iat, k: 'session' },
     deps.support.keys.publicKeyPem,
   );
-  log.info('session exchanged for an access block', { label: logAccount(identity.authority) });
+  // The address it was counted under, pseudonymised: distinct pseudonyms show that a
+  // forwarder's people are told apart.
+  log.info('session exchanged for an access block', { label: logAccount(identity.authority), ip: logAddress(deps.ip) });
   return {
     ok: true, block, authority: identity.authority,
     ...(identity.displayName ? { displayName: identity.displayName } : {}),

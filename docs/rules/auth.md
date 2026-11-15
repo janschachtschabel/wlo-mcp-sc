@@ -264,10 +264,13 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   without the object. (13) A second form: a TRUSTED FORWARDER (the chatbot backend) owns the path on the
   repository's host and passes the exchange on server to server to `/auth/session` at the root. With a key from
   `TRUSTED_CLIENT_KEYS`, `/auth/session` and `/auth/revoke` spend the client's protocol budget instead of the
-  address budget, and the distinct-session guard counts per address the client names (`forwardedClientKey`, the hop
-  it added) inside the client's space — every exchange of a forwarder comes from ITS one address, and a class
+  address budget, and the distinct-session guard counts per address the client names (`forwardedClientKey`:
+  `X-WLO-Client-Address` when sent — then only it — else the `X-Forwarded-For` hop it added; the own header because
+  Traefik drops `X-Forwarded-For` from untrusted senders by default) inside the client's space — every exchange of a forwarder comes from ITS one address, and a class
   loading at once was refused there (chatbot team, 2026-11-15). The forwarded address is read ONLY behind a valid
   key (`tests/shared-rule-discipline.test.ts`); the password paths keep the address. `TRUST_PROXY` is not the
-  answer: it would make every caller's `X-Forwarded-For` count. It still decides which hop is the forwarder's
-  (`forwardedClientKey`), so it must fit the forwarder's way here: through the one proxy, or off when it connects
-  directly.
+  answer: it would make every caller's `X-Forwarded-For` count. For the `X-Forwarded-For` form it still decides
+  which hop is the forwarder's, so it must fit the forwarder's way here: through the one proxy, or off when it
+  connects directly. A forwarder that names no usable address is warned about in the log on every exchange. The
+  named address is parsed only behind a known key (`forwarderBudget` takes it as a thunk), never with a zone id, and
+  `addressUnit` is total: a header anyone can send must not be able to throw (review 2026-11-15).

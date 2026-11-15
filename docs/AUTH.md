@@ -507,8 +507,9 @@ backend — which checks the request and passes the exchange on server to server
 to `POST /auth/session` at this server's root. Nothing on the browser side
 changes, and this server need not run in the repository's cluster. It receives
 the cookie, the page's `Origin` (passed on only when the browser sent exactly
-that), the empty JSON body, the forwarder's `X-WLO-Client-Key` and an
-`X-Forwarded-For` naming the person's address. The `Origin` rule is unchanged.
+that), the empty JSON body, the forwarder's `X-WLO-Client-Key` and the
+person's address — in `X-WLO-Client-Address` (one address, no port), or as the
+hop it adds to `X-Forwarded-For`. The `Origin` rule is unchanged.
 
 What changes is the budget. Every exchange of such a forwarder arrives from its
 one address, where the request budget (`API_RATE_LIMIT_RPM`, shared with
@@ -517,15 +518,23 @@ would cap the whole platform at one address's share — a class loading at once
 was refused. With a key from `TRUSTED_CLIENT_KEYS`, `/auth/session` and
 `/auth/revoke` therefore spend the client's **protocol budget** (three times its
 rate, the one `/auth/status` spends), and the guard counts **per address the
-client names** (`client:<name>|ip:<address>`) — the hop the forwarder added,
-read only behind a valid key; anyone else's `X-Forwarded-For` stays free text,
-read no further than `TRUST_PROXY` says. A forged name costs only the key
+client names** (`client:<name>|ip:<address>`), read only behind a valid key:
+`X-WLO-Client-Address` when it is sent (then only it — a value that is no single
+address names nobody), else the `X-Forwarded-For` hop the forwarder added. The
+own header exists because a proxy in front of this server may drop
+`X-Forwarded-For` from senders it does not trust — Traefik does by default and
+writes only the connection's address — while it passes an unknown header
+untouched (chatbot team, 2026-11-15). Anyone else's headers stay free text,
+read no further than `TRUST_PROXY` says. When a forwarder names no usable
+address its people share one bucket, and the log says so
+(`… named no usable address …`, with the client's name); every exchange logs
+the address it was counted under as a pseudonym. A forged name costs only the key
 holder's own budget — which is then the only bound on how many distinct
 sessions it presents, and the same pot as its POSTs to `/mcp` and its
 `/auth/status`. `TRUST_PROXY` does not help here: it would make every caller's
-header count. It still decides which hop is the forwarder's, so it must fit the
-forwarder's way to this server (through the one proxy, or directly with it
-off). The paths that check a password (`/auth/issue`, `/auth/revoke-all`) keep
+header count. For the `X-Forwarded-For` form it still decides which hop is the
+forwarder's, so it must fit the forwarder's way to this server (through the one
+proxy, or directly with it off); `X-WLO-Client-Address` does not depend on it. The paths that check a password (`/auth/issue`, `/auth/revoke-all`) keep
 the address, whoever forwards.
 
 What is different on the wire, and measured (`scripts/session-disableguest-probe.mjs`,

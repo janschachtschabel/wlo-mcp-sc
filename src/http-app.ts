@@ -41,7 +41,7 @@ import { handleReady, READY_PATH } from './rest/ready.js';
 import { HEALTH_PATH, writeHealth } from './rest/health.js';
 import { refuseRateLimited, refuseTooManyLogins } from './rest/rate-limited.js';
 import {
-  budgetBucket, CLIENT_KEY_HEADER, countToolCalls, forwarderBudget, type ClientBudgets, type TrustedClient,
+  budgetBucket, CLIENT_ADDRESS_HEADER, CLIENT_KEY_HEADER, countToolCalls, forwarderBudget, type ClientBudgets, type TrustedClient,
 } from './client-budget.js';
 import { logAddress } from './log-privacy.js';
 import { applyBaselineHeaders } from './response-headers.js';
@@ -599,7 +599,7 @@ export function createHttpRequestHandler(
     // A trusted client forwarding a person's session exchange or logout (chatbot
     // team, 2026-11-15): its own budget, and the address it names for the person.
     const trustedForwarder = forwarderBudget(req.headers[CLIENT_KEY_HEADER],
-      forwardedClientKey(req.headers['x-forwarded-for'], trustProxy), authIp, clientBudgets);
+      () => forwardedClientKey(req.headers[CLIENT_ADDRESS_HEADER], req.headers['x-forwarded-for'], trustProxy), authIp, clientBudgets);
     if (await handleAuthEndpoint(req, res, {
       ip: authIp,
       ...(trustedForwarder ? { trustedForwarder } : {}),

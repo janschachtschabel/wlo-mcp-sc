@@ -310,6 +310,12 @@ async function route(
       return send(res, 400, { error: 'Es kam keine WLO-Sitzung mit. Bitte in WLO anmelden.' });
     }
     const limiter = deps.ticketAbuseLimiter ?? deps.authAbuseLimiter;
+    // The one thing an operator must see from a forwarder: every person it
+    // forwards now shares ONE bucket (a proxy dropped its X-Forwarded-For, or it
+    // sent no X-WLO-Client-Address). The client's name only — no address.
+    if (forwarder && !forwarder.named) {
+      log.warn('session exchange from a trusted client that named no usable address — its people share one bucket', { client: forwarder.key });
+    }
     const outcome = await exchangeSession(session, {
       ip: forwarder?.address ?? deps.ip, authAbuseLimiter: limiter, support,
       ...(forwarder ? { bucket: forwarder.abuseBucket } : {}),

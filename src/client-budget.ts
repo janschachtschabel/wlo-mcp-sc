@@ -25,6 +25,13 @@ export const MIN_CLIENT_KEY_LENGTH = 32;
 /** The header a trusted client sends. Never logged, never echoed. */
 export const CLIENT_KEY_HEADER = 'x-wlo-client-key';
 
+/**
+ * The person's address as a trusted client names it on `/auth/session`, where
+ * the distinct-session guard counts by it (`forwardedClientKey`). Read only
+ * behind a valid key.
+ */
+export const CLIENT_ADDRESS_HEADER = 'x-wlo-client-address';
+
 export interface TrustedClient { name: string; rpm: number }
 
 const hashKey = (key: string) => createHash('sha256').update(key).digest('hex');
@@ -149,19 +156,25 @@ export interface ForwarderBudget {
   abuseBucket: string;
   /** The person's address as the client named it, else the client's own — for the log, pseudonymised there. */
   address: string;
+  /** Whether the client named a usable address; without one its whole space is one bucket. */
+  named: boolean;
 }
 
 export function forwarderBudget(
-  header: string | string[] | undefined, namedAddress: string | null, ip: string, budgets: ClientBudgets | undefined,
+  header: string | string[] | undefined, readNamedAddress: () => string | null, ip: string, budgets: ClientBudgets | undefined,
 ): ForwarderBudget | undefined {
   if (!budgets) return undefined;
   const bucket = budgetBucket(header, ip, budgets.clients);
   const limiter = bucket.kind === 'client' ? budgets.protocol(bucket.key) : undefined;
   if (!limiter) return undefined;
+  // Read only now, behind a known key: for anyone else the headers it reads
+  // are free text and are not even parsed.
+  const namedAddress = readNamedAddress();
   return {
     limiter, key: bucket.key,
     abuseBucket: namedAddress ? `${bucket.key}|${addressBucket(namedAddress)}` : bucket.key,
     address: namedAddress ?? ip,
+    named: namedAddress !== null,
   };
 }
 

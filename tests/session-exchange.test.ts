@@ -514,3 +514,49 @@ test('the forwarder\'s budget applies to /auth/session and /auth/revoke only —
   await handleAuthEndpoint({ ...req({}), url: '/auth/issue' }, issue, deps);
   assert.equal(issue.out.status, 429, 'issuance checks a password: the address budget, whoever forwards');
 });
+
+// ── what the operator can see (chatbot team, third answer, 2026-11-15) ──────
+
+/** Capture the structured log lines written while `fn` runs. */
+async function captureLog(fn: () => Promise<void>): Promise<Record<string, unknown>[]> {
+  const real = process.stderr.write.bind(process.stderr);
+  const lines: string[] = [];
+  process.stderr.write = ((chunk: unknown) => { lines.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try { await fn(); } finally { process.stderr.write = real; }
+  return lines.flatMap((l) => l.split('\n').filter(Boolean))
+    .flatMap((l) => { try { return [JSON.parse(l) as Record<string, unknown>]; } catch { return []; } });
+}
+
+test('a session exchange logs the address it counted — as a pseudonym — and a forwarder that named none is warned about', async (t) => {
+  // Pseudonyms are the default; a developer's LOG_PERSONAL_DATA=plain must not decide this test.
+  const before = process.env['LOG_PERSONAL_DATA'];
+  delete process.env['LOG_PERSONAL_DATA'];
+  t.after(() => { if (before === undefined) delete process.env['LOG_PERSONAL_DATA']; else process.env['LOG_PERSONAL_DATA'] = before; });
+  await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const forwarder = (named: boolean, address = '203.0.113.5') => ({
+    limiter: createRateLimiter(100), key: 'client:boerdi', named,
+    abuseBucket: named ? `client:boerdi|ip:${address}` : 'client:boerdi', address: named ? address : '198.51.100.2',
+  });
+  const run = (named: boolean, sid: string, address?: string) => captureLog(async () => {
+    await handleAuthEndpoint(req({ cookie: `JSESSIONID=${sid}`, origin: REPO_ORIGIN }), res(),
+      endpointDeps({ sessionExchange: true, trustedForwarder: forwarder(named, address) }));
+  });
+  const named = await run(true, SID);
+  const done = named.find((l) => l['message'] === 'session exchanged for an access block');
+  assert.ok(done, 'the success line');
+  assert.equal(typeof done['ip'], 'string');
+  assert.notEqual(done['ip'], '203.0.113.5', 'a pseudonym, never the address');
+  assert.ok(!named.some((l) => String(l['message']).includes('named no usable address')));
+  const other = (await run(true, 'D'.repeat(32))).find((l) => l['message'] === 'session exchanged for an access block');
+  assert.equal(other?.['ip'], done['ip'], 'one address, one pseudonym');
+  const elsewhere = (await run(true, 'F'.repeat(32), '198.51.100.77')).find((l) => l['message'] === 'session exchanged for an access block');
+  assert.ok(elsewhere?.['ip'] && elsewhere['ip'] !== done['ip'], 'and another address another — so a forwarder\'s people can be told apart');
+
+  const unnamed = await run(false, 'E'.repeat(32));
+  const warn = unnamed.find((l) => String(l['message']).includes('named no usable address'));
+  assert.ok(warn, 'the operator sees that the whole client shares one bucket');
+  assert.equal(warn['client'], 'client:boerdi');
+  assert.ok(!JSON.stringify(unnamed).includes('198.51.100.2'), 'no address in the clear');
+});

@@ -175,23 +175,54 @@ test('the distinct-login limiter also says how long until its window ends', () =
 
 test('forwardedClientKey: the hop the forwarder added — the last one, or the one before our own proxy', () => {
   // The forwarder connects to us directly: the address it names is the last hop.
-  assert.equal(forwardedClientKey('203.0.113.5', false), '203.0.113.5');
-  assert.equal(forwardedClientKey('10.0.0.1, 203.0.113.5', false), '203.0.113.5', 'not what the person\'s browser claimed');
+  assert.equal(forwardedClientKey(undefined, '203.0.113.5', false), '203.0.113.5');
+  assert.equal(forwardedClientKey(undefined, '10.0.0.1, 203.0.113.5', false), '203.0.113.5', 'not what the person\'s browser claimed');
   // Behind our own proxy (TRUST_PROXY) the last hop is the forwarder itself.
-  assert.equal(forwardedClientKey('203.0.113.5, 198.51.100.2', true), '203.0.113.5');
-  assert.equal(forwardedClientKey(['203.0.113.5', '198.51.100.2'], true), '203.0.113.5', 'a repeated header joins');
+  assert.equal(forwardedClientKey(undefined, '203.0.113.5, 198.51.100.2', true), '203.0.113.5');
+  assert.equal(forwardedClientKey(undefined, ['203.0.113.5', '198.51.100.2'], true), '203.0.113.5', 'a repeated header joins');
 });
 
 test('forwardedClientKey: nothing, or something that is no address, names nobody', () => {
-  assert.equal(forwardedClientKey(undefined, false), null);
-  assert.equal(forwardedClientKey('', false), null);
-  assert.equal(forwardedClientKey('198.51.100.2', true), null, 'only our proxy\'s hop: the forwarder named nobody');
-  assert.equal(forwardedClientKey('jemand', false), null);
-  assert.equal(forwardedClientKey('203.0.113.5:4711', false), null, 'with a port it is no address');
+  assert.equal(forwardedClientKey(undefined, undefined, false), null);
+  assert.equal(forwardedClientKey(undefined, '', false), null);
+  assert.equal(forwardedClientKey(undefined, '198.51.100.2', true), null, 'only our proxy\'s hop: the forwarder named nobody');
+  assert.equal(forwardedClientKey(undefined, 'jemand', false), null);
+  assert.equal(forwardedClientKey(undefined, '203.0.113.5:4711', false), null, 'with a port it is no address');
 });
 
 test('forwardedClientKey: counted in the same units as clientKey (an IPv6 /64, a mapped IPv4 as itself)', () => {
-  assert.equal(forwardedClientKey('2001:db8:1:2::7', false), clientKey('2001:db8:1:2::7', undefined, true));
-  assert.equal(forwardedClientKey('::ffff:203.0.113.5', false), '203.0.113.5');
-  assert.equal(forwardedClientKey('[2001:db8:1:2::7]', false), '2001:db8:1:2::/64');
+  assert.equal(forwardedClientKey(undefined, '2001:db8:1:2::7', false), clientKey('2001:db8:1:2::7', undefined, true));
+  assert.equal(forwardedClientKey(undefined, '::ffff:203.0.113.5', false), '203.0.113.5');
+  assert.equal(forwardedClientKey(undefined, '[2001:db8:1:2::7]', false), '2001:db8:1:2::/64');
+});
+
+// ── the address in its own header (chatbot team, third answer, 2026-11-15) ──
+
+test('forwardedClientKey: X-WLO-Client-Address wins — a proxy that drops X-Forwarded-For cannot lose it', () => {
+  // Traefik, by default, throws away X-Forwarded-* from senders it does not
+  // trust and writes only the connection's address: under TRUST_PROXY nothing
+  // would be left. A header of our own passes every proxy untouched.
+  assert.equal(forwardedClientKey('203.0.113.9', '198.51.100.2', true), '203.0.113.9');
+  assert.equal(forwardedClientKey('203.0.113.9', '10.0.0.1, 198.51.100.2', false), '203.0.113.9', 'whatever X-Forwarded-For says');
+  assert.equal(forwardedClientKey(' 2001:db8:1:2::7 ', undefined, false), '2001:db8:1:2::/64', 'trimmed, in the units of clientKey');
+  assert.equal(forwardedClientKey('::ffff:203.0.113.9', undefined, true), '203.0.113.9');
+});
+
+test('forwardedClientKey: a named header that is no single address names nobody — no fallback to X-Forwarded-For', () => {
+  for (const bad of ['203.0.113.9:4711', 'jemand', '', '203.0.113.9, 198.51.100.7', '[2001:db8::1]:443']) {
+    assert.equal(forwardedClientKey(bad, '203.0.113.5', false), null, JSON.stringify(bad));
+  }
+  assert.equal(forwardedClientKey(['203.0.113.9', '203.0.113.9'], '203.0.113.5', false), null, 'sent twice');
+});
+
+test('an address with a zone id names nobody, in either header — and never throws (review 2026-11-15)', () => {
+  // `isIP` accepts a zone id, colons included; cutting such a value to its /64
+  // used to throw (`Array(-1)`), and the handler gave no answer at all.
+  for (const zoned of ['1:2:3:4:5:6:7:8%::x', '1:2:3:4:5:6:7:8%a:b:c', 'fe80::1%eth0']) {
+    assert.equal(forwardedClientKey(zoned, undefined, false), null, `named ${zoned}`);
+    assert.equal(forwardedClientKey(undefined, zoned, false), null, `forwarded ${zoned}`);
+    assert.doesNotThrow(() => clientKey(zoned, undefined, true), `clientKey ${zoned}`);
+    assert.doesNotThrow(() => clientKey(undefined, zoned, false), `remote ${zoned}`);
+  }
+  assert.equal(forwardedClientKey('[2001:db8::1]', undefined, false), null, 'the own header takes no brackets');
 });

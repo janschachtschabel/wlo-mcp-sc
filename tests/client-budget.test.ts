@@ -90,23 +90,43 @@ test('forwarderBudget: nothing without budgets, without a key, with an unknown o
   const { forwarderBudget, createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
   const key = 'k'.repeat(40);
   const budgets = createClientBudgets(parseTrustedClientKeys(`boerdi:2:${key}`).clients);
-  assert.equal(forwarderBudget(key, '203.0.113.5', '198.51.100.2', undefined), undefined);
-  assert.equal(forwarderBudget(undefined, '203.0.113.5', '198.51.100.2', budgets), undefined);
-  assert.equal(forwarderBudget('x'.repeat(40), '203.0.113.5', '198.51.100.2', budgets), undefined);
-  assert.equal(forwarderBudget([key, key], '203.0.113.5', '198.51.100.2', budgets), undefined);
+  assert.equal(forwarderBudget(key, () => '203.0.113.5', '198.51.100.2', undefined), undefined);
+  assert.equal(forwarderBudget(undefined, () => '203.0.113.5', '198.51.100.2', budgets), undefined);
+  assert.equal(forwarderBudget('x'.repeat(40), () => '203.0.113.5', '198.51.100.2', budgets), undefined);
+  assert.equal(forwarderBudget([key, key], () => '203.0.113.5', '198.51.100.2', budgets), undefined);
 });
 
 test('forwarderBudget: the client\'s protocol pot, and the guard per address it names inside its space', async () => {
   const { forwarderBudget, createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
   const key = 'k'.repeat(40);
   const budgets = createClientBudgets(parseTrustedClientKeys(`boerdi:2:${key}`).clients);
-  const named = forwarderBudget(key, '203.0.113.5', '198.51.100.2', budgets);
+  const named = forwarderBudget(key, () => '203.0.113.5', '198.51.100.2', budgets);
   assert.ok(named);
   assert.equal(named.limiter, budgets.protocol('client:boerdi'), 'the pot of its /mcp POSTs and /auth/status');
   assert.equal(named.key, 'client:boerdi');
   assert.equal(named.abuseBucket, 'client:boerdi|ip:203.0.113.5');
   assert.equal(named.address, '203.0.113.5', 'the person\'s address, for the (pseudonymised) log');
-  const unnamed = forwarderBudget(key, null, '198.51.100.2', budgets);
+  const unnamed = forwarderBudget(key, () => null, '198.51.100.2', budgets);
   assert.equal(unnamed?.abuseBucket, 'client:boerdi', 'no named address: the client\'s space is one bucket');
   assert.equal(unnamed?.address, '198.51.100.2');
+});
+
+test('forwarderBudget: says whether the client named an address', async () => {
+  const { forwarderBudget, createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const key = 'k'.repeat(40);
+  const budgets = createClientBudgets(parseTrustedClientKeys(`boerdi:2:${key}`).clients);
+  assert.equal(forwarderBudget(key, () => '203.0.113.5', '198.51.100.2', budgets)?.named, true);
+  assert.equal(forwarderBudget(key, () => null, '198.51.100.2', budgets)?.named, false);
+});
+
+test('forwarderBudget: the named address is not even read without a known key', async () => {
+  const { forwarderBudget, createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const budgets = createClientBudgets(parseTrustedClientKeys(`boerdi:2:${'k'.repeat(40)}`).clients);
+  let read = 0;
+  const named = () => { read += 1; return '203.0.113.5'; };
+  assert.equal(forwarderBudget(undefined, named, '198.51.100.2', budgets), undefined);
+  assert.equal(forwarderBudget('x'.repeat(40), named, '198.51.100.2', budgets), undefined);
+  assert.equal(read, 0, 'a header nobody vouched for is not parsed');
+  assert.equal(forwarderBudget('k'.repeat(40), named, '198.51.100.2', budgets)?.named, true);
+  assert.equal(read, 1);
 });

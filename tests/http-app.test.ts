@@ -1066,3 +1066,69 @@ test('/auth/session end to end: the guard splits by the address a KEY holder nam
     } finally { await close(server); }
   }
 });
+
+test('/auth/session behind a proxy that dropped X-Forwarded-For: X-WLO-Client-Address still splits, for a key holder only', async (t) => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setAccessSupport } = await import('../src/auth/credential.js');
+  const { loadAuthKeys } = await import('../src/auth/access-token.js');
+  const { openRegistry } = await import('../src/auth/access-registry.js');
+  const { createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const { WLO_REPOSITORY_URL } = await import('../src/wlo-config.js');
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-session-named-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(registry && keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => String(url).startsWith('http://127.0.0.1')
+    ? original(url as string, init)
+    : new Response(JSON.stringify({ person: { authorityName: 'lehrerin' } }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const key = 'n'.repeat(40);
+  const origin = new URL(WLO_REPOSITORY_URL).origin;
+  let n = 0;
+  // What a proxy that trusts nobody leaves: only the address it saw itself.
+  const exchange = (base: string, headers: Record<string, string>) => fetch(`${base}/auth/session`, {
+    method: 'POST', body: '{}',
+    headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: `JSESSIONID=${String(++n).padStart(32, 'B')}`, 'X-Forwarded-For': '127.0.0.1', ...headers },
+  });
+  const { server, base } = await startServer({
+    sessionExchange: true, trustProxy: true, apiRateLimiter: createRateLimiter(100),
+    ticketAbuseLimiter: createDistinctValueLimiter(1),
+    clientBudgets: createClientBudgets(parseTrustedClientKeys(`boerdi:50:${key}`).clients),
+  });
+  try {
+    const as = (address: string, withKey = true) => ({ 'X-WLO-Client-Address': address, ...(withKey ? { 'X-WLO-Client-Key': key } : {}) });
+    assert.equal((await exchange(base, as('203.0.113.5'))).status, 200, 'person A');
+    assert.equal((await exchange(base, as('198.51.100.20'))).status, 200, 'person B: its own bucket');
+    assert.equal((await exchange(base, as('203.0.113.5'))).status, 429, 'person A again: over its one');
+    assert.equal((await exchange(base, as('192.0.2.1', false))).status, 200, 'no key: the address');
+    assert.equal((await exchange(base, as('192.0.2.2', false))).status, 429, 'no key: the header splits nothing');
+  } finally { await close(server); }
+});
+
+test('a zone-id address in either header does not break the answer — with or without a key (review 2026-11-15)', async () => {
+  const { createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const key = 'z'.repeat(40);
+  for (const trustProxy of [false, true]) {
+    const { server, base } = await startServer({
+      trustProxy, clientBudgets: createClientBudgets(parseTrustedClientKeys(`boerdi:5:${key}`).clients),
+    });
+    try {
+      for (const headers of [
+        { 'X-WLO-Client-Address': '1:2:3:4:5:6:7:8%::x' },
+        { 'X-Forwarded-For': '1:2:3:4:5:6:7:8%::x, 127.0.0.1' },
+        { 'X-Forwarded-For': '1:2:3:4:5:6:7:8%::x' },
+        { 'X-WLO-Client-Address': '1:2:3:4:5:6:7:8%::x', 'X-WLO-Client-Key': key },
+      ]) {
+        const r = await fetch(`${base}/no-such-page`, { headers, signal: AbortSignal.timeout(5000) });
+        assert.equal(r.status, 404, `${trustProxy} ${JSON.stringify(headers)}`);
+      }
+    } finally { await close(server); }
+  }
+});

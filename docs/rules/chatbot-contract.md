@@ -70,7 +70,8 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   by key instead of address, and a 429 carries the rest of the window. Since
   2026-11-15 the same key on `/auth/session` and `/auth/revoke` spends the
   client's protocol budget, and the distinct-session guard counts per address the
-  client names in the `X-Forwarded-For` hop it adds (the chatbot backend forwards
+  client names — in `X-WLO-Client-Address`, else the `X-Forwarded-For` hop it
+  adds (the chatbot backend forwards
   the session exchange from its own path on the repository's host). Ticket and
   session blocks belong to ONE listing of their id: after a revocation or the
   twelve hours a re-exchange gives a new block, never the old one back (`/auth/status`

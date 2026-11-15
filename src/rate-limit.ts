@@ -55,22 +55,46 @@ export function clientKey(
 
 /**
  * The address a TRUSTED forwarder names for the person behind it, in the units
- * of `clientKey` — or null when it names none. The hop the forwarder added: the
- * last one when it connects to us directly, the one before our own proxy's
- * under `TRUST_PROXY` (that proxy appends the forwarder itself). Anything
- * further left is what the person's browser claimed and stays unread.
+ * of `clientKey` — or null when it names none.
+ *
+ * `X-WLO-Client-Address` first, and when it is sent, only it: exactly one
+ * address, no port. A header of our own, because a proxy in front of this
+ * server may drop `X-Forwarded-For` from senders it does not trust — Traefik
+ * does by default and writes only the connection's address (chatbot team,
+ * 2026-11-15) — while it passes an unknown header untouched.
+ *
+ * Without it, the `X-Forwarded-For` hop the forwarder added: the last one when
+ * it connects to us directly, the one before our own proxy's under
+ * `TRUST_PROXY` (that proxy appends the forwarder itself). Anything further
+ * left is what the person's browser claimed and stays unread.
  *
  * Only for a caller that proved it is the forwarder (`X-WLO-Client-Key`): for
- * anyone else this header is free text, which is why `clientKey` never reads
+ * anyone else both headers are free text, which is why `clientKey` never reads
  * past the hop its own proxy wrote.
  */
-export function forwardedClientKey(forwardedFor: string | string[] | undefined, trustProxy: boolean): string | null {
+export function forwardedClientKey(
+  clientAddress: string | string[] | undefined, forwardedFor: string | string[] | undefined, trustProxy: boolean,
+): string | null {
+  if (clientAddress !== undefined) {
+    const one = typeof clientAddress === 'string' ? clientAddress.trim() : '';
+    return usableAddress(one) ? addressUnit(one) : null;
+  }
   if (!forwardedFor) return null;
   const raw = Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor;
   const hops = raw.split(',').map(s => s.trim()).filter(Boolean);
   if (trustProxy) hops.pop();
-  const named = hops[hops.length - 1];
-  return named && isIP(named.replace(/^\[|\]$/g, '')) ? addressUnit(named) : null;
+  const hop = hops[hops.length - 1];
+  return hop && usableAddress(hop.replace(/^\[|\]$/g, '')) ? addressUnit(hop) : null;
+}
+
+/**
+ * An address a forwarder may name: an IP address without a zone id. `isIP`
+ * accepts `fe80::1%eth0` and even zone ids with colons in them; a person's
+ * public address never carries one, and a bucket per invented zone would be
+ * free to make.
+ */
+function usableAddress(value: string): boolean {
+  return !value.includes('%') && isIP(value) !== 0;
 }
 
 /**
@@ -87,7 +111,10 @@ export function forwardedClientKey(forwardedFor: string | string[] | undefined, 
  * stays loopback. Anything that is not an address passes through unchanged.
  */
 function addressUnit(address: string): string {
-  const host = address.replace(/^\[|\]$/g, '').toLowerCase();
+  // A zone id (`%eth0`, and `isIP` takes colons in it too) is no part of the
+  // address: cut before counting groups, or the arithmetic below goes negative
+  // and throws (review 2026-11-15) — from a header anyone can send.
+  const host = address.replace(/^\[|\]$/g, '').toLowerCase().replace(/%.*$/, '');
   if (isIP(host) !== 6) return address;
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
   if (mapped) return mapped[1]!;
@@ -95,7 +122,7 @@ function addressUnit(address: string): string {
   const [head = '', tail] = host.split('::');
   const left = head ? head.split(':') : [];
   const right = tail !== undefined && tail ? tail.split(':') : [];
-  const groups = [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right];
+  const groups = [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
   const prefix = groups.slice(0, 4).map(g => parseInt(g, 16).toString(16)).join(':');
   return `${prefix}::/64`;
 }
