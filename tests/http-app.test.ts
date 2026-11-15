@@ -1120,12 +1120,13 @@ test('a zone-id address in either header does not break the answer — with or w
       trustProxy, clientBudgets: createClientBudgets(parseTrustedClientKeys(`boerdi:5:${key}`).clients),
     });
     try {
-      for (const headers of [
+      const cases: Record<string, string>[] = [
         { 'X-WLO-Client-Address': '1:2:3:4:5:6:7:8%::x' },
         { 'X-Forwarded-For': '1:2:3:4:5:6:7:8%::x, 127.0.0.1' },
         { 'X-Forwarded-For': '1:2:3:4:5:6:7:8%::x' },
         { 'X-WLO-Client-Address': '1:2:3:4:5:6:7:8%::x', 'X-WLO-Client-Key': key },
-      ]) {
+      ];
+      for (const headers of cases) {
         const r = await fetch(`${base}/no-such-page`, { headers, signal: AbortSignal.timeout(5000) });
         assert.equal(r.status, 404, `${trustProxy} ${JSON.stringify(headers)}`);
       }
