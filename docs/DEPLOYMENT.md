@@ -304,7 +304,7 @@ collection's listing), then start from a new preview.
   503 while the REPOSITORY is unreachable, and a probe on it would take every
   instance out of service for a fault that is not theirs. Alert on it instead.
 - **The log.** One JSON object per line on **stdout** — `timestamp`, `level`,
-  `service`, `message`, `req`, and `trace_id`/`span_id` when the caller sent B3
+  `service`, `message`, `req`, and `trace_id`/`span_id` (the caller's B3 trace, or one started for the request when it sent none); formerly only when the caller sent B3
   headers. `LOG_LEVEL` (`info` by default) sets the threshold. Under stdio the
   log is on stderr, because stdout is the protocol there.
 - **An outside check.** Nothing in the container can report that the container

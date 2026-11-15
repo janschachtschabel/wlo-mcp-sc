@@ -262,7 +262,8 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   and must keep its id. A caller's id is adopted only as a plain token — it
   lands in every log line. The same module holds the caller's TRACE context
   (`x-client-trace-id`, B3): read only when well-formed, logged, and handed on
-  by `wloFetch` to the repository alone, as a child span; never invented. `src/metrics.ts` + `src/rest/metrics-route.ts` —
+  by `wloFetch` to the repository alone, as a child span. A caller's trace is never replaced; a request
+  without a B3 trace gets one started (`traceForRequest`, since 1.2.0 — the platform guide asks for it). `src/metrics.ts` + `src/rest/metrics-route.ts` —
   `GET /metrics`, off unless `METRICS_TOKEN` is set. Counted at the three
   seams (response end in `http-app.ts`, `registerWloTool`, `wloFetch`). Two
   rules: a label value comes from OUR code (route class, tool name, status

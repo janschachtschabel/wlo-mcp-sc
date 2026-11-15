@@ -187,3 +187,21 @@ test('resolveStaticRoute returns null for a target that will not parse', () => {
 test('resolveStaticRoute returns null when there is no target at all', () => {
   assert.equal(resolveStaticRoute('GET', undefined), null);
 });
+
+// ── the OpenAPI document, served (platform guide: "deliver the spec at a documented path") ──
+test('GET /openapi.yaml serves the document the repository carries', async () => {
+  const r = resolveStaticRoute('GET', '/openapi.yaml');
+  assert.equal(r?.status, 200);
+  assert.equal(r?.asset?.contentType, 'application/yaml; charset=utf-8');
+  let status = 0; let headers: Record<string, string> = {}; let body = '';
+  const handled = await handleStaticRequest({ method: 'GET', url: '/openapi.yaml' }, {
+    writeHead: (s, h) => { status = s; headers = h ?? {}; },
+    end: (b) => { body = b ?? ''; },
+  });
+  assert.equal(handled, true);
+  assert.equal(status, 200);
+  assert.equal(headers['X-Content-Type-Options'], 'nosniff');
+  assert.match(body, /^openapi: 3\.1\.0/);
+  assert.match(body, /^ {2}\/openapi\.yaml:$/m, 'and it names itself');
+  assert.equal(resolveStaticRoute('POST', '/openapi.yaml')?.status, 405);
+});

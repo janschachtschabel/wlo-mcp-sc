@@ -46,6 +46,16 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Audit full tree (informational)
         run: npm audit || true
+      # The chart: tests/helm-chart.test.ts reads it as text; this renders it.
+      # The two values without a default are given here, as an installer must.
+      - name: Lint and render the Helm chart
+        run: |
+          helm lint --strict deploy/helm/wlo-mcp \
+            --set image.repository=example.invalid/wlo-mcp \
+            --set repositoryUrl=https://repository.example.invalid/edu-sharing
+          helm template wlo-mcp deploy/helm/wlo-mcp \
+            --set image.repository=example.invalid/wlo-mcp \
+            --set repositoryUrl=https://repository.example.invalid/edu-sharing > /dev/null
       # The image itself: everything above runs the sources, none of it the
       # Dockerfile, the HEALTHCHECK or the entry point the container starts.
       # Builds it, starts it under the compose file's restrictions, and checks

@@ -20,8 +20,7 @@ diese Datei über rund 100 Zeilen wächst.
 
 ## Offen
 
-- **Entscheidungen des Nutzers:** Versionsnummer (kommt auf Ansage), Termin für das Staging-Deployment,
-  Image-Registry. Nicht gebaut und so entschieden: einheitlicher Vertrag (A-3), Ausgabeschemas für die
+- **Entscheidungen des Nutzers:** Termin für das Staging-Deployment, Registry der Plattform. Nicht gebaut und so entschieden: einheitlicher Vertrag (A-3), Ausgabeschemas für die
   übrigen Werkzeuge, `wlo_register_usage` (braucht eine App-Signatur), Sitzungs-Zugang P2.
 - **Ungemessen:** wie die WLO-Oberfläche Vorschläge für eine Sammlung zeigt und in welcher Reihenfolge
   sie Untersammlungen darstellt.
@@ -53,7 +52,10 @@ diese Datei über rund 100 Zeilen wächst.
 - **2026-11-15 — `idempotentHint` angeglichen.** Je Schreibwerkzeug gelesen, was ein zweiter gleicher Durchlauf
   sendet; `true` bei 19, `false` bei den fünf, die erneut etwas anlegen oder senden. Lesewerkzeuge tragen das
   Merkmal nicht mehr. Technischer Owner im Übergabe-Steckbrief: T4.
-- **Zur Entscheidung des Nutzers:** `tools/list` misst 231 306 Zeichen für 60 Werkzeuge (Test hält das
+- **2026-11-15 — Version 1.2.0.** Tag `v1.2.0` baut Image und Chart (`release.yml`, ghcr.io); `GET /openapi.yaml`;
+  eigener B3-Trace, wenn keiner ankommt; Chart-Version = Dienst-Version; CI rendert den Chart. Abgleich mit dem
+  Leitfaden in `docs/STECKBRIEF-UEBERGABE.md`.
+- **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das
   ändert, was Clients einlesen.

@@ -71,6 +71,12 @@ TOOLS="$(curl -fsS "http://127.0.0.1:${PORT}/mcp" \
 grep -q '"search_wlo_all"' <<<"$TOOLS" || fail "tools/list does not name search_wlo_all"
 grep -q '"wlo_update_content"' <<<"$TOOLS" || fail "tools/list does not name the curation tools"
 
+echo "== /openapi.yaml"
+# The one served file that lives outside public/: a Dockerfile or .dockerignore
+# that drops it answers 500 here and nowhere in the test suite.
+SPEC="$(curl -fsS "http://127.0.0.1:${PORT}/openapi.yaml")" || fail "/openapi.yaml did not answer"
+grep -q '^openapi: 3' <<<"$SPEC" || fail "/openapi.yaml is not the OpenAPI document"
+
 echo "== no error in the startup log"
 LOGS="$(docker logs "$NAME" 2>&1)"
 if grep -q '"level":"error"' <<<"$LOGS"; then fail "the startup log holds an error"; fi

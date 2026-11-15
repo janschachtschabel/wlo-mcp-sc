@@ -3,7 +3,8 @@
  *
  * Emits one JSON object per line. The field names are the ones the service
  * guide (Team 6) asks every service for — `timestamp`, `level`, `service`,
- * `message`, and `trace_id` / `span_id` when the caller named a trace — so one
+ * `message`, and per request `trace_id` / `span_id` (the caller's trace, or the
+ * one started for the request) — so one
  * query works across services (chatbot feedback 2026-11-13, D8).
  *
  * WHERE the line goes depends on the transport, and the default is the safe

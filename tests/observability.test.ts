@@ -240,3 +240,19 @@ test('upstream calls are counted by how they ended', async () => {
     assert.match(text, /^wlo_upstream_requests_total\{outcome="error"\} 1$/m, 'only the repository is counted');
   } finally { mock.restore(); }
 });
+
+test('a request that names no trace is logged under one started for it; a caller\'s trace stands', async () => {
+  const s = await serving();
+  try {
+    const own = await captureLog(async () => { await (await post(s.base, rpc('tools/list', {}))).text(); });
+    const line = own.find((l) => l['message'] === 'mcp request');
+    assert.ok(line, JSON.stringify(own));
+    assert.match(String(line['trace_id']), /^[0-9a-f]{32}$/);
+    assert.match(String(line['span_id']), /^[0-9a-f]{16}$/);
+
+    const theirs = await captureLog(async () => {
+      await (await post(s.base, rpc('tools/list', {}), { 'X-B3-TraceId': 'a'.repeat(32), 'X-B3-SpanId': 'b'.repeat(16) })).text();
+    });
+    assert.equal(theirs.find((l) => l['message'] === 'mcp request')?.['trace_id'], 'a'.repeat(32));
+  } finally { await s.close(); }
+});

@@ -151,6 +151,8 @@ test('the pod gets longer to stop than the server takes to drain', () => {
 test('appVersion is the package version, and no image repository is preset', () => {
   const version = (JSON.parse(read('package.json')) as { version: string }).version;
   assert.equal(withoutComments(chart('Chart.yaml')).match(/^appVersion:\s*"?([^"\s]+)"?\s*$/m)?.[1], version);
+  // One chart per version of the service: the release job packages the chart under the tag's number.
+  assert.equal(withoutComments(chart('Chart.yaml')).match(/^version:\s*"?([^"\s]+)"?\s*$/m)?.[1], version);
   assert.match(values, /^image:\n\s+repository: ""$/m, 'no registry is decided — the repository has no default');
   assert.match(values, /^repositoryUrl: ""$/m, 'one MCP per repository — the address has no default');
 });

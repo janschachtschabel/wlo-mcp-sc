@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { log } from '../src/logger.js';
-import { outgoingTraceHeaders, runWithRequestId, traceFrom } from '../src/request-id.js';
+import { outgoingTraceHeaders, runWithRequestId, traceForRequest, traceFrom } from '../src/request-id.js';
 import { collectRecursiveContents } from '../src/services/collection-traversal.js';
 import { searchSkillsDetailed } from '../src/services/skills.js';
 import { stopSkillRegistryCache } from '../src/services/skill-registry-cache.js';
@@ -218,4 +218,41 @@ test('get_topic_page_content: variants that could not be LISTED are not "no_vari
     const r = await client.callTool({ name: 'get_topic_page_content', arguments: { collectionId: 'coll-9' } });
     assert.equal(structured(r)['reason'], 'source_unreachable', toolText(r));
   } finally { await client.close(); mock.restore(); stopSkillRegistryCache(); }
+});
+
+test('a request without a trace gets one of its own; a caller\'s trace is never replaced', () => {
+  // The platform guide: read the B3 headers, hand them on, otherwise start a
+  // trace — so every log line of a request can be found by `trace_id`.
+  const theirsIds = { 'x-b3-traceid': 'a'.repeat(32), 'x-b3-spanid': 'b'.repeat(16) };
+  const own = traceForRequest({ 'x-client-trace-id': 'chat-7f3a' });
+  assert.match(own.b3?.traceId ?? '', /^[0-9a-f]{32}$/);
+  assert.match(own.b3?.spanId ?? '', /^[0-9a-f]{16}$/);
+  assert.equal(own.b3?.sampled, undefined, 'no sampling decision is made for anybody');
+  assert.equal(own.clientTraceId, 'chat-7f3a');
+  assert.notEqual(traceForRequest({}).b3?.traceId, own.b3?.traceId, 'a fresh one per request');
+  // B3's sampling-only form: a decision without ids. It must not be lost.
+  assert.equal(traceForRequest({ b3: '0' }).b3?.sampled, '0');
+  assert.equal(traceForRequest({ 'x-b3-sampled': '1' }).b3?.sampled, '1');
+  assert.equal(traceForRequest({ 'x-b3-sampled': 'yes' }).b3?.sampled, undefined);
+  // …also not behind a `b3` header that says nothing usable, and not beside a caller's ids.
+  assert.equal(traceForRequest({ b3: 'abc-def', 'x-b3-sampled': '0' }).b3?.sampled, '0');
+  assert.deepEqual(traceForRequest({ b3: '0', ...theirsIds }).b3, { traceId: 'a'.repeat(32), spanId: 'b'.repeat(16), sampled: '0' });
+  // A malformed single header beside well-formed X-B3-* is still the caller's trace.
+  assert.equal(traceForRequest({ b3: 'abc-def', ...theirsIds }).b3?.traceId, 'a'.repeat(32));
+  // Debug: `d` in the single header, `X-B3-Flags: 1` in the multi form — in and out.
+  assert.equal(traceForRequest({ 'x-b3-flags': '1', ...theirsIds }).b3?.sampled, 'd');
+  runWithRequestId('r2', () => {
+    const out = outgoingTraceHeaders();
+    assert.equal(out['X-B3-Flags'], '1');
+    assert.equal('X-B3-Sampled' in out, false, 'debug is a flag, not a sampling value');
+  }, traceForRequest({ b3: 'd' }));
+
+  const theirs = { 'x-b3-traceid': 'a'.repeat(32), 'x-b3-spanid': 'b'.repeat(16) };
+  assert.deepEqual(traceForRequest(theirs), traceFrom(theirs), 'the caller\'s trace stands');
+
+  runWithRequestId('r1', () => {
+    const out = outgoingTraceHeaders();
+    assert.equal(out['X-B3-TraceId'], own.b3?.traceId);
+    assert.equal(out['X-B3-ParentSpanId'], own.b3?.spanId);
+  }, own);
 });

@@ -32,7 +32,7 @@ arrive unchanged.
 
 | Value | Why there is no default |
 |---|---|
-| `image.repository` | No registry is decided yet. `image.tag` defaults to the chart's `appVersion`, which equals `package.json`'s version — but **no published, tagged image exists yet**. |
+| `image.repository` | No registry is decided yet. `image.tag` defaults to the chart's `appVersion`, which equals `package.json`'s version. Since 1.2.0 a tag `vX.Y.Z` publishes `ghcr.io/janschachtschabel/wlo-mcp:X.Y.Z` (private until its owner changes that); the platform's own registry is undecided. |
 | `repositoryUrl` | One MCP per repository. The code would fall back to staging; the chart refuses to render instead, so a forgotten value cannot land anywhere. |
 | `existingSecret` | Not required for anonymous reading. Needed as soon as people sign in (`WLO_AUTH_PRIVATE_KEY`), a service account is used, `/metrics` gets a token or a trusted client gets a key. |
 

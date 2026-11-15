@@ -1,8 +1,8 @@
 /**
  * rest/static.ts – Static asset serving for the public prompt launcher.
  *
- * Serves a FIXED allow-list of files from `public/` (currently only the
- * launcher). Split like `rest/routes.ts`:
+ * Serves a FIXED allow-list of files from `public/` — and one from `docs/`,
+ * the OpenAPI document. Split like `rest/routes.ts`:
  *  - `resolveStaticRoute(method, url)` — pure path→asset mapping, offline-testable,
  *    returns `null` for a path we don't own so the caller falls through (to the
  *    MCP branch / 404).
@@ -22,7 +22,7 @@ import { log } from '../logger.js';
 import { parseRequestUrl } from '../request-url.js';
 
 export interface StaticAsset {
-  /** Path under `public/` — a constant from the map, never from the request. */
+  /** Path relative to `public/` — a constant from the map, never from the request. */
   relPath: string;
   contentType: string;
   /**
@@ -53,6 +53,7 @@ export const LAUNCHER_CSP =
   "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const MARKDOWN = 'text/markdown; charset=utf-8';
 const TEXT = 'text/plain; charset=utf-8';
+const YAML = 'application/yaml; charset=utf-8';
 const CSS = 'text/css; charset=utf-8';
 const JS = 'text/javascript; charset=utf-8';
 
@@ -68,7 +69,7 @@ export const AUTH_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
   "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-// Closed allow-list: request pathname → the file under public/ it serves.
+// Closed allow-list: request pathname → the file it serves (a path relative to public/).
 // `/` is shared with the MCP endpoint (POST /), so this GET mapping is only
 // reached after the MCP branch declines it (see http.ts ordering).
 // robots.txt is served explicitly (permissive): AI fetch tools check it before
@@ -102,6 +103,10 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/auth-i18n.js': { relPath: 'auth-i18n.js', contentType: JS },
   // The launcher's script as a FILE, so its page needs no inline script (audit 2026-11-14).
   '/launcher.js': { relPath: 'launcher.js', contentType: JS },
+  // The HTTP surface, described — served so that a platform can read it from
+  // the running service. The one asset outside `public/`: the document stays
+  // where its test and every reference expect it (the image copies that file).
+  '/openapi.yaml': { relPath: '../docs/openapi.yaml', contentType: YAML },
 };
 
 /**
@@ -148,7 +153,7 @@ export const AUTHORIZE_ASSET: StaticAsset = {
 };
 
 /**
- * Write one asset from `public/`. Shared by `handleStaticRequest` and by
+ * Write one asset of the allow-list. Shared by `handleStaticRequest` and by
  * `rest/oauth-pages.ts`, which serves the authorization page itself — one copy,
  * so the CSP and the `nosniff` header cannot drift apart between them.
  *

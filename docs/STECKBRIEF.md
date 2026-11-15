@@ -1,6 +1,6 @@
 # Steckbrief: wlo-mcp
 
-Stand: 2026-11-13 · Server-Version 1.1.0 · **Entwurf zur Übergabe an das Plattform-Team**
+Stand: 2026-11-15 · Server-Version 1.2.0 · **Entwurf zur Übergabe an das Plattform-Team**
 
 Dieser Steckbrief fasst zusammen, was jemand wissen muss, der den Dienst betreibt, ohne ihn gebaut zu
 haben. Er wiederholt die Einzelheiten nicht, sondern verweist: Betrieb in
@@ -91,7 +91,7 @@ Parameter eines Aufrufs. Gründe:
 
 | Port | Zweck | Pfade | Erreichbar für |
 |---|---|---|---|
-| `3000` (öffentlich, `PORT`) | Clients | `POST /mcp` (MCP, SSE-Antwort) · `GET /api/*`, `POST /api/uploads` · `/auth`, `/auth/*`, `/auth-revoke.html` · `/oauth/*`, `/.well-known/oauth-*` · `/launcher.html` | Ingress / Reverse Proxy |
+| `3000` (öffentlich, `PORT`) | Clients | `POST /mcp` (MCP, SSE-Antwort) · `GET /api/*`, `POST /api/uploads` · `/auth`, `/auth/*`, `/auth-revoke.html` · `/oauth/*`, `/.well-known/oauth-*` · `/launcher.html` · `/openapi.yaml` | Ingress / Reverse Proxy |
 | intern (`INTERNAL_PORT`, **ohne Vorgabe aus**; im Chart `9090`) | Proben, Metriken | **nur** `GET /health`, `GET /ready`, `GET /metrics` | Cluster (kubelet, Prometheus) — nie über den Ingress |
 
 - **Den internen Port gibt es nur, wenn er eingeschaltet wird.** `INTERNAL_PORT` ist ohne Vorgabe
@@ -211,8 +211,8 @@ Eine unbrauchbare `WLO_REPOSITORY_URL` beendet den Start mit Exit-Code 1.
 - **Ströme:** über HTTP nach **stdout**; im stdio-Betrieb nach stderr (stdout ist dort der
   Protokollkanal).
 - **Felder:** `timestamp`, `level` (`info` | `warn` | `error`), `service` (`wlo-mcp`), `message`,
-  `req` (die Request-ID, auch als Antwortkopf `X-Request-Id`), `trace_id` / `span_id`, wenn der
-  Aufrufer B3-Köpfe gesendet hat; dazu ereignisbezogene Felder.
+  `req` (die Request-ID, auch als Antwortkopf `X-Request-Id`), `trace_id` / `span_id` in jeder
+  Zeile einer HTTP-Anfrage (der B3-Trace des Aufrufers, sonst ein eigener, seit 1.2.0); dazu ereignisbezogene Felder.
 - **Schwelle:** `LOG_LEVEL` (`debug`, `info`, `warn`, `error`; Vorgabe `info`).
 - **Menge:** eine Zeile je Anfrage gibt es **nur für `POST /mcp`** (`mcp request`, mit Methode und
   Rechte-Modus). Anfragen an `/api/*`, `/auth*`, `/oauth/*`, `/health`, `/ready` und die Seiten
@@ -294,16 +294,21 @@ Zusätzlich nötig und nicht aus dem Dienst selbst zu gewinnen: eine **Prüfung 
 ## 12. Build
 
 - **Mehrstufiges Image** (`Dockerfile`): Basis `node:22-alpine`, per Digest festgelegt; die
-  Laufzeitstufe enthält nur Produktionsabhängigkeiten, `dist/`, die gebauten Widgets und `public/`.
+  Laufzeitstufe enthält nur Produktionsabhängigkeiten, `dist/`, die gebauten Widgets, `public/` und `docs/openapi.yaml`.
 - **Nicht-root:** Benutzer `node` (uid 1000). Im Betrieb: Dateisystem nur lesbar, beschreibbar sind
   allein `/data` (Volume) und `/tmp`; alle Capabilities entzogen, keine Rechteausweitung.
 - **CI:** Lint, Tests und Build auf Node 22; in der GitHub-Pipeline zusätzlich ein Smoke-Test des
   Images (`npm run smoke:image`: bauen, unter den Compose-Einschränkungen starten, `/health`,
-  `tools/list`, sauberes Stoppen, Startabbruch bei unbrauchbarer Repository-Adresse). In der
+  `tools/list`, `/openapi.yaml`, sauberes Stoppen, Startabbruch bei unbrauchbarer Repository-Adresse). In der
   GitLab-Pipeline läuft dieser Smoke-Test nicht (er braucht einen Docker-Daemon).
-- **NOCH NICHT vorhanden: ein veröffentlichtes, mit Version markiertes Image.** Heute baut der Host
-  das Image selbst (`docker compose up -d --build`, Name `wlo-mcp:latest`). Der Chart hat deshalb
-  keinen Vorgabewert für `image.repository`.
+- **Versionen als Tag (seit 1.2.0):** Ein Git-Tag `vX.Y.Z` (gleich der Version in `package.json`)
+  baut über `.github/workflows/release.yml` das Image `ghcr.io/janschachtschabel/wlo-mcp:X.Y.Z` und
+  `:X.Y` sowie den Chart `oci://ghcr.io/janschachtschabel/charts/wlo-mcp` in derselben Version;
+  `latest` wird nicht veröffentlicht. Ein neues Paket in dieser Registry ist privat, bis sein
+  Eigentümer das ändert. Die Ziel-Registry der Plattform ist weiter offen (§14); der Chart hat
+  deshalb keinen Vorgabewert für `image.repository`. Die CI rendert den Chart
+  (`helm lint --strict`, `helm template`). Compose baut weiterhin auf dem Host
+  (`docker compose up -d --build`, Name `wlo-mcp:latest`).
 
 ## 13. Kompatibilität
 
@@ -311,9 +316,9 @@ Eingetragen ist nur, was im Repository belegt ist; leere Felder sind nicht gemes
 
 | Server | Node | MCP-SDK | edu-sharing-Instanz | Stand |
 |---|---|---|---|---|
-| 1.1.0 | 22 (Image: `node:22-alpine`, 22.23.4; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13) |
-| 1.1.0 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen; kein Schreibtest |
-| 1.1.0 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
+| 1.2.0 | 22 (Image: `node:22-alpine`, 22.23.4; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test |
+| 1.2.0 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
+| 1.2.0 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
 | … | | | | |
 
 Bekannter Zustand auf Staging (2026-11-06): das Repository lehnt Inhalts-Uploads und das Ablegen in
@@ -324,8 +329,9 @@ Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit
 
 > Diese Punkte sind **nicht entschieden**. Nichts davon ist im Chart oder im Code vorweggenommen.
 
-- [ ] **Image-Registry und Sichtbarkeit:** wohin das Image veröffentlicht wird, öffentlich oder
-      intern, und wer es mit welcher Marke (Version = `package.json`) baut.
+- [ ] **Image-Registry der Plattform und Sichtbarkeit:** Seit 1.2.0 veröffentlicht der Tag-Lauf nach
+      `ghcr.io/janschachtschabel` (privat). Offen bleibt, wohin die Plattform spiegelt und ob das
+      Paket öffentlich wird.
 - [ ] **Vertretung** für den Dienst. Technischer Owner ist T4 (festgelegt 2026-11-15).
 - [x] **Service-ID:** `wlo-mcp`, entschieden 2026-11-13 — Paket, Image, Compose-Dienst, Log-Feld `service` und Chart tragen denselben Namen.
 - [x] **Vorgabe für `WLO_REPOSITORY_URL` im Code:** bleibt (entschieden 2026-11-13). Ohne B-API hat der

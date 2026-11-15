@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WLO MCP Server — HTTP surface outside MCP
-  version: 1.1.0
+  version: 1.2.0
   summary: Every path the server answers besides the MCP protocol itself.
   description: |
     Read from the source (`src/http-app.ts` and `src/rest/*`), not from a wish
@@ -1230,6 +1230,17 @@ paths:
       tags: [pages]
       operationId: launcherJs
       summary: Script of the launcher page (`text/javascript`)
+      x-cors: wildcard
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Asset' }
+        '405': { $ref: '#/components/responses/UseGet' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /openapi.yaml:
+    get:
+      tags: [pages]
+      operationId: openapiDocument
+      summary: This document (`application/yaml`)
       x-cors: wildcard
       security: []
       responses:

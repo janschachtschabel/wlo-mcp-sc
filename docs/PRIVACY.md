@@ -128,9 +128,10 @@ Fulfilling a request may transmit data to:
    is the staging instance `repository.staging.openeduhub.net`, production is
    `redaktion.openeduhub.net` and has to be set deliberately) — the source of the OER content and the target of
    every write. The only recipient that ever receives a credential. It also
-   receives a trace id the calling client chose to send (`x-client-trace-id`,
-   the B3 headers), passed on so one request can be followed across systems —
-   never one this server invented. Separately, **the viewer's browser** contacts
+   receives a trace id so one request can be followed across systems: the one
+   the calling client chose to send (`x-client-trace-id`, the B3 headers), or,
+   when it sent no B3 trace, a random one this server starts per request (since
+   1.2.0; it names no person). `x-client-trace-id` is never made up. Separately, **the viewer's browser** contacts
    the repository when a widget shows results: preview images of public records
    are loaded by the browser itself, so the repository (and any thumbnail host
    the operator added with `WLO_WIDGET_IMAGE_DOMAINS`) sees that browser's IP

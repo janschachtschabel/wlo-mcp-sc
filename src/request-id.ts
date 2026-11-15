@@ -19,8 +19,10 @@ import { randomBytes } from 'node:crypto';
 /**
  * What a caller sent to follow its request across services (chatbot feedback
  * 2026-11-13, W5): its own trace id, and the B3 headers of a tracing system.
- * Read, validated, logged and handed on to the repository — never invented:
- * a trace this server started would be a second trace, not theirs.
+ * Read, validated, logged and handed on to the repository. A caller's trace is
+ * never replaced — a second trace beside theirs would split what they follow.
+ * Only a request that names NO B3 trace gets one started here
+ * (`traceForRequest`), so every log line of every request carries `trace_id`.
  */
 export interface TraceContext {
   /** `x-client-trace-id`. */
@@ -53,12 +55,55 @@ export function traceFrom(headers: Record<string, Header>): TraceContext {
   const client = one(headers['x-client-trace-id']);
   if (SAFE_TRACE.test(client)) trace.clientTraceId = client;
 
+  // The single header wins only when its ids are well-formed; a `b3` that says
+  // nothing usable must not hide the caller's `X-B3-*` beside it.
   const single = one(headers['b3']).toLowerCase().split('-');
-  const traceId = (single.length >= 2 ? single[0]! : one(headers['x-b3-traceid']).toLowerCase());
-  const spanId = (single.length >= 2 ? single[1]! : one(headers['x-b3-spanid']).toLowerCase());
-  const sampled = single.length >= 3 ? single[2]! : one(headers['x-b3-sampled']);
+  const usable = single.length >= 2 && HEX_TRACE.test(single[0]!) && HEX_SPAN.test(single[1]!);
+  const traceId = usable ? single[0]! : one(headers['x-b3-traceid']).toLowerCase();
+  const spanId = usable ? single[1]! : one(headers['x-b3-spanid']).toLowerCase();
   if (HEX_TRACE.test(traceId) && HEX_SPAN.test(spanId)) {
-    trace.b3 = { traceId, spanId, ...(/^[01d]$/.test(sampled) ? { sampled } : {}) };
+    const sampled = samplingFrom(headers);
+    trace.b3 = { traceId, spanId, ...(sampled ? { sampled } : {}) };
+  }
+  return trace;
+}
+
+/**
+ * The caller's sampling decision, wherever it stands: `0` / `1` / `d` in the
+ * single header (alone — `b3: 0` — or as its third part), `X-B3-Flags: 1`
+ * (debug, the multi-header spelling of `d`), or `X-B3-Sampled`. Each candidate
+ * is checked on its own, so an unusable one does not hide the next.
+ */
+function samplingFrom(headers: Record<string, Header>): string | undefined {
+  const single = one(headers['b3']).toLowerCase().split('-');
+  const candidates = [
+    single.length === 1 ? single[0]! : single[2] ?? '',
+    one(headers['x-b3-flags']) === '1' ? 'd' : '',
+    one(headers['x-b3-sampled']),
+  ];
+  return candidates.find(c => /^[01d]$/.test(c));
+}
+
+/**
+ * The trace context a request runs under: the caller's B3 trace when it sent a
+ * well-formed one, otherwise a trace started here (platform guide, logging and
+ * tracing: "read the B3 headers, hand them on, otherwise create a trace id").
+ * No sampling decision is made here; one the caller sent WITHOUT ids (`b3: 0`,
+ * or `X-B3-Sampled` alone — B3's "do not trace this") is carried into the
+ * started trace, so it reaches the repository.
+ *
+ * In the log, `span_id` is then this server's root span; for a caller's trace
+ * it is the caller's span (the parent of what is handed on).
+ */
+export function traceForRequest(headers: Record<string, Header>): TraceContext {
+  const trace = traceFrom(headers);
+  if (!trace.b3) {
+    const sampled = samplingFrom(headers);
+    trace.b3 = {
+      traceId: randomBytes(16).toString('hex'),
+      spanId: randomBytes(8).toString('hex'),
+      ...(sampled ? { sampled } : {}),
+    };
   }
   return trace;
 }
@@ -77,12 +122,14 @@ export function outgoingTraceHeaders(): Record<string, string> {
     out['X-B3-TraceId'] = trace.b3.traceId;
     out['X-B3-ParentSpanId'] = trace.b3.spanId;
     out['X-B3-SpanId'] = randomBytes(8).toString('hex');
-    if (trace.b3.sampled) out['X-B3-Sampled'] = trace.b3.sampled;
+    // Debug is a flag in the multi-header form, not a value of `X-B3-Sampled`.
+    if (trace.b3.sampled === 'd') out['X-B3-Flags'] = '1';
+    else if (trace.b3.sampled) out['X-B3-Sampled'] = trace.b3.sampled;
   }
   return out;
 }
 
-/** What the logger adds to a line: the trace the request belongs to, when the caller named one. */
+/** What the logger adds to a line: the trace the request belongs to — the caller's, or the one started for it. */
 export function currentTraceFields(): Record<string, string> {
   const trace = store.getStore()?.trace;
   if (!trace) return {};

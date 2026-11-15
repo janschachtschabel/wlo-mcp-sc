@@ -6,6 +6,36 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-15
+
+No tool, no top-level parameter and no error code was renamed or removed since 1.1.0; a client written against
+1.1.0 keeps working. The sections below say what was added — tools (60 now), parameters, result fields, error
+codes, paths, metrics, settings — and what was corrected; they are in the order they were made, newest first.
+
+What an operator or a client can notice without using anything new:
+
+- the package and the image are named `wlo-mcp` (were `wlomcp`);
+- the log: fields `timestamp` / `service` / `message` (were `ts` / `name` / `msg`), over HTTP on stdout, address,
+  account and search term pseudonymised by default, and `trace_id` / `span_id` on every line of a request;
+- `collectionId` / `nodeId` are no longer `required` in the published schema of the tools that accept a collection
+  by name instead (section "the second half of the chatbot addendum", Z3);
+- tool annotations: `openWorldHint` is `true` on two tools only, `idempotentHint` is `true` on ten more write tools
+  and gone from five read tools.
+
+### Added — release by tag, the OpenAPI document as a path, a trace for every request (2026-11-15)
+
+Read against the platform's hand-over guide; the comparison is in `docs/STECKBRIEF-UEBERGABE.md`.
+
+- **A tag `vX.Y.Z` publishes image and chart** (`.github/workflows/release.yml`): `ghcr.io/<owner>/wlo-mcp:X.Y.Z`
+  and `:X.Y`, and the Helm chart under the same number. The tag must equal the version in `package.json`; `latest`
+  is not pushed. The chart's `version` now equals its `appVersion` and the package version (pinned by a test).
+- **CI renders the chart** (`helm lint --strict`, `helm template`) — until now it was only read as text.
+- **`GET /openapi.yaml`** serves `docs/openapi.yaml` from the running service. The image carries that one file of
+  `docs/`; the image smoke test asks for it.
+- **A request without a B3 trace gets one started here**, so every log line of every HTTP request carries
+  `trace_id` and `span_id`, and the repository receives B3 headers for it. A trace the caller sent is never
+  replaced; `x-client-trace-id` is never made up.
+
 ### Changed — `idempotentHint` says what a second run does (2026-11-15)
 
 - The hint was set by copy: of two siblings that both answer "already", one said `true` and one `false`. Read per

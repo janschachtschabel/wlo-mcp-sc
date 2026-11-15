@@ -18,7 +18,7 @@ import {
 } from './auth/credential.js';
 import { resolveWriteMode, ALLOW_SERVICE_WRITES } from './services/write/credential-gate.js';
 import { ClientGoneError, runWithRequestSignal } from './request-scope.js';
-import { requestIdFrom, runWithRequestId, traceFrom } from './request-id.js';
+import { requestIdFrom, runWithRequestId, traceForRequest } from './request-id.js';
 import { count, observe } from './metrics.js';
 import { METRICS_PATH, handleMetrics } from './rest/metrics-route.js';
 import { log } from './logger.js';
@@ -207,7 +207,7 @@ export function createHttpRequestHandler(
       count('wlo_http_requests_total', { route, status: res.writableFinished ? String(res.statusCode) : 'aborted' });
       observe('wlo_http_request_duration_seconds', { route }, (Date.now() - acceptedAt) / 1000);
     });
-    return runWithRequestId(id, () => runAnonymous(() => handle(req, res)), traceFrom(req.headers));
+    return runWithRequestId(id, () => runAnonymous(() => handle(req, res)), traceForRequest(req.headers));
   };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {

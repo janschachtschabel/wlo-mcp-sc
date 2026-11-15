@@ -31,6 +31,8 @@ COPY --from=builder /app/dist ./dist
 # widgets silently degrade and /launcher.html + /api/skills 500.
 COPY --from=builder /app/dist-widgets ./dist-widgets
 COPY public/ ./public/
+# Served at /openapi.yaml (src/rest/static.ts) — the one file of docs/ the image carries.
+COPY docs/openapi.yaml ./docs/openapi.yaml
 
 EXPOSE 3000
 
