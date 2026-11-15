@@ -123,3 +123,30 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   `null`; a caller that then states a negative ("nicht gefunden", "kein Kompendiumstext") uses `readNodeMetadata`
   and answers 404 / 401·403 / anything else apart. Fixed in related content, compendium, topic-page structure and
   content text.
+
+- **"Set position, else title", and whether positions decide (S11–S13, chatbot team, 2026-11-15).** Measured
+  anonymously on staging (`npm run measure:tree`, table in `docs/plans/2026-11-14-sammlungsstrukturen.md` —
+  re-measure before contradicting): the children listing carries `ccm:collection_ordered_position` per child once
+  it is in the projection, as one string holding an integer; a child without a position has NO such property. And
+  **a tie is the normal case**: of 57 parents with positions 46 carry one value throughout, all 30 subject portals
+  the same `"1"`. So `stored` (position, else order of creation) is right for a curriculum somebody arranged and
+  arbitrary for a portal, and the answer could not tell which. Rules. (1) The order `position` and the flag live in
+  ONE module, `src/collection-position.ts`: per parent the children with a position numerically, ties and children
+  without one by title; only a plain integer in safe range is a position. (2) `childrenPositioned`
+  (`subcollectionsPositioned` in the overview) is `true` when two DIFFERENT positions were SEEN, `false` only when
+  the listing was read to its end, has at least two children and nothing decides, and absent otherwise
+  (`positionedFlag(seen, readToEnd)`). The first cut said `false` over a cut listing — the listing is asked
+  ascending by position, so a cut prefix of equal positions is exactly where the unseen tail differs. "At least one
+  position" was rejected as the meaning: it is true for 48 of 57 parents where nothing is ordered. (3) In the flat
+  list the children of a parent are sorted BEFORE they are appended to the level, and a sorting run reads every
+  parent to its end — the list must stay one stable sequence across pages. With `position`, tree and overview cut
+  in the repository's order and sort then, on every level. (4) The default request of each tool is unchanged:
+  `title` sends no sort and no position property. (5) A count is ONE request with `maxItems=0` and one property
+  (`countCollectionContents`): 139 ms against 307 ms with `maxItems=1`, same totals on 144 collections; the flat
+  list pools counts at half the upstream gate, at most 12 (`countPool`). No facet counts per collection (five
+  candidates refused, one empty). `delete-empty-plan.ts` keeps its own read on purpose — the one item is a second
+  witness beside `total` before a delete. (6) `unreadParents` / `refusedParents` describe the WHOLE walk of the
+  call and only what was observed — the start collection included, parents on other pages included, never a parent
+  the walk did not reach (`walkCapped`, `more`). They come from the same arrays as `incomplete` / `restricted`,
+  so one never stands without the other. (7) Line forms the chatbot reads stay: the item line of the flat list and
+  the prefix `Untersammlungen: ` carry no order note; the note has a line of its own.

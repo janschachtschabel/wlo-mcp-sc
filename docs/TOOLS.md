@@ -176,7 +176,7 @@ gemeinsame Dienstkonto nur mit `WLO_ALLOW_SERVICE_WRITES`, anonym nie. Siehe
 |---|---|---|
 | `get_subject_portals` | Übersicht aller Fachportale (Mathe, Bio, Deutsch …) | *„Welche Fächer gibt es bei WLO?“* |
 | `browse_collection_tree` | Themenbaum / Unterthemen eines Fachs oder einer Sammlung | *„Zeig mir den Themenbaum zu Mathematik“* |
-| `list_collection_tree` | Der ganze Teilbaum einer Sammlung als flache Liste mit Pfaden (bis 4 Ebenen, gespeicherte Reihenfolge, in Seiten) — zum Abgleichen und Zurücklesen, nicht zum Stöbern | *„Welche Untersammlungen gibt es unter Physik, mit Pfad?“* |
+| `list_collection_tree` | Der ganze Teilbaum einer Sammlung als flache Liste mit Pfaden (bis 4 Ebenen, gespeicherte Reihenfolge — oder per `order` nach Titel bzw. „Position, sonst Titel“ —, in Seiten) — zum Abgleichen und Zurücklesen, nicht zum Stöbern | *„Welche Untersammlungen gibt es unter Physik, mit Pfad?“* |
 | `get_collection_contents` | Inhalte einer konkreten Sammlung auflisten | *„Was ist in der Sammlung Bruchrechnung drin?“* |
 | `search_wlo_within_collection` | Innerhalb einer Sammlung suchen/filtern (auch nach **Lizenz**); `excludeNodeIds` lässt schon Gesehenes weg | *„Welche Videos zu Zellteilung gibt es in dieser Sammlung?“* |
 | `get_collection_stats` | Zusammensetzung einer Sammlung (Anzahl, Typen, Fächer) | *„Woraus besteht diese Sammlung?“* |

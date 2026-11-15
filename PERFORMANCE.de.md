@@ -47,7 +47,7 @@ getrennt (content/collections/topicPages).
 edu-sharing akzeptiert Feldauswahl NUR als **wiederholten** `propertyFilter=`-Param
 (Kommaliste → 0 Properties). Statt `-all-` (~59 Properties/Node) werden nur die
 real genutzten ~24 Felder angefordert (`DISPLAY_PROPS` / für Themenseiten
-`TOPIC_PAGE_PROPS` in `topic-page-api.ts`). Die `_DISPLAYNAME`-Label-Felder müssen
+`TOPIC_PAGE_PROPS` in `topic-page-variant.ts` — am 2026-08-11 aus `topic-page-api.ts` dorthin gezogen). Die `_DISPLAYNAME`-Label-Felder müssen
 explizit mitgelistet werden — kommen dann korrekt zurück (verifiziert).
 Behaltene „Extras“: `ccm:oeh_lrt(_DISPLAYNAME)`, `ccm:replicationsource(_DISPLAYNAME)`
 (= Bezugsquelle, z.B. Klexikon), `ccm:author_freetext`.
@@ -209,7 +209,10 @@ Knoten ergibt ~100), und jede Anreicherung kostete danach einen Abruf pro Knoten
   einem Gesamtbudget (150) ab, gedeckelt bei 10, und wird **vor** dem Durchlauf
   berechnet — so bekommt jeder Elternknoten dieselbe Größe. Ein Zähler, den
   nebenläufige Arbeiter leeren, hätte die Ausgabe nichtdeterministisch gemacht.
-  Die Tiefe bleibt bei 2.
+  Die Tiefe bleibt bei 2. *(Stand 2026-07-27. Seit 2026-11-06 gibt es
+  zusätzlich `depth: 3` mit einem eigenen Budget von höchstens 300 Knoten
+  insgesamt, `TREE_DEPTH3_BUDGET`, ebenfalls vor dem Durchlauf berechnet; die
+  Messwerte unten gelten für Tiefe 1 und 2.)*
 - **Die Kürzung wird offengelegt, nicht verschwiegen.** Gekürzte Knoten tragen
   `hasMoreChildren`, die Antwort trägt `truncated`, und die Markdown-Ausgabe
   nennt den konkreten Folgeaufruf (`browse_collection_tree mit nodeId=…`). Die
@@ -300,12 +303,21 @@ erklärt — deshalb werden Absätze erst auf 200 Zeichen aufgesammelt); und ein
 ganzer Abschnitt ist zu grob (größter Eigentext: 16 317 Zeichen).
 
 **Bewusst unangetastet:** `GET /api/compendium` und das `includeCompendium`-Bündeln
-in `search_wlo_content` liefern weiterhin den Volltext — sie rufen
+in `search_wlo_all` liefern weiterhin den Volltext — sie rufen
 `getCompendiumTexts` direkt auf, und den hat diese Änderung nicht angefasst.
 
 ## Offenes Optimierungspotenzial
 
 ### O7 — In-Process-Cache  *(NICHT umgesetzt)*
+> *Stand 2026-11-15:* Ein allgemeiner Ergebnis-Cache, wie hier beschrieben,
+> existiert weiterhin nicht. Zwei schmale Caches gibt es inzwischen: den
+> Skill-Registry-Cache je Sammlung (`src/services/skill-registry-cache.ts`,
+> TTL 10 Minuten) und einen Minuten-Cache für wenige, bei jeder Anfrage
+> wiederholte Lesezugriffe wie die Fachportal-Liste (`src/short-cache.ts`,
+> 60 s). Der Vorbehalt unten gilt dort bereits: was von den Rechten einer
+> Anmeldung abhängt, wird je Anmeldung gehalten.
+
+
 **Größter verbliebener Hebel.** Der Server läuft im Zielbetrieb **persistent**
 (Docker auf dem vServer), pro Request wird lediglich ein MCP-Server-Objekt
 erzeugt und wieder geschlossen — der Prozess selbst bleibt bestehen. Ein

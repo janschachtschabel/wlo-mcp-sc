@@ -26,10 +26,29 @@ import { codedErrorResult, toolError } from './shared.js';
  * them, so the two values mean one thing. The default stays `title`: what
  * these tools always answered.
  */
-export const collectionOrderParam = z.enum(['title', 'stored']).optional().default('title').describe(
+const ORDER_VALUES = ['title', 'stored', 'position'] as const;
+/** What `position` means — one wording for every tool that takes it (S11, 2026-11-15). */
+const POSITION_ORDER = '"position": fits both — per parent the sub-collections with a set position in that order, then '
+  + 'those without one by title (equal positions by title too).';
+/**
+ * The flag comes with `stored` as well (follow-up of 2026-11-15): the team
+ * reads in the stored order and sorts by itself where nothing was arranged.
+ */
+const POSITIONED_FLAG = 'With "stored" and "position" the answer says per parent whether set positions order anything '
+  + '(`childrenPositioned`; get_collection_overview: `subcollectionsPositioned`): true = at least two different positions; '
+  + 'false = listed to the end, none that decide (with "stored": sort those yourself); absent = not known (cut or unread), '
+  + 'absent also when there are fewer than two.';
+
+export const collectionOrderParam = z.enum(ORDER_VALUES).optional().default('title').describe(
   'Order of the sub-collections on every level. "title" (default): alphabetical. "stored": the order the '
   + 'repository holds — the position an editor set, else the order of creation. Use "stored" where the sequence '
-  + 'means something (a curriculum).');
+  + `means something (a curriculum). ${POSITION_ORDER} ${POSITIONED_FLAG} Where a level is cut, it is cut in the repository's order before sorting.`);
+
+/** The same three values for the flat list, whose default has always been the repository's order. */
+export const flatTreeOrderParam = z.enum(ORDER_VALUES).optional().default('stored').describe(
+  'Order of the sub-collections of each parent. "stored" (default): the order the repository holds — the position '
+  + `an editor set, else the order of creation. "title": alphabetical. ${POSITION_ORDER} ${POSITIONED_FLAG} "title" and "position" read `
+  + 'every parent to its end before sorting, so the pages stay one list.');
 
 export const collectionNameParam = z.string().max(200).optional().describe(
   'Titel der Sammlung STATT ihrer nodeId, z. B. "Optik". Er muss genau stimmen (Groß-/Kleinschreibung egal, '

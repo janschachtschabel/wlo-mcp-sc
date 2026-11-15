@@ -78,7 +78,7 @@ Für einen einzelnen Datensatz oder Dateiinhalt: wlo_update_content.`,
       continuationToken: z.string().max(200).optional(),
     },
     // Not idempotent: a NEW preview and approval of the same items proposes the same values again.
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params) => {
       requireWrite();
       const raw = params['items'] as Array<Record<string, unknown>>;

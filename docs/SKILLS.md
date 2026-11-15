@@ -53,7 +53,9 @@ description will lose to one that puts them in `cclom:general_keyword`.
 over, the server prefixes a line it asks the model to print into the chat —
 `[ edu-sharing Skill ] Unterrichtsstunde planen - aktiv` — so the reader can see
 that an uploaded document is steering the answer, and which one. It is built
-from `cclom:title` alone; nothing goes into the `SKILL.md` for it. Write a title
+from the record's title alone (`cclom:title`, else the title the repository
+shows for the record) and only for a record whose content type is `ai_skill`;
+nothing goes into the `SKILL.md` for it. Write a title
 that reads as a name a person would recognise, not a filename.
 
 ## Why a skill is a record, not a collection
@@ -190,6 +192,11 @@ subtree is a cost the caller should have to ask for.
 WLO_SKILLS_COLLECTION_ID=<nodeId of the root collection>   # optional
 WLO_SKILL_TOOL_MODE=two-tool                               # or one-tool
 ```
+
+`one-tool` replaces the **search alone**: `get_skill_for_task` takes the place
+of `search_skill`, while `get_skill` and `get_skill_registry` stay registered in
+both modes — a registry hands out node ids, and `get_skill` is the tool that
+takes one.
 
 Without `WLO_SKILLS_COLLECTION_ID` the search runs **repository-wide**, filtered
 by the content type alone. That works, and it is the right setting while the
@@ -553,4 +560,6 @@ none" is only ever made over a listing that was seen in full.
 
 A deployment that has moved entirely to this process can also drop the
 repository-wide search with `WLO_DISABLE_SKILL_SEARCH=1`. `get_skill` always
-stays: it is what the registry's node ids are for.
+stays: it is what the registry's node ids are for. The switch has no effect
+under `WLO_SKILL_TOOL_MODE=one-tool` — there `get_skill_for_task` IS the search
+and stays registered.

@@ -296,6 +296,12 @@ export type BrowseTreeNode = z.infer<typeof formattedNodeSchema> & {
   /** The node's own contents were refused / did not answer: no count, no preview. */
   contentsRefused?: boolean;
   contentsUnread?: boolean;
+  /**
+   * With `order: "position"` or `"stored"` and where the children were listed:
+   * set positions order them. `false` only over a listing read to its end;
+   * absent over a cut one, and for fewer than two children.
+   */
+  childrenPositioned?: boolean;
 };
 
 const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
@@ -308,6 +314,7 @@ const browseTreeNodeSchema: z.ZodType<BrowseTreeNode> = z.lazy(() =>
     childrenRefused: z.boolean().optional(),
     contentsRefused: z.boolean().optional(),
     contentsUnread: z.boolean().optional(),
+    childrenPositioned: z.boolean().optional(),
   }),
 );
 
@@ -321,6 +328,8 @@ export const browseTreeSchema = z.object({
   truncated: z.boolean().optional(),
   /** The first node, in listing order, whose children were cut. */
   truncatedAt: z.string().optional(),
+  /** With `order: "position"` or `"stored"`: set positions order the first level. */
+  childrenPositioned: z.boolean().optional(),
   resolvedCollection: resolvedCollectionSchema,
 });
 

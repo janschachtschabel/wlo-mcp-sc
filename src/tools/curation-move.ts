@@ -35,7 +35,7 @@ ZWEISTUFIG: ohne confirmToken nur Vorschau. Danach wird der neue Pfad zurückgel
       newParentId: z.string().trim().min(1).max(200).describe('nodeId der Sammlung, unter der sie danach liegt.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

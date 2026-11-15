@@ -113,6 +113,19 @@ test('every tool declares the security scheme that matches what it needs', async
   await client.close();
 });
 
+test('openWorldHint is true exactly for the tools that leave the repository', async () => {
+  // The hint says a tool reaches an OPEN set of outside sources. Every WLO tool
+  // — reading or writing — talks to the one repository this server is bound to;
+  // only the encyclopedia and the fetch of a caller-chosen URL do not. Eleven
+  // batch tools and one list tool carried `true` by copy (found 2026-11-15),
+  // so a host asked for an extra confirmation on some writes and not on others.
+  const client = await connectedClient();
+  try {
+    const open = (await client.listTools()).tools.filter(t => t.annotations?.openWorldHint).map(t => t.name).sort();
+    assert.deepEqual(open, ['get_url_text', 'get_wikipedia_summary']);
+  } finally { await client.close(); }
+});
+
 test('every tool declares the required destructiveHint + openWorldHint annotations', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();

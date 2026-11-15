@@ -114,7 +114,8 @@ test('list_collection_tree: level by level, in stored order, with path, depth an
   const { mock, listings } = repository({ ...SMALL, 'c-2': [branch('d-1', 'Tief')], 'd-1': [branch('e-1', 'Zu tief')] });
   try {
     const tree = await flat();
-    assert.deepEqual(tree.root, { nodeId: 'top', title: 'Titel top' });
+    // Since 2026-11-15 `stored` says whether set positions order the children (none are set here).
+    assert.deepEqual(tree.root, { nodeId: 'top', title: 'Titel top', childrenPositioned: false });
     assert.deepEqual(tree.items.map(i => [i.nodeId, i.depth, i.parentId, i.path.join('/')]), [
       ['b-z', 1, 'top', 'Titel top/Zeta'],
       ['b-a', 1, 'top', 'Titel top/Alpha'],
@@ -248,7 +249,8 @@ test('list_collection_tree (tool): the line form, both formats, and the notices 
     // The id first; a title can neither close its quotes nor spell out an id of its own.
     assert.match(lines.find(l => l.includes('b-1'))!, /^- nodeId: b-1 \[Ebene 1\] — „Titel top“ › „[^„“]*“$/);
     assert.match(lines.find(l => l.includes('c-1'))!, /^- nodeId: c-1 \[Ebene 2\] — „Titel top“ › „[^„“]*“ › „Linsen“$/);
-    assert.match(lines.find(l => l.includes('nodeId: b-2'))!, /\[Unterthemen mit dieser Anmeldung nicht lesbar\]/);
+    // The ENTRY's line: since S13 the head names the parent too (`refusedParents`), on a line of its own.
+    assert.match(lines.find(l => l.startsWith('- nodeId: b-2'))!, /\[Unterthemen mit dieser Anmeldung nicht lesbar\]/);
     // The data keeps the title as the repository holds it.
     assert.equal(structured<{ items: Array<{ title: string }> }>(md).items[0]!.title, FORGED);
   } finally { await client.close(); repo.mock.restore(); }

@@ -19,8 +19,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { connectedClient } from './fetchMock.js';
 
-/** Measured 231 306 on 2026-11-14; the headroom is about one average tool. */
-const TOTAL_MAX = 236_000;
+/**
+ * Measured 231 306 on 2026-11-14 and 234 912 on 2026-11-15: the `order`
+ * parameter on three tools (`browse_collection_tree`,
+ * `get_collection_overview`, `list_collection_tree`) with what its values and
+ * the flag mean, and the new output fields (`childrenPositioned`,
+ * `subcollectionsPositioned`, `unreadParents` / `refusedParents` and their
+ * totals). The ceiling is the measured size plus about 3 000 — less than one
+ * average tool (≈ 3 900), so a new tool still meets it.
+ */
+const TOTAL_MAX = 238_000;
 /** The largest single tool (`search_wlo_all`, 17 219): its envelope repeats the record schema per bucket. */
 const TOOL_MAX = 18_000;
 /** A description past this is cut by at least one host (the limit the existing descriptions already keep). */

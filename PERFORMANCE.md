@@ -46,7 +46,7 @@ dedicated, session-stateful `search_wlo_topic_pages`. Verified live: same query
 edu-sharing accepts field selection ONLY as a **repeated** `propertyFilter=` param
 (comma list → 0 properties). Instead of `-all-` (~59 properties/node), only the
 ~24 fields actually used are requested (`DISPLAY_PROPS` / for topic pages
-`TOPIC_PAGE_PROPS` in `topic-page-api.ts`). The `_DISPLAYNAME` label fields must be
+`TOPIC_PAGE_PROPS` in `topic-page-variant.ts` — it moved there from `topic-page-api.ts` on 2026-08-11). The `_DISPLAYNAME` label fields must be
 listed explicitly — they then come back correctly (verified).
 Retained "extras": `ccm:oeh_lrt(_DISPLAYNAME)`, `ccm:replicationsource(_DISPLAYNAME)`
 (= source, e.g. Klexikon), `ccm:author_freetext`.
@@ -203,7 +203,10 @@ a single tool call in the worst case.
 - **The tree is bounded.** The slice per parent derives from a total node budget
   (150), capped at 10, computed *before* the walk so every parent gets the same
   size — a counter drained by concurrent workers would make the output
-  nondeterministic. Depth stays capped at 2.
+  nondeterministic. Depth stays capped at 2. *(As of 2026-07-27. Since
+  2026-11-06 there is also `depth: 3`, with its own budget of at most 300 nodes
+  in total, `TREE_DEPTH3_BUDGET`, likewise computed before the walk; the
+  measurements below are for depth 1 and 2.)*
 - **Truncation is disclosed.** Cut nodes carry `hasMoreChildren`, the envelope
   carries `truncated`, and the Markdown output names the exact follow-up call.
   The tool description instructs the model to say so and open a branch
@@ -291,12 +294,20 @@ characters first); and a whole section is too coarse (largest own-body section:
 16 317 characters).
 
 **Deliberately untouched:** `GET /api/compendium` and the `includeCompendium`
-bundling inside `search_wlo_content` still deliver the full text — they call
+bundling inside `search_wlo_all` still deliver the full text — they call
 `getCompendiumTexts` directly, which this change did not alter.
 
 ## Open optimization potential
 
 ### O7 — In-process cache  *(NOT implemented)*
+> *As of 2026-11-15:* a general result cache as described here still does not
+> exist. Two narrow caches have been added since: the skill-registry cache per
+> collection (`src/services/skill-registry-cache.ts`, TTL 10 minutes) and a
+> one-minute cache for a few reads every request repeats, such as the list of
+> subject portals (`src/short-cache.ts`, 60 s). The caveat below already
+> applies there: what depends on a login's rights is held per login.
+
+
 **Largest remaining lever.** In its target deployment the server runs
 **persistently** (Docker on the vServer); only a per-request MCP server object is
 created and closed, the process itself stays up. An **in-process result cache**

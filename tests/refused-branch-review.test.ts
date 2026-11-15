@@ -146,12 +146,12 @@ test('a refused skills ROOT ends the walk at once — its subtree is not read fo
 
 // ── marks on a tree node ────────────────────────────────────────────────────
 
-/** top → b-1. The COUNT read (maxItems=1) and the PREVIEW read (maxItems=2) of b-1 answer as given. */
+/** top → b-1. The COUNT read (maxItems=0 — no item, only the total) and the PREVIEW read (maxItems=2) of b-1 answer as given. */
 function twoReads(count: number, preview: number) {
   return installFetchMock((url): MockResult => {
     if (!url.includes('/children')) return { json: {} };
     if (isFolders(url)) return idOf(url) === 'top' ? page([branch('b-1', 'Optik')]) : page([]);
-    const status = new URL(url).searchParams.get('maxItems') === '1' ? count : preview;
+    const status = new URL(url).searchParams.get('maxItems') === '0' ? count : preview;
     return status === 200 ? page([makeNode('f', 'Datei')], 7) : { status, json: {} };
   });
 }

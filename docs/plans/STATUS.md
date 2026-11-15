@@ -43,6 +43,13 @@ diese Datei über rund 100 Zeilen wächst.
   `CHANGELOG.md` und `2026-11-14-antwort-sammlungsstrukturen-2.md`.
 - **2026-11-14 — Steuerdokumente.** `CLAUDE.md` von 2154 auf rund 250 Zeilen; die Regelblöcke wortgleich
   nach `docs/rules/` (acht Dateien nach Bereich); diese Datei von 5243 Zeilen auf den Stand gekürzt.
+- **2026-11-15 — Wünsche S11–S13 des Chatbot-Teams.** `order: "position"` an den drei Baum-Werkzeugen,
+  das Merkmal `childrenPositioned`, schlanker Zählabruf (Physik mit Zahlen 7,0 statt 11,4 s),
+  `unreadParents` / `refusedParents`. Vorher gemessen (`npm run measure:tree`); ein Review (0 kritisch,
+  1 groß, 6 klein, 4 Randnotizen), behoben. Dazu: `openWorldHint` nur noch an den zwei Werkzeugen, die
+  das Repository verlassen; alle übrigen Dokumente gegen den Code gelesen;
+  `docs/STECKBRIEF-UEBERGABE.md` nach der Übergabe-Vorlage. Antwort ans Team:
+  `2026-11-15-antwort-sammlungsstrukturen-3.md`.
 - **Zur Entscheidung des Nutzers:** `tools/list` misst 231 306 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

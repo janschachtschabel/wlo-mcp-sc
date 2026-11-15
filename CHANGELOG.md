@@ -6,6 +6,42 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — the tree in an order that always fits, counts faster, and where it could not read (wishes S11–S13, 2026-11-15)
+
+Measured anonymously against staging before it was built (`npm run measure:tree`); one review, 0 critical, 1 major,
+6 minor, 4 nits, all worked.
+
+- **`order: "position"`** on `browse_collection_tree`, `get_collection_overview` and `list_collection_tree` (which
+  gains the `order` parameter; its default stays `stored`): per parent the sub-collections with a set position in
+  that order, ties and those without one by title. `stored` is right for a curriculum somebody arranged and
+  arbitrary for a subject portal — measured, a tie is the normal case (46 of 57 parents, all 30 portals).
+- **`childrenPositioned`** (`subcollectionsPositioned` in the overview), with `stored` and `position`: `true` when
+  two different positions were seen; `false` when the listing was read to its end, has at least two entries and
+  nothing decides — sort those yourself; absent when nothing can be said (order `title`, fewer than two, a cut,
+  unread or refused listing).
+- **Content counts are one lean request** (`maxItems=0`): `list_collection_tree` with counts on the subject portal
+  Physik (144 collections) takes 7.0 s where it took 11.4 s; browse and overview count the same way. The 19–38 s the
+  team saw on a first call could not be reproduced (6.8 s in a fresh process) and is not caused by this server.
+- **`unreadParents` / `refusedParents`** on `list_collection_tree`: the ids of every parent whose sub-collection
+  listing did not answer or was refused in this call — the start collection and parents on other pages included; at
+  most 50 each, the whole number beside it beyond that.
+- Default answers: `browse_collection_tree` and `get_collection_overview` are unchanged without `order`.
+  `list_collection_tree` gains fields and one head line (`Erste Ebene: …`); its item lines are unchanged.
+
+### Changed — annotations aligned; hand-over sheet (2026-11-15)
+
+- **`openWorldHint` is `true` exactly for `get_wikipedia_summary` and `get_url_text`** — the two tools that leave
+  the repository. Eleven batch curation tools and `wlo_list_collection_proposals` carried `true` by copy while their
+  single-record siblings carried `false`, so a host that asks for an extra confirmation on open-world tools did so
+  for some writes and not for others. Pinned by a test.
+- **`docs/STECKBRIEF-UEBERGABE.md`**: the service in the shape of the hand-over template — one row per point,
+  each marked present / checked / open, with the open points listed at the end.
+- The remaining documents were read against the code: `docs/PRIVACY.md` (tool count, the ways to sign in, what is
+  held in memory and for how long, the default repository, previews loaded by the browser), `docs/INTEGRATION.md`
+  (two counts, `wlo_list_suggestions`), `docs/AUTH.md` (`API_RATE_LIMIT_RPM`, the cap per kind of block, the
+  length bound, the budgets of the write stores), the performance documents, the Apps-SDK checklist and golden
+  prompts (marked as a dated state), `docs/SKILLS.md` / `docs/SKILL-TRIGGER.md`.
+
 ### Fixed — documentation checked against the code (2026-11-15)
 
 - Both READMEs called `nodeId` required on `get_collection_contents`, `search_wlo_within_collection` and

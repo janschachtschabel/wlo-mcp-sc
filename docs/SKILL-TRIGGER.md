@@ -96,7 +96,8 @@ Werkzeug unverändert mit ausgibt.
 | Antwortform | Was mitkommt |
 |---|---|
 | Datensatz-Listen (`search_wlo_all`, `search_wlo_collections`, `get_collection_contents`, `get_node_collections`, `get_node_details`) | der Katalog je Sammlung, **im Zeilenbudget** |
-| Die Sammlung, auf der ein Werkzeug arbeitet (`get_collection_contents`, `search_wlo_within_collection`, `get_topic_page_content`, `get_related_content`) | derselbe Katalog, mit der Sammlung benannt — **plus `skillContext`** |
+| Die Sammlung, auf der ein Werkzeug arbeitet (`get_collection_contents`, `search_wlo_within_collection`, `get_topic_page_content`, `get_related_content`) | derselbe Katalog, mit der Sammlung benannt, dazu die Beschreibungen der ersten drei Skills und die allgemeine Anweisung der Redaktion — **plus `skillContext`** (den nimmt auch `get_node_details`) |
+| `get_collection_overview` | die freigegebenen Skills als eigener Teil `skills`, die ersten drei mit Beschreibung; hat der Abruf nicht geantwortet, steht der Teil in `missing` mit `not_checked` — nie als „keine Skills“ |
 | Übersichten mit einer Zeile je Knoten (`browse_collection_tree`, `get_subject_portals`, `search_wlo_topic_pages`) | nur die **Kopfzeile**: Titel, Anzahl, nodeId für `get_skill_registry` |
 
 Gilt in **beiden** Ausgabeformaten: im Markdown als Zeilen, im JSON als Feld

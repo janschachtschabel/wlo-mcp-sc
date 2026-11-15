@@ -56,7 +56,7 @@ Zum UMSORTIEREN (aufnehmen und aus der alten Sammlung nehmen) wlo_add_to_collect
       continuationToken: z.string().max(200).optional(),
     },
     // Not destructive: only a reference goes, the material stays (the single tool says the same).
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
       const pairs = params['pairs'] as PairInput[];

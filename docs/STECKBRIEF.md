@@ -6,7 +6,8 @@ Dieser Steckbrief fasst zusammen, was jemand wissen muss, der den Dienst betreib
 haben. Er wiederholt die Einzelheiten nicht, sondern verweist: Betrieb in
 [`DEPLOYMENT.md`](DEPLOYMENT.md), Einstellungen in [`.env.example`](../.env.example) und
 [`MCP-REFERENZ.md`](MCP-REFERENZ.md), Anmeldung in [`AUTH.md`](AUTH.md), der Helm-Chart-Entwurf in
-[`deploy/helm/wlo-mcp/`](../deploy/helm/wlo-mcp/README.md).
+[`deploy/helm/wlo-mcp/`](../deploy/helm/wlo-mcp/README.md). Die Kurzform nach der Übergabe-Vorlage
+(eine Zeile je Punkt) ist [`STECKBRIEF-UEBERGABE.md`](STECKBRIEF-UEBERGABE.md).
 
 Heute läuft der Dienst mit Docker Compose auf einem Host. Der Helm-Chart ist ein Entwurf: geprüft mit
 `helm lint` und `helm template`, **auf keinem Cluster installiert**.

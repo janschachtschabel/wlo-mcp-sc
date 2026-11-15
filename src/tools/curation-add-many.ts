@@ -75,7 +75,7 @@ Einzeln: wlo_add_to_collection.`,
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
       const pairs = params['pairs'] as PairInput[];

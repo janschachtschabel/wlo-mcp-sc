@@ -17,6 +17,7 @@
 import type { WloNode } from '../wlo-api.js';
 import { didNotAnswer, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
 import { rerankNodes, sortByTitle } from '../reranker.js';
+import { positionedFlag, sortByPosition, type CollectionOrder } from '../collection-position.js';
 import type { FormattedNode } from '../formatter.js';
 import { formatNode, formatNodes } from '../formatter.js';
 import { comparable, nodeMatchesText } from '../node-match.js';
@@ -321,6 +322,16 @@ export type CollectionTreeNode = FormattedNode & {
   contentsRefused?: boolean;
   /** No read of its contents answered (count and preview alike): none this time. Never beside `contentsRefused`. */
   contentsUnread?: boolean;
+  /**
+   * With `order: "position"` or `"stored"`, and only where this node's
+   * sub-collections were LISTED: whether set positions order them (two
+   * different ones were seen). `false`: the listing was read to its end and
+   * positions order nothing there — `position` lists them by title, `stored`
+   * in the repository's order (a caller that sorts by itself is right to).
+   * Absent: not listed, or cut (`hasMoreChildren`) with no two different
+   * positions in sight, or fewer than two sub-collections — nothing is said.
+   */
+  childrenPositioned?: boolean;
 };
 
 /**
@@ -358,6 +369,31 @@ export async function readNodeContents<T>(
   }
 }
 
+/**
+ * How many direct contents (files and references) a collection holds — the ONE
+ * count request of every tool that needs the number and not the items. It is
+ * `pagination.total` of the contents listing, asked for NO item and one
+ * property: with one item the repository builds and sends that record (3.5 kB)
+ * and takes twice as long — 307 ms against 139 ms per call, same total on all
+ * 144 collections (measured 2026-11-15, `npm run measure:tree`). Never the
+ * repository's counters, which lag. Throws like the listing it reads.
+ */
+export async function countCollectionContents(collectionId: string): Promise<number> {
+  return (await getCollectionContents(collectionId, 'files', 0, 0, COUNT_PROPS)).pagination.total;
+}
+const COUNT_PROPS = ['cm:name'];
+
+/**
+ * The same count for a node of a walk: a count that could not be read MARKS the
+ * node (`readNodeContents`) and comes back undefined — never 0, which would be
+ * a statement about the collection.
+ */
+export async function countNodeContents(
+  node: { nodeId: string; contentsRefused?: boolean; contentsUnread?: boolean },
+): Promise<number | undefined> {
+  return (await readNodeContents(node, () => countCollectionContents(node.nodeId))) ?? undefined;
+}
+
 export interface CollectionTreeOptions {
   parentId: string;
   /** 1 = direct sub-collections only; 2 = also their children. */
@@ -370,15 +406,25 @@ export interface CollectionTreeOptions {
   /**
    * `title` (default): every level alphabetical. `stored`: the repository's own
    * order — the position where one was set, else the order of creation. A
-   * curriculum has a sequence, and alphabetical order loses it.
+   * curriculum has a sequence, and alphabetical order loses it. `position`:
+   * the set position, else the title (`collection-position.ts`) — a branch is
+   * CUT in the repository's order first, so past a cut the children without a
+   * position are the first created, not the alphabetically first.
    */
   order?: CollectionOrder;
 }
 
-export type CollectionOrder = 'title' | 'stored';
+export type { CollectionOrder };
 
 export interface CollectionTree {
   nodes: CollectionTreeNode[];
+  /**
+   * With `order: "position"` or `"stored"`: whether set positions order the
+   * FIRST level (`positionedFlag`: absent where the level was cut without two
+   * different positions in sight, and for fewer than two children). Each node
+   * carries the same for its own children.
+   */
+  childrenPositioned?: boolean;
   /** At least one branch holds more than was returned. */
   truncated: boolean;
   /** The first node, in listing order, whose children were cut. */
@@ -446,9 +492,20 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
   const { parentId, depth, maxResults, includeContentCounts, contentPreview } = opts;
   // ONE switch for both halves of the rule: what the repository is asked for,
   // and whether its answer is re-sorted. `title` keeps the request it always sent.
-  const stored = opts.order === 'stored';
-  const listingOpts = { stored };
-  const arrange = (nodes: WloNode[]): WloNode[] => (stored ? nodes : sortByTitle(nodes));
+  const byPosition = opts.order === 'position';
+  const stored = opts.order === 'stored' || byPosition;
+  // `position` asks in the stored order too: a cut then keeps the positioned
+  // children, which the repository lists first. And both read the position
+  // itself: a caller of `stored` sorts by itself where nothing was arranged,
+  // and the flag is what tells it where (measured to cost nothing).
+  const listingOpts = { stored, ...(stored ? { withPosition: true } : {}) };
+  const arrange = (nodes: WloNode[]): WloNode[] => (byPosition ? sortByPosition(nodes) : stored ? nodes : sortByTitle(nodes));
+  // A child level, cut to `width`. `position` cuts in the repository's order
+  // FIRST, like level 1 — that order is position-ascending, so the cut keeps
+  // the positioned children. `title` sorts everything fetched and cuts then:
+  // what it always did, and its answers must not change.
+  const arrangeCut = (nodes: WloNode[], width: number): WloNode[] =>
+    (byPosition ? arrange(nodes.slice(0, width)) : arrange(nodes).slice(0, width));
 
   // One more than shown, like every level below: without it a first level
   // longer than `maxResults` was cut SILENTLY — the overview's
@@ -484,8 +541,9 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
     const f = formatNode(n) as CollectionTreeNode;
     const id = n.ref?.id;
     if (includeContentCounts && id) {
-      const filesResp = await readNodeContents(f, () => getCollectionContents(id, 'files', 1, 0));
-      if (filesResp) f.fileCount = filesResp.pagination.total;
+      // `f.nodeId` is this id (`formatNode`), and the mark belongs on `f`.
+      const count = await countNodeContents(f);
+      if (count !== undefined) f.fileCount = count;
     }
     if (level < depth && id) {
       // Fetch one more than shown: the extra hit proves there IS more
@@ -496,13 +554,20 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
       if (didNotAnswer(listing)) f.childrenUnread = true;
       // Refused is not empty either — and it is no "later" (chatbot team, 2026-11-14).
       else if (listing.refused) f.childrenRefused = true;
+      // Over everything the listing returned, the extra hit included — and a
+      // "no" only where that was ALL of it (`positionedFlag`). A listing that
+      // did not answer says nothing about positions either.
+      else if (stored) {
+        const positioned = positionedFlag(fetched, fetched.length <= childSlice);
+        if (positioned !== undefined) f.childrenPositioned = positioned;
+      }
       if (fetched.length > childSlice) f.hasMoreChildren = true;
       // Claim each child in `visited` at SCHEDULING time (synchronously in
       // this filter), not when its own enrichOne starts — otherwise two
       // parents sharing a child could both pass the check before either
       // marks it, emitting the same subtree twice. Claiming here makes the
       // placement deterministic (first parent in traversal order wins).
-      const sortedChildren = arrange(fetched).slice(0, childSlice).filter(c => {
+      const sortedChildren = arrangeCut(fetched, childSlice).filter(c => {
         const cid = c.ref?.id;
         if (!cid) return true;
         if (visited.has(cid)) return false;
@@ -552,5 +617,10 @@ export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<
   // The root's own children come first in listing order.
   const truncatedAt = level1Cut ? parentId : firstCut(nodes);
 
-  return { nodes, truncated: truncatedAt !== undefined, ...(truncatedAt ? { truncatedAt } : {}) };
+  // The extra hit counts as seen; a cut first level may say "yes", never "no".
+  const positioned1 = stored ? positionedFlag(level1Listing.nodes, !level1Cut) : undefined;
+  return {
+    nodes, truncated: truncatedAt !== undefined, ...(truncatedAt ? { truncatedAt } : {}),
+    ...(positioned1 !== undefined ? { childrenPositioned: positioned1 } : {}),
+  };
 }

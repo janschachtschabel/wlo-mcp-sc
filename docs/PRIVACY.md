@@ -6,28 +6,34 @@ baseline the deploying **operator** adapts and publishes. The operator that runs
 a deployment is the data controller and should add a contact address and their
 governing jurisdiction.
 
-_Last reviewed: 2026-08-04._
+_Last reviewed: 2026-11-15 (checked against the source code)._
 
 ## What this server is
 
 A Model Context Protocol (MCP) server that lets AI assistants search open
 educational resources (OER) from [WirLernenOnline](https://wirlernenonline.de)
 (the "WLO" edu-sharing repository). It has **no user accounts of its own, no
-database, no cookies, and no session state** — every request is served in
-isolation and nothing about it is retained after the response is sent.
+database, no cookies, and no MCP session state** — every request is served on
+its own. What outlives a request is listed in the table below, item by item:
+short-lived entries in memory (confirmation keys, approved plans, counters,
+caches) and, only when personal access blocks are switched on, one file — the
+allow-list of issued blocks.
 
 Two things about the surface decide what this policy has to cover, and both
 depend on how the operator configured the deployment:
 
 **Reading is the default and needs no login.** Out of the box the server calls
-the repository anonymously and offers 25–26 read-only tools plus a public
+the repository anonymously and offers 34 read-only tools plus a public
 read-only REST layer.
 
 **Writing exists, and requires an identity.** With a login the server also offers
 26 curation tools that change data in the repository: editing metadata, creating
-records, submitting them for editorial review, managing collections, choosing
-which variant a topic page renders, deciding metadata proposals, and deleting
-records. They are listed for every caller — a tool a model never sees is a login
+records, attaching a full text, submitting records for editorial review,
+managing collections (creating, renaming, moving, ordering, filing and
+proposing materials), choosing which variant a topic page renders, deciding
+metadata proposals, and deleting records and collections. With
+`WLO_BATCH_UPLOAD_ENABLED` four more file a batch of uploaded files into the
+signed-in person's own area. They are listed for every caller — a tool a model never sees is a login
 that never starts — and **refuse at call time** without a write-capable identity,
 carrying the challenge that asks the host to offer that login. Every mutation is
 confirmed in two steps — a preview first, then a
@@ -48,13 +54,23 @@ There are three possibilities, resolved per request:
    deployment. Writes under it are additionally gated behind
    `WLO_ALLOW_SERVICE_WRITES`, because a change made under a shared account is
    attributable to nobody.
-3. **The individual user's own WLO login**, sent by their AI host as an
-   `Authorization: Basic` header from the host's connector settings. The model
-   never sees it.
+3. **The individual user's own WLO login**, sent by their AI host in the
+   `Authorization` header. The model never sees it. It arrives in one of two
+   forms: as `Basic` (user name and password, from the host's connector
+   settings), or — only when the operator set `WLO_AUTH_PRIVATE_KEY` — as
+   `Bearer wlo2.…`, a **personal access block**: the login encrypted to this
+   server's public key, in the browser, on the `/auth` page. The OAuth login
+   (`/oauth/*`) hands the host that same block as its access token, and an
+   embedded widget obtains one by exchanging the visitor's edu-sharing ticket at
+   `POST /auth/ticket`. A block is usable only against this server and can be
+   revoked here.
 
-**Scope:** the credential chain applies to the MCP endpoint (`POST /mcp`) only.
-The public REST layer (`GET /api/*`) and the launcher page run anonymously by
-construction and cannot inherit any configured account.
+**Scope:** the credential chain applies to the MCP endpoint (`POST /mcp`).
+Two further addresses read the caller's own `Authorization` header and nothing
+else: `GET /auth/status` (which login is this, and does the repository accept
+it) and, only with `WLO_BATCH_UPLOAD_ENABLED`, `POST /api/uploads`. The public
+REST layer (`GET /api/*`) and the launcher page run anonymously by construction
+and cannot inherit any configured account.
 
 ## Data the server processes
 
@@ -64,14 +80,18 @@ construction and cannot inherit any configured account.
 | **Metadata values a curation tool writes** (titles, descriptions, keywords, licence, editorial notes, version comments) | Sent to the repository as the change the user confirmed. Once written they are part of the repository's record and its version history — under **the repository operator's** policy, not this server's. | Not stored here. This server keeps no copy after the response. |
 | **An `Authorization` header a user's AI host sends** | Forwarded to the configured repository so the request acts as that person. Attached in exactly one place (`src/wlo-fetch.ts`) and **only** to the repository host — never to Wikipedia, never to the text-extraction service. | Not stored, not logged. Scoped to the single request that carried it (`AsyncLocalStorage`). |
 | **An edu-sharing ticket** (only at `POST /auth/ticket`) | A page that already has the visitor signed in hands its widget that person's ticket; this server proves it against the repository once and wraps it in an encrypted access block, so what the widget keeps afterwards is revocable here rather than a live repository credential. | Not stored in the clear, not logged. It transits for the one exchange; afterwards it exists only encrypted inside the user's own block. |
-| **A truncated keyed digest of that header** (HMAC under a secret that exists only in the running process) | Abuse protection: counting how many *distinct* logins one client address presents, which is what separates a normal per-user client from credential guessing. Deliberately a digest — this state lives for a whole window, and holding passwords in it would create the exposure the guard exists to reduce. | In memory, ≤ 10 minutes. Two separate budgets: `AUTH_CREDENTIAL_LIMIT` (10) for logins, `TICKET_CREDENTIAL_LIMIT` (200) for the ticket exchange, whose addresses are routinely shared by a whole class. Either `0` disables. Never the cleartext. |
+| **A truncated keyed digest of that header** (HMAC under a secret that exists only in the running process) | Abuse protection: counting how many *distinct* logins one client address presents (for a `Basic` login) or how many distinct blocks claim one access id (for an access block), which is what separates a normal per-user client from credential guessing. Deliberately a digest — this state lives for a whole window, and holding passwords in it would create the exposure the guard exists to reduce. | In memory, ≤ 10 minutes. Two separate budgets: `AUTH_CREDENTIAL_LIMIT` (10) for logins, `TICKET_CREDENTIAL_LIMIT` (200) for the ticket exchange, whose addresses are routinely shared by a whole class. Either `0` disables. Never the cleartext. |
 | **Client IP address** | Transient per-IP rate limiting (in-memory counters, fixed 60-second window). With `TRUST_PROXY=1` the **rightmost** `X-Forwarded-For` hop is used — the address the trusted proxy itself appended; the leftmost value is client-supplied and therefore spoofable. | Not persisted; counters reset on process restart and expire with the window. |
-| **Pending confirmation tokens** | The two-step confirmation: a random token plus a SHA-256 fingerprint of the planned change. Holds no values in the clear. An expired token is kept as its bare id for one more hour, so it can answer "expired" instead of "unknown". | In memory, 10 minutes (bare id: 1 more hour), at most 1000 entries (2000 bare ids), single use. Lost on restart. |
-| **Approved plans** (collection tree, filing many materials) | What one confirmation approved: the steps with their titles and descriptions, and each step's result, so a long run can continue across calls. Bound to a hash of the caller's identity. | In memory, 30 minutes from the confirmation, at most 5 unfinished per identity and 200 in total; afterwards the bare plan id for one hour. Lost on restart. |
+| **Pending confirmation tokens** | The two-step confirmation: a random token plus a SHA-256 fingerprint of the planned change, and who may redeem it (the access id of a block, or the account name of a `Basic` or service login). Holds none of the values to be written. An expired token is kept as its bare id for one more hour, so it can answer "expired" instead of "unknown". | In memory, 10 minutes (bare id: 1 more hour), at most 1000 entries (2000 bare ids) and 50 per identity (500 for the shared service account), single use. Lost on restart. |
+| **Answers to redeemed confirmation tokens** | So that a call repeated after a network error gets the first answer again instead of writing twice: the answer of the confirmed call (which names the record and what was written), kept under a SHA-256 hash of the token together with the identity and a hash of the call's arguments. | In memory, 30 minutes, at most 500 entries and 50 per identity. Lost on restart. |
+| **Approved plans** (collection tree; filing, removing, submitting, updating many records; full texts; deleting empty collections) | What one confirmation approved: the steps with their titles, descriptions and — for metadata and full-text plans — the values or texts to be written, and each step's result, so a long run can continue across calls. Bound to the caller's identity (the access id of a block, or the account name). | In memory, 30 minutes from the confirmation, at most 5 unfinished per identity and 200 in total; afterwards the bare plan id for one hour. Lost on restart. |
 | **Uploaded files** (only with `WLO_BATCH_UPLOAD_ENABLED`) | The bytes a person's chatbot sends to `POST /api/uploads` to be filed into **that person's own area** in the repository, with their checksum and detected type. The client's file name is used only to tell Markdown from plain text — never stored, logged or echoed. | **In memory only, never written to disk here.** 30 minutes or until filed (one take), at most 20 per identity and `UPLOAD_MAX_TOTAL_BYTES` (128 MB) in total. Lost on restart. What is filed then lives in the person's own repository area, under their own account. |
 | **Batch approvals** (only with `WLO_BATCH_UPLOAD_ENABLED`) | The approved list of one batch — titles, sizes, checksums, file types — and the outcome per file, so each file can be filed once. The server also writes a compact summary (titles, record ids, outcome, which entry is the structure document) into the `cm:description` of the batch's `vorgang.json` record in the person's own area, so they can find their batches again. | Approval: in memory, 30 minutes, at most 5 per owner and 500 in total. The summary is repository data in the person's own area, deleted with that record. |
 | **Confirmed upload logins** (only with `WLO_BATCH_UPLOAD_ENABLED`) | Which `Authorization` header the repository confirmed as a person, so each file of a batch does not re-check the login. Keyed by a keyed digest of the header (HMAC under a per-process secret); holds an identity hash, never the credential. A login the repository REFUSED is remembered the same way for 60 seconds, so it is not tried against the real account on every request. | In memory, 10 minutes, at most 1000 entries. Lost on restart. |
-| **The access-block allow-list** (only when `WLO_AUTH_PRIVATE_KEY` is set) | One entry per issued personal access block: the access id, the **WLO user name** it was issued for, the time this server registered it, and whether it came from a pasted block or from an embedded widget's ticket. The id is random for a block issued from a password, and a SHA-256 hash of the ticket for one issued from an edu-sharing ticket — so an embedded widget re-exchanging on every page load keeps ONE entry instead of pushing that account's other blocks out. Deriving it from the ticket gives nothing away: whoever holds the ticket already holds the stronger secret. Needed so a block can be revoked — without a record of what was issued, "revoke" cannot mean anything. Never a password: the credential travels encrypted inside the user's own block and is only ever in memory here. | **The one thing this server persists**, in a file on a dedicated volume (`WLO_AUTH_REGISTRY_PATH`). An entry lives until the user revokes it on `/auth-revoke.html`, until that same account's eleventh newer entry **of the same kind** pushes it out (ten most recent per kind), or until the operator deletes it from the file. The two kinds are counted apart because one is a deliberate act and the other happens by opening a page: counted together, a fortnight of widget use retired the block someone had pasted into their AI host. |
+| **An OAuth login in progress** (only when `WLO_AUTH_PRIVATE_KEY` is set) | Between the consent page and the token exchange: the authorization code (kept as a hash), the client and redirect target it was issued to, the PKCE challenge, the WLO user name for the log line, and the access block itself — as the ciphertext it is; this store never opens it. | In memory, 60 seconds, single use, at most 1000 codes and 20 per account. Lost on restart. |
+| **Answers of `GET /auth/status`** | So a chatbot polling its login state does not ask the repository on every request: the status answer (mode, user name, whether the repository accepted the login), keyed by a keyed digest of the `Authorization` header — never the header. | In memory, 60 seconds (10 seconds when the repository was unreachable), at most 1000 entries. Lost on restart. |
+| **Cached repository answers** | Speed, nothing personal: which approved-skill catalogue a collection carries (title, record ids, context names, a capped editorial note), the list of subject portals, a collection's first skill descriptions. These are repository content, not data about a caller. One part is per login: what a **signed-in** person's own collection lookups answered is kept for that login alone, keyed by a keyed digest of the credential, because their rights may differ from the public's. | In memory. Skill catalogues: re-checked after 10 minutes (`WLO_SKILL_CACHE_TTL_MS`), at most 2000 collections; `WLO_SKILL_CACHE=off` disables it. Everything else, including the per-login part (at most 1000 entries): 60 seconds. Lost on restart. |
+| **The access-block allow-list** (only when `WLO_AUTH_PRIVATE_KEY` is set) | One entry per issued personal access block: the access id, the **WLO user name** it was issued for (as typed, and — where recorded — the account name the repository confirmed for that login), the time this server registered it, whether it came from a pasted block or from an embedded widget's ticket, and for the blocks that expire, when. The id is random for a block issued from a password, and a SHA-256 hash of the ticket for one issued from an edu-sharing ticket — so an embedded widget re-exchanging on every page load keeps ONE entry instead of pushing that account's other blocks out. Deriving it from the ticket gives nothing away: whoever holds the ticket already holds the stronger secret. Needed so a block can be revoked — without a record of what was issued, "revoke" cannot mean anything. Never a password: the credential travels encrypted inside the user's own block and is only ever in memory here. | **The one thing this server persists**, in a file on a dedicated volume (`WLO_AUTH_REGISTRY_PATH`). An entry lives until the user revokes it (on `/auth-revoke.html`, or their client with `POST /auth/revoke`), until it expires — only a block issued from a ticket, or by an OAuth login from an origin the operator listed in `WIDGET_OAUTH_ORIGINS`, does: 12 hours after it was listed it stops working; the entry itself is kept for two more days as the record that stops the same id from being listed again, and is dropped from the file when that account next gets a block after that —, until that same account's eleventh newer entry **of the same kind** pushes it out (ten most recent per kind), or until the operator deletes it from the file. The two kinds are counted apart because one is a deliberate act and the other happens by opening a page: counted together, a fortnight of widget use retired the block someone had pasted into their AI host. |
 | **Operational logs** (structured JSON — `stdout` over HTTP, `stderr` under stdio) | Diagnostics and abuse protection. A log line may include a **node ID** or the **host** of a URL that was refused — for debugging only. What could name a person is **pseudonymised by default**: a client address, a WLO user name and a search term are written as `~` plus twelve hex characters, a keyed digest under a secret that exists only in the running process. Within one run the same value gives the same pseudonym (so "the same address again" stays visible); it cannot be turned back into the value, and it does not match the pseudonym of another run or another system. `LOG_PERSONAL_DATA=plain` writes the three in the clear — an operator's decision, to be covered by their own legal ground and retention. With pseudonyms, "who has access, and since when" and "where did the guessing come from" are answerable only as "the same account / the same address as in that other line"; naming the person or the address needs `plain` (the allow-list on disk names the accounts either way). Three limits of a pseudonym, stated rather than hidden: it is deterministic within a run, so someone who can read the log AND cause a line for a value they choose (a failed login for a known account name, a failing search) learns that value's pseudonym for the run; an id the CALLER sends — `X-Request-Id`, `x-client-trace-id`, the B3 trace id — is logged as sent, so a client that puts a per-person id there links that person's requests itself; and an OAuth client's self-declared name is logged as typed (it names software). The lines in question: a search term on the diagnostic lines of a failed or capped search, an unknown subject name and a Wikipedia lookup that failed or found nothing on topic; **the WLO user name** when a personal access is issued, issued again, exchanged from a ticket, turned into an OAuth token, refused or revoked (so an operator can answer "who has access, and since when"), and **the client IP address** when a request is refused for abuse protection — too many distinct logins, an unusable token or `Authorization` header (so a guessing attempt can be traced). Neither is written for ordinary reading or searching: those lines carry which surface a request got (`mode`), never who asked. Every line of one request shares a random **request id** (`req`), which links lines to each other and to nothing else. | Governed by the **operator's** logging system, not by this server. The server writes to `stdout` (`stderr` under stdio) and keeps nothing; the shipped `docker-compose.yml` bounds the container log to 5 × 10 MB, so older lines are overwritten. An operator who ships logs elsewhere sets the retention there. |
 
 The server **never logs credentials or tokens**, and never logs a full
@@ -89,7 +109,12 @@ query string.
 - The prompt launcher page (`/launcher.html`) and the access-block pages
   (`/auth`, `/auth-revoke.html`) are fully self-contained — they load **no
   third-party fonts, scripts, or assets**, so opening one does not leak the
-  visitor's IP to any third party. The widgets are likewise self-contained.
+  visitor's IP to any third party. The page `GET /api/search?format=html`
+  renders is self-contained too and embeds no image. The widgets' own code and
+  styles are likewise delivered by this server (as MCP resources) and load no
+  third-party script or font; the one thing a widget fetches from elsewhere is
+  the **preview image of a public record**, which the viewer's browser loads
+  directly from the repository — see "Data recipients".
 - The access-block page never transmits the password: it is encrypted in the
   browser, and what reaches the server is ciphertext only. The page stores
   nothing in `localStorage`, `sessionStorage` or a cookie, and puts nothing in
@@ -99,17 +124,32 @@ query string.
 
 Fulfilling a request may transmit data to:
 
-1. **The WLO edu-sharing repository** (`WLO_REPOSITORY_URL`, default
-   `redaktion.openeduhub.net`) — the source of the OER content and the target of
-   every write. The only recipient that ever receives a credential.
+1. **The WLO edu-sharing repository** (`WLO_REPOSITORY_URL`; the code's default
+   is the staging instance `repository.staging.openeduhub.net`, production is
+   `redaktion.openeduhub.net` and has to be set deliberately) — the source of the OER content and the target of
+   every write. The only recipient that ever receives a credential. It also
+   receives a trace id the calling client chose to send (`x-client-trace-id`,
+   the B3 headers), passed on so one request can be followed across systems —
+   never one this server invented. Separately, **the viewer's browser** contacts
+   the repository when a widget shows results: preview images of public records
+   are loaded by the browser itself, so the repository (and any thumbnail host
+   the operator added with `WLO_WIDGET_IMAGE_DOMAINS`) sees that browser's IP
+   address. In search results, previews of records that are not public are
+   fetched by this server under the caller's login and handed to the widget
+   inline.
 2. **Wikipedia's public REST API** (`*.wikipedia.org`) — only when the
-   `get_wikipedia_summary` tool or `GET /api/wikipedia` is invoked; receives the
-   search term.
+   `get_wikipedia_summary` tool, `search_wlo_all` with `includeWikipedia`, or
+   `GET /api/wikipedia` is invoked; receives the search term.
 3. **A text-extraction service** (`WLO_TEXT_EXTRACTION_URL`) — only when
    configured. Receives the URL whose text is to be read: normally a material's
-   curated source URL, and, where the operator leaves the `get_url_text` tool
+   curated source URL (`get_wlo_content_text` on a record that only links to
+   its material), and, where the operator leaves the `get_url_text` tool
    enabled, **any URL the caller supplies**. That service then fetches the target
-   itself. Unset (the default) disables this path entirely.
+   itself. Before handing a URL over, this server resolves its host name through
+   the system's DNS resolver to refuse private addresses. If the operator
+   configured `WLO_TEXT_EXTRACTION_API_KEY`, that key — the operator's, never a
+   user's credential — is sent along, and only over `https`. Unset (the default)
+   disables this path entirely.
 4. **The AI host** that calls this server (e.g. ChatGPT, Claude) — the client
    that initiated the request. That host's own privacy policy governs the
    surrounding conversation; this server neither controls nor receives it.
@@ -151,8 +191,9 @@ technically required to answer the request above.
   tool off with `WLO_DISABLE_UNSAFE_TOOLS`.
 - **No detail leakage:** internal errors return a generic `500`.
 - **Widget sandbox:** the widget CSP whitelists exactly the configured
-  edu-sharing origin for connections and resources and permits no framing, so a
-  rendered widget can load OER thumbnails and nothing else.
+  edu-sharing origin for connections, the same origin plus any thumbnail host
+  the operator listed in `WLO_WIDGET_IMAGE_DOMAINS` for resources, and permits
+  no framing, so a rendered widget can load OER thumbnails and nothing else.
 - **Container:** runs as the non-root `node` user; base image pinned by digest;
   CI gates on a clean production dependency audit.
 
@@ -162,10 +203,11 @@ Requests are transient and leave no record in the application. With personal
 access blocks switched on there is **one** exception, and it is self-service:
 
 - **The allow-list entry for an issued access block** (access id, WLO user name,
-  issue time, and which of the two kinds it is). Anyone can delete their own by pasting the block on
+  issue time, which of the two kinds it is, and an expiry where one applies). Anyone can delete their own by pasting the block on
   `/auth-revoke.html`; the entry is removed and the block stops working
-  immediately. Someone who no longer has the block can achieve the same by
-  changing their WLO password, which invalidates every block containing it. An
+  immediately. Someone who no longer has the block can sign in on the same page
+  and revoke **all** blocks of their account at once (`POST /auth/revoke-all`),
+  or change their WLO password, which invalidates every block containing it. An
   operator can also delete entries directly from the registry file.
 
 Two further things outlive a request and are not this server's to erase:

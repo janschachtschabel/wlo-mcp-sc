@@ -149,9 +149,17 @@ by whoever holds it — revocation by id was never durable against a holder; a
 password change is.
 
 Writes are serialised and **undone on failure**, so the list never grants what it
-could not record. Ten blocks per WLO account; the oldest is evicted beyond that,
-because nothing removes an entry on its own — both revocation paths below need a
-person to act.
+could not record. Ten blocks per WLO account **and kind** (`MAX_BLOCKS_PER_LABEL`
+= 10, counted apart for pasted/OAuth blocks and for ticket blocks, §5c); the
+oldest of that kind is evicted beyond that, because nothing removes an entry
+without an expiry on its own — both revocation paths below need a person to act.
+
+**A block is length-bounded where it is decoded** (`MAX_BLOCK_CHARS` = 4096,
+`decodeAccessToken` — the one place the paste route, the `Bearer` header and the
+OAuth consent all pass through). The payload takes arbitrary padding, and
+`/oauth/authorize` retains the block string in the code store; a real block is
+573 characters (605 measured against the deployed key), and the bound leaves
+room for an RSA-4096 rotation.
 
 ### What revocation actually proves
 
@@ -482,7 +490,8 @@ repository gave no answer — which is no verdict on the login, so it must not
 read as a wrong password (until 2026-11-07 an outage answered 400 here, and an
 embedded widget dropped a valid ticket over a repository blip). All four pass two limiters:
 
-- **requests per address** (`RATE_LIMIT_RPM`), the ordinary public-surface bound;
+- **requests per address** (`API_RATE_LIMIT_RPM`, default 30/min — the tight
+  budget of the public surface, not the MCP endpoint's `RATE_LIMIT_RPM`);
 - **distinct logins per address** (`AUTH_CREDENTIAL_LIMIT`) — the guessing guard.
   It counts *credentials*, not requests, because a per-user client legitimately
   sends its header on every call. It runs after decoding (so only logins we would
@@ -536,9 +545,26 @@ block it *is* the access id, and §4 makes that the secret revocation hangs on.
 The refusal names its `scope` (`access-block` / `address`) and the address, never
 the key.
 
+**The in-memory write stores have their own budgets, split by whether the login
+is proven** (2026-11-14, `src/services/write/store-budget.ts`). Confirmation
+keys, approved plans and prepared batches are each bounded, and a bound means
+somebody's entry goes when room is needed. A `Basic` login is never proven
+before a preview — and some previews cost no upstream call — so each store is
+two pools with half its total each: **proven** (an account the repository
+confirmed, a block on the allow-list, the operator's service account) and
+**unproven** (a `Basic` header, keyed by the name *plus a keyed digest of the
+whole header*, and anonymous). A caller fills and evicts only within its own
+pool, and gives up its own oldest entry first; typing somebody's account name
+with another password no longer shares — or evicts — that person's pending keys
+and plans. This decides caps and eviction only: who may redeem a key or continue
+a plan is unchanged. What remains, and is accepted: unproven callers can evict
+each other — whoever needs to be safe from that signs in with an access block or
+OAuth.
+
 Two things make those limits hold:
 
-**No CORS header on `/auth*` or `/oauth/authorize`.** Both limiters count per
+**No CORS header on `/auth*` or `/oauth/authorize`** — with the one exact-match
+exception of `POST /auth/ticket` (§5c). Both limiters count per
 client *address*, so a wildcard origin would let a page spend every visitor's
 quota on a guess and read the outcome. The rest of the OAuth surface keeps the
 wildcard and needs it — the discovery documents are public and secret-free.

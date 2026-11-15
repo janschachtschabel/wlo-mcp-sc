@@ -21,7 +21,7 @@ import { formatNode, formatNodes } from '../formatter.js';
 import { flattenText } from '../text-sanitize.js';
 import { buildCompendiumView } from './compendium-view.js';
 import { getCollectionStats } from './stats.js';
-import { buildCollectionTree, type CollectionOrder } from './collection-traversal.js';
+import { buildCollectionTree, countCollectionContents, type CollectionOrder } from './collection-traversal.js';
 import { ensureRegistryFor } from './skill-registry-cache.js';
 import { DESCRIBED_MAX, describeEntries } from './skill-registry.js';
 import { BUSY_RETRY_DEFAULT_S, failureCode, type FailureCode } from './failure-code.js';
@@ -77,6 +77,14 @@ export interface CollectionOverview {
   subcollections?: Array<{ nodeId: string; title: string; contentCount?: number; contentsRefused?: true; contentsUnread?: true }>;
   /** Set only when there are more sub-collections than were listed. */
   subcollectionsTruncated?: true;
+  /**
+   * With `order: "position"` or `"stored"`: set positions order the
+   * sub-collections. `false`: the list was read whole and they order nothing —
+   * `position` then lists by title, `stored` as the repository does. Absent
+   * over a cut list without two different positions in sight, and for fewer
+   * than two sub-collections.
+   */
+  subcollectionsPositioned?: boolean;
   contents?: {
     total: number; truncated: boolean;
     items: Array<{
@@ -200,8 +208,16 @@ export async function getCollectionOverview(collectionId: string, opts: Overview
         ...(n.contentsUnread ? { contentsUnread: true as const } : {}),
       }));
       if (tree.truncated) overview.subcollectionsTruncated = true;
+      // With `position` and `stored`: whether positions decide here.
+      if (tree.childrenPositioned !== undefined) overview.subcollectionsPositioned = tree.childrenPositioned;
     },
     contents: async () => {
+      // No item asked for: only the number is needed, and the count request is the cheap way to it.
+      if (opts.maxContents === 0) {
+        const total = await countCollectionContents(id);
+        overview.contents = { total, items: [], truncated: total > 0 };
+        return;
+      }
       const page = await getCollectionContents(id, 'files', Math.max(1, opts.maxContents), 0);
       const items = formatNodes(page.nodes).slice(0, opts.maxContents).map(n => ({
         nodeId: n.nodeId, title: n.title, url: n.url, learningResourceTypes: n.learningResourceTypes, license: n.license,

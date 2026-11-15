@@ -43,7 +43,7 @@ ZWEISTUFIG: ohne confirmToken nur Vorschau (Datensatz, Größe, Prüfsumme, ob e
       replace: z.boolean().optional().default(false).describe('Einen vorhandenen Volltext ersetzen.'),
       confirmToken: z.string().max(200).optional(),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params) => {
       try {
         requireWrite();

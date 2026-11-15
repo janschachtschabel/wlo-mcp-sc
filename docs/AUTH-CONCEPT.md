@@ -3,8 +3,10 @@
 Warum die Anmeldung so aussieht, was wir für die Sicherheit tun, und wie sie sich
 gegen die Alternativen schlägt. Betriebsanleitung: [AUTH.md](AUTH.md) (englisch).
 
-> Technische Angaben am 2026-08-09 gegen den Quelltext geprüft. Messungen gegen
-> edu-sharing tragen ihr Datum — wer widersprechen will, muss neu messen.
+> Technische Angaben am 2026-08-09 gegen den Quelltext geprüft; Zahlen, Namen und
+> die seither hinzugekommenen Punkte (Ticket-Tausch, Ablauf nach 12 h, Zähler je
+> Zugangs-Id) am 2026-11-15 nachgeprüft und ergänzt. Messungen gegen edu-sharing
+> tragen ihr Datum — wer widersprechen will, muss neu messen.
 
 ---
 
@@ -96,6 +98,15 @@ eintragen. Für eigene Anwendungen und alles ohne OAuth.
 > zwei Dinge zu widerrufen und ein Widerruf übersähe eines. Deshalb **kein**
 > `refresh_token`, **kein** `expires_in`.
 
+**Dritte Tür, für eingebettete Widgets** (seit 2026-08-12): eine edu-sharing-Seite,
+die ihre Besucherin schon angemeldet hat, tauscht deren Ticket an
+`POST /auth/ticket` gegen einen gewöhnlichen Block — danach gilt alles Übrige
+unverändert. Solche Ticket-Blöcke und OAuth-Anmeldungen eines Widgets
+(`WIDGET_OAUTH_ORIGINS`) **laufen nach 12 Stunden ab**; der Ablauf steht im
+Eintrag der Positivliste, nicht im Block. Ein in einen KI-Host eingefügter Block
+und dessen OAuth-Anmeldung laufen nicht ab. Einzelheiten: [AUTH.md](AUTH.md) §4
+und §5c.
+
 **Widerruf:** `/auth/revoke` (ein Block) oder `/auth/revoke-all` (alle eines
 Kontos) — beendet beide Wege.
 
@@ -122,8 +133,9 @@ Kontos) — beendet beide Wege.
 | Geprüft an **einer** Stelle | `decodeAccessToken` — Einfügeweg, `Bearer` und OAuth laufen alle dort durch |
 
 **Die Positivliste** — eine Erlaubnisliste, keine Sperrliste: jeder Fehler
-schließt die Tür. Sie enthält nur Zugangs-Id, Kontoname und Zeitpunkt, **nie ein
-Passwort** (ein Test hält das fest), und ist der einzige Teil des Servers, der
+schließt die Tür. Sie enthält nur Zugangs-Id, Kontoname und Zeitpunkt (dazu, wo
+vorhanden, die Art `k`, den Ablauf `exp` und den vom Repository bestätigten
+Kontonamen `acct`), **nie ein Passwort** (ein Test hält das fest), und ist der einzige Teil des Servers, der
 zur Laufzeit auf Platte schreibt.
 
 **Missbrauchsschranken**
@@ -132,13 +144,16 @@ zur Laufzeit auf Platte schreibt.
 |---|---|---|
 | MCP-Endpunkt | 120/Min. je Adresse | Last |
 | `/api/*`, `/auth*`, `/oauth/authorize` | 30/Min. je Adresse | Dort wird ein Passwort getippt |
-| Verschiedene Zugangsdaten je Adresse | 10 in 10 Min. | **Passwort-Raten** — gezählt werden *unterschiedliche* Zugangsdaten, nicht Versuche |
+| Verschiedene Zugangsdaten je Adresse | 10 in 10 Min. (`AUTH_CREDENTIAL_LIMIT`) | **Passwort-Raten** — gezählt werden *unterschiedliche* Zugangsdaten, nicht Versuche. Auf `/mcp` zählt ein Zugangsblock je **Zugangs-Id** statt je Adresse (seit 2026-08-12): ein Chatbot-Backend ist eine Adresse für viele Personen |
+| Verschiedene Tickets je Adresse (`/auth/ticket`) | 200 in 10 Min. (`TICKET_CREDENTIAL_LIMIT`) | Eigener Topf — ein Ticket ist nicht erratbar, und hinter einer Adresse sitzt oft eine ganze Schule |
 | Anfrage-Rumpf | 4 MiB (`/mcp`), 64 KiB auf `/auth*` und `/oauth/*` | Speichererschöpfung |
 
 **`/auth*` und `/oauth/authorize` senden bewusst KEINEN CORS-Header:** beide
 Schranken zählen pro Adresse, also könnte eine beliebige Webseite sonst das
 Kontingent jedes Besuchers für einen Rateversuch ausgeben — und das Ergebnis
-auslesen.
+auslesen. Die **eine** Ausnahme ist exakt `POST /auth/ticket`: der Aufruf kommt
+bauartbedingt von einer fremden Herkunft, und dort wird kein Passwort getippt;
+`TICKET_ALLOWED_ORIGINS` grenzt sie auf die eingetragenen Herkünfte ein.
 
 **Der OAuth-Ablauf**
 

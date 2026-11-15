@@ -8,6 +8,7 @@ One line per document: the question it answers. Pick your role.
 |---|---|
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | How do I run it (Docker Compose behind a proxy), which settings matter, how much memory does it need, how do I watch it, what do I back up? |
 | [`STECKBRIEF.md`](STECKBRIEF.md) (German) | What is this service, in the shape a platform team expects: ports, probes, state, secrets, sizing — and what it deliberately is not? |
+| [`STECKBRIEF-UEBERGABE.md`](STECKBRIEF-UEBERGABE.md) (German) | The same service as the hand-over sheet the platform process asks for: one row per point (endpoints, two ports, scaling, B-API, secrets, monitoring, resources), each marked present / checked / open. |
 | [`../.env.example`](../.env.example) | Every setting the server reads, with its default and a comment. The file to copy. |
 | [`AUTH.md`](AUTH.md) | How does a person sign in (access block, OAuth 2.1, ticket exchange), how do I switch it on, rotate the key, revoke access — and which decisions must not be undone? |
 | [`PRIVACY.md`](PRIVACY.md) | What data does the server process, why, and for how long? A baseline for the policy an operator publishes. |

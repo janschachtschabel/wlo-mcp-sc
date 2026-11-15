@@ -8,6 +8,15 @@ design doc (§ "References (Apps-SDK surface — locked P3 Step 0b)").
 Legend: ✅ implemented & verified · 🔶 implemented, needs a live developer-mode
 render to confirm · ⬜ operator action.
 
+> **Reading this file (2026-11-15).** The posture and the verification runs
+> below are dated facts from 2026-07/08 and are kept as such: the Inspector run
+> saw 25 tools, the mechanics pass 17 prompts. The server has grown since — 34
+> read and 26 curation tools (30 with `WLO_BATCH_UPLOAD_ENABLED`), four widgets,
+> and an OAuth 2.1 login (discovery documents, open client registration, PKCE;
+> live since 2026-08-05, see `docs/AUTH.md` §5b). The rows were checked against
+> the code on 2026-11-15; no Inspector run and no developer-mode render has been
+> repeated against the current tool list.
+
 ## Current posture (2026-08-03) — read this before ticking anything
 
 **No submission is pending.** The deployment runs on the `nip.io` address and is
@@ -33,12 +42,12 @@ switch is a redeploy with changed env variables.
 
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
-| MCP server over Streamable HTTP | ✅ | `src/http.ts` (`POST /mcp`) |
+| MCP server over Streamable HTTP | ✅ | `src/http.ts` → `src/http-app.ts` (`POST /mcp`) |
 | Real SSE streaming for ChatGPT developer mode | ✅ | `MCP_SSE=1` → `enableJsonResponse:false` (`src/mcp-transport.ts`); image defaults it on; smoke-verified (`content-type: text/event-stream`) |
 | Reverse proxy must not buffer SSE | ⬜ | Documented in `docker-compose.yml` + README; operator configures nginx `proxy_buffering off;` |
-| Stateless server | ✅ | one server+transport per request; no MCP session state. Process-level state exists only for writes in progress — confirmation keys (10 min), approved plans and, with `WLO_BATCH_UPLOAD_ENABLED`, upload slots and batch approvals (30 min), all in memory — so the server runs as one instance. The 34 read tools all carry `readOnlyHint:true` (`wlo_list_my_batches`, registered with the curation tools, too). **Not read-only as a whole:** the server also lists 26 curation tools (30 with batch filing), which refuse at call time without a write identity — see the row below |
+| Stateless server | ✅ | one server+transport per request; no MCP session state. Process-level state exists for writes in progress — confirmation keys (10 min), the answers of redeemed keys for a safe retry, approved plans and, with `WLO_BATCH_UPLOAD_ENABLED`, upload slots and batch approvals (30 min) —, for an OAuth login in progress (60 s) and for caches of repository answers, all in memory; the one file is the allow-list of issued access blocks (`WLO_AUTH_REGISTRY_PATH`) — so the server runs as one instance. The 34 read tools all carry `readOnlyHint:true` (so do the three listing tools registered with the curation tools: `wlo_list_suggestions`, `wlo_list_collection_proposals` and, with batch filing, `wlo_list_my_batches`). **Not read-only as a whole:** the server also lists 26 curation tools (30 with batch filing), which refuse at call time without a write identity — see the row below |
 | Server `instructions` block (fast path vs deep-dive vs search/fetch) | ✅ | `src/apps/instructions.ts`; asserted non-empty in `tests/server.test.ts` |
-| Health endpoint | ✅ | `GET /health` → `200` (`src/http.ts`) |
+| Health endpoint | ✅ | `GET /health` → `200` (`src/rest/health.ts`, dispatched in `src/http-app.ts`) |
 
 ## Tools
 
@@ -46,11 +55,11 @@ switch is a redeploy with changed env variables.
 |-------------|--------|----------|
 | Clear tool names + "Use this when… / Do not use for…" descriptions | ✅ | tool registrations in `src/tools/*`; disambiguation asserted in `tests/server.test.ts` |
 | `annotations.readOnlyHint` on every tool | ✅ | asserted for every registered tool in `tests/server.test.ts` |
-| `annotations.openWorldHint` where a tool leaves WLO | ✅ | `get_wikipedia_summary` (`src/tools/wikipedia.ts`) and `get_url_text` (`src/tools/url-text.ts`) — the two that reach a source outside WLO |
+| `annotations.openWorldHint` where a tool leaves WLO | ✅ | `get_wikipedia_summary` (`src/tools/wikipedia.ts`) and `get_url_text` (`src/tools/url-text.ts`) — the two READ tools that reach a source outside WLO. Every other tool — reading or writing — talks to the one repository this server is bound to and declares `false` (aligned 2026-11-15: eleven batch tools and one list tool had carried `true` by copy; `tests/server.test.ts` now pins the two). `destructiveHint:true` is carried by exactly the three delete tools (`wlo_delete_content`, `wlo_delete_collection`, `wlo_delete_collections`) |
 | `outputSchema` + `structuredContent` on display tools | ✅ | `src/apps/register.ts` seam + `src/apps/outputSchemas.ts`; `tests/apps-structured-content.test.ts` |
 | ChatGPT `search` + `fetch` tools with the fixed shapes | ✅ | `src/tools/knowledge.ts`; `tests/tools-knowledge.test.ts` |
 | Tool-invocation status strings (`openai/toolInvocation/*`) on every tool | ✅ | `src/apps/tool-status.ts` via `tool-defaults.ts`; pinned by the conformance test in `tests/apps-tool-defaults.test.ts` |
-| Human-readable `title` on every tool (the submission scan reads it) | ✅ | seam titles + `TOOL_TITLES` in `src/apps/tool-defaults.ts`; conformance test pins title + hints + noauth + status for all current AND future tools (25/25 today). Re-verified with the official MCP Inspector CLI on 2026-08-03 against the running HTTP server: `tools/list` returned 25 tools, and a scripted check of title + description + readOnlyHint + destructiveHint + both `openai/toolInvocation/*` strings + `securitySchemes` + `inputSchema` found **0 objections**. (The earlier one-off run was clean at 22/22 on 2026-07-17.) |
+| Human-readable `title` on every tool (the submission scan reads it) | ✅ | seam titles + `TOOL_TITLES` in `src/apps/tool-defaults.ts`; conformance test pins title + hints + noauth + status for all current AND future tools (25/25 on 2026-08-03; the test covers every tool registered today). Re-verified with the official MCP Inspector CLI on 2026-08-03 against the running HTTP server: `tools/list` returned 25 tools, and a scripted check of title + description + readOnlyHint + destructiveHint + both `openai/toolInvocation/*` strings + `securitySchemes` + `inputSchema` found **0 objections**. (The earlier one-off run was clean at 22/22 on 2026-07-17.) |
 
 ## Widgets
 
@@ -59,10 +68,10 @@ switch is a redeploy with changed env variables.
 | Self-contained widget HTML (JS+CSS inlined, no external `<script src>`) | ✅ | `src/apps/widgets/build.mjs` → `dist-widgets/*.html`; `tests/apps-resources.test.ts` |
 | Widget resource MIME `text/html;profile=mcp-app`, `ui://` scheme | ✅ | `src/apps/resources.ts` (`WIDGET_MIME_TYPE`) |
 | `_meta.ui.domain` = submission origin | ⬜ | ABSENT by default (hosts validate it against their own sandbox format — Claude rejects foreign values and aborts the bound tool call, live-proven 2026-07-17). **Correct for the current posture:** the deployment runs on `nip.io` and is not being submitted yet, so `WLO_WIDGET_DOMAIN` stays unset. For the later ChatGPT submission, set it to the final app domain; it is then emitted on `ui.domain` + the `openai/widgetDomain` alias — a redeploy with a changed env variable, no code change |
-| `_meta.ui.csp` restricts connect/resource/frame domains | ✅ | `src/apps/resources.ts` — whitelists only the edu-sharing origin |
+| `_meta.ui.csp` restricts connect/resource/frame domains | ✅ | `src/apps/resources.ts` — `connect` whitelists only the edu-sharing origin; `resource` that origin plus the thumbnail hosts an operator lists in `WLO_WIDGET_IMAGE_DOMAINS` (none by default); `frame` is empty |
 | Widget `_meta` descriptions + `prefersBorder` (hosts label the rendered component) | ✅ | `WIDGET_DESCRIPTIONS` in `src/apps/resources.ts`, emitted on `ui.*` **and** the `openai/widget*` aliases, on both the `resources/list` descriptor and each read `contents` entry; `tests/apps-resources.test.ts` |
 | Content-addressed URIs (cache-busting on rebuild) | ✅ | `computeWidgetUri()` sha256 over the HTML **and** the resource `_meta` — a metadata-only change also rolls the URI (hosts key their cache on it; live-proven 2026-07-17) |
-| Widgets bundled in the deployment image | ✅ | Dockerfile copies `dist-widgets/`; container `resources/list` returns the 3 `ui://` widgets |
+| Widgets bundled in the deployment image | ✅ | Dockerfile copies `dist-widgets/`; container `resources/list` returned the 3 `ui://` widgets when this was checked; there are 4 today (`search-results`, `topic-page`, `browse`, `reading`) |
 | WCAG AA (alt text, contrast, keyboard) | ✅ | built to the `/better-coding-frontend` floor (P4); tile alt text / decorative-icon fallback in `widgets/shared/tile.ts`; detail-view focus management (open → back button, close → originating card, Escape closes) in `widgets/search-results/main.ts` |
 
 ## Distinct value & demo
@@ -122,12 +131,12 @@ switch is a redeploy with changed env variables.
 | Project with **global** data residency | ⬜ | EU-data-residency projects cannot submit plugins containing apps (current portal limitation) |
 | Universal MCP server URL (not Template) | ✅ | One hosted endpoint for all users; no per-tenant URLs |
 | Publicly accessible domain, no local/testing endpoint | ⬜ | ⚠️ **Choose the FINAL domain before the first submission.** The MCP server origin (scheme/host/port) is LOCKED across versions — changing it later means a brand-new app + review. A `nip.io`/raw-IP URL is a testing endpoint in reviewers' eyes AND would chain the app to that IP forever. Use e.g. `mcp.wirlernenonline.de` from the start |
-| CSP declared for the exact fetch domains | ✅ | `_meta.ui.csp` = the edu-sharing origin only (`src/apps/resources.ts`) |
+| CSP declared for the exact fetch domains | ✅ | `_meta.ui.csp` = the edu-sharing origin only, plus — for images — any host the operator lists in `WLO_WIDGET_IMAGE_DOMAINS` (`src/apps/resources.ts`) |
 | Scan Tools imports the advertised metadata as a locked snapshot | ✅ | Everything it reads is complete: names, titles, descriptions, schemas, `_meta.securitySchemes`, annotations, UI-resource CSP, server `instructions` (verified with the MCP Inspector CLI 2026-07-17) |
 | Annotation justifications match server-advertised values | ⬜ | All read tools are `readOnlyHint:true`, `destructiveHint:false`. Two carry `openWorldHint:true` in the MCP-spec sense (they query an open external source): `get_wikipedia_summary` and `get_url_text`; justification wording: *read-only lookup of a public source, writes nothing, cannot change public internet state*. Note that `get_url_text` is declared **unsafe** and is switched off by default in the shipped deployment config — a submission should state whether it is enabled. The 26 curation tools (30 with batch filing) are not part of this read-only surface: they declare `readOnlyHint:false` and refuse at call time without a write-capable identity. |
 | Response minimization (no telemetry/session/trace IDs in tool output) | ✅ | Responses carry only content metadata; the `_queryMeta` block is subject-matter context (search term, resolved criteria, pagination, repository URL) — no user identifiers, no session/request IDs |
 | Test prompts + expected responses for the form | ✅ | [`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md); must pass on ChatGPT web AND mobile |
-| Screenshots | ⬜ | Optional and only because the app HAS a UI — capture the three rendered widgets in developer mode |
+| Screenshots | ⬜ | Optional and only because the app HAS a UI — capture the four rendered widgets in developer mode |
 
 ### ⚠️ Post-publication maintenance rule for OUR widget URIs
 

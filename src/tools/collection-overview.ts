@@ -45,6 +45,12 @@ export const collectionOverviewSchema = z.object({
     contentsUnread: z.literal(true).optional(),
   })).optional(),
   subcollectionsTruncated: z.literal(true).optional(),
+  /**
+   * With `order: "position"` or `"stored"`: set positions order the
+   * sub-collections (two different ones were seen). `false` only over a list
+   * that was not cut; absent over a cut one, and for fewer than two.
+   */
+  subcollectionsPositioned: z.boolean().optional(),
   contents: z.object({
     total: z.number(), truncated: z.boolean(),
     items: z.array(z.object({
@@ -97,7 +103,7 @@ Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch 
             isError: true,
           };
         }
-        return { content: [{ type: 'text' as const, text: render(result.overview) }], structuredContent: result.overview };
+        return { content: [{ type: 'text' as const, text: render(result.overview, params.order === 'position') }], structuredContent: result.overview };
       } catch (err) {
         return toolError('Fehler bei der Sammlungsübersicht', err);
       }
@@ -106,7 +112,7 @@ Nicht für den Kompendium-TEXT (get_compendium_text), nicht zum Blättern durch 
 }
 
 /** The short text form of the same data. Every repository value through `oneLine`. */
-function render(o: CollectionOverview): string {
+function render(o: CollectionOverview, sortedByPosition: boolean): string {
   const lines: string[] = [`## ${o.collection.title || o.collection.nodeId}`, nodeIdLine(o.collection.nodeId)];
   if (o.collection.topicPageUrl) lines.push(`Themenseite: ${o.collection.topicPageUrl}`);
   if (o.breadcrumb?.length) lines.push(`Pfad: ${o.breadcrumb.map(b => b.title).join(' › ')}`);
@@ -127,8 +133,20 @@ function render(o: CollectionOverview): string {
     }
   }
   if (o.subcollections?.length) {
+    // The prefix `Untersammlungen: ` is a line form a client reads
+    // (`tests/line-forms.test.ts`): it is the same for every order.
     lines.push(`Untersammlungen: ${o.subcollections
       .map(s => `${s.nodeId} (${s.contentsRefused ? 'mit dieser Anmeldung nicht lesbar' : s.contentsUnread ? 'Anzahl gerade nicht lesbar' : s.contentCount ?? '?'}) ${quotedTitle(s.title)}`).join('; ')}${o.subcollectionsTruncated ? ' …' : ''}`);
+    // The order on a line of its own, AFTER the list. Which case held is said
+    // only where the flag exists — over a cut list it does not.
+    const held = o.subcollectionsPositioned;
+    if (sortedByPosition) {
+      lines.push(`Reihenfolge: gesetzte Position, sonst Titel.${held === undefined ? ''
+        : held ? ' Hier: in gesetzter Reihenfolge.' : ' Hier: nach Titel (keine unterscheidenden Positionen gesetzt).'}`);
+    } else if (held !== undefined) {
+      // `stored` sorted nothing, so it never says "nach Titel".
+      lines.push(held ? 'Reihenfolge: in gesetzter Reihenfolge.' : 'Reihenfolge: keine unterscheidenden Positionen gesetzt.');
+    }
   }
   if (o.contents) {
     lines.push(`Inhalte (${o.contents.items.length} von ${o.contents.total}):`);

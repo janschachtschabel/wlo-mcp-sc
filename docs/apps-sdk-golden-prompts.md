@@ -102,6 +102,15 @@ Two consequences are worse than "fewer fields", and query `"Optik"` shows both.
 
 Neither is visible from the schema — both needed the live call.
 
+> **State of the code on 2026-11-15 (the measurement above is kept as the dated
+> fact it is).** The wrong-URL defect is fixed in the source: `search` and
+> `fetch` now build `url` as `n.topicPageUrl || n.url || buildRenderUrl(n.nodeId)`
+> (`src/tools/knowledge.ts`), so a topic page is cited by its topic-page URL.
+> The line reference `src/formatter.ts:182` has moved (the fallback to
+> `node.content.url` is still in `formatNode`). The flattening of the three
+> pots and the dropped `nodeType` are unchanged in the default (`lean`) mode.
+> Neither statement has been re-measured against a deployment.
+
 ### Section E mechanics pass, run 2026-08-09 against staging
 
 The same "does the expected tool deliver at all" pass as the table above, so a
@@ -170,6 +179,15 @@ should fire.
 | D9 | „Finde in der Sammlung `<nodeId>` nur die Videos zur Zellteilung.“ | `search_wlo_within_collection` | text/JSON list | scoped results |
 | D10 | „Gibt es fertige Anleitungen/Skills, um ein Arbeitsblatt zu erstellen?“ | `search_skill`, then `get_skill` with a returned nodeId | text (catalogue, then one instruction document) | catalogue returned; the content type skills are found by is `ai_skill` since 2026-08-12 |
 
+> **Read with today's tool list (2026-11-15).** The "Expected output" column was
+> written when D7–D9 answered as plain text. `search_wlo_collections`,
+> `get_node_details` and `search_wlo_within_collection` now declare the
+> **search-results** widget as well, so a rendered card grid there is correct,
+> not a deviation. For D8 the descriptions now separate the two halves of the
+> prompt: `get_node_details` is the detail view (metadata; `includeTextContent`
+> for the stored text), `get_wlo_content_text` is the tool for "den Volltext" —
+> either one firing, or both, is a pass.
+
 ## B. Indirect-intent prompts
 
 No explicit "WLO" — the model should still recognise an OER / teaching-material
@@ -237,7 +255,7 @@ Record the tool that fired for **every** prompt below, including the ones where
 | S4 | „Suche mir Unterrichtsmaterial zur Photosynthese und nenne die Lizenz.“ | `search_wlo_all` | the licence is only in the full projection | `search` fires → the model has no licence and either omits or invents it |
 | S5 | „Belege deine Aussage zur Photosynthese mit Quellen aus WLO.“ | `search` → `fetch` | genuine citation intent — this is what the knowledge convention is for | `search_wlo_all` fires → acceptable, but note it |
 | S6 | „Recherchiere gründlich zum Thema Wellenoptik und fasse die WLO-Quellen zusammen.“ | `search` → `fetch` (repeatedly) | research/RAG loop; `fetch` supplies the document text | either tool is defensible — record which, and whether `fetch` followed |
-| S7 | „Finde die WLO-Themenseite zur Optik.“ | `get_topic_page_content` or `search_wlo_all` | tests whether `search` swallows a topic-page request | `search` fires → the topic page arrives with the wrong URL (see the measured delta) |
+| S7 | „Finde die WLO-Themenseite zur Optik.“ | `get_topic_page_content` or `search_wlo_all` | tests whether `search` swallows a topic-page request | `search` fires → the topic page arrives unmarked among single items, without its swimlanes (the wrong URL measured on 2026-08-09 is fixed in the source since) |
 | S8 | (English) „Find OER teaching material about photosynthesis.“ | `search_wlo_all` | both descriptions are German; an English prompt may bias toward the English-named tool | `search` fires → the language of the *name* is deciding, not the description |
 
 **Pass criteria.** S1–S4 and S7 must not fire `search`. S5/S6 may fire either —

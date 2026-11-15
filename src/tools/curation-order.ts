@@ -31,7 +31,7 @@ ZWEISTUFIG: ohne confirmToken nur Vorschau mit der neuen Abfolge. Danach wird di
         .describe(`Alle Untersammlungen ODER alle Inhalte dieser Sammlung, in der gewünschten Reihenfolge (höchstens ${ORDER_MAX}).`),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

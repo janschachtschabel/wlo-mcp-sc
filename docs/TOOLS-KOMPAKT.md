@@ -20,7 +20,7 @@ Ausführliche Referenz: [`TOOLS.md`](./TOOLS.md)
 |---|---|
 | `get_collection_contents` | Listet auf, was eine Sammlung enthält — Materialien und Unter-Sammlungen. |
 | `browse_collection_tree` | Navigiert durch die Unterthemen einer Sammlung oder eines Fachportals. |
-| `list_collection_tree` | Liefert den Teilbaum einer Sammlung als flache Liste mit Pfaden, bis vier Ebenen tief, in gespeicherter Reihenfolge. |
+| `list_collection_tree` | Liefert den Teilbaum einer Sammlung als flache Liste mit Pfaden, bis vier Ebenen tief, in wählbarer Reihenfolge (`order`), ohne Angabe in gespeicherter Reihenfolge. |
 | `get_subject_portals` | Zeigt, welche Fächer es gibt — die obersten Fach-Hubs. |
 | `get_collection_stats` | Fasst zusammen, woraus eine Sammlung besteht, nach Typ, Fach und Stufe. |
 | `get_collection_overview` | Zeigt eine Sammlung auf einen Blick: Pfad, Gliederung, Statistik, Skills, Untersammlungen und erste Inhalte. |
@@ -105,7 +105,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 |---|---|
 | `wlo_create_collection` | Legt eine neue Sammlung an. |
 | `wlo_rename_collection` | Ändert Titel und Beschreibung einer Sammlung. |
-| `wlo_add_to_collection` | Nimmt ein vorhandenes Material in eine Sammlung auf. |
+| `wlo_add_to_collection` | Nimmt ein vorhandenes Material in eine Sammlung auf; wer dort nur lesen darf, schlägt es stattdessen vor. |
 | `wlo_remove_from_collection` | Nimmt ein Material wieder aus einer Sammlung heraus. |
 | `wlo_create_collection_tree` | Legt einen ganzen Sammlungsbaum mit einer Bestätigung an. |
 | `wlo_add_to_collections` | Nimmt viele Materialien mit einer Bestätigung in Sammlungen auf. |
@@ -117,7 +117,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_decide_collection_proposal` | Nimmt einen Vorschlag an eine Sammlung an oder lehnt ihn ab. |
 | `wlo_delete_collections` | Löscht viele Sammlungen mit einer Bestätigung, aber nur leere. |
 | `wlo_update_contents` | Ändert Metadaten vieler Datensätze mit einer Bestätigung (schreibt bzw. schlägt vor). |
-| `wlo_attach_fulltext` | Legt einen Volltext im textContent eines Datensatzes ab. |
+| `wlo_attach_fulltext` | Legt einen Volltext im textContent eines Datensatzes ab — nur an einem Datensatz ohne Datei, sonst abgelehnt. |
 | `wlo_attach_fulltexts` | Legt Volltexte für viele Datensätze mit einer Bestätigung ab. |
 | `wlo_delete_collection` | Löscht eine Sammlung endgültig, samt Untersammlungen. |
 | `wlo_prepare_file_batch` | Nur mit `WLO_BATCH_UPLOAD_ENABLED`: Stapel-Ablage vorbereiten (Vorschau + Freigabe). |

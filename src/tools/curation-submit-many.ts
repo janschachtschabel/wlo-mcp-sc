@@ -55,7 +55,7 @@ Danach liegen die Datensätze bei der Redaktion und können nicht unbemerkt zur�
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
       const ids = (params['items'] as Array<{ nodeId: string }>).map(i => i.nodeId.trim());

@@ -140,7 +140,17 @@ export async function getChildCollectionsResult(
   maxItems = 100,
   skipCount = 0,
   props: string[] | undefined = DISPLAY_PROPS,
-  opts: { /** In the STORED order (see `ORDER_POSITION_PROPERTY`) instead of the order of creation. */ stored?: boolean } = {},
+  opts: {
+    /** In the STORED order (see `ORDER_POSITION_PROPERTY`) instead of the order of creation. */
+    stored?: boolean;
+    /**
+     * Each child WITH its position (the property is added to the projection):
+     * a child that has none carries no such property (measured 2026-11-15,
+     * `npm run measure:tree`). Opt-in, so every other caller sends the request
+     * it always sent.
+     */
+    withPosition?: boolean;
+  } = {},
 ): Promise<ChildCollectionsResult> {
   const params = new URLSearchParams({
     filter: 'folders',
@@ -151,7 +161,9 @@ export async function getChildCollectionsResult(
     params.set('sortProperties', ORDER_POSITION_PROPERTY);
     params.set('sortAscending', 'true');
   }
-  appendPropertyFilter(params, props);
+  // An empty projection means `-all-`, which holds the property already.
+  appendPropertyFilter(params, opts.withPosition && props?.length && !props.includes(ORDER_POSITION_PROPERTY)
+    ? [...props, ORDER_POSITION_PROPERTY] : props);
 
   const url = `${BASE_URL}/node/v1/nodes/-home-/${encodeURIComponent(nodeId)}/children?${params}`;
   const res = await wloFetch(url, { headers: { Accept: 'application/json' } });

@@ -11,9 +11,10 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 [AUTH.md](AUTH.md) (Anmeldung im Detail), [SKILLS.md](SKILLS.md) (Redaktion),
 [DEPLOYMENT.md](DEPLOYMENT.md) (Betrieb), [PRIVACY.md](PRIVACY.md).
 
-> Alle Angaben sind am 2026-11-07 gegen den Quelltext geprüft. Die
-> Werkzeugliste stammt aus einem tatsächlich gestarteten Server, nicht aus einer
-> Aufzählung von Hand.
+> Alle Angaben sind am 2026-11-07 gegen den Quelltext geprüft, die
+> Werkzeugzeilen in Abschnitt 1 zuletzt am 2026-11-15 (jede Zeile gegen die
+> registrierte Beschreibung und das Schema). Die Werkzeugliste stammt aus einem
+> tatsächlich gestarteten Server, nicht aus einer Aufzählung von Hand.
 
 ---
 
@@ -45,7 +46,7 @@ immer anonym.
 
 ### 1.1 Lesen — 34 Werkzeuge (`noauth`)
 
-**Suchen (6)**
+**Suchen (7)**
 
 | Werkzeug | Zweck |
 |---|---|
@@ -84,7 +85,7 @@ immer anonym.
 |---|---|
 | `get_collection_contents` | Inhalte einer Sammlung |
 | `browse_collection_tree` | Sammlungsbaum als Textbaum, bis Tiefe 3 |
-| `list_collection_tree` | Teilbaum als flache Liste mit Pfad, Tiefe und parentId, bis Tiefe 4, in gespeicherter Reihenfolge, in Seiten |
+| `list_collection_tree` | Teilbaum als flache Liste mit Pfad, Tiefe und parentId, bis Tiefe 4, in gespeicherter Reihenfolge (oder `order: title` / `position`), in Seiten |
 | `get_collection_overview` | Eine Sammlung auf einen Blick: Kopf, Pfad, Kompendium-Gliederung, Statistik, freigegebene Skills, Untersammlungen, erste Inhalte |
 | `get_subject_portals` | Die Fachportale (oberste Ebene) |
 | `get_topic_page_content` | Eine Themenseite als Schwimmlinien, fertig zum Rendern |
@@ -168,7 +169,7 @@ aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 | `wlo_create_collection` | Sammlung anlegen |
 | `wlo_rename_collection` | Sammlung umbenennen |
 | `wlo_delete_collection` | Sammlung löschen |
-| `wlo_add_to_collection` | Material in eine Sammlung legen |
+| `wlo_add_to_collection` | Material in eine Sammlung legen; darf die Anmeldung dort nur lesen, wird es stattdessen vorgeschlagen (`proposed`) |
 | `wlo_remove_from_collection` | Material aus einer Sammlung nehmen |
 | `wlo_create_collection_tree` | Einen Baum von Untersammlungen (≤ 250 Knoten, Tiefe 4) mit **einer** Bestätigung anlegen |
 | `wlo_add_to_collections` | Bis zu 200 Materialien mit **einer** Bestätigung in Sammlungen aufnehmen |
@@ -185,7 +186,7 @@ aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 | `wlo_update_compendium` | Kompendialtext schreiben |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert |
 | `wlo_suggest_metadata` | Metadaten *vorschlagen* statt ändern |
-| `wlo_list_suggestions` | Offene Vorschläge auflisten |
+| `wlo_list_suggestions` | Hinterlegte Vorschläge zu einem Datensatz auflisten (alle, mit `status` nur offene, angenommene oder abgelehnte) |
 | `wlo_decide_suggestion` | Vorschlag annehmen oder ablehnen |
 
 > **Für Chatbots wichtig:** `wlo_set_topic_page` ist das einzige Werkzeug, dessen
@@ -325,7 +326,7 @@ Nur mit `WLO_BATCH_UPLOAD_ENABLED`; sonst gibt es die Adresse nicht.
 
 ### 3.1 Ausgabeformat
 
-23 der 60 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
+24 der 60 Werkzeuge nehmen `outputFormat: "markdown" | "json"`. Standard ist Markdown
 (sparsamer im Kontextfenster); der vollständige Envelope reist ohnehin in
 `structuredContent` mit. Ein abschließender `_queryMeta`-Textblock trägt den
 maschinenlesbaren Suchkontext (Kriterien, Paginierung, Repository-URL).

@@ -199,7 +199,7 @@ Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Besc
     // The browse widget calls this tool from inside the iframe for drill-down.
     widgetAccessible: true,
     description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig. Statt der nodeId geht auch der Titel einer Sammlung als \`collection\` (gleichnamige: \`discipline\`); mehrdeutig → Kandidaten statt Ergebnis.
-Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Alphabetisch; mit \`order: "stored"\` wie im Repository.
+Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Alphabetisch oder nach \`order\` ("stored", "position").
 Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
     inputSchema: {
       nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
@@ -263,7 +263,7 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
         // module holds its schema and its rendering, never an algorithm.
         // `truncated` is disclosed below so the caller can offer a targeted
         // drill-down rather than presenting a slice as the whole tree.
-        const { nodes: tree, truncated, truncatedAt } = await buildCollectionTree({
+        const { nodes: tree, truncated, truncatedAt, childrenPositioned } = await buildCollectionTree({
           parentId,
           depth,
           maxResults: params.maxResults ?? 50,
@@ -288,7 +288,11 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
           if (registry) n.skillRegistry = registry;
         }
 
-        const payload = { parent: parentId, depth, total: tree.length, results: tree, truncated, ...(truncatedAt ? { truncatedAt } : {}) };
+        const payload = {
+          parent: parentId, depth, total: tree.length, results: tree, truncated, ...(truncatedAt ? { truncatedAt } : {}),
+          // Present with `order: "position"` and `"stored"` — the default answer is the one it always was.
+          ...(childrenPositioned !== undefined ? { childrenPositioned } : {}),
+        };
 
         if (params.outputFormat === 'json') {
           return {
@@ -297,7 +301,19 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
           };
         }
 
-        const lines: string[] = [`Sub-Sammlungen unter ${parentId}: ${tree.length} (Tiefe ${depth})\n`];
+        // Which of the two cases held, said where a one-block client reads it.
+        // `stored` sorts nothing, so it never says "nach Titel": only whether positions decide.
+        // The flag is absent where the first level was cut with no two different
+        // positions in sight (or holds fewer than two): then the rule is named
+        // and nothing is said about which case held — "nach Titel" over a cut
+        // listing was a statement about children nobody saw.
+        const firstLevel = childrenPositioned === undefined ? ''
+          : childrenPositioned ? 'erste Ebene in gesetzter Reihenfolge'
+            : params.order === 'position' ? 'erste Ebene nach Titel' : 'erste Ebene ohne unterscheidende Positionen';
+        const orderNote = params.order === 'position'
+          ? ` — Reihenfolge: gesetzte Position, sonst Titel${firstLevel ? `; ${firstLevel}` : ''}`
+          : firstLevel ? ` — ${firstLevel}` : '';
+        const lines: string[] = [`Sub-Sammlungen unter ${parentId}: ${tree.length} (Tiefe ${depth})${orderNote}\n`];
         const renderTree = (nodes: CollectionTreeNode[], indent: number) => {
           for (const n of nodes) {
             const pad = '  '.repeat(indent);
@@ -306,7 +322,8 @@ Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \
             // title carrying a newline would add a branch with a nodeId that
             // exists nowhere in the tree (same rule as renderToText).
             // The id first, the title last and quoted: ahead of the id a title could spell out one.
-            lines.push(oneLine(`${pad}- ${nodeIdLine(n.nodeId, n.originalId)}${cnt} — ${quotedTitle(n.title)}`));
+            const positioned = n.childrenPositioned ? ' [Unterthemen in gesetzter Reihenfolge]' : '';
+            lines.push(oneLine(`${pad}- ${nodeIdLine(n.nodeId, n.originalId)}${cnt}${positioned} — ${quotedTitle(n.title)}`));
             for (const line of n.skillRegistry
               ? registrySummaryLines(n.skillRegistry, { entries: false }) : []) {
               lines.push(oneLine(`${pad}    ${line}`));

@@ -56,7 +56,7 @@ Entscheiden mit wlo_decide_collection_proposal. Erfordert eine Anmeldung.`,
       collectionId: z.string().trim().min(1).max(200).describe('nodeId der Sammlung.'),
       status: z.enum(['PENDING', 'ACCEPTED', 'DECLINED']).optional().default('PENDING'),
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -94,7 +94,7 @@ Nur ein OFFENER Vorschlag lässt sich entscheiden. nodeId ist die des vorgeschla
       decision: z.enum(['accept', 'decline']),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {
       const collectionId = String(params['collectionId'] ?? '').trim();
       const nodeId = String(params['nodeId'] ?? '').trim();

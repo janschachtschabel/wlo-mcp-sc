@@ -27,6 +27,7 @@
     "measure:resources": "node --env-file-if-exists=.env scripts/measure-resources.mjs",
     "measure:moves": "node --env-file-if-exists=.env --import tsx scripts/measure-collection-moves.ts",
     "measure:order": "node --env-file-if-exists=.env --import tsx scripts/measure-collection-order.ts",
+    "measure:tree": "node --import tsx scripts/measure-tree-reading.ts",
     "measure:uploads": "node --env-file-if-exists=.env --import tsx scripts/measure-uploads.ts",
     "dump:tools": "node --import tsx scripts/dump-tools.ts",
     "docs:tools": "node --import tsx scripts/docs-tools.ts"

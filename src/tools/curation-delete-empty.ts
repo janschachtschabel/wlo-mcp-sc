@@ -50,7 +50,7 @@ Gelöschtes lässt sich nicht verlässlich wiederherstellen. Für EINE Sammlung 
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
     },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
       const ids = [...new Set((params['nodeIds'] as string[]).map(id => id.trim()))];

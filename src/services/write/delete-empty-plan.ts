@@ -53,6 +53,8 @@ export interface Holding { files: number; folders: string[]; moreFolders: boolea
 export async function readHolding(id: string): Promise<Holding | null> {
   try {
     const [files, folders] = await Promise.all([
+      // Its own read, not `countCollectionContents` (maxItems=0): "empty" decides
+      // a DELETE, and the one item asked for is a second witness beside `total`.
       getCollectionContents(id, 'files', 1, 0, TITLE_PROPS),
       getChildCollectionsResult(id, CHILD_SCAN + 1, 0, TITLE_PROPS),
     ]);
