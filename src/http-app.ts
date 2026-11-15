@@ -79,6 +79,10 @@ export interface HttpAppOptions {
    * Absent: the wildcard, as before.
    */
   ticketAllowedOrigins?: ReadonlySet<string>;
+  /** `WLO_SESSION_EXCHANGE`: `POST /auth/session` exists (see `rest/auth-pages.ts`). Absent: it does not. */
+  sessionExchange?: boolean;
+  /** `WLO_SESSION_ALLOWED_ORIGINS`. Absent: only the repository's own origin may ask. */
+  sessionAllowedOrigins?: ReadonlySet<string>;
   /** `METRICS_TOKEN`. Present: `GET /metrics` answers to this Bearer token. Absent: the path does not exist. */
   metricsToken?: string;
   /** `WIDGET_OAUTH_ORIGINS` (R1): OAuth logins redirecting there expire after 12 h — see `OAuthEndpointDeps`. */
@@ -177,7 +181,7 @@ export function createHttpRequestHandler(
   opts: HttpAppOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const {
-    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter, ticketAllowedOrigins, widgetOAuthOrigins,
+    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter, ticketAllowedOrigins, sessionExchange, sessionAllowedOrigins, widgetOAuthOrigins,
     maxBodyBytes, trustProxy, streamOptions, publicBaseUrl, protocolLimiter, clientBudgets, metricsToken,
   } = opts;
 
@@ -583,6 +587,8 @@ export function createHttpRequestHandler(
       authAbuseLimiter,
       ...(ticketAbuseLimiter ? { ticketAbuseLimiter } : {}),
       ...(ticketAllowedOrigins ? { ticketAllowedOrigins } : {}),
+      ...(sessionExchange ? { sessionExchange } : {}),
+      ...(sessionAllowedOrigins ? { sessionAllowedOrigins } : {}),
     })) return;
 
     // OAuth surface (discovery in P1; register/authorize/token follow). Like the

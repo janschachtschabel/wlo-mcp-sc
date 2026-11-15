@@ -15,7 +15,7 @@ import { createClientBudgets, parseTrustedClientKeys, PROTOCOL_FACTOR, type Trus
 import { streamableHttpOptions } from './mcp-transport.js';
 import { createDistinctValueLimiter, createRateLimiter } from './rate-limit.js';
 import { metricsTokenFrom, metricsTokenRejected } from './rest/metrics-route.js';
-import { resolveNonNegativeInt, resolvePositiveInt } from './wlo-config.js';
+import { resolveNonNegativeInt, resolvePositiveInt, WLO_REPOSITORY_URL } from './wlo-config.js';
 
 /** A line the entry point logs at startup. */
 export interface StartupNotice {
@@ -113,6 +113,35 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
     });
   }
 
+  // `POST /auth/session` (2026-11-15): takes over the repository session of a
+  // person whose browser sends the session cookie HERE — which it only does
+  // when this server is mounted on the repository's host below `/edu-sharing`.
+  // Off unless set; said at startup, because a server that reads cookies should
+  // be seen to.
+  const sessionExchange = /^(1|true|yes)$/i.test(env['WLO_SESSION_EXCHANGE'] ?? '');
+  // Who may ask. Unset: the repository's own origin. A list whose every entry is
+  // unusable closes the path (like the ticket list) instead of opening it.
+  const sessionOrigins = resolveTicketOrigins(env['WLO_SESSION_ALLOWED_ORIGINS']);
+  if (sessionExchange) {
+    const repositoryOrigin = new URL(WLO_REPOSITORY_URL).origin;
+    notices.push({
+      level: 'warn',
+      message: 'WLO_SESSION_EXCHANGE: POST /auth/session takes over a repository session — meant for a mount on the '
+        + 'repository host below /edu-sharing. Only a page of the origins named here may ask; if the address in the '
+        + 'browser differs, set WLO_SESSION_ALLOWED_ORIGINS. The requests arrive through the repository\'s ingress: '
+        + 'TRUST_PROXY must fit that chain, or every person shares one address in the limiters',
+      fields: { origins: sessionOrigins.origins ? [...sessionOrigins.origins] : [repositoryOrigin] },
+    });
+    if (sessionOrigins.rejected.length) {
+      notices.push({
+        level: sessionOrigins.allRejected ? 'error' : 'warn',
+        message: 'WLO_SESSION_ALLOWED_ORIGINS: entries ignored (need http(s) origins, no wildcard)'
+          + (sessionOrigins.allRejected ? ' — NO page may exchange a session until this is fixed' : ''),
+        fields: { entries: sessionOrigins.rejected },
+      });
+    }
+  }
+
   // OAuth logins whose verified redirect target lies in one of these origins are an
   // embedded widget's, and their block expires after 12 h (plan 2026-11-07, R1).
   // Empty = no OAuth block expires — AI hosts are never affected by default.
@@ -172,6 +201,8 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
     authAbuseLimiter: createDistinctValueLimiter(authCredentialLimit),
     ticketAbuseLimiter: createDistinctValueLimiter(ticketCredentialLimit),
     ...(ticketOrigins.origins ? { ticketAllowedOrigins: ticketOrigins.origins } : {}),
+    ...(sessionExchange ? { sessionExchange } : {}),
+    ...(sessionExchange && sessionOrigins.origins ? { sessionAllowedOrigins: sessionOrigins.origins } : {}),
     widgetOAuthOrigins: widgetOrigins.origins,
     maxBodyBytes,
     trustProxy,

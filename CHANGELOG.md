@@ -6,6 +6,24 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — the session of a repository page becomes a login (`POST /auth/session`, optional, 2026-11-15)
+
+Off unless `WLO_SESSION_EXCHANGE=1`; without it nothing changes and the server reads no cookie anywhere.
+
+- **`POST /auth/session`** exchanges the repository session of a signed-in person for an ordinary access block —
+  no ticket, no second password. For a chat widget inside an edu-sharing page, where this one path is mounted on
+  the repository's host below `/edu-sharing` (the only place a browser sends the session cookie). The widget can
+  hand the block to its backend, which sends it as `Authorization: Bearer` like any other.
+- **A session block can not read as a guest.** Measured against staging: an ended session answers `200` with the
+  public results; with `DisableGuest: true` it answers `401`. Every call of a session block carries that header,
+  and never an `Authorization` header beside the cookie (`src/auth/upstream-auth.ts`, the one place).
+- `wlo_auth_status` and `GET /auth/status` name the new kind: `credential: "session"`.
+- Only a page of the repository's own origin (or one in `WLO_SESSION_ALLOWED_ORIGINS`, a list of its own) may ask;
+  no CORS headers. Two different session cookies in one request are refused.
+- One review with a security brief: no critical or major finding, 8 minor, 3 nits, all worked.
+- A live test signs in, exchanges, reads, creates and deletes a collection with the session, ends the session and
+  sees the refusal. Plan for the chatbot team: `docs/plans/2026-11-15-chatbot-anmeldung-aus-der-sitzung.md`.
+
 ## [1.2.0] - 2026-11-15
 
 No tool, no top-level parameter and no error code was renamed or removed since 1.1.0; a client written against

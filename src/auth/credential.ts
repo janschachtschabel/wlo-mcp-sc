@@ -21,6 +21,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { decodeAccessToken, type AuthKeys } from './access-token.js';
 import type { AccessRegistry } from './access-registry.js';
+import { isSessionCookieString, sessionCredentialHeader } from './upstream-auth.js';
 
 /** The authority name edu-sharing reports for an unauthenticated caller. */
 export const ANONYMOUS_AUTHORITY = 'esguest';
@@ -228,9 +229,20 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   // Everything else about the block — registry, revocation, abuse bucket — is
   // kind-agnostic and stays shared.
   const account = accessSupport.registry.accountOf(payload.jti);
+  // The kind is the ENTRY's kind, for a session: its id is a hash of a session
+  // id, and the holder of that listed id can encrypt any content under it (the
+  // public key is published) — a password or a ticket under a session's id is
+  // not something this server issued. Only this direction: an entry written
+  // before the kinds existed carries none, and a ticket block must keep
+  // decoding against it.
+  if ((accessSupport.registry.kindOf(payload.jti) === 'session') !== (payload.k === 'session')) return null;
+  // …and what may become a `Cookie` header is checked again, for the same reason.
+  if (payload.k === 'session' && !isSessionCookieString(payload.secret)) return null;
   const header = payload.k === 'ticket'
     ? `EDU-TICKET ${payload.secret}`
-    : `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`;
+    : payload.k === 'session'
+      ? sessionCredentialHeader(payload.secret)
+      : `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`;
   return {
     header,
     label: payload.u,

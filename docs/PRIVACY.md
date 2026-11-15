@@ -13,7 +13,7 @@ _Last reviewed: 2026-11-15 (checked against the source code)._
 A Model Context Protocol (MCP) server that lets AI assistants search open
 educational resources (OER) from [WirLernenOnline](https://wirlernenonline.de)
 (the "WLO" edu-sharing repository). It has **no user accounts of its own, no
-database, no cookies, and no MCP session state** — every request is served on
+database, sets no cookies, and keeps no MCP session state** — every request is served on
 its own. What outlives a request is listed in the table below, item by item:
 short-lived entries in memory (confirmation keys, approved plans, counters,
 caches) and, only when personal access blocks are switched on, one file — the
@@ -103,7 +103,10 @@ query string.
 - No accounts of its own; **no password is ever stored**, and none is logged.
   Personal access blocks are not an exception: what is kept is an access id and
   a user name, never a credential.
-- No cookies, tracking pixels, analytics, or advertising identifiers.
+- No cookies of its own, tracking pixels, analytics, or advertising identifiers. One optional path reads a
+  cookie it did not set: with `WLO_SESSION_EXCHANGE`, `POST /auth/session` takes the repository's session cookie
+  of a signed-in person, proves it at the repository and returns it encrypted inside an access block. It is not
+  stored, not logged, and sent to the repository only.
 - No behavioural profiling across requests, and no record linking a person to
   what they searched for.
 - The prompt launcher page (`/launcher.html`) and the access-block pages

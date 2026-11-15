@@ -7,6 +7,7 @@
  *                            as `Authorization: Bearer` — self-revocation, R2)
  *   POST /auth/revoke-all  → verify a login, then strike every id of that account
  *   POST /auth/ticket      → exchange an edu-sharing ticket for a ticket block
+ *   POST /auth/session     → exchange the repository session cookie for a block (off by default)
  *
  * `/auth/issue`, `/auth/revoke-all` and `/auth/ticket` are the endpoints on
  * this server that check a credential, which makes each a guessing oracle with
@@ -23,6 +24,7 @@
  */
 
 import { issueAccessBlock } from '../auth/access-issue.js';
+import { exchangeSession, sessionCookiesFrom } from '../auth/session-exchange.js';
 import { exchangeTicket } from '../auth/ticket-exchange.js';
 import { ticketOriginAllowed } from '../auth/ticket-origins.js';
 import { revokeAllForBlock } from '../auth/access-revoke.js';
@@ -33,6 +35,7 @@ import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { isJsonContentType, readBodyWithLimit } from '../read-body.js';
 import { parseRequestUrl } from '../request-url.js';
 import { sanitizeText } from '../text-sanitize.js';
+import { WLO_REPOSITORY_URL } from '../wlo-config.js';
 import { sendLoginFailure } from './login-failure.js';
 import { germanRetryMessage, refuseRateLimited } from './rate-limited.js';
 import { logAccount } from '../log-privacy.js';
@@ -73,12 +76,28 @@ export interface AuthEndpointDeps {
    * `Origin` is server-to-server and never refused (`auth/ticket-origins.ts`).
    */
   ticketAllowedOrigins?: ReadonlySet<string>;
+  /**
+   * `WLO_SESSION_EXCHANGE`: whether `POST /auth/session` exists. Off by
+   * default — it only makes sense where this server is mounted on the
+   * repository's host below `/edu-sharing` (the browser sends the session
+   * cookie nowhere else), and a server that reads cookies should do so because
+   * its operator said so.
+   */
+  sessionExchange?: boolean;
+  /**
+   * `WLO_SESSION_ALLOWED_ORIGINS`: the pages that may ask for the session
+   * exchange. Absent = the repository's own origin and nothing else. Its own
+   * list, not the ticket one: listing a page for tickets must not entitle it
+   * to take over sessions, and setting a list here must not narrow the ticket
+   * path.
+   */
+  sessionAllowedOrigins?: ReadonlySet<string>;
 }
 
 interface AuthReq extends AsyncIterable<Buffer | Uint8Array> {
   method?: string;
   url?: string;
-  /** `content-type` (the 415 below), `origin` on `/auth/ticket`, `authorization` on `/auth/revoke`. */
+  /** `content-type` (the 415 below), `origin` on `/auth/ticket` and `/auth/session`, `authorization` on `/auth/revoke`, `cookie` on `/auth/session` ONLY. */
   headers?: Record<string, string | string[] | undefined>;
 }
 interface AuthRes {
@@ -87,6 +106,9 @@ interface AuthRes {
   /** node:http sets this; the mocks in the tests do not, which reads as false. */
   headersSent?: boolean;
 }
+
+/** The origin a page of the repository has — who may ask for the session exchange. */
+const REPOSITORY_ORIGIN = new URL(WLO_REPOSITORY_URL).origin;
 
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' };
 
@@ -97,6 +119,7 @@ const ROUTES: Record<string, 'GET' | 'POST'> = {
   '/auth/revoke': 'POST',
   '/auth/revoke-all': 'POST',
   '/auth/ticket': 'POST',
+  '/auth/session': 'POST',
 };
 
 function send(res: AuthRes, status: number, body: unknown): true {
@@ -172,6 +195,11 @@ async function route(
   // as a tool that is never registered.
   const support = currentAccessSupport();
   if (!support) return send(res, 404, { error: 'Zugänge werden auf diesem Server nicht ausgegeben.' });
+  // Off like an endpoint that does not exist — before the method, the budget
+  // and above all before the cookie is looked at.
+  if (parsed.pathname === '/auth/session' && !deps.sessionExchange) {
+    return send(res, 404, { error: 'Die Übernahme einer WLO-Sitzung ist auf diesem Server nicht eingeschaltet.' });
+  }
 
   if (req.method !== wanted) {
     res.writeHead(405, { ...JSON_HEADERS, Allow: wanted });
@@ -195,6 +223,21 @@ async function route(
     const origin = Array.isArray(raw) ? raw[0] : raw;
     if (!ticketOriginAllowed(origin, deps.ticketAllowedOrigins)) {
       log.warn('ticket exchange from an origin not in TICKET_ALLOWED_ORIGINS refused', { origin: sanitizeText(origin ?? '') });
+      return send(res, 403, { error: 'Diese Seite darf keine Anmeldung übernehmen.', code: 'origin_not_allowed' });
+    }
+  }
+
+  // The session exchange answers a page of the REPOSITORY and nobody else: the
+  // cookie comes along because this path is mounted on that host, so the page
+  // that may ask is one of that host (or one the operator listed in
+  // `WLO_SESSION_ALLOWED_ORIGINS`). A browser names its origin on every POST; a request without one is
+  // no browser, and no browser means no session of a person to take over.
+  if (parsed.pathname === '/auth/session') {
+    const raw = req.headers?.['origin'];
+    const origin = Array.isArray(raw) ? raw[0] : raw;
+    const allowed = deps.sessionAllowedOrigins ? deps.sessionAllowedOrigins.has(origin ?? '') : origin === REPOSITORY_ORIGIN;
+    if (!origin || !allowed) {
+      log.warn('session exchange from a page that is not the repository refused', { origin: sanitizeText(origin ?? '') });
       return send(res, 403, { error: 'Diese Seite darf keine Anmeldung übernehmen.', code: 'origin_not_allowed' });
     }
   }
@@ -233,6 +276,22 @@ async function route(
   // the response stays unreadable for origins the carve-out does not cover.)
   if (!isJsonContentType(req.headers?.['content-type'])) {
     return send(res, 415, { error: 'Dieser Endpunkt erwartet einen JSON-Body (Content-Type: application/json).' });
+  }
+
+  if (parsed.pathname === '/auth/session') {
+    // The ONE place on this server that reads a `Cookie` header, and it takes
+    // two named cookies out of it (`upstream-auth.ts`). The body carries nothing.
+    const session = sessionCookiesFrom(req.headers?.['cookie']);
+    if (!session) return send(res, 400, { error: 'Es kam keine WLO-Sitzung mit. Bitte in WLO anmelden.' });
+    const limiter = deps.ticketAbuseLimiter ?? deps.authAbuseLimiter;
+    const outcome = await exchangeSession(session, { ip: deps.ip, authAbuseLimiter: limiter, support }, Date.now());
+    if (!outcome.ok) return sendLoginFailure(res, outcome, limiter, deps.ip);
+    return send(res, 200, {
+      ok: true,
+      block: outcome.block,
+      authority: outcome.authority,
+      ...(outcome.displayName ? { displayName: outcome.displayName } : {}),
+    });
   }
 
   if (parsed.pathname === '/auth/ticket') {

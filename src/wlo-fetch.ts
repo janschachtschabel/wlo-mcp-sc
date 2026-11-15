@@ -10,6 +10,7 @@
  */
 
 import { outgoingTraceHeaders } from './request-id.js';
+import { applyUpstreamAuth } from './auth/upstream-auth.js';
 import { count, observe } from './metrics.js';
 import { log } from './logger.js';
 import {
@@ -159,8 +160,10 @@ function loginRefused(url: string): Promise<boolean> {
   if (!check) {
     // Plain `fetch`, not `wloFetch`: this IS the confirmation, it must not
     // trigger one. The host is the repository by construction.
+    const probe = new Headers({ 'Accept': 'application/json' });
+    applyUpstreamAuth(probe, cred.header);
     check = fetch(IDENTITY_URL, {
-      headers: { 'Accept': 'application/json', 'Authorization': cred.header },
+      headers: probe,
       signal: AbortSignal.timeout(WLO_FETCH_TIMEOUT_MS),
     }).then(r => r.status === 401, () => false);
     identityChecks.set(cred, check);
@@ -198,7 +201,9 @@ function withCredential(url: string, headers: HeadersInit | undefined): HeadersI
   if (!isRepositoryUrl(url)) return headers;
   const merged = new Headers(headers ?? {});
   if (merged.has('authorization')) return headers;
-  merged.set('Authorization', cred.header);
+  // Inside the host check above, never beside it: a session cookie is as much
+  // a credential as the header is (`auth/upstream-auth.ts`).
+  applyUpstreamAuth(merged, cred.header);
   return merged;
 }
 

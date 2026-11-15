@@ -52,9 +52,11 @@ export interface AccessPayload {
    * `EDU-TICKET <secret>` from it instead of `Basic`. Optional so every block
    * issued before the kind existed keeps decoding unchanged; an unknown value
    * fails closed, because a kind we cannot name is a wire format we cannot
-   * build.
+   * build. `'session'` carries the cookies of a repository session
+   * (`/auth/session`), sent as a cookie with `DisableGuest` — see
+   * `upstream-auth.ts`.
    */
-  k?: 'ticket';
+  k?: 'ticket' | 'session';
   /**
    * Issued-at, seconds, as claimed by the BROWSER that built the block. Inside
    * the AEAD, so nobody else can change it — but the issuer chose it, so it is
@@ -153,11 +155,12 @@ function validatePayload(value: unknown): AccessPayload | null {
   if (typeof u !== 'string' || !u) return null;
   if (typeof secret !== 'string' || !secret) return null;
   if (typeof iat !== 'number' || !Number.isFinite(iat)) return null;
-  // `undefined` is the password block; the ONLY named kind is 'ticket'. Spread
-  // conditionally so an old block decodes to an object without a `k` key at
-  // all — a `k: undefined` would survive into deepEqual comparisons and JSON.
-  if (k !== undefined && k !== 'ticket') return null;
-  return { v: 2, jti, u, secret, iat, ...(k === 'ticket' ? { k } : {}) };
+  // `undefined` is the password block; the named kinds are 'ticket' and
+  // 'session'. Spread conditionally so an old block decodes to an object
+  // without a `k` key at all — a `k: undefined` would survive into deepEqual
+  // comparisons and JSON.
+  if (k !== undefined && k !== 'ticket' && k !== 'session') return null;
+  return { v: 2, jti, u, secret, iat, ...(k !== undefined ? { k } : {}) };
 }
 
 function open(privateKey: KeyObject, wrapped: Buffer, iv: Buffer, body: Buffer): AccessPayload | null {

@@ -103,7 +103,7 @@ export async function proveLogin(
     bucket?: string;
   },
   now: number,
-  purpose: 'issuance' | 'revocation' | 'ticket-exchange' | 'upload',
+  purpose: 'issuance' | 'revocation' | 'ticket-exchange' | 'session-exchange' | 'upload',
 ): Promise<LoginProof> {
   // One bucket per address across `/mcp`, `/auth/status` and this path: the
   // bare address here and `ip:<address>` there were two buckets in one limiter,

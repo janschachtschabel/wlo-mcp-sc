@@ -89,6 +89,10 @@ config:
   AUTH_CREDENTIAL_LIMIT: ""
   TICKET_CREDENTIAL_LIMIT: ""
   TICKET_ALLOWED_ORIGINS: ""
+  # "1": POST /auth/session takes over a repository session. Only with an ingress
+  # rule on the REPOSITORY's host below /edu-sharing that points at this path.
+  WLO_SESSION_EXCHANGE: ""
+  WLO_SESSION_ALLOWED_ORIGINS: ""
   WIDGET_OAUTH_ORIGINS: ""
   MAX_BODY_BYTES: ""
   WLO_FETCH_TIMEOUT_MS: ""

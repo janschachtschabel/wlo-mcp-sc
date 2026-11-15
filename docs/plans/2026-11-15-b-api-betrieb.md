@@ -3,7 +3,9 @@
 Ziel des Nutzers: Der Dienst soll **wahlweise** hinter dem Proxy der B-API laufen, dann auch andere
 Dienste über die B-API rufen, und selbst erkennen, wo er sitzt. Der heutige Betrieb ohne B-API bleibt.
 
-Stand: **Entwurf, nichts gebaut.** Abschnitt 1 ist gemessen, Abschnitt 2 folgt daraus, Abschnitt 3
+Stand: **Entwurf, nichts gebaut.** Nachtrag des Nutzers (15.11.): Von den edu-sharing-Pfaden der B-API ist
+bisher nur das Lesen von Metadaten in Betrieb; der Betrieb dahinter bleibt eine Option für später und darf den
+heutigen nicht stören. Die Anmeldung aus der Sitzung ist getrennt gelöst (`POST /auth/session`). Abschnitt 1 ist gemessen, Abschnitt 2 folgt daraus, Abschnitt 3
 ist der Vorschlag, Abschnitt 4 nennt, was sich nur mit einem Proxy-Eintrag messen lässt.
 
 ## 1. Gemessen gegen `b-api.staging.openeduhub.net` (2026-11-15, nur lesend)

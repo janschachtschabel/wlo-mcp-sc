@@ -957,6 +957,64 @@ paths:
         '429': { $ref: '#/components/responses/ApiRateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/UpstreamUnreachable' }
+  /auth/session:
+    post:
+      tags: [access-block]
+      operationId: authSession
+      summary: Exchange the repository session cookie for a session block
+      description: >-
+        For a widget inside an edu-sharing page, where this path is mounted on
+        the repository's host below `/edu-sharing` — the only place a browser
+        sends the session cookie. The session (`JSESSIONID`, with the balancer
+        cookie when present) is proven at the repository and wrapped in an
+        access block; the body carries nothing. Off unless
+        `WLO_SESSION_EXCHANGE` is set. No CORS headers: the page that asks is
+        one of the repository's own origin (or one listed in
+        `WLO_SESSION_ALLOWED_ORIGINS`), and a request without `Origin` is
+        refused. A request that carries two different `JSESSIONID` values
+        answers `400`.
+      x-requires-env: WLO_AUTH_PRIVATE_KEY, WLO_SESSION_EXCHANGE
+      x-cors: none
+      security: []
+      parameters:
+        - name: Origin
+          in: header
+          required: true
+          schema: { type: string }
+        - name: Cookie
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: The block.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, block, authority]
+                properties:
+                  ok: { const: true }
+                  block: { type: string, description: Send as `Authorization` Bearer token. }
+                  authority: { type: string }
+                  displayName: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403':
+          description: '`code: origin_not_allowed`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/FeatureOff' }
+        '405': { $ref: '#/components/responses/WrongMethod' }
+        '415': { $ref: '#/components/responses/JsonRequired' }
+        '429': { $ref: '#/components/responses/ApiRateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/UpstreamUnreachable' }
   /.well-known/oauth-authorization-server:
     get:
       tags: [oauth]
@@ -1577,7 +1635,7 @@ components:
         configuredAs: { type: string }
         authority: { type: [string, 'null'] }
         displayName: { type: string }
-        credential: { enum: [none, basic, access-block, ticket, service] }
+        credential: { enum: [none, basic, access-block, ticket, session, service] }
         upstream:
           description: '`unreachable` = the repository gave no verdict; not a refused login.'
           enum: [ok, unreachable]

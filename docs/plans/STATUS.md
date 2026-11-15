@@ -57,6 +57,10 @@ diese Datei über rund 100 Zeilen wächst.
   Leitfaden in `docs/STECKBRIEF-UEBERGABE.md`.
 - **2026-11-15 — Betrieb hinter der B-API: gemessen und entworfen, nichts gebaut.**
   `2026-11-15-b-api-betrieb.md`. Offen: Proxy-Eintrag `wlo-mcp` auf Staging, Name der zusätzlichen Kopfzeile.
+- **2026-11-15 — Sitzungs-Tausch `POST /auth/session` gebaut**, ohne Vorgabe aus (`WLO_SESSION_EXCHANGE`).
+  Vorher gemessen (`scripts/session-disableguest-probe.mjs`), Live-Test mit echter Sitzung grün. Plan fürs
+  Chatbot-Team: `2026-11-15-chatbot-anmeldung-aus-der-sitzung.md`. B-API-Betrieb bleibt Entwurf: dort läuft
+  bisher nur das Lesen von Metadaten.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

@@ -222,7 +222,7 @@ removed, so the miss is visible rather than silent.
 
 ---
 
-## 5. Three ways in
+## 5. Three ways in — and a fourth for one deployment shape
 
 All end at the same place: a `wlo2.…` block the caller presents as
 `Authorization: Bearer …`.
@@ -456,6 +456,90 @@ Issuing the ticket is the host's business, not ours: browsers cannot fetch one
 browser), so the embedding page must template it server-side.
 
 ---
+
+### 5d. The session of the host page — `POST /auth/session` (optional)
+
+For the same widget as §5c when the page has **no ticket to hand over**. Off
+unless `WLO_SESSION_EXCHANGE` is set, because it only works in one deployment
+shape: this path is reachable **on the repository's host below `/edu-sharing`**
+(an ingress rule that rewrites, say, `/edu-sharing/services/wlo-mcp/auth/session`
+to `/auth/session`). The session cookie reaches the server only there:
+`JSESSIONID` is `HttpOnly` with `Path=/edu-sharing`, so no script can read it and
+hand it over (measured 2026-08-12). It carries no `SameSite` attribute, so what a
+browser attaches to a cross-site request is the browser's decision — the defence
+against a foreign page is the JSON body and the `Origin` check below, not the
+cookie.
+
+```
+POST /auth/session          {}          Cookie: JSESSIONID=…   Origin: <the repository>
+  → 200 {"ok": true, "block": "wlo2.…", "authority": "…", "displayName": "…"}
+  → 400  no session came along, or it names no signed-in person
+  → 403  {code: "origin_not_allowed"} — not a page of the repository (or no Origin at all)
+  → 404  not switched on, or this deployment issues no blocks
+  → 415 / 429 / 503 as for a ticket
+```
+
+The block carries `k: 'session'` and the two cookies of a session — `JSESSIONID`
+and, when it came along, the balancer's `INGRESSCOOKIE` (the session lives on one
+repository node). From there it is an ordinary block: same header, same registry,
+twelve hours, same revocation. The widget may hand it to its own backend; the
+backend sends it as `Authorization: Bearer` from anywhere.
+
+What is different on the wire, and measured (`scripts/session-disableguest-probe.mjs`,
+staging, 2026-11-15) — `src/auth/upstream-auth.ts` is the one place:
+
+| presented to the repository | identity | search |
+|---|---|---|
+| live session | 200, the person | 200 |
+| unknown or ended session | 200, **`esguest`** | 200, the public results |
+| unknown or ended session + `DisableGuest: true` | **401** | **401** |
+
+So every call of a session block carries `DisableGuest: true`, and never an
+`Authorization` header beside the cookie. A session that ends therefore ends the
+access out loud — the first 401 marks the login as refused for the rest of the
+request, like a wrong password. A write needs no CSRF token (measured
+2026-08-12), and `tests/live/session-exchange.test.ts` creates and deletes a
+collection with nothing but the session.
+
+Three things that are deliberate:
+
+- **This is the only place the server reads a `Cookie` header**, and it takes two
+  named cookies out of it. A test fails on a second reader or a second writer.
+- **No CORS header, and `Origin` is required.** The page that asks has the
+  repository's origin (`WLO_REPOSITORY_URL`) or is listed in
+  `WLO_SESSION_ALLOWED_ORIGINS` — a list of its own: a page listed for tickets
+  is not thereby entitled to sessions, and setting a list here does not narrow
+  the ticket path. A request that names no origin is no browser, and without a
+  browser there is no person whose session this could be.
+- **Two different `JSESSIONID` values in one request are refused.** A sibling
+  subdomain can set a cookie of that name with a longer path, which the browser
+  sends first; taking either would let that page choose whose session the widget
+  works with.
+- **The kind is bound to the entry.** A session's access id is a hash of the
+  session id; a password or a ticket encrypted under that id is refused, and so
+  is a cookie string of any other shape than the one the exchange builds.
+- **The body must be declared JSON**, like every sibling: a form of a foreign
+  page cannot send it without a preflight, and the preflight gets no answer.
+
+What this costs, and it is accepted: **the exchange turns an `HttpOnly` session
+into something a script holds.** Any script that runs on the repository's origin
+— the widget, but also a cross-site-scripting hole there — can obtain a block
+that works outside the browser, for up to twelve hours and for as long as the
+session lives. It is no new right (that script can already act with the session
+inside the browser), it ends with the session (401, measured), and it is why the
+path is off by default.
+
+Two limits worth knowing. **Revoking a session block (or a ticket block) lasts
+until the next exchange**: the access id is derived from the session, so the
+next page load lists the same id again and an old copy of the block works again.
+Only ending the repository session is final. And **the twelve hours are not
+extended by exchanging again**: the entry keeps its first expiry; after it, the
+next exchange of a still-living session lists it anew.
+
+Not measured: whether the repository keeps a session id across a change of
+login (the exchange replaces the entry if it does), whether every endpoint
+honours `DisableGuest` (identity, search and a collection write were measured),
+and what production does at logout (staging was measured).
 
 ## 6. Why the write tools are visible to people who cannot use them
 

@@ -29,7 +29,7 @@ export const authStatusSchema = z.object({
   authority: z.string().nullable(),
   displayName: z.string().optional(),
   /** How the identity reached this server (plan 2026-11-07, S4). */
-  credential: z.enum(['none', 'basic', 'access-block', 'ticket', 'service']),
+  credential: z.enum(['none', 'basic', 'access-block', 'ticket', 'session', 'service']),
   /** Whether the repository answered at all — `unreachable` is no verdict on the login (B2). */
   upstream: z.enum(['ok', 'unreachable']),
   /** When this server stops accepting the block (ISO) — ticket and widget blocks only (R1). */

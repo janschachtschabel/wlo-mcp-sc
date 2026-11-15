@@ -134,7 +134,8 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   `scope` and the address instead.
 
   P2 (a session credential for a chatbot embedded INSIDE the repository) is
-  designed in the same file and still unbuilt — but "no concrete embedding
+  designed in the same file; it was built on 2026-11-15 in one shape (the session-exchange block at the end of
+  this file) — but "no concrete embedding
   exists yet", the reason it was parked, stopped being true on 2026-08-12: the
   embedded case is served by the ticket block below, through a different
   mechanism. What P2 alone would still add is a host that cannot hand over a
@@ -219,3 +220,28 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   safe from that signs in with an access block or OAuth, which is what the hosts do. Unmeasured: whether the
   repository answers a wrong `Basic` as guest on a public record, which would let an unproven caller start a plan
   that only proposes.
+
+- **Session exchange (`POST /auth/session`) — built 2026-11-15, off by default (`WLO_SESSION_EXCHANGE`);
+  documented in `docs/AUTH.md` §5d.** This is P2 above, in the one shape that works: the path mounted on the
+  repository's host below `/edu-sharing`, where the browser sends the cookie itself. Measured before it was built
+  (`scripts/session-disableguest-probe.mjs`, staging, 2026-11-15 — re-measure before contradicting): an unknown or
+  ENDED session answers `200` as `esguest` on the identity and `200` with the public results on a search; with
+  `DisableGuest: true` both answer `401`. Rules. (1) `src/auth/upstream-auth.ts` is the ONE place a credential is
+  put on a repository call: a session travels as `Cookie` + `DisableGuest: true` and NEVER beside `Authorization`;
+  everything else as `Authorization`. `withCredential` and the login probe in `wlo-fetch.ts` both call it, inside
+  the repository-host check. (2) Only `JSESSIONID` and `INGRESSCOOKIE` are taken from a `Cookie` header, and
+  `rest/auth-pages.ts` is the only reader — guarded in `tests/session-exchange.test.ts` (one reader, one writer).
+  (3) A block's content is its holder's to write, so the cookie string of a `k: 'session'` block is checked again
+  when it is decoded. (4) The access id is a hash of the session id, the entry carries `k: 'session'` and the
+  twelve-hour expiry — the reasoning of the ticket block, unchanged. (5) No CORS on the path, `Origin` required and
+  equal to the repository's origin or listed in `WLO_SESSION_ALLOWED_ORIGINS` — its OWN list (review 2026-11-15:
+  reusing the ticket list entitled every ticket page to sessions and narrowed the ticket path for whoever set it). (6) Write paths with a session have a
+  live test (`tests/live/session-exchange.test.ts`): no CSRF token is needed (2026-08-12), and an ended session is
+  refused with 401 instead of reading as a guest.
+  From the security review of the same day: (7) two DIFFERENT `JSESSIONID` values in one request are refused,
+  never "the first one" — a sibling subdomain can plant one with a longer path (cookie tossing). (8) The kind is
+  bound to the entry (`registry.kindOf`): a session-listed id decodes only as a session block. (9) The same session
+  id under another person REPLACES the entry (not measured whether the repository reuses a session id across a
+  change of login). (10) Accepted and written down in `docs/AUTH.md` §5d: the exchange turns an `HttpOnly` session
+  into a block a script on the repository's origin can hold; and revoking a session or ticket block lasts until
+  the next exchange, because the id is derived.

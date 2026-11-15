@@ -14,9 +14,10 @@
 
 import { currentAccessSupport, runWithCredential, type WloCredential } from './credential.js';
 import { checkIdentity, type WloIdentity } from './identity.js';
+import { isSessionCredential } from './upstream-auth.js';
 import { sanitizeText } from '../text-sanitize.js';
 
-export type CredentialKind = 'none' | 'basic' | 'access-block' | 'ticket' | 'service';
+export type CredentialKind = 'none' | 'basic' | 'access-block' | 'ticket' | 'session' | 'service';
 
 export interface AuthStatus {
   /** `anonymous` = public data only; `service` = one shared account for everyone. */
@@ -46,6 +47,7 @@ export function credentialKind(cred: WloCredential | null): CredentialKind {
   if (!cred) return 'none';
   if (cred.source === 'service') return 'service';
   if (!cred.jti) return 'basic';
+  if (isSessionCredential(cred.header)) return 'session';
   return /^EDU-TICKET\s/i.test(cred.header) ? 'ticket' : 'access-block';
 }
 
