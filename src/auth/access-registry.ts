@@ -28,7 +28,7 @@ export interface RegistryEntry {
   /** WLO user name, so the operator can tell whose access an entry is. */
   label: string;
   /**
-   * Issued-at, seconds. For a session entry it is the LISTING instant with a
+   * Issued-at, seconds. For a ticket or session entry it is the LISTING instant with a
    * millisecond fraction, and its blocks must carry it exactly
    * (`credentialFromAccessBlock`) — never round or recompute it.
    */
@@ -306,6 +306,9 @@ function parseEntries(raw: string): RegistryEntry[] | null {
  */
 export async function openRegistry(path: string): Promise<AccessRegistry | null> {
   const entries = new Map<string, RegistryEntry>();
+  // The instant of the last fresh listing (`listUnlessListed`), in ms: each new
+  // listing is stamped strictly after it, so no two listings share an instant.
+  let lastListedMs = 0;
 
   let raw: string | null = null;
   try {
@@ -473,7 +476,20 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
           listed = e;
           return null;
         }
-        return listFresh(entry);
+        // Stamped HERE, not with the caller's clock: "one instant per listing" is
+        // what binds an exchange block, and two exchanges that read the same
+        // millisecond — a revocation committed between their listings — would
+        // otherwise make two listings of one instant, the revoked one's blocks
+        // working again (review 2026-11-15). Strictly after the last one, since
+        // two serialised writes can still fall into one millisecond.
+        const stampMs = Math.max(at, lastListedMs + 1);
+        lastListedMs = stampMs;
+        const lifetimeMs = entry.exp === undefined ? undefined : Math.round((entry.exp - entry.iat) * 1000);
+        listed = {
+          ...entry, iat: stampMs / 1000,
+          ...(lifetimeMs === undefined ? {} : { exp: (stampMs + lifetimeMs) / 1000 }),
+        };
+        return listFresh(listed);
       });
       return listed;
     },

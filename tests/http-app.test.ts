@@ -969,3 +969,100 @@ test('/auth/session at its mount path: answered as /auth/session, still without 
     assert.equal(r.status, 404);
   } finally { await close(off.server); }
 });
+
+test('/auth/session and /auth/revoke with a trusted client key: the client\'s own budget, not the address\'s', async (t) => {
+  // A forwarder (the chatbot backend) is ONE address for every exchange; on the
+  // address budget (API_RATE_LIMIT_RPM) a class loading at once was refused
+  // (chatbot team, 2026-11-15). With its key it spends its protocol budget.
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setAccessSupport } = await import('../src/auth/credential.js');
+  const { loadAuthKeys } = await import('../src/auth/access-token.js');
+  const { openRegistry } = await import('../src/auth/access-registry.js');
+  const { createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-session-forwarder-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(registry && keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  const key = 'f'.repeat(40);
+  const { server, base } = await startServer({
+    sessionExchange: true,
+    apiRateLimiter: createRateLimiter(1),
+    clientBudgets: createClientBudgets(parseTrustedClientKeys(`boerdi:1:${key}`).clients),
+  });
+  // A foreign Origin is refused AFTER the budget, so the status tells which pot paid.
+  const exchange = (headers: Record<string, string> = {}) => fetch(`${base}/auth/session`, {
+    method: 'POST', body: '{}',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example', 'X-Forwarded-For': '203.0.113.5', ...headers },
+  });
+  try {
+    assert.equal((await exchange()).status, 403, 'the address\'s one request');
+    assert.equal((await exchange()).status, 429, 'the address is spent');
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await exchange({ 'X-WLO-Client-Key': key })).status, 403, `client request ${i + 1}: its own pot`);
+    }
+    const revoke = await fetch(`${base}/auth/revoke`, {
+      method: 'POST', headers: { Authorization: 'Bearer wlo2.kaputt', 'X-WLO-Client-Key': key },
+    });
+    assert.equal(revoke.status, 200, 'the logout spends the same pot');
+    const spent = await exchange({ 'X-WLO-Client-Key': key });
+    assert.equal(spent.status, 429, 'the client\'s pot is 3 x its rate');
+    assert.equal((await spent.json() as { code?: string }).code, 'rate_limited');
+    assert.equal((await exchange({ 'X-WLO-Client-Key': 'x'.repeat(40) })).status, 429, 'a wrong key is the address');
+  } finally { await close(server); }
+});
+
+test('/auth/session end to end: the guard splits by the address a KEY holder names, by nobody else\'s', async (t) => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setAccessSupport } = await import('../src/auth/credential.js');
+  const { loadAuthKeys } = await import('../src/auth/access-token.js');
+  const { openRegistry } = await import('../src/auth/access-registry.js');
+  const { createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const { WLO_REPOSITORY_URL } = await import('../src/wlo-config.js');
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-session-split-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(registry && keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  // The repository: every session is a signed-in person. Requests to this test
+  // server itself go through untouched.
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => String(url).startsWith('http://127.0.0.1')
+    ? original(url as string, init)
+    : new Response(JSON.stringify({ person: { authorityName: 'lehrerin' } }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const key = 's'.repeat(40);
+  const origin = new URL(WLO_REPOSITORY_URL).origin;
+  let n = 0;
+  const exchange = (base: string, xff: string, headers: Record<string, string> = {}) => fetch(`${base}/auth/session`, {
+    method: 'POST', body: '{}',
+    headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: `JSESSIONID=${String(++n).padStart(32, 'A')}`, 'X-Forwarded-For': xff, ...headers },
+  });
+  for (const trustProxy of [false, true]) {
+    const { server, base } = await startServer({
+      sessionExchange: true, trustProxy, apiRateLimiter: createRateLimiter(100),
+      ticketAbuseLimiter: createDistinctValueLimiter(1),
+      clientBudgets: createClientBudgets(parseTrustedClientKeys(`boerdi:50:${key}`).clients),
+    });
+    // Under TRUST_PROXY the last hop is our proxy's: the forwarder's own.
+    const via = (person: string) => (trustProxy ? `${person}, 127.0.0.1` : person);
+    try {
+      assert.equal((await exchange(base, via('203.0.113.5'), { 'X-WLO-Client-Key': key })).status, 200, `${trustProxy}: person A`);
+      assert.equal((await exchange(base, via('198.51.100.20'), { 'X-WLO-Client-Key': key })).status, 200, `${trustProxy}: person B, own bucket`);
+      assert.equal((await exchange(base, via('203.0.113.5'), { 'X-WLO-Client-Key': key })).status, 429, `${trustProxy}: person A again, over its one`);
+      // Without a key, a varying header does not split anything.
+      assert.equal((await exchange(base, via('192.0.2.1'))).status, 200, `${trustProxy}: no key, first`);
+      assert.equal((await exchange(base, via('192.0.2.2'))).status, 429, `${trustProxy}: no key, an invented address is the same bucket`);
+    } finally { await close(server); }
+  }
+});

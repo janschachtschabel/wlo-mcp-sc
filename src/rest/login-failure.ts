@@ -21,11 +21,13 @@ import { sendRateLimited, type RefusalResponse } from './rate-limited.js';
 
 const HEADERS = { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' };
 
+/** @param bucket The guard's bucket when it is not the address (a trusted forwarder's, `ForwarderBudget`). */
 export function sendLoginFailure(
-  res: RefusalResponse, outcome: LoginFailure, limiter: DistinctValueLimiter, ip: string,
+  res: RefusalResponse, outcome: LoginFailure, limiter: DistinctValueLimiter, ip: string, bucket?: string,
 ): true {
   if (outcome.status === 429) {
-    sendRateLimited(res, limiter.retryAfterSeconds?.(addressBucket(ip), Date.now()) ?? 600, outcome.error, 'too_many_logins', 'rest');
+    const wait = limiter.retryAfterSeconds?.(bucket ?? addressBucket(ip), Date.now()) ?? 600;
+    sendRateLimited(res, wait, outcome.error, 'too_many_logins', 'rest');
   } else if (outcome.status === 503) {
     res.writeHead(503, { ...HEADERS, 'Retry-After': String(BUSY_RETRY_DEFAULT_S) });
     res.end(JSON.stringify({ error: outcome.error, code: 'upstream_unreachable', retryAfter: BUSY_RETRY_DEFAULT_S }));

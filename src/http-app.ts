@@ -23,7 +23,7 @@ import { count, observe } from './metrics.js';
 import { METRICS_PATH, handleMetrics } from './rest/metrics-route.js';
 import { log } from './logger.js';
 import type { DistinctValueLimiter, RateLimiter } from './rate-limit.js';
-import { clientKey } from './rate-limit.js';
+import { clientKey, forwardedClientKey } from './rate-limit.js';
 import { CREDENTIAL_BODY_MAX_BYTES, readBodyWithLimit } from './read-body.js';
 import { parseRequestUrl } from './request-url.js';
 import type { streamableHttpOptions } from './mcp-transport.js';
@@ -41,7 +41,7 @@ import { handleReady, READY_PATH } from './rest/ready.js';
 import { HEALTH_PATH, writeHealth } from './rest/health.js';
 import { refuseRateLimited, refuseTooManyLogins } from './rest/rate-limited.js';
 import {
-  budgetBucket, CLIENT_KEY_HEADER, countToolCalls, type ClientBudgets, type TrustedClient,
+  budgetBucket, CLIENT_KEY_HEADER, countToolCalls, forwarderBudget, type ClientBudgets, type TrustedClient,
 } from './client-budget.js';
 import { logAddress } from './log-privacy.js';
 import { applyBaselineHeaders } from './response-headers.js';
@@ -595,8 +595,14 @@ export function createHttpRequestHandler(
     // Deliberately inside the handler-wide anonymous scope: nothing here runs
     // with the service account. Issuance opens its own credential scope for the
     // single call that verifies the user's login, and nothing else.
+    const authIp = clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy);
+    // A trusted client forwarding a person's session exchange or logout (chatbot
+    // team, 2026-11-15): its own budget, and the address it names for the person.
+    const trustedForwarder = forwarderBudget(req.headers[CLIENT_KEY_HEADER],
+      forwardedClientKey(req.headers['x-forwarded-for'], trustProxy), authIp, clientBudgets);
     if (await handleAuthEndpoint(req, res, {
-      ip: clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy),
+      ip: authIp,
+      ...(trustedForwarder ? { trustedForwarder } : {}),
       maxBodyBytes: Math.min(maxBodyBytes, CREDENTIAL_BODY_MAX_BYTES),
       rateLimiter: apiRateLimiter,
       authAbuseLimiter,

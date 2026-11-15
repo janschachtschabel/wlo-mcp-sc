@@ -142,6 +142,13 @@ dabei **nicht** hinter der B-API; ihr ruft ihn direkt.
 4. `TRUST_PROXY` am MCP muss zur Proxy-Kette des Repository-Ingress passen: Die Anfragen kommen über
    ihn, und sonst teilen sich alle Personen eine Adresse in den Begrenzungen.
 
+**Zweite Form, seit der zweiten Antwort des Teams am 15.11.:** Der Pfad auf dem Repository-Host gehört
+eurem Backend, das den Tausch von Server zu Server an `/auth/session` des MCP weiterreicht. Dann entfällt
+Punkt 2 am MCP, der MCP muss nicht im Cluster laufen, und an Punkt 4 ändert sich: Mit eurem Schlüssel
+(`X-WLO-Client-Key`) zahlt der Tausch aus eurem Budget, und der Schutz zählt je Adresse, die euer Backend an
+`X-Forwarded-For` anhängt. `TRUST_PROXY` muss dann zu eurem Weg zum MCP passen, nicht zum Repository-Ingress
+(Antwort `2026-11-15-antwort-chatbot-sitzung-2.md`).
+
 Ohne Punkt 1 antwortet der MCP 404. Ohne Punkt 2 gibt es den Pfad auf dem Repository-Host nicht (404
 vom Repository); ein direkter Aufruf des MCP von der Seite aus scheitert schon im Browser, weil der
 Pfad keine CORS-Kopfzeilen sendet. Ohne Punkt 3 antwortet der MCP 403.

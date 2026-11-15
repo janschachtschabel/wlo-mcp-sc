@@ -31,6 +31,7 @@ import { revokeAllForBlock } from '../auth/access-revoke.js';
 import { decodeAccessToken } from '../auth/access-token.js';
 import { currentAccessSupport } from '../auth/credential.js';
 import { log } from '../logger.js';
+import type { ForwarderBudget } from '../client-budget.js';
 import type { DistinctValueLimiter, RateLimiter } from '../rate-limit.js';
 import { isJsonContentType, readBodyWithLimit } from '../read-body.js';
 import { parseRequestUrl } from '../request-url.js';
@@ -78,10 +79,11 @@ export interface AuthEndpointDeps {
   ticketAllowedOrigins?: ReadonlySet<string>;
   /**
    * `WLO_SESSION_EXCHANGE`: whether `POST /auth/session` exists. Off by
-   * default — it only makes sense where this server is mounted on the
+   * default — it only makes sense where this path is reachable on the
    * repository's host below `/edu-sharing` (the browser sends the session
-   * cookie nowhere else), and a server that reads cookies should do so because
-   * its operator said so.
+   * cookie nowhere else): mounted there, or owned there by a trusted backend
+   * that forwards the exchange (`trustedForwarder`). A server that reads
+   * cookies should do so because its operator said so.
    */
   sessionExchange?: boolean;
   /**
@@ -93,6 +95,16 @@ export interface AuthEndpointDeps {
    * path.
    */
   sessionAllowedOrigins?: ReadonlySet<string>;
+  /**
+   * Present when the request carries a trusted client's key
+   * (`X-WLO-Client-Key`): a backend forwarding a person's session exchange or
+   * logout. On `/auth/session` and `/auth/revoke` ONLY, it replaces the address
+   * budget and the address bucket of the guessing guard (`ForwarderBudget`) —
+   * every exchange of such a backend arrives from its one address, and a class
+   * loading at once was refused there (chatbot team, 2026-11-15). The paths
+   * that check a password keep the address, whoever forwards.
+   */
+  trustedForwarder?: ForwarderBudget;
 }
 
 interface AuthReq extends AsyncIterable<Buffer | Uint8Array> {
@@ -207,10 +219,15 @@ async function route(
     return true;
   }
 
-  if (deps.rateLimiter.check(deps.ip, Date.now())) {
+  const forwarder = parsed.pathname === '/auth/session' || parsed.pathname === '/auth/revoke'
+    ? deps.trustedForwarder : undefined;
+  const budget = forwarder
+    ? { limiter: forwarder.limiter, key: forwarder.key, kind: 'client' as const }
+    : { limiter: deps.rateLimiter, key: deps.ip, kind: 'address' as const };
+  if (budget.limiter.check(budget.key, Date.now())) {
     // The shared REST 429 (`code`, `retryAfter`, the rest of the window), with
     // the German text the pages show a person.
-    refuseRateLimited(res, deps.rateLimiter, deps.ip, 'address', { shape: 'rest', message: germanRetryMessage });
+    refuseRateLimited(res, budget.limiter, budget.key, budget.kind, { shape: 'rest', message: germanRetryMessage });
     return true;
   }
 
@@ -293,8 +310,11 @@ async function route(
       return send(res, 400, { error: 'Es kam keine WLO-Sitzung mit. Bitte in WLO anmelden.' });
     }
     const limiter = deps.ticketAbuseLimiter ?? deps.authAbuseLimiter;
-    const outcome = await exchangeSession(session, { ip: deps.ip, authAbuseLimiter: limiter, support }, Date.now());
-    if (!outcome.ok) return sendLoginFailure(res, outcome, limiter, deps.ip);
+    const outcome = await exchangeSession(session, {
+      ip: forwarder?.address ?? deps.ip, authAbuseLimiter: limiter, support,
+      ...(forwarder ? { bucket: forwarder.abuseBucket } : {}),
+    }, Date.now());
+    if (!outcome.ok) return sendLoginFailure(res, outcome, limiter, deps.ip, forwarder?.abuseBucket);
     return send(res, 200, {
       ok: true,
       block: outcome.block,

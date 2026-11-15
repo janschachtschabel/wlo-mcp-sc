@@ -94,8 +94,9 @@ export async function proveLogin(
   credential: WloCredential,
   deps: Pick<VerifyDeps, 'ip' | 'authAbuseLimiter'> & {
     /**
-     * The limiter bucket, when it is not the address. Only `upload` passes one
-     * (`abuseBucketKey`, the rule `POST /mcp` follows): a chatbot backend is
+     * The limiter bucket, when it is not the address. `upload` passes one
+     * (`abuseBucketKey`, the rule `POST /mcp` follows), and the session exchange
+     * behind a trusted forwarder (`ForwarderBudget`): a chatbot backend is
      * ONE address for all its users. Issuance must stay per address — its
      * blocks are minted fresh, so a per-`jti` bucket there would be a new
      * budget per guess. Never logged: for a block it IS the access id.

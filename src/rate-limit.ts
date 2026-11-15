@@ -54,6 +54,26 @@ export function clientKey(
 }
 
 /**
+ * The address a TRUSTED forwarder names for the person behind it, in the units
+ * of `clientKey` — or null when it names none. The hop the forwarder added: the
+ * last one when it connects to us directly, the one before our own proxy's
+ * under `TRUST_PROXY` (that proxy appends the forwarder itself). Anything
+ * further left is what the person's browser claimed and stays unread.
+ *
+ * Only for a caller that proved it is the forwarder (`X-WLO-Client-Key`): for
+ * anyone else this header is free text, which is why `clientKey` never reads
+ * past the hop its own proxy wrote.
+ */
+export function forwardedClientKey(forwardedFor: string | string[] | undefined, trustProxy: boolean): string | null {
+  if (!forwardedFor) return null;
+  const raw = Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor;
+  const hops = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (trustProxy) hops.pop();
+  const named = hops[hops.length - 1];
+  return named && isIP(named.replace(/^\[|\]$/g, '')) ? addressUnit(named) : null;
+}
+
+/**
  * The unit a client is counted in: an IPv4 address as is, an IPv6 address by
  * its /64.
  *

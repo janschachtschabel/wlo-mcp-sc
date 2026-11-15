@@ -456,6 +456,7 @@ Fassung für das Modell.
 |---|---|---|
 | MCP-Endpunkt | 120 **Werkzeugaufrufe** (`tools/call`)/Minute je Adresse; alle POSTs zusammen das Dreifache | `RATE_LIMIT_RPM` |
 | MCP-Endpunkt mit `X-WLO-Client-Key` | eigenes Budget je vertrautem Client, unabhängig von der Adresse | `TRUSTED_CLIENT_KEYS` |
+| `/auth/session`, `/auth/revoke` mit `X-WLO-Client-Key` | das Protokoll-Budget des Clients (3 × rpm, derselbe Topf wie seine POSTs an `/mcp`); der Schutz vor vielen Sitzungen zählt je Adresse, die der Client im `X-Forwarded-For` nennt | `TRUSTED_CLIENT_KEYS` |
 | `/api/*` und die Anmeldeseiten | 30 Anfragen/Minute je Adresse | `API_RATE_LIMIT_RPM` |
 | Anfrage-Rumpf | 4 MiB; auf `/auth*` und `/oauth/*` höchstens 64 KiB | `MAX_BODY_BYTES` |
 | Eine Datei auf `/api/uploads` | 50 MB (höchstens 100 MB) | `UPLOAD_MAX_BYTES` |

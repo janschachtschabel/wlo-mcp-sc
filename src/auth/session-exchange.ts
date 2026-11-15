@@ -7,6 +7,8 @@
  * `/auth/session`, gets an ordinary `wlo2.` block back and uses it like any
  * other — on this host or, handed to its own backend, from anywhere. Nobody
  * types a password a second time, and the page needs no ticket to hand over.
+ * The path on the repository's host may also belong to a trusted backend that
+ * forwards the exchange here (`ForwarderBudget`, its own budget).
  *
  * Off unless the operator switches it on (`WLO_SESSION_EXCHANGE`): a server
  * that is not mounted there never sees the cookie, and one that is should say
@@ -48,7 +50,10 @@ const REFUSED = 'Diese WLO-Sitzung ist nicht (mehr) angemeldet.';
  */
 export async function exchangeSession(
   session: { sessionId: string; cookie: string },
-  deps: VerifyDeps,
+  deps: VerifyDeps & {
+    /** The guard's bucket when it is not the address: a trusted forwarder's (`ForwarderBudget`). Never logged. */
+    bucket?: string;
+  },
   now: number,
 ): Promise<SessionExchangeOutcome> {
   if (!isSessionCookieString(session.cookie)) return { ok: false, status: 400, error: REFUSED };

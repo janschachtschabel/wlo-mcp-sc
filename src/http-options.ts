@@ -127,9 +127,12 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
     notices.push({
       level: 'warn',
       message: 'WLO_SESSION_EXCHANGE: POST /auth/session takes over a repository session — meant for a mount on the '
-        + 'repository host below /edu-sharing. Only a page of the origins named here may ask; if the address in the '
-        + 'browser differs, set WLO_SESSION_ALLOWED_ORIGINS. The requests arrive through the repository\'s ingress: '
-        + 'TRUST_PROXY must fit that chain, or every person shares one address in the limiters',
+        + 'repository host below /edu-sharing, or for a trusted backend that owns such a path and forwards the '
+        + 'exchange. Only a page of the origins named here may ask; if the address in the browser differs, set '
+        + 'WLO_SESSION_ALLOWED_ORIGINS. Mounted, the requests arrive through the repository\'s ingress: TRUST_PROXY '
+        + 'must fit that chain, or every person shares one address in the limiters. Forwarded, the budget is the '
+        + 'backend\'s key in TRUSTED_CLIENT_KEYS (it names each person\'s address); TRUST_PROXY must then fit the '
+        + 'backend\'s own way here, since it decides which X-Forwarded-For hop is the backend\'s',
       fields: { origins: sessionOrigins.origins ? [...sessionOrigins.origins] : [repositoryOrigin] },
     });
     if (sessionOrigins.rejected.length) {

@@ -67,7 +67,15 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   phases 5–7 implement the S7 decision R4 → R2 → R1). Phase 1 binds: the tool
   budget counts `tools/call` only, every POST is bounded at 3× before its body is
   read, a trusted client (`TRUSTED_CLIENT_KEYS`, `X-WLO-Client-Key`) is counted
-  by key instead of address, and a 429 carries the rest of the window. Two
+  by key instead of address, and a 429 carries the rest of the window. Since
+  2026-11-15 the same key on `/auth/session` and `/auth/revoke` spends the
+  client's protocol budget, and the distinct-session guard counts per address the
+  client names in the `X-Forwarded-For` hop it adds (the chatbot backend forwards
+  the session exchange from its own path on the repository's host). Ticket and
+  session blocks belong to ONE listing of their id: after a revocation or the
+  twelve hours a re-exchange gives a new block, never the old one back (`/auth/status`
+  answers 401 for a block of a gone listing); at the rollout, ticket blocks a reload
+  had issued answered 401 once. Two
   measurements bind it: a stateless server answers `tools/call` as the FIRST POST without
   `initialize` (SDK 1.32.2), and a fresh connection to edu-sharing costs only
   0.1–0.3 s — the 22 s cold path is not the transport. Phases 2–7 add rules that

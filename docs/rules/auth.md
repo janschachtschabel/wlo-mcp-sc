@@ -166,7 +166,7 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   ⇒ a cross-site iframe carries nothing), and `appauth` is impersonation by
   design — whoever may call it may become anyone.
 
-  Four rules bind any change here. (1) **The access id is a hash of the ticket**
+  Five rules bind any change here. (1) **The access id is a hash of the ticket**
   (`sha256('wlo-ticket:' + ticket)`), never random: an embedded widget exchanges
   on EVERY page load, so random ids would list a fresh entry each time until
   `MAX_BLOCKS_PER_LABEL` started evicting the person's OTHER blocks — the ones
@@ -181,7 +181,7 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   one constant over two classes. `removeByLabel` is deliberately NOT split — a
   ticket block is as much of an access as a pasted one, and "everything revoked"
   over a widget that keeps working is a lie. (2) The registry is written **only when the id is not listed
-  yet**, and that guard is not cosmetic: `add` ALWAYS commits (serialise, temp
+  yet** (`listUnlessListed`), and that guard is not cosmetic: a listing commits (serialise, temp
   file, rename) and the registry is the one thing this server writes to disk at
   runtime, so without it every page load rewrote the file — the sole difference
   being a refreshed `iat`, while the first one is the more accurate record of
@@ -194,7 +194,11 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   exact-match carve-out from the no-CORS rule on `/auth*` (`isCredentialSurface`,
   `http-app.ts`) — it is called cross-origin by construction and no password is
   typed there; the carve-out is exact-match so `/auth/ticket-anything` cannot
-  inherit it.
+  inherit it. (5) **A ticket block belongs to one listing** (chatbot team,
+  2026-11-15; R2 is gone): it carries the listing's `iat` (ms fraction, never
+  rounded), `credentialFromAccessBlock` compares it, a reload reuses the listing,
+  and a revoked or expired listing stays dead — the session rule (11) below, in
+  the same code.
 
   What happens when the ticket DIES is measured (2026-08-13, staging) and needs
   no code of ours: `/iam/…/-me-` answers **404**, and search/node/children answer
@@ -247,10 +251,23 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   change of login). (10) Accepted and written down in `docs/AUTH.md` §5d: the exchange turns an `HttpOnly` session
   into a block a script on the repository's origin can hold. (11) A session block belongs to ONE listing: it carries
   the entry's `iat` (seconds with a millisecond fraction — never round it) and is refused when that differs; the
-  "same listing?" decision runs inside the registry's serialised write (`listUnlessListed`) — so a revocation or the twelve-hour end is not
-  undone by the next exchange of the same session (chatbot team, 2026-11-15). Ticket blocks keep R2. (12) The chart
+  "same listing?" decision runs inside the registry's serialised write (`listUnlessListed`), and a fresh listing
+  is STAMPED there, strictly after the previous one, never with the caller's clock (two listings of one instant
+  would revive a revoked block; review 2026-11-15) — so a revocation or the twelve-hour end is not
+  undone by the next exchange of the same session (chatbot team, 2026-11-15). Ticket blocks follow the same rule since
+  the team's second answer of that day (`credentialFromAccessBlock` compares for both kinds; R2's "a logout lasts until
+  the next exchange" is gone). (12) The chart
   routes the path with its own Ingress on the repository's host (`sessionIngress`), one `Exact` path below
   `/edu-sharing/`, forwarded UNCHANGED and answered by the server at that path (`WLO_SESSION_MOUNT_PATH`) — no
   rewrite annotation, which on ingress-nginx switches every path of the host to regex matching (review
   2026-11-15). That switch is the only way the chart sets `WLO_SESSION_EXCHANGE`; `createIngress: false` sets it
-  without the object.
+  without the object. (13) A second form: a TRUSTED FORWARDER (the chatbot backend) owns the path on the
+  repository's host and passes the exchange on server to server to `/auth/session` at the root. With a key from
+  `TRUSTED_CLIENT_KEYS`, `/auth/session` and `/auth/revoke` spend the client's protocol budget instead of the
+  address budget, and the distinct-session guard counts per address the client names (`forwardedClientKey`, the hop
+  it added) inside the client's space — every exchange of a forwarder comes from ITS one address, and a class
+  loading at once was refused there (chatbot team, 2026-11-15). The forwarded address is read ONLY behind a valid
+  key (`tests/shared-rule-discipline.test.ts`); the password paths keep the address. `TRUST_PROXY` is not the
+  answer: it would make every caller's `X-Forwarded-For` count. It still decides which hop is the forwarder's
+  (`forwardedClientKey`), so it must fit the forwarder's way here: through the one proxy, or off when it connects
+  directly.

@@ -244,10 +244,14 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   if (payload.k === 'session') {
     const session = sessionCookiesFrom(payload.secret);
     if (!session || session.cookie !== payload.secret || sessionJti(session.sessionId) !== payload.jti) return null;
-    // …and the block belongs to the CURRENT listing of that id: a revoked or
-    // expired listing does not come back with the next exchange (see
-    // `session-exchange.ts`).
-    if (payload.iat !== accessSupport.registry.listedAt(payload.jti)) return null;
+  }
+  // A block of an EXCHANGE belongs to the CURRENT listing of its id: the id is
+  // derived from the ticket or the session, so a revoked or expired listing would
+  // otherwise come back with the next exchange (`ticket-exchange.ts`,
+  // `session-exchange.ts`; chatbot team, 2026-11-15). A password block's id is
+  // minted fresh and never listed twice.
+  if ((payload.k === 'ticket' || payload.k === 'session') && payload.iat !== accessSupport.registry.listedAt(payload.jti)) {
+    return null;
   }
   const header = payload.k === 'ticket'
     ? `EDU-TICKET ${payload.secret}`

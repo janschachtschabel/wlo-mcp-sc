@@ -424,11 +424,13 @@ test('after the twelve hours, the next exchange does not revive the old block ei
   const s = await support(t);
   const up = upstream('lehrerin');
   t.after(up.restore);
-  const t0 = Date.now() - (SESSION_BLOCK_TTL_S + 60) * 1000;
-  const old = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), t0);
+  // A listing is stamped by the registry's own clock, never earlier than now —
+  // so the time after the twelve hours is reached with a later caller clock.
+  const old = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), Date.now());
   assert.ok(old.ok);
   if (!old.ok) return;
-  const fresh = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), Date.now());
+  const later = Date.now() + (SESSION_BLOCK_TTL_S + 60) * 1000;
+  const fresh = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), later);
   assert.ok(fresh.ok && credentialFromHeader(`Bearer ${fresh.block}`));
   assert.equal(credentialFromHeader(`Bearer ${old.block}`), null);
 });
@@ -462,4 +464,53 @@ test('a session block survives a restart: the listing instant reads back exactly
   assert.ok(reopened);
   setAccessSupport({ keys: s.keys, registry: reopened });
   assert.ok(credentialFromHeader(`Bearer ${out.block}`));
+});
+
+// ── behind a trusted forwarder (chatbot team, 2026-11-15) ────────────────────
+
+test('POST /auth/session through a trusted forwarder: the guessing guard counts per address it names', async (t) => {
+  // Every exchange arrives from the forwarder's ONE address. The distinct-session
+  // guard (TICKET_CREDENTIAL_LIMIT) would cap the whole platform at one address's
+  // budget; per named address it caps each person's network, as without a forwarder.
+  await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const guard = createDistinctValueLimiter(1, 600_000);
+  const forwarder = (address: string) => ({
+    limiter: createRateLimiter(100), key: 'client:boerdi', abuseBucket: `client:boerdi|ip:${address}`, address,
+  });
+  const on = (address: string) => endpointDeps({ sessionExchange: true, ticketAbuseLimiter: guard, trustedForwarder: forwarder(address) });
+  const cookie = (sid: string) => ({ cookie: `JSESSIONID=${sid}`, origin: REPO_ORIGIN });
+  const a1 = res();
+  await handleAuthEndpoint(req(cookie(SID)), a1, on('203.0.113.5'));
+  assert.equal(a1.out.status, 200);
+  const a2 = res();
+  await handleAuthEndpoint(req(cookie('B'.repeat(32))), a2, on('203.0.113.5'));
+  assert.equal(a2.out.status, 429, 'the same address, a second session: over its budget of one');
+  assert.equal(a2.json()?.['code'], 'too_many_logins');
+  assert.ok(Number(a2.json()?.['retryAfter']) > 60, 'the wait of THAT bucket\'s ten-minute window');
+  const b = res();
+  await handleAuthEndpoint(req(cookie('B'.repeat(32))), b, on('198.51.100.20'));
+  assert.equal(b.out.status, 200, 'another address the forwarder names has its own budget');
+  const direct = res();
+  await handleAuthEndpoint(req(cookie('C'.repeat(32))), direct, endpointDeps({ sessionExchange: true, ticketAbuseLimiter: guard }));
+  assert.equal(direct.out.status, 200, 'and the forwarder\'s own address is a third bucket');
+});
+
+test('the forwarder\'s budget applies to /auth/session and /auth/revoke only — a password path keeps the address', async (t) => {
+  await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const spentAddress = createRateLimiter(1);
+  spentAddress.check('198.51.100.7', Date.now());
+  const deps = endpointDeps({
+    sessionExchange: true, rateLimiter: spentAddress,
+    trustedForwarder: { limiter: createRateLimiter(100), key: 'client:boerdi', abuseBucket: 'client:boerdi|ip:203.0.113.5', address: '203.0.113.5' },
+  });
+  const exchange = res();
+  await handleAuthEndpoint(req({ cookie: `JSESSIONID=${SID}`, origin: REPO_ORIGIN }), exchange, deps);
+  assert.equal(exchange.out.status, 200);
+  const issue = res();
+  await handleAuthEndpoint({ ...req({}), url: '/auth/issue' }, issue, deps);
+  assert.equal(issue.out.status, 429, 'issuance checks a password: the address budget, whoever forwards');
 });

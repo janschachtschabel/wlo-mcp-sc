@@ -67,6 +67,12 @@ diese Datei über rund 100 Zeilen wächst.
 - **2026-11-15 — zweites Review des Sitzungs-Tauschs** (1 groß: Rollback-Sicherheit der Registry; 5 klein,
   9 Randnotizen), alles behoben. Dazu `docs/WERKZEUGE.md` (alle 64 Werkzeuge, eine Zeile je Werkzeug) und
   `docs/architektur-grafik.html` (Archify).
+- **2026-11-15 — zweite Antwort des Chatbot-Teams: Weiterreicher und Ticket-Bindung.** Ein vertrautes Backend
+  darf den Sitzungs-Tausch weiterreichen: Mit seinem Schlüssel zahlen `/auth/session` und `/auth/revoke` aus
+  seinem Protokoll-Budget, und der Sitzungs-Schutz zählt je Adresse, die es nennt. Ticket-Blöcke sind jetzt an
+  ihre Eintragung gebunden wie Sitzungs-Blöcke (beim Einspielen einmal 401 für per Neuladen ausgestellte
+  Blöcke). Antwort: `2026-11-15-antwort-chatbot-sitzung-2.md`. Offen beim Nutzer: Der Staging-Server läuft
+  noch mit 1.0.0 und braucht den neuen Stand plus `WLO_SESSION_EXCHANGE=1`.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

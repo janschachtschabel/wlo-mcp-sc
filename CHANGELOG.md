@@ -6,11 +6,33 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — the session exchange behind a trusted forwarder (chatbot team's second answer, 2026-11-15)
+
+- **A trusted backend may forward the exchange.** It owns the path on the repository's host and passes the
+  exchange on server to server to `POST /auth/session` at this server's root — no need for this server to run in
+  the repository's cluster. With a key from `TRUSTED_CLIENT_KEYS`, `/auth/session` and `/auth/revoke` spend that
+  client's protocol budget (3 × its rate) instead of the address budget (`API_RATE_LIMIT_RPM`), and the
+  distinct-session guard (`TICKET_CREDENTIAL_LIMIT`) counts per address the client names for the person in
+  `X-Forwarded-For` — the hop it added, read only behind a valid key. Before, every exchange of such a backend
+  shared its one address's budget, and a class loading at once was refused. The password paths keep the address.
+- The startup notice and the documents name the second form; `TRUST_PROXY` is not the way to it (it would make
+  every caller's `X-Forwarded-For` count), but it still decides which hop is the forwarder's, so it must fit the
+  forwarder's way to this server.
+- A fresh listing of a ticket or session id is stamped inside the registry's write, strictly after the previous
+  one — not with the caller's clock, under which two exchanges in one millisecond around a revocation could share
+  an instant and revive the revoked block.
+- **A ticket block belongs to one listing too**, at the team's request — the same rule as the session block: it
+  carries the listing's `iat` (to the millisecond) and is refused once that listing is gone. A logout now holds when
+  the same ticket is exchanged again (in another tab, or by the silent renewal after twelve hours); before, it lasted
+  only until that next exchange (R2, 2026-11-07). **Rollout: a ticket block that a reload issued before this change
+  carries another instant and answers `401` once** — the widget exchanges again, and the person notices nothing
+  beyond that. An older build reads the new blocks and entries unchanged (the instant is any number there).
+
 ### Changed — after the chatbot team's answer on the session exchange (2026-11-15)
 
 - **A session block belongs to one listing.** It carries the listing's `iat` and is refused once that listing is
   gone: a revoked block, or one from before the twelve-hour end, no longer comes back when the same session is
-  exchanged again (in another tab, or by the widget's silent renewal). Ticket blocks are unchanged (R2).
+  exchanged again (in another tab, or by the widget's silent renewal). Ticket blocks followed the same day (see above).
 - **Helm: `sessionIngress`** — an optional second Ingress on the repository's host for exactly
   `<path>/auth/session` (below `/edu-sharing/`), forwarded unchanged. Enabling it sets `WLO_SESSION_EXCHANGE` and
   the new **`WLO_SESSION_MOUNT_PATH`**, at which the server answers the exchange itself — no rewrite annotation,

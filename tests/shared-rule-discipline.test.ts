@@ -217,6 +217,25 @@ test('the authority check has one caller per purpose, not a copy per endpoint', 
   );
 });
 
+test('an address a CLIENT names is read only where its key was checked', () => {
+  // `forwardedClientKey` reads X-Forwarded-For past the hop our own proxy wrote —
+  // text anyone can send. It is safe only for a caller that proved, by its key,
+  // that it is the forwarder; `http-app.ts` hands its answer to `forwarderBudget`,
+  // which yields nothing without a known key. A second caller that used it as the
+  // client's address would let anyone choose their own limiter bucket.
+  assert.deepEqual(offenders(/\bforwardedClientKey\(/, ['rate-limit.ts', 'http-app.ts']), [],
+    'only http-app.ts, beside forwarderBudget, may read a forwarded address');
+  // Inside the two owners as well: ONE call in http-app.ts, and it is the
+  // address argument of forwarderBudget; in rate-limit.ts only the definition.
+  const app = readFileSync(join(srcDir, 'http-app.ts'), 'utf8').replace(/\s+/g, ' ');
+  assert.equal(app.match(/\bforwardedClientKey\(/g)?.length, 1, 'one call in http-app.ts');
+  assert.match(app, /forwarderBudget\([^;()]*(?:\([^;()]*\)[^;()]*)*?forwardedClientKey\(/,
+    'and there only as the address forwarderBudget weighs against the key');
+  const lib = readFileSync(join(srcDir, 'rate-limit.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  assert.deepEqual(lib.match(/[^\n]*\bforwardedClientKey\([^\n]*/g)?.map(l => l.trim().slice(0, 40)),
+    ['export function forwardedClientKey(forwa'], 'rate-limit.ts only defines it');
+});
+
 /**
  * The other half of the same rule, and the one a file listing cannot show: both
  * modules that act on a block must actually GO through the shared check. An

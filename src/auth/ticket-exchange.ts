@@ -117,21 +117,23 @@ export async function exchangeTicket(
   }
 
   const jti = ticketJti(ticket);
-  const iat = Math.floor(now / 1000);
-  const block = encodeAccessToken(
-    { v: 2, jti, u: identity.authority, secret: ticket, iat, k: 'ticket' },
-    deps.support.keys.publicKeyPem,
-  );
   // Label = the verified authority, so revocation-by-account catches ticket
   // blocks together with the same person's password blocks.
   //
-  // Only when the id is not listed yet, and that guard is not cosmetic: `add`
-  // ALWAYS commits — it serialises the whole list, writes a temp file and
-  // renames it — while the registry is the one thing this server writes to disk
-  // at runtime. An embedded widget exchanges on every page load, so without the
-  // guard every page load rewrote the file, and the only difference between the
-  // old content and the new one was a refreshed `iat`. Keeping the first one is
-  // the more accurate record anyway: it is when this access began.
+  // Listed only when the id is not listed yet (`listUnlessListed`), and that is
+  // not cosmetic: a listing commits — it serialises the whole list, writes a temp
+  // file and renames it — while the registry is the one thing this server writes
+  // to disk at runtime. An embedded widget exchanges on every page load; a reload
+  // during a listing writes nothing and keeps the first `iat`, which is when this
+  // access began.
+  //
+  // A block belongs to ONE listing (chatbot team, 2026-11-15 — the rule of the
+  // session block, `session-exchange.ts`): it carries the listing's `iat`, to the
+  // millisecond, and the decoder compares it. The id is the ticket's hash, so
+  // after a revocation or the twelve hours the next exchange lists the SAME id
+  // again — and before this every block of the earlier listing worked again with
+  // it (R2: a logout lasted until the next exchange). Decided inside the
+  // registry's serialised write, so two tabs exchanging at once share a listing.
   //
   // `k: 'ticket'` is what keeps that guard from being the whole story. It marks
   // the entry as one that appeared because someone opened a page, so the cap
@@ -141,16 +143,20 @@ export async function exchangeTicket(
   // entry, and counted together those retired a pasted block after ten of them.
   //
   // The entry expires after `SESSION_BLOCK_TTL_S` (R1). An EXPIRED entry reads
-  // as not listed here, so the next exchange of a still-valid ticket writes it
-  // again with a fresh expiry — the renewal the widget gets for free.
-  if (!deps.support.registry.has(jti, now)) {
-    await deps.support.registry.add({
-      jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'ticket',
-      // The full name as the account key (see `WloIdentity.account`): label and
-      // `u` both carry the display form, which the binding compares.
-      ...(identity.account ? { acct: identity.account } : {}),
-    });
-  }
+  // as not listed here, so the next exchange of a still-valid ticket lists it
+  // again with a fresh expiry — the renewal the widget gets for free, with a new
+  // listing whose blocks the old ones are not.
+  const iatNow = now / 1000;
+  const listed = await deps.support.registry.listUnlessListed({
+    jti, label: identity.authority, iat: iatNow, exp: iatNow + SESSION_BLOCK_TTL_S, k: 'ticket',
+    // The full name as the account key (see `WloIdentity.account`): label and
+    // `u` both carry the display form, which the binding compares.
+    ...(identity.account ? { acct: identity.account } : {}),
+  }, now);
+  const block = encodeAccessToken(
+    { v: 2, jti, u: identity.authority, secret: ticket, iat: listed.iat, k: 'ticket' },
+    deps.support.keys.publicKeyPem,
+  );
   log.info('ticket exchanged for an access block', { label: logAccount(identity.authority) });
 
   return {

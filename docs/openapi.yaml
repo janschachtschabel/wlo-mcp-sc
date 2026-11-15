@@ -835,11 +835,15 @@ paths:
         always `200 {revoked}`, whatever the block's state. (2) The block as
         `token` in a JSON body — `400` when it cannot be opened, else
         `200 {revoked}`; `revoked` is `false` for an id that was not listed.
+        With a trusted client's key the request spends that client's budget,
+        not the address's (a backend logging its people out).
       x-requires-env: WLO_AUTH_PRIVATE_KEY
       x-cors: none
       security:
         - {}
         - accessBlock: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
       requestBody:
         required: false
         content:
@@ -972,7 +976,11 @@ paths:
         one of the repository's own origin (or one listed in
         `WLO_SESSION_ALLOWED_ORIGINS`), and a request without `Origin` is
         refused. A request that carries two different `JSESSIONID` values
-        answers `400`.
+        answers `400`. A trusted backend that owns the path on the repository's
+        host may forward the exchange here server to server: with its
+        `X-WLO-Client-Key` the request spends that client's protocol budget,
+        and the guessing guard counts per address it names in
+        `X-Forwarded-For` (the hop it added).
       x-requires-env: WLO_AUTH_PRIVATE_KEY, WLO_SESSION_EXCHANGE
       x-cors: none
       security: []
@@ -985,6 +993,7 @@ paths:
           in: header
           required: true
           schema: { type: string }
+        - $ref: '#/components/parameters/ClientKey'
       requestBody:
         required: false
         description: Not read; send `{}` with `Content-Type: application/json` (the declared JSON type is what forces a preflight).

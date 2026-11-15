@@ -83,3 +83,30 @@ test('the 429 body carries the code it is given (the login guard uses too_many_l
   };
   assert.deepEqual(body.error.data, { code: 'too_many_logins', retryAfter: 300 });
 });
+
+// ── a trusted forwarder at /auth/session and /auth/revoke (chatbot team, 2026-11-15) ──
+
+test('forwarderBudget: nothing without budgets, without a key, with an unknown or repeated one', async () => {
+  const { forwarderBudget, createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const key = 'k'.repeat(40);
+  const budgets = createClientBudgets(parseTrustedClientKeys(`boerdi:2:${key}`).clients);
+  assert.equal(forwarderBudget(key, '203.0.113.5', '198.51.100.2', undefined), undefined);
+  assert.equal(forwarderBudget(undefined, '203.0.113.5', '198.51.100.2', budgets), undefined);
+  assert.equal(forwarderBudget('x'.repeat(40), '203.0.113.5', '198.51.100.2', budgets), undefined);
+  assert.equal(forwarderBudget([key, key], '203.0.113.5', '198.51.100.2', budgets), undefined);
+});
+
+test('forwarderBudget: the client\'s protocol pot, and the guard per address it names inside its space', async () => {
+  const { forwarderBudget, createClientBudgets, parseTrustedClientKeys } = await import('../src/client-budget.js');
+  const key = 'k'.repeat(40);
+  const budgets = createClientBudgets(parseTrustedClientKeys(`boerdi:2:${key}`).clients);
+  const named = forwarderBudget(key, '203.0.113.5', '198.51.100.2', budgets);
+  assert.ok(named);
+  assert.equal(named.limiter, budgets.protocol('client:boerdi'), 'the pot of its /mcp POSTs and /auth/status');
+  assert.equal(named.key, 'client:boerdi');
+  assert.equal(named.abuseBucket, 'client:boerdi|ip:203.0.113.5');
+  assert.equal(named.address, '203.0.113.5', 'the person\'s address, for the (pseudonymised) log');
+  const unnamed = forwarderBudget(key, null, '198.51.100.2', budgets);
+  assert.equal(unnamed?.abuseBucket, 'client:boerdi', 'no named address: the client\'s space is one bucket');
+  assert.equal(unnamed?.address, '198.51.100.2');
+});

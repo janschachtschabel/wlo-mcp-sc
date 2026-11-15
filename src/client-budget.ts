@@ -16,6 +16,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { addressBucket } from './auth/credential.js';
 import { createRateLimiter, type RateLimiter } from './rate-limit.js';
 
 /** Shorter keys are refused: a key is a bearer secret, and a short one is guessable. */
@@ -129,6 +130,39 @@ export interface ClientBudgets {
   tool(bucketKey: string): RateLimiter | undefined;
   /** The all-POST limiter of that client, at `PROTOCOL_FACTOR` × its rate. */
   protocol(bucketKey: string): RateLimiter | undefined;
+}
+
+/**
+ * What a trusted client that FORWARDS a person's request is counted in on the
+ * paths that take one person's login over (`/auth/session`, `/auth/revoke`):
+ * the request budget is the client's own (its protocol budget — the same pot as
+ * its all-POST bound on `/mcp` and `/auth/status`), and the guessing guard counts per address the client
+ * names for the person — inside the client's own space, so a forged name costs
+ * only the key holder's own budget. Without a named address, the client's whole
+ * space is one bucket.
+ */
+export interface ForwarderBudget {
+  limiter: RateLimiter;
+  /** The request bucket, `client:<name>`. Its NAME may be logged; it is no secret. */
+  key: string;
+  /** The guessing guard's bucket. Never logged or returned (a limiter key). */
+  abuseBucket: string;
+  /** The person's address as the client named it, else the client's own — for the log, pseudonymised there. */
+  address: string;
+}
+
+export function forwarderBudget(
+  header: string | string[] | undefined, namedAddress: string | null, ip: string, budgets: ClientBudgets | undefined,
+): ForwarderBudget | undefined {
+  if (!budgets) return undefined;
+  const bucket = budgetBucket(header, ip, budgets.clients);
+  const limiter = bucket.kind === 'client' ? budgets.protocol(bucket.key) : undefined;
+  if (!limiter) return undefined;
+  return {
+    limiter, key: bucket.key,
+    abuseBucket: namedAddress ? `${bucket.key}|${addressBucket(namedAddress)}` : bucket.key,
+    address: namedAddress ?? ip,
+  };
 }
 
 /** One pair of limiters per trusted client, each at the client's own rate. */

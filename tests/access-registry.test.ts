@@ -572,5 +572,23 @@ test('listUnlessListed: a listing that has expired by the time the write runs is
   const nowS = Date.now() / 1000;
   await registry.add({ ...entry('s'), iat: nowS - 100, exp: nowS - 1 });
   const listed = await registry.listUnlessListed({ ...entry('s'), iat: nowS, exp: nowS + 100 }, (nowS - 10) * 1000);
-  assert.equal(listed.iat, nowS, 'a new listing, though the caller\'s clock still said "listed"');
+  assert.ok(listed.iat >= nowS, 'a new listing, stamped by the write\'s clock, though the caller\'s still said "listed"');
+  assert.equal(registry.listedAt('s'), listed.iat);
+});
+
+test('listUnlessListed: every fresh listing gets its own instant, stamped inside the write', async (t) => {
+  // The binding of an exchange block is "one iat per listing". Stamped with the
+  // caller's clock, two exchanges that read the same millisecond, with a
+  // revocation committed between their listings, made two listings of one
+  // instant — and the revoked one's blocks worked again (review 2026-11-15).
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowMs = Date.now() + 60_000;
+  const first = await registry.listUnlessListed({ ...entry('s'), iat: nowMs / 1000, exp: nowMs / 1000 + 100 }, nowMs);
+  await registry.remove('s');
+  const second = await registry.listUnlessListed({ ...entry('s'), iat: nowMs / 1000, exp: nowMs / 1000 + 100 }, nowMs);
+  assert.notEqual(second.iat, first.iat, 'the same caller instant, a different listing instant');
+  assert.ok(second.iat > first.iat);
+  assert.equal(Math.round((second.exp! - second.iat) * 1000), 100_000, 'the lifetime the caller asked for, from the stamp');
+  const reused = await registry.listUnlessListed({ ...entry('s'), iat: nowMs / 1000 + 5, exp: nowMs / 1000 + 105 }, nowMs + 5_000);
+  assert.equal(reused.iat, second.iat, 'a listing that stands is reused, not restamped');
 });

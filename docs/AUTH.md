@@ -76,8 +76,8 @@ wlo2.<b64u(wrappedKey)>.<b64u(iv)>.<b64u(ciphertext||gcmTag)>
   hit only some users and only in production.
 - The payload is `{ v: 2, jti, u, secret, iat }` (plus `k` for a ticket or
   session block): the access id, the WLO user name, the password, and the
-  issuing browser's clock — for a session block the server's listing instant
-  instead, compared exactly (§5d).
+  issuing browser's clock — for a ticket or session block the server's listing
+  instant instead, compared exactly (§5c, §5d).
 - **Everything is inside the AEAD, especially the `jti`.** Revocation acts on
   that id, so an id sitting *outside* the authenticated payload could be swapped
   — a holder of a revoked block would splice in one that is still listed and
@@ -415,16 +415,25 @@ Three decisions worth naming:
   both kinds, because a ticket block is exactly as much of an access as a
   pasted one.
 
-  **Logging out of a ticket block lasts until the next exchange — by design,
-  not a gap** (R2; written down at the chatbot team's request, 2026-11-07).
-  `POST /auth/revoke` removes the entry, but the id is the ticket's hash, so
-  exchanging the SAME, still-valid ticket again lists it anew. In the tab where
-  the person logged out the widget does not exchange on its own; a new tab on an
-  edu-sharing page where they are still signed in does — and signs them in
-  again, because they ARE signed in there. The edu-sharing session is the
-  authority here; this server only mirrors it. What ends a ticket access for
-  good is ending that session (logging out of edu-sharing), after which the
-  ticket fails upstream and every exchange with it is refused.
+  **A ticket block belongs to one listing of its id** (chatbot team,
+  2026-11-15; until then R2 of 2026-11-07: logging out lasted until the next
+  exchange). The id is the ticket's hash, so after a revocation or after the
+  twelve hours the next exchange of the SAME, still-valid ticket lists it
+  again. The block therefore carries the listing's `iat` (seconds with a
+  millisecond fraction, never rounded) and the decoder compares it with the
+  entry, as for a session block (§5d): a revoked or expired listing stays dead,
+  while a reload during a listing gets a block of that same listing — decided
+  inside the registry's serialised write, so two tabs exchanging at once share
+  one. What the next exchange still does is sign the person in again with a NEW
+  block — they ARE signed in at edu-sharing, and that session is the authority
+  here; what ends a ticket access for good is ending it, after which the ticket
+  fails upstream and every exchange with it is refused. Blocks issued before
+  this change by a reload (not the first exchange of a listing) carry another
+  instant and answer 401 once; the widget exchanges again. Revocation still goes
+  by the id alone (§4): revoking with a dead block of an EARLIER listing ends the
+  current listing too — a backend that retries a logout with a stale block also
+  signs out a tab the person opened since. That is the safe direction, and
+  intended.
 - **This is the one `/auth*` path that carries CORS** (exact-match carve-out in
   `isCredentialSurface`). Its only real client is a widget on a foreign
   origin, and what a hostile page could make visitors present here is not a
@@ -492,6 +501,33 @@ itself (401). From there it is an ordinary block: same header, same registry,
 twelve hours, same revocation. The widget may hand it to its own backend; the
 backend sends it as `Authorization: Bearer` from anywhere.
 
+**The second form: a trusted forwarder** (chatbot team, 2026-11-15). The path
+on the repository's host may lead to another service instead — the chatbot's
+backend — which checks the request and passes the exchange on server to server
+to `POST /auth/session` at this server's root. Nothing on the browser side
+changes, and this server need not run in the repository's cluster. It receives
+the cookie, the page's `Origin` (passed on only when the browser sent exactly
+that), the empty JSON body, the forwarder's `X-WLO-Client-Key` and an
+`X-Forwarded-For` naming the person's address. The `Origin` rule is unchanged.
+
+What changes is the budget. Every exchange of such a forwarder arrives from its
+one address, where the request budget (`API_RATE_LIMIT_RPM`, shared with
+`/auth/revoke`) and the distinct-session guard (`TICKET_CREDENTIAL_LIMIT`)
+would cap the whole platform at one address's share — a class loading at once
+was refused. With a key from `TRUSTED_CLIENT_KEYS`, `/auth/session` and
+`/auth/revoke` therefore spend the client's **protocol budget** (three times its
+rate, the one `/auth/status` spends), and the guard counts **per address the
+client names** (`client:<name>|ip:<address>`) — the hop the forwarder added,
+read only behind a valid key; anyone else's `X-Forwarded-For` stays free text,
+read no further than `TRUST_PROXY` says. A forged name costs only the key
+holder's own budget — which is then the only bound on how many distinct
+sessions it presents, and the same pot as its POSTs to `/mcp` and its
+`/auth/status`. `TRUST_PROXY` does not help here: it would make every caller's
+header count. It still decides which hop is the forwarder's, so it must fit the
+forwarder's way to this server (through the one proxy, or directly with it
+off). The paths that check a password (`/auth/issue`, `/auth/revoke-all`) keep
+the address, whoever forwards.
+
 What is different on the wire, and measured (`scripts/session-disableguest-probe.mjs`,
 staging, 2026-11-15) — `src/auth/upstream-auth.ts` is the one place:
 
@@ -545,16 +581,17 @@ revoked in another tab. The block therefore carries the listing's `iat` (seconds
 with a millisecond fraction, never rounded) and the decoder compares it with the entry: a revoked or expired
 listing stays dead, while a reload during a listing gets a block of that same
 listing — decided inside the registry's serialised write, so two tabs
-exchanging at once share one listing. What the next exchange still does is sign the person in again — they
+exchanging at once share one listing, and a fresh listing is stamped there,
+strictly after the previous one (never with the caller's clock, under which two
+listings around a revocation could share an instant). What the next exchange still does is sign the person in again — they
 ARE signed in to the repository; only ending that session ends access for good.
 
 **The twelve hours are not extended by exchanging again**: the entry keeps its
 first expiry; after it, the next exchange of a still-living session lists it
 anew, and the blocks of the old listing do not come back.
 
-Ticket blocks keep the behaviour of §5c (logging out lasts until the next
-exchange of the same ticket, R2, decided 2026-11-07); the binding above is for
-session blocks only.
+Ticket blocks follow the same rule since the chatbot team asked for it the same
+day (§5c).
 
 Not measured: whether the repository keeps a session id across a change of
 login (the exchange replaces the entry if it does), whether every endpoint

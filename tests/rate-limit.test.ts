@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createRateLimiter, createDistinctValueLimiter, clientKey } from '../src/rate-limit.js';
+import { createRateLimiter, createDistinctValueLimiter, clientKey, forwardedClientKey } from '../src/rate-limit.js';
 
 const T0 = 1_000_000; // fixed base clock (ms); tests inject all timestamps
 
@@ -169,4 +169,29 @@ test('the distinct-login limiter also says how long until its window ends', () =
   assert.equal(limiter.retryAfterSeconds?.('ip', 100_000), 500);
   assert.equal(limiter.retryAfterSeconds?.('ip', 600_000), 1);
   assert.equal(limiter.retryAfterSeconds?.('fremd', 0), 1);
+});
+
+// ── the address a trusted forwarder names (chatbot team, 2026-11-15) ─────────
+
+test('forwardedClientKey: the hop the forwarder added — the last one, or the one before our own proxy', () => {
+  // The forwarder connects to us directly: the address it names is the last hop.
+  assert.equal(forwardedClientKey('203.0.113.5', false), '203.0.113.5');
+  assert.equal(forwardedClientKey('10.0.0.1, 203.0.113.5', false), '203.0.113.5', 'not what the person\'s browser claimed');
+  // Behind our own proxy (TRUST_PROXY) the last hop is the forwarder itself.
+  assert.equal(forwardedClientKey('203.0.113.5, 198.51.100.2', true), '203.0.113.5');
+  assert.equal(forwardedClientKey(['203.0.113.5', '198.51.100.2'], true), '203.0.113.5', 'a repeated header joins');
+});
+
+test('forwardedClientKey: nothing, or something that is no address, names nobody', () => {
+  assert.equal(forwardedClientKey(undefined, false), null);
+  assert.equal(forwardedClientKey('', false), null);
+  assert.equal(forwardedClientKey('198.51.100.2', true), null, 'only our proxy\'s hop: the forwarder named nobody');
+  assert.equal(forwardedClientKey('jemand', false), null);
+  assert.equal(forwardedClientKey('203.0.113.5:4711', false), null, 'with a port it is no address');
+});
+
+test('forwardedClientKey: counted in the same units as clientKey (an IPv6 /64, a mapped IPv4 as itself)', () => {
+  assert.equal(forwardedClientKey('2001:db8:1:2::7', false), clientKey('2001:db8:1:2::7', undefined, true));
+  assert.equal(forwardedClientKey('::ffff:203.0.113.5', false), '203.0.113.5');
+  assert.equal(forwardedClientKey('[2001:db8:1:2::7]', false), '2001:db8:1:2::/64');
 });
