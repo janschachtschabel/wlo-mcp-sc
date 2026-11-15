@@ -73,6 +73,8 @@ diese Datei über rund 100 Zeilen wächst.
   ihre Eintragung gebunden wie Sitzungs-Blöcke (beim Einspielen einmal 401 für per Neuladen ausgestellte
   Blöcke). Antwort: `2026-11-15-antwort-chatbot-sitzung-2.md`. Offen beim Nutzer: Der Staging-Server läuft
   noch mit 1.0.0 und braucht den neuen Stand plus `WLO_SESSION_EXCHANGE=1`.
+- **2026-11-15 — Version 1.3.0.** Tag `v1.3.0`: Image und Chart mit Sitzungs-Tausch, Weiterreicher-Budget und
+  Ticket-Bindung (`release.yml`).
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

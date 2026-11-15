@@ -6,6 +6,20 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-15
+
+No tool, no top-level parameter and no error code was renamed or removed since 1.2.0; a client written against
+1.2.0 keeps working. New and off by default: the session exchange (`POST /auth/session`, `WLO_SESSION_EXCHANGE`),
+directly mounted or behind a trusted forwarder, and the chart's `sessionIngress`.
+
+What an operator or a client can notice without using anything new:
+
+- **A ticket block that a page reload issued before 1.3.0 answers `401` once** (it carries another instant than
+  its listing); the widget exchanges again and gets a working block. Blocks of the first exchange keep working.
+- **A logout of a ticket block now holds** when the same ticket is exchanged again (before: until that next
+  exchange, R2).
+- A trusted client's key now also selects its own budget on `/auth/session` and `/auth/revoke`.
+
 ### Changed — the session exchange behind a trusted forwarder (chatbot team's second answer, 2026-11-15)
 
 - **A trusted backend may forward the exchange.** It owns the path on the repository's host and passes the
