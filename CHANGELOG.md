@@ -20,7 +20,10 @@ Off unless `WLO_SESSION_EXCHANGE=1`; without it nothing changes and the server r
 - `wlo_auth_status` and `GET /auth/status` name the new kind: `credential: "session"`.
 - Only a page of the repository's own origin (or one in `WLO_SESSION_ALLOWED_ORIGINS`, a list of its own) may ask;
   no CORS headers. Two different session cookies in one request are refused.
-- One review with a security brief: no critical or major finding, 8 minor, 3 nits, all worked.
+- One review with a security brief: no critical or major finding, 8 minor, 3 nits, all worked. A second review: 1 major
+  (a session entry would have failed an older build's whole registry closed on rollback — it is now filed as a ticket
+  entry with a marker), 5 minor, 9 nits, all worked; among them the session id inside a block is bound to its id,
+  and the answers of `/auth*` carry `Cache-Control: no-store`.
 - A live test signs in, exchanges, reads, creates and deletes a collection with the session, ends the session and
   sees the refusal. Plan for the chatbot team: `docs/plans/2026-11-15-chatbot-anmeldung-aus-der-sitzung.md`.
 

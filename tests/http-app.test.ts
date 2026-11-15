@@ -897,3 +897,38 @@ test('the login and OAuth routes cap their body far below the MCP limit (audit S
     assert.equal(r.status, 413, 'a 2-KB registration against a 1-KB operator bound');
   } finally { await close(tight.server); }
 });
+
+test('/auth/session through the handler: absent unless switched on, never offered cross-origin, never cached', async (t) => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setAccessSupport } = await import('../src/auth/credential.js');
+  const { loadAuthKeys } = await import('../src/auth/access-token.js');
+  const { openRegistry } = await import('../src/auth/access-registry.js');
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-session-http-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(registry && keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  const post = (base: string) => fetch(`${base}/auth/session`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{}',
+  });
+
+  const off = await startServer();
+  try {
+    assert.equal((await post(off.base)).status, 404);
+  } finally { await close(off.server); }
+
+  const on = await startServer({ sessionExchange: true });
+  try {
+    const pre = await fetch(`${on.base}/auth/session`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } });
+    assert.equal(pre.headers.get('access-control-allow-origin'), null, 'no preflight passes');
+    const r = await post(on.base);
+    assert.equal(r.status, 403, 'reached, and the foreign page refused');
+    assert.equal(r.headers.get('access-control-allow-origin'), null);
+    assert.equal(r.headers.get('cache-control'), 'no-store');
+  } finally { await close(on.server); }
+});

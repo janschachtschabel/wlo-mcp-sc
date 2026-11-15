@@ -26,7 +26,7 @@
 import { issueAccessBlock } from '../auth/access-issue.js';
 import { exchangeSession, sessionCookiesFrom } from '../auth/session-exchange.js';
 import { exchangeTicket } from '../auth/ticket-exchange.js';
-import { ticketOriginAllowed } from '../auth/ticket-origins.js';
+import { sessionOriginAllowed, ticketOriginAllowed } from '../auth/ticket-origins.js';
 import { revokeAllForBlock } from '../auth/access-revoke.js';
 import { decodeAccessToken } from '../auth/access-token.js';
 import { currentAccessSupport } from '../auth/credential.js';
@@ -85,8 +85,9 @@ export interface AuthEndpointDeps {
    */
   sessionExchange?: boolean;
   /**
-   * `WLO_SESSION_ALLOWED_ORIGINS`: the pages that may ask for the session
-   * exchange. Absent = the repository's own origin and nothing else. Its own
+   * `WLO_SESSION_ALLOWED_ORIGINS`, resolved: the page origins that may ask for
+   * the session exchange. Absent = the repository's own origin
+   * (`sessionOriginAllowed`). Its own
    * list, not the ticket one: listing a page for tickets must not entitle it
    * to take over sessions, and setting a list here must not narrow the ticket
    * path.
@@ -107,10 +108,9 @@ interface AuthRes {
   headersSent?: boolean;
 }
 
-/** The origin a page of the repository has — who may ask for the session exchange. */
-const REPOSITORY_ORIGIN = new URL(WLO_REPOSITORY_URL).origin;
-
-const JSON_HEADERS = { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' };
+// `no-store`: a block, a public key and a refusal are answers to THIS request; the session path in
+// particular runs through the repository's ingress, whose caches are not ours.
+const JSON_HEADERS = { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' };
 
 /** Paths this module owns, with the single method each accepts. */
 const ROUTES: Record<string, 'GET' | 'POST'> = {
@@ -235,8 +235,7 @@ async function route(
   if (parsed.pathname === '/auth/session') {
     const raw = req.headers?.['origin'];
     const origin = Array.isArray(raw) ? raw[0] : raw;
-    const allowed = deps.sessionAllowedOrigins ? deps.sessionAllowedOrigins.has(origin ?? '') : origin === REPOSITORY_ORIGIN;
-    if (!origin || !allowed) {
+    if (!sessionOriginAllowed(origin, deps.sessionAllowedOrigins, WLO_REPOSITORY_URL)) {
       log.warn('session exchange from a page that is not the repository refused', { origin: sanitizeText(origin ?? '') });
       return send(res, 403, { error: 'Diese Seite darf keine Anmeldung übernehmen.', code: 'origin_not_allowed' });
     }
@@ -281,8 +280,18 @@ async function route(
   if (parsed.pathname === '/auth/session') {
     // The ONE place on this server that reads a `Cookie` header, and it takes
     // two named cookies out of it (`upstream-auth.ts`). The body carries nothing.
-    const session = sessionCookiesFrom(req.headers?.['cookie']);
-    if (!session) return send(res, 400, { error: 'Es kam keine WLO-Sitzung mit. Bitte in WLO anmelden.' });
+    const cookie = req.headers?.['cookie'];
+    const session = sessionCookiesFrom(cookie);
+    if (!session) {
+      // Two different session cookies are refused on purpose (cookie tossing);
+      // if the repository host ever set a second one on another path, every
+      // signed-in person would meet this — so it is told apart in the log,
+      // without a value.
+      if (typeof cookie === 'string' && (cookie.match(/(?:^|;)\s*JSESSIONID=/g) ?? []).length > 1) {
+        log.warn('session exchange refused — the request carried more than one JSESSIONID');
+      }
+      return send(res, 400, { error: 'Es kam keine WLO-Sitzung mit. Bitte in WLO anmelden.' });
+    }
     const limiter = deps.ticketAbuseLimiter ?? deps.authAbuseLimiter;
     const outcome = await exchangeSession(session, { ip: deps.ip, authAbuseLimiter: limiter, support }, Date.now());
     if (!outcome.ok) return sendLoginFailure(res, outcome, limiter, deps.ip);

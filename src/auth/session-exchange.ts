@@ -24,12 +24,11 @@
  * address is what that limiter bounds. It runs on the ticket budget.
  */
 
-import { createHash } from 'node:crypto';
 import { SESSION_BLOCK_TTL_S } from './access-registry.js';
 import { encodeAccessToken } from './access-token.js';
 import { proveLogin, unreachableFailure, type LoginFailure, type VerifyDeps } from './access-verify.js';
 import type { WloCredential } from './credential.js';
-import { isSessionCookieString, sessionCredentialHeader } from './upstream-auth.js';
+import { isSessionCookieString, sessionCredentialHeader, sessionJti } from './upstream-auth.js';
 import { log } from '../logger.js';
 import { logAccount } from '../log-privacy.js';
 
@@ -41,13 +40,6 @@ export type SessionExchangeOutcome =
 
 const REFUSED = 'Diese WLO-Sitzung ist nicht (mehr) angemeldet.';
 
-/**
- * The access id of a session block: a domain-separated hash of the session id,
- * for the reason `ticketJti` gives — a page reload is the same entry.
- */
-function sessionJti(sessionId: string): string {
-  return createHash('sha256').update(`wlo-session:${sessionId}`).digest('base64url');
-}
 
 /**
  * Prove a session against the repository and issue the block that carries it.
@@ -92,11 +84,11 @@ export async function exchangeSession(
   // handled — the entry is replaced. Left in place, the new person got a block
   // the label check refuses, and the earlier person's block would act upstream
   // as the new one while being counted as the old.
+  // `add` replaces an entry under the same id in one write.
   const listedFor = deps.support.registry.has(jti, now) ? deps.support.registry.labelOf(jti) : undefined;
-  if (listedFor !== undefined && listedFor !== identity.authority) await deps.support.registry.remove(jti);
   if (listedFor !== identity.authority) {
     await deps.support.registry.add({
-      jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'session',
+      jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'ticket', sess: true,
       ...(identity.account ? { acct: identity.account } : {}),
     });
   }

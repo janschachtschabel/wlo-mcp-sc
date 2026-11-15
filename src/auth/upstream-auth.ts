@@ -16,6 +16,8 @@
  * as it stands.
  */
 
+import { createHash } from 'node:crypto';
+
 /** Internal scheme of a session credential. Never sent: `applyUpstreamAuth` turns it into a cookie. */
 export const SESSION_SCHEME = 'EDU-SESSION';
 
@@ -69,6 +71,16 @@ export function isSessionCookieString(value: string): boolean {
 /** The credential header of a session: our scheme and the cookie string. */
 export function sessionCredentialHeader(cookie: string): string {
   return `${SESSION_SCHEME} ${cookie}`;
+}
+
+/**
+ * The access id of a session block: a domain-separated hash of the session id.
+ * Deterministic for the reason `ticketJti` gives — a page reload is the same
+ * entry — and checked again when a block is decoded: the session a block sends
+ * must be the one its listed id was made from (`credentialFromAccessBlock`).
+ */
+export function sessionJti(sessionId: string): string {
+  return createHash('sha256').update(`wlo-session:${sessionId}`).digest('base64url');
 }
 
 /** Whether a credential header is a session. */

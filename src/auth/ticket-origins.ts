@@ -65,3 +65,17 @@ export function ticketOriginAllowed(origin: string | undefined, allowed: Readonl
   const normalised = originOf(origin);
   return normalised !== null && allowed.has(normalised);
 }
+
+/**
+ * May a request carrying this `Origin` exchange a SESSION (`POST /auth/session`)?
+ * Unlike a ticket, a request without `Origin` is refused: no browser, no person.
+ * Without a list, only `fallback` — the repository's own origin. Normalised like
+ * the ticket check, so `HTTPS://Host:443` and `https://host` are one origin.
+ */
+export function sessionOriginAllowed(
+  origin: string | undefined, allowed: ReadonlySet<string> | undefined, fallback: string,
+): boolean {
+  const normalised = origin ? originOf(origin) : null;
+  if (!normalised) return false;
+  return allowed ? allowed.has(normalised) : normalised === originOf(fallback);
+}

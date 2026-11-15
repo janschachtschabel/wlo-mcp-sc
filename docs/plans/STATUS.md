@@ -61,6 +61,9 @@ diese Datei über rund 100 Zeilen wächst.
   Vorher gemessen (`scripts/session-disableguest-probe.mjs`), Live-Test mit echter Sitzung grün. Plan fürs
   Chatbot-Team: `2026-11-15-chatbot-anmeldung-aus-der-sitzung.md`. B-API-Betrieb bleibt Entwurf: dort läuft
   bisher nur das Lesen von Metadaten.
+- **2026-11-15 — zweites Review des Sitzungs-Tauschs** (1 groß: Rollback-Sicherheit der Registry; 5 klein,
+  9 Randnotizen), alles behoben. Dazu `docs/WERKZEUGE.md` (alle 64 Werkzeuge, eine Zeile je Werkzeug) und
+  `docs/architektur-grafik.html` (Archify).
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

@@ -32,7 +32,7 @@ export const authStatusSchema = z.object({
   credential: z.enum(['none', 'basic', 'access-block', 'ticket', 'session', 'service']),
   /** Whether the repository answered at all — `unreachable` is no verdict on the login (B2). */
   upstream: z.enum(['ok', 'unreachable']),
-  /** When this server stops accepting the block (ISO) — ticket and widget blocks only (R1). */
+  /** When this server stops accepting the block (ISO) — ticket, session and widget blocks only (R1). */
   expiresAt: z.string().optional(),
 });
 
@@ -66,7 +66,7 @@ WICHTIG: "authenticated" ist eine EIGENE Aussage. Ist mode="service" oder "user"
               // No verdict: telling a person their password is wrong during an
               // outage sends them to fix something that is not broken.
               ? `Es sind Zugangsdaten für ${whose} hinterlegt, aber WLO ist gerade nicht erreichbar — ob sie gelten, lässt sich im Moment nicht prüfen. Bitte später erneut versuchen.`
-              : `Es sind Zugangsdaten für ${whose} hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. Bitte die Zugangsdaten prüfen; ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
+              : `Es sind Zugangsdaten für ${whose} hinterlegt, aber WLO akzeptiert sie nicht (${payload.authority ?? 'abgelehnt'}). Solange das so ist, schlagen alle Abfragen fehl — es kommen nicht nur weniger Inhalte, sondern keine. ${payload.credential === 'ticket' || payload.credential === 'session' ? 'Die WLO-Sitzung ist vermutlich beendet; bitte in WLO neu anmelden.' : 'Bitte die Zugangsdaten prüfen.'} Ohne hinterlegte Zugangsdaten liest der Server wieder öffentliche Inhalte.`;
 
         return { content: [{ type: 'text' as const, text }], structuredContent: payload };
       } catch (err) {

@@ -68,7 +68,7 @@ tracked compose file. The full list with defaults is in
 | `WIDGET_OAUTH_ORIGINS` | _(unset)_ | Origins of an embedded widget's OAuth redirect targets, comma-separated. A login whose **verified** `redirect_uri` lies there gets a block that expires after **12 h** (the allow-list entry carries `exp`; an expired block answers 401 like a revoked one). Unset = no OAuth block expires, so AI hosts (ChatGPT, Claude) are never affected. Keyed on the redirect target, not `client_name`, because registration is open. Ticket blocks expire after 12 h regardless; after it expires, the next exchange of the same still-valid ticket lists it again for 12 h (before that it is not extended, so a session longer than 12 h meets one 401 and re-exchanges). A list with no usable entry is logged as an ERROR and expires nothing. |
 | `TICKET_ALLOWED_ORIGINS` | _(unset)_ | Browser origins allowed to exchange an edu-sharing ticket at `POST /auth/ticket`, comma-separated. Another browser origin gets `403 origin_not_allowed` and no CORS header (its preflight already fails); a request without `Origin` — a server such as the chatbot backend — is never refused. Unset = every origin, as before. **A list whose every entry is unusable (e.g. `chatbot.example.org` without a scheme) admits NO browser origin** and logs an error — a typo must not switch the restriction off. Set it to the pages that embed the widget — in practice the chatbot's own `CORS_ORIGINS`. `Origin` does not stop a non-browser client; what the list closes is a foreign page exchanging a visitor's ticket in the visitor's browser. |
 | `WLO_SESSION_EXCHANGE` | _(off)_ | `1` adds `POST /auth/session`: the repository session of a signed-in person is exchanged for an access block. Only useful where that path is mounted on the repository's host below `/edu-sharing` (a browser sends the session cookie nowhere else); the ingress must rewrite the mount path to `/auth/session` and pass `Cookie` and `Origin`. Needs `WLO_AUTH_PRIVATE_KEY`. See AUTH.md §5d. |
-| `WLO_SESSION_ALLOWED_ORIGINS` | _(the repository's origin)_ | With `WLO_SESSION_EXCHANGE` only: the page origins that may exchange a session, comma-separated. Set it when the address in the browser differs from `WLO_REPOSITORY_URL`. Separate from `TICKET_ALLOWED_ORIGINS` on purpose. `TRUST_PROXY` must fit the repository's ingress chain, since these requests arrive through it. |
+| `WLO_SESSION_ALLOWED_ORIGINS` | _(the repository's origin)_ | With `WLO_SESSION_EXCHANGE` only: further origins under which the same mounted path is reached (a second host name of the repository), comma-separated. Not for foreign pages: the path sends no CORS headers. Separate from `TICKET_ALLOWED_ORIGINS` on purpose. A list without the switch is named at startup. `TRUST_PROXY` must fit the repository's ingress chain, since these requests arrive through it. |
 | `TRUSTED_CLIENT_KEYS` | _(unset)_ | Trusted clients with their **own** budget, counted by key instead of address: comma-separated `name:rpm:key`, sent as `X-WLO-Client-Key`. For a chatbot backend, which is one address for all its users — give it more than it uses itself (BOERDi limits itself to 300/min, so `360`). Generate a key with `openssl rand -hex 32` (≥ 32 characters, else the entry is ignored with a warning naming it). Held only as a SHA-256 hash; never logged. A key lifts only the request budget, never the login-guessing guard. A second entry with the same name is refused; an entry without any colon is logged by position only (it may be a pasted key). **Server-to-server only:** a key in a browser is public to every script on the page — the CORS preflight deliberately does not allow the header, so a widget cannot send it. |
 | `API_RATE_LIMIT_RPM` | `30` | Per-IP requests/min on the public `/api/*` surface. |
 | `WLO_COMPENDIUM_SECTION_MAX` | `2000` | Characters one main section of a compendium text may contribute when `get_compendium_text` is called without a `query`; with one it caps a single passage. Raise it if a deployment wants the untruncated prose back — at the default one of the eleven texts on staging is affected (65 250 → 20 802 delivered). The REST route `/api/compendium` is unaffected either way. |
@@ -391,9 +391,13 @@ and must not roll with two pods alive at once for longer than the stop grace per
 
 ### 5.1 Rolling back
 
-The image is the unit of rollback; there is no migration and no persistent state
-to unwind (confirmation tokens and rate-limit counters live in memory and are
-meant to be lost on restart).
+The image is the unit of rollback; there is no migration (confirmation tokens and
+rate-limit counters live in memory and are meant to be lost on restart). The one
+file on disk, the access registry, is kept readable in both directions: a field
+a build does not know is carried along, and a new kind of block is filed under
+a kind the older build knows (session blocks as ticket entries). After a
+rollback past a feature, the blocks of that feature answer 401; every other
+access keeps working.
 
 ```bash
 # Tag every deploy so there is something to go back TO.

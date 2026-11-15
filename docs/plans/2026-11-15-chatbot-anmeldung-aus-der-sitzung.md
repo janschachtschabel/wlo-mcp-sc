@@ -39,6 +39,11 @@ Braucht kein Ticket. Voraussetzung ist die Einrichtung in Abschnitt 5: Der Pfad 
 des MCP ist auf dem **Host des Repositorys unterhalb von `/edu-sharing`** erreichbar. Nur dorthin
 schickt der Browser das Sitzungs-Cookie.
 
+Der Aufruf muss **von einer Seite desselben Hosts** kommen — dem Widget, wie es in der Seite der
+Redaktionsumgebung läuft, oder einem iframe, das selbst von diesem Host geladen wird. Ein iframe
+vom Host des Chatbots kann Weg B nicht nutzen: Der Pfad sendet keine CORS-Kopfzeilen, der Browser
+bricht den Aufruf vor dem Absenden ab, und am MCP kommt nichts an. Dort bleibt Weg A.
+
 ```js
 const r = await fetch('/edu-sharing/services/wlo-mcp/auth/session', {   // Pfad laut Betrieb
   method: 'POST',
@@ -108,8 +113,10 @@ dabei **nicht** hinter der B-API; ihr ruft ihn direkt.
   In beiden Fällen: Block verwerfen, im Frontend einmal neu tauschen, bei 400 anonym weiter.
 - **Status in einem Aufruf:** `GET {MCP}/auth/status` mit dem Block, oder das Werkzeug
   `wlo_auth_status`. Die Art der Anmeldung steht dort als `credential`: `ticket` oder `session`.
-  `/auth/status` antwortet immer 200; ob die Anmeldung gilt, steht in `authenticated`. Die Antwort
-  ist bis zu 60 Sekunden alt — für „gerade abgemeldet“ zählt der Fehler am Werkzeug, nicht dieser Wert.
+  `/auth/status` antwortet 200, solange der Block selbst gilt; ob das Repository die Anmeldung
+  annimmt, steht dann in `authenticated` (bis zu 60 Sekunden alt — für „gerade abgemeldet“ zählt der
+  Fehler am Werkzeug). **401** heißt: der Block ist abgelaufen oder widerrufen — neu tauschen. **429**
+  heißt: zu viele Abfragen — nach `retryAfter` erneut.
 - **Abmelden im Chatbot:** `POST {MCP}/auth/revoke` mit `Authorization: Bearer <block>`; danach gilt
   der Block nicht mehr — **bis zum nächsten Tausch derselben Sitzung**, der dieselbe Kennung wieder
   einträgt. Endgültig ist nur das Abmelden im Repository; das gehört der Redaktionsumgebung.

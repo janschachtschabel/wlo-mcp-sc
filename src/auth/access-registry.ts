@@ -43,10 +43,18 @@ export interface RegistryEntry {
    * harmless: they age out of their own accord, and until they do they are
    * counted in the stricter class.
    *
-   * `'session'` (2026-11-15), a block from `/auth/session`, is a class of its
-   * own again.
+   * A session block (`/auth/session`, 2026-11-15) is filed as `'ticket'` with
+   * `sess: true`, NOT under a kind of its own: an unknown `k` fails an older
+   * build's whole registry closed (`isEntry`), so one session exchange followed
+   * by a rollback would have switched every personal access off. The older
+   * build reads the entry as a ticket entry and ignores `sess`; the session
+   * BLOCK it then cannot decode (`k: 'session'` is unknown to its
+   * `validatePayload`), which is a 401 for that one block. Session and ticket
+   * entries share the eviction class — both appear because a page was opened.
    */
-  k?: 'ticket' | 'session';
+  k?: 'ticket';
+  /** Set (only ever `true`, only with `k: 'ticket'`) on the entry of a session block. See `k`. */
+  sess?: true;
   /**
    * Expiry, seconds (plan 2026-11-07, R1): the entry stops counting as listed
    * at this instant, and the block reads exactly like a revoked one — 401 on
@@ -109,8 +117,8 @@ export interface AccessRegistry {
    * presenting the id under ANOTHER name is not that access (audit S-1).
    */
   labelOf(jti: string): string | undefined;
-  /** The kind the id was listed with (`undefined`: a password block, or not listed). */
-  kindOf(jti: string): RegistryEntry['k'];
+  /** The kind of block the id was listed for (`undefined`: a password block, or not listed). */
+  kindOf(jti: string): 'ticket' | 'session' | undefined;
   /** The account the repository CONFIRMED for the id's login (`acct`), or undefined where none was recorded. */
   accountOf(jti: string): string | undefined;
   add(entry: RegistryEntry): Promise<void>;
@@ -239,11 +247,13 @@ async function writeSynced(path: string, body: string): Promise<void> {
 function isEntry(value: unknown): value is RegistryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
-  // `k` is optional; the named values are 'ticket' and 'session'. An unknown one fails
+  // `k` is optional and the only named value is 'ticket'. An unknown one fails
   // the whole entry closed rather than being dropped: a kind we cannot name is a
   // record written by something we do not understand, and admitting it in the
   // deliberate class is the direction that loses someone their pasted block.
-  if (e['k'] !== undefined && e['k'] !== 'ticket' && e['k'] !== 'session') return false;
+  if (e['k'] !== undefined && e['k'] !== 'ticket') return false;
+  // The session marker rides only on a ticket-class entry (see `RegistryEntry.k`).
+  if (e['sess'] !== undefined && (e['sess'] !== true || e['k'] !== 'ticket')) return false;
   // An expiry we cannot read fails closed the same way: dropping it would turn a
   // 12-hour access into one that never ends.
   if (e['exp'] !== undefined && typeof e['exp'] !== 'number') return false;
@@ -418,7 +428,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     known: (jti) => entries.has(jti),
     expiresAt: (jti) => entries.get(jti)?.exp,
     labelOf: (jti) => entries.get(jti)?.label,
-    kindOf: (jti) => entries.get(jti)?.k,
+    kindOf: (jti) => { const e = entries.get(jti); return e?.sess ? 'session' : e?.k; },
     accountOf: (jti) => entries.get(jti)?.acct,
     async add(entry) {
       await commit(() => {

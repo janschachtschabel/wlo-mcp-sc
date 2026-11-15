@@ -18,7 +18,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -50,16 +50,17 @@ function upstream(authority: string | null, opts: { status?: number } = {}) {
   return { calls, restore: () => { globalThis.fetch = original; } };
 }
 
-async function support(t: { after: (fn: () => void) => void }): Promise<{ keys: AuthKeys; registry: AccessRegistry }> {
+async function support(t: { after: (fn: () => void) => void }): Promise<{ keys: AuthKeys; registry: AccessRegistry; path: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'wlo-session-'));
-  const registry = await openRegistry(join(dir, 'registry.json'));
+  const path = join(dir, 'registry.json');
+  const registry = await openRegistry(path);
   assert.ok(registry);
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
   assert.ok(keys);
   setAccessSupport({ keys, registry });
   t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
-  return { keys, registry };
+  return { keys, registry, path };
 }
 
 const deps = (s: { keys: AuthKeys; registry: AccessRegistry }) => ({
@@ -327,4 +328,66 @@ test('a Cookie header is read in one place and written in one place', async () =
   const writers = files.filter(f => /\.(set|append)\(\s*['"`]cookie['"`]|['"`]cookie['"`]\s*:/i.test(code(f)));
   assert.deepEqual(readers, ['rest/auth-pages.ts'], 'the session exchange is the only reader of a Cookie header');
   assert.deepEqual(writers, ['auth/upstream-auth.ts'], 'a cookie is put on an upstream call in one place');
+});
+
+// ── what a rollback reads, and what binds a block to its session ─────────────
+
+test('a session entry is one an older build can read: a ticket-class entry with a marker', async (t) => {
+  // An older build fails its WHOLE registry closed on a kind it does not know
+  // (`isEntry`), which would switch every personal access off after one session
+  // exchange and a rollback. The rule of that build, written out: `k` absent or
+  // 'ticket', and fields it does not know are carried along.
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const out = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), Date.now());
+  assert.ok(out.ok);
+  const entries = (JSON.parse(readFileSync(s.path, 'utf8')) as { entries: Record<string, unknown>[] }).entries;
+  assert.equal(entries.length, 1);
+  const olderBuildAccepts = (e: Record<string, unknown>) => e['k'] === undefined || e['k'] === 'ticket';
+  assert.ok(entries.every(olderBuildAccepts), JSON.stringify(entries));
+  assert.equal(entries[0]!['sess'], true);
+  assert.equal(s.registry.kindOf(String(entries[0]!['jti'])), 'session');
+
+  // …and this build reads the marker only where it belongs.
+  const odd = join(tmpdir(), `wlo-session-odd-${process.pid}.json`);
+  t.after(() => rmSync(odd, { force: true }));
+  writeFileSync(odd, JSON.stringify({ v: 1, entries: [{ jti: 'a', label: 'x', iat: 1, sess: true }] }));
+  assert.equal(await openRegistry(odd), null, 'a session marker without the ticket class fails closed');
+});
+
+test('a block on a listed session id cannot carry ANOTHER session', async (t) => {
+  // Whoever knows a listed session A can encrypt a block under A's id that sends
+  // session B: no new right at the repository, but labelled, counted and
+  // revocable as the wrong person. The id is derived from the session id, so
+  // the decoder checks they belong together.
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const out = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), Date.now());
+  assert.ok(out.ok);
+  if (!out.ok) return;
+  const real = decodeAccessToken(out.block, s.keys)!;
+  const other = encodeAccessToken({ ...real, secret: `JSESSIONID=${'B'.repeat(32)}` }, s.keys.publicKeyPem);
+  assert.equal(credentialFromHeader(`Bearer ${other}`), null);
+  assert.ok(credentialFromHeader(`Bearer ${out.block}`), 'the real one stands');
+});
+
+test('exchanging again does not extend the twelve hours; after them, the next exchange lists anew', async (t) => {
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const t0 = 1_800_000_000_000;
+  const first = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), t0);
+  assert.ok(first.ok);
+  if (!first.ok) return;
+  const jti = decodeAccessToken(first.block, s.keys)!.jti;
+  const exp0 = s.registry.expiresAt(jti);
+  await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), t0 + 3_600_000);
+  assert.equal(s.registry.expiresAt(jti), exp0, 'an hour later: the same end');
+  const later = t0 + (SESSION_BLOCK_TTL_S + 60) * 1000;
+  assert.equal(s.registry.has(jti, later), false);
+  await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), later);
+  assert.equal(s.registry.has(jti, later), true, 'listed again');
+  assert.ok((s.registry.expiresAt(jti) ?? 0) > exp0!, 'with a fresh end');
 });

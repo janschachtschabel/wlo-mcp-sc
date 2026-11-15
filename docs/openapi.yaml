@@ -986,7 +986,8 @@ paths:
           required: true
           schema: { type: string }
       requestBody:
-        required: true
+        required: false
+        description: Not read; send `{}` with `Content-Type: application/json` (the declared JSON type is what forces a preflight).
         content:
           application/json:
             schema: { type: object }

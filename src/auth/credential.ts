@@ -21,7 +21,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { decodeAccessToken, type AuthKeys } from './access-token.js';
 import type { AccessRegistry } from './access-registry.js';
-import { isSessionCookieString, sessionCredentialHeader } from './upstream-auth.js';
+import { sessionCookiesFrom, sessionCredentialHeader, sessionJti } from './upstream-auth.js';
 
 /** The authority name edu-sharing reports for an unauthenticated caller. */
 export const ANONYMOUS_AUTHORITY = 'esguest';
@@ -236,8 +236,15 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   // before the kinds existed carries none, and a ticket block must keep
   // decoding against it.
   if ((accessSupport.registry.kindOf(payload.jti) === 'session') !== (payload.k === 'session')) return null;
-  // …and what may become a `Cookie` header is checked again, for the same reason.
-  if (payload.k === 'session' && !isSessionCookieString(payload.secret)) return null;
+  // …and what may become a `Cookie` header is checked again, for the same reason:
+  // it must be the exact cookie string the exchange builds, and its session id
+  // the one this listed id was derived from. Without the second half, whoever
+  // knows a listed session could send ANOTHER session under it — no new right at
+  // the repository, but counted, labelled and revocable as the wrong person.
+  if (payload.k === 'session') {
+    const session = sessionCookiesFrom(payload.secret);
+    if (!session || session.cookie !== payload.secret || sessionJti(session.sessionId) !== payload.jti) return null;
+  }
   const header = payload.k === 'ticket'
     ? `EDU-TICKET ${payload.secret}`
     : payload.k === 'session'

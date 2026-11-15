@@ -11,3 +11,6 @@ scripts/probe.env
 # Operator deployment notes (server IPs, ad-hoc procedures) — kept beside the
 # repo for convenience, never in it: a stray `git add -A` must not publish them.
 serverupdate.txt
+
+# Archify work folders (candidates, receipts); the delivered page is copied to docs/
+.archify/

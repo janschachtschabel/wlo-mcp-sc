@@ -481,7 +481,11 @@ POST /auth/session          {}          Cookie: JSESSIONID=…   Origin: <the re
 
 The block carries `k: 'session'` and the two cookies of a session — `JSESSIONID`
 and, when it came along, the balancer's `INGRESSCOOKIE` (the session lives on one
-repository node). From there it is an ordinary block: same header, same registry,
+repository node). Its registry entry is filed as a ticket entry with `sess: true`,
+not under a kind of its own: an older build fails its whole registry closed on a
+kind it does not know, and a rollback must not switch every personal access off.
+The older build reads the entry as a ticket entry and refuses the session block
+itself (401). From there it is an ordinary block: same header, same registry,
 twelve hours, same revocation. The widget may hand it to its own backend; the
 backend sends it as `Authorization: Bearer` from anywhere.
 
@@ -501,7 +505,7 @@ request, like a wrong password. A write needs no CSRF token (measured
 2026-08-12), and `tests/live/session-exchange.test.ts` creates and deletes a
 collection with nothing but the session.
 
-Three things that are deliberate:
+What is deliberate:
 
 - **This is the only place the server reads a `Cookie` header**, and it takes two
   named cookies out of it. A test fails on a second reader or a second writer.

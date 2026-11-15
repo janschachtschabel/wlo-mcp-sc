@@ -140,6 +140,12 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
         fields: { entries: sessionOrigins.rejected },
       });
     }
+  } else if (sessionOrigins.origins || sessionOrigins.rejected.length) {
+    notices.push({
+      level: 'warn',
+      message: 'WLO_SESSION_ALLOWED_ORIGINS is set but WLO_SESSION_EXCHANGE is not — POST /auth/session does not exist '
+        + 'and the list has no effect',
+    });
   }
 
   // OAuth logins whose verified redirect target lies in one of these origins are an

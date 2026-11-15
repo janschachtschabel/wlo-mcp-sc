@@ -149,3 +149,27 @@ test('http.ts builds its handler from buildHttpOptions and from nothing else', (
     'no limiter is constructed beside the tested function');
   assert.doesNotMatch(source, /trustProxy:\s*true/);
 });
+
+test('the session exchange: off by default, its own origin list, closed when every entry is unusable', () => {
+  const none = buildHttpOptions({});
+  assert.equal(none.options.sessionExchange, undefined);
+  assert.equal(none.options.sessionAllowedOrigins, undefined);
+
+  const on = buildHttpOptions({ WLO_SESSION_EXCHANGE: '1' });
+  assert.equal(on.options.sessionExchange, true);
+  assert.equal(on.options.sessionAllowedOrigins, undefined, 'no list: the repository origin, decided at the endpoint');
+  assert.ok(on.notices.some(n => /WLO_SESSION_EXCHANGE/.test(n.message)), 'said at startup');
+
+  const listed = buildHttpOptions({ WLO_SESSION_EXCHANGE: '1', WLO_SESSION_ALLOWED_ORIGINS: 'https://redaktion.example.org' });
+  assert.deepEqual([...listed.options.sessionAllowedOrigins!], ['https://redaktion.example.org']);
+  assert.equal(listed.options.ticketAllowedOrigins, undefined, 'the ticket path is not narrowed by it');
+
+  const broken = buildHttpOptions({ WLO_SESSION_EXCHANGE: '1', WLO_SESSION_ALLOWED_ORIGINS: '*, redaktion' });
+  assert.equal(broken.options.sessionAllowedOrigins?.size, 0, 'closed, not opened to the default');
+  assert.ok(broken.notices.some(n => n.level === 'error' && /WLO_SESSION_ALLOWED_ORIGINS/.test(n.message)));
+
+  const stray = buildHttpOptions({ WLO_SESSION_ALLOWED_ORIGINS: 'https://redaktion.example.org' });
+  assert.equal(stray.options.sessionAllowedOrigins, undefined);
+  assert.ok(stray.notices.some(n => /WLO_SESSION_ALLOWED_ORIGINS/.test(n.message) && /WLO_SESSION_EXCHANGE/.test(n.message)),
+    'a list without the switch is said, not silently ignored');
+});

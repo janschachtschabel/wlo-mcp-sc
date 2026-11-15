@@ -6,9 +6,9 @@
  * caller resolves the credential and asks the repository (`checkIdentity`).
  *
  * `expiresAt` is the allow-list's own expiry (R1, `RegistryEntry.exp`) and
- * appears only where one exists — ticket blocks and a widget's OAuth blocks. A
- * pasted block has none. It is when THIS server stops accepting the block; a
- * ticket block can die earlier, with the edu-sharing session, whose end this
+ * appears only where one exists — ticket and session blocks and a widget's OAuth
+ * blocks. A pasted block has none. It is when THIS server stops accepting the
+ * block; a ticket or session block can die earlier, with the edu-sharing session, whose end this
  * server cannot see (measured 2026-08-13: 404/500, no warning before).
  */
 

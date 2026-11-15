@@ -232,7 +232,9 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   the repository-host check. (2) Only `JSESSIONID` and `INGRESSCOOKIE` are taken from a `Cookie` header, and
   `rest/auth-pages.ts` is the only reader — guarded in `tests/session-exchange.test.ts` (one reader, one writer).
   (3) A block's content is its holder's to write, so the cookie string of a `k: 'session'` block is checked again
-  when it is decoded. (4) The access id is a hash of the session id, the entry carries `k: 'session'` and the
+  when it is decoded. (4) The access id is a hash of the session id — checked again at decode, so a block sends only the session its id was
+  made from — the entry is filed as `k: 'ticket'` with `sess: true` (an unknown `k` fails an older build's whole
+  registry closed; second review 2026-11-15) and carries the
   twelve-hour expiry — the reasoning of the ticket block, unchanged. (5) No CORS on the path, `Origin` required and
   equal to the repository's origin or listed in `WLO_SESSION_ALLOWED_ORIGINS` — its OWN list (review 2026-11-15:
   reusing the ticket list entitled every ticket page to sessions and narrowed the ticket path for whoever set it). (6) Write paths with a session have a
