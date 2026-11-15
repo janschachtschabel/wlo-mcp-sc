@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-15
+
+No tool, no top-level parameter and no error code was renamed or removed since 1.3.0. Added: the optional header
+`X-WLO-Client-Address` for a trusted client on `/auth/session`. Fixed: an address with a zone id in
+`X-Forwarded-For` could leave a request unanswered (since 1.3.0, reachable without a key).
+
 ### Added — the person's address in its own header (chatbot team's third answer, 2026-11-15)
 
 - **`X-WLO-Client-Address`**: a trusted client (valid `X-WLO-Client-Key`) names the person's address in it on
