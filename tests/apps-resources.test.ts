@@ -1,0 +1,148 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+import {
+  registerWidgetResource,
+  computeWidgetUri,
+  widgetResourceMeta,
+  WIDGET_MIME_TYPE,
+} from '../src/apps/resources.js';
+import { WLO_REPOSITORY_URL } from '../src/wlo-config.js';
+
+/** The origin the widget CSP must allow — whatever repository is configured. */
+const REPOSITORY_ORIGIN = new URL(WLO_REPOSITORY_URL).origin;
+
+async function connect(server: McpServer): Promise<Client> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  return client;
+}
+
+test('computeWidgetUri is content-addressed (stable per content, changes on edit)', () => {
+  const a = computeWidgetUri('search-results', '<html>A</html>');
+  const b = computeWidgetUri('search-results', '<html>A</html>');
+  const c = computeWidgetUri('search-results', '<html>B</html>');
+  assert.equal(a, b, 'same HTML → same URI');
+  assert.notEqual(a, c, 'different HTML → different URI');
+  assert.match(a, /^ui:\/\/widget\/search-results-[0-9a-f]{8}\.html$/);
+});
+
+test('computeWidgetUri also covers the _meta — a metadata-only change busts the cache', () => {
+  // The URI is the host's CACHE KEY for the WHOLE resource. Hashing only the
+  // HTML meant a metadata-only fix (e.g. dropping ui.domain) kept the old URI,
+  // so Claude kept serving its cached, broken copy — the deployed fix had no
+  // effect (live-proven 2026-07-17).
+  const html = '<html>same</html>';
+  const a = computeWidgetUri('search-results', html, { ui: { domain: 'https://old.example' } });
+  const b = computeWidgetUri('search-results', html, { ui: {} });
+  assert.notEqual(a, b, 'same HTML but different _meta must yield a different URI');
+  assert.equal(a, computeWidgetUri('search-results', html, { ui: { domain: 'https://old.example' } }),
+    'same HTML + same _meta stays stable');
+});
+
+test('widgetResourceMeta whitelists the configured edu-sharing origin in its CSP', () => {
+  const meta = widgetResourceMeta() as {
+    ui: { domain?: string; csp: { connectDomains: string[]; resourceDomains: string[] } };
+    'openai/widgetDomain'?: string;
+  };
+  // Derived, not spelled out: the property is "the CONFIGURED repository origin",
+  // and pinning the host froze the default of the day — it broke when the
+  // default moved from production to staging on 2026-08-06.
+  assert.ok(meta.ui.csp.connectDomains.includes(REPOSITORY_ORIGIN));
+  assert.ok(meta.ui.csp.resourceDomains.includes(REPOSITORY_ORIGIN));
+  // Claude's MCP-Apps host validates the widget domain against its OWN sandbox
+  // format ({hash}.claudemcpcontent.com) and rejects the whole widget for
+  // foreign values. It NORMALISES the vendor alias onto the standard key
+  // (live-proven 2026-07-17: the rejected value existed only in
+  // `openai/widgetDomain`), so BOTH must stay absent unless explicitly
+  // configured for a ChatGPT plugin submission.
+  assert.ok(!('domain' in meta.ui), 'ui.domain must be absent by default');
+  assert.ok(!('openai/widgetDomain' in meta), 'the openai alias must be absent too — Claude maps it onto ui.domain');
+});
+
+test('widgetResourceMeta carries a per-widget description (audit A-2)', () => {
+  const meta = widgetResourceMeta('search-results') as {
+    ui: { description?: string };
+    'openai/widgetDescription'?: string;
+  };
+  assert.ok(meta.ui.description && meta.ui.description.length > 0, 'ui.description present');
+  assert.equal(meta['openai/widgetDescription'], meta.ui.description, 'openai alias mirrors ui.description');
+});
+
+test('registerWidgetResource exposes a fetchable mcp-app resource with CSP metadata', async () => {
+  const server = new McpServer({ name: 't', version: '0' });
+  const html = '<!doctype html><html><body><div id="wlo-root"></div></body></html>';
+  const uri = computeWidgetUri('search-results', html);
+  registerWidgetResource(server, { name: 'search-results', uri, html });
+  const client = await connect(server);
+
+  const { resources } = await client.listResources();
+  const entry = resources.find(r => r.uri === uri);
+  assert.ok(entry, 'resource appears in resources/list');
+  assert.equal(entry?.mimeType, WIDGET_MIME_TYPE);
+  const metaUi = (entry?._meta as { ui?: { csp?: { connectDomains?: string[] } } })?.ui;
+  assert.ok(metaUi?.csp?.connectDomains && metaUi.csp.connectDomains.length > 0, 'CSP _meta advertised');
+
+  const read = await client.readResource({ uri });
+  const first = read.contents[0];
+  assert.ok(first && 'text' in first, 'widget resource must be a TEXT resource, not a blob');
+  assert.equal(first.text, html, 'read returns the inlined widget HTML');
+  assert.equal(first.mimeType, WIDGET_MIME_TYPE);
+  // The Apps-SDK doc places the widget _meta (CSP/domain) on the READ contents
+  // entry; hosts may read it from either surface, so both must carry it.
+  const contentsUi = (first._meta as { ui?: { csp?: { connectDomains?: string[] } } } | undefined)?.ui;
+  assert.ok(contentsUi?.csp?.connectDomains?.length, 'contents[] entry carries the widget _meta (CSP)');
+
+  await client.close();
+});
+
+test('a STALE widget URI (old hash) still reads — serves the CURRENT build', async () => {
+  // Live failure 2026-07-17 (ChatGPT "Failed to fetch template"): every
+  // redeploy rolls new content-addressed URIs, but the server dropped the old
+  // ones — a host whose connector still holds the previous tool descriptor
+  // (ChatGPT syncs on connect, not per chat) then reads a dead URI. Like a CDN,
+  // old URIs must keep resolving; they serve the newest build for that widget.
+  const server = new McpServer({ name: 't', version: '0' });
+  const html = '<!doctype html><html><body><div id="wlo-root">v2</div></body></html>';
+  const uri = computeWidgetUri('search-results', html);
+  registerWidgetResource(server, { name: 'search-results', uri, html });
+  const client = await connect(server);
+
+  const stale = 'ui://widget/search-results-00000000.html';
+  assert.notEqual(stale, uri, 'test uses a genuinely different (old) hash');
+  const read = await client.readResource({ uri: stale });
+  const first = read.contents[0];
+  assert.ok(first && 'text' in first, 'stale URI resolves to a text resource');
+  assert.equal(first.text, html, 'stale URI serves the CURRENT widget build');
+  assert.equal(first.mimeType, WIDGET_MIME_TYPE);
+
+  // An unknown widget name must NOT resolve — the fallback is per known widget.
+  await assert.rejects(
+    client.readResource({ uri: 'ui://widget/not-a-widget-00000000.html' }),
+    /not found|unknown/i,
+  );
+  await client.close();
+});
+
+test('widgetResourceMeta: WLO_WIDGET_DOMAIN emits both domain keys, and only then', () => {
+  // The domain is the APP identity (unique per app at ChatGPT submission);
+  // the CSP allowlist stays the DATA origin previews are fetched from.
+  process.env['WLO_WIDGET_DOMAIN'] = 'https://mcp.wirlernenonline.de';
+  try {
+    const meta = widgetResourceMeta() as {
+      ui: { domain: string; csp: { connectDomains: string[] } };
+      'openai/widgetDomain'?: string;
+    };
+    assert.equal(meta.ui.domain, 'https://mcp.wirlernenonline.de');
+    assert.equal(meta['openai/widgetDomain'], 'https://mcp.wirlernenonline.de');
+    assert.ok(meta.ui.csp.connectDomains.includes(REPOSITORY_ORIGIN),
+      'CSP keeps the edu-sharing origin');
+  } finally {
+    delete process.env['WLO_WIDGET_DOMAIN'];
+  }
+});

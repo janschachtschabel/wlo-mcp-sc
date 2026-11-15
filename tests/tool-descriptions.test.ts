@@ -1,0 +1,230 @@
+/**
+ * tool-descriptions.test.ts – the descriptions are a contract with the model.
+ *
+ * A tool description is the only thing a model has when it picks between two
+ * similar tools. Two of them contradicted each other: `search_wlo_collections`
+ * stated that a Sammlung IS a Themenseite, while `search_wlo_topic_pages`
+ * described itself as searching collections and then checking which of them
+ * have one. Both cannot be true, and the measurement settles it — for
+ * "Mathematik": 5 collections, 1 topic page.
+ *
+ * The truth is containment: a Themenseite is a collection that additionally
+ * carries a curated page layout (`ccm:page_config_ref`). Every topic page is a
+ * collection; most collections are not topic pages.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { connectedClient } from './fetchMock.js';
+
+async function descriptionOf(name: string): Promise<string> {
+  const client = await connectedClient();
+  try {
+    const tool = (await client.listTools()).tools.find(t => t.name === name);
+    assert.ok(tool, `${name} is registered`);
+    return tool.description ?? '';
+  } finally {
+    await client.close();
+  }
+}
+
+test('search_wlo_collections does not claim a collection IS a topic page', async () => {
+  const text = await descriptionOf('search_wlo_collections');
+  assert.doesNotMatch(text, /dasselbe wie eine "?Themenseite"?/i);
+  assert.doesNotMatch(text, /Sammlung.{0,20}(ist|=).{0,20}Themenseite/i);
+});
+
+test('search_wlo_collections says only SOME collections have a topic page', async () => {
+  const text = await descriptionOf('search_wlo_collections');
+  assert.match(text, /manche|einige|nicht jede|nur ein Teil/i, 'the relation is stated as partial');
+  assert.match(text, /search_wlo_topic_pages/, 'and the other tool is named for the narrower case');
+});
+
+test('search_wlo_topic_pages describes a Themenseite as a collection WITH a page', async () => {
+  const text = await descriptionOf('search_wlo_topic_pages');
+  assert.match(text, /collection|Sammlung/i);
+  // It already says it checks which collections have one; that must survive,
+  // because it is the accurate half of the former contradiction.
+  assert.match(text, /which ones have|welche.{0,20}haben|have a Themenseite/i);
+});
+
+/**
+ * ── The words a teacher actually types (2026-08-06) ─────────────────────────
+ *
+ * The block above pins a contradiction out of two descriptions. These pin the
+ * opposite failure: a description that is *correct* and still never matches the
+ * request, because it is written in the vocabulary of the repository rather than
+ * of the person asking. Nobody asks for "Bildungsinhalte"; they ask for "ein
+ * Video zu Bruchrechnung", "Medien zum Klimawandel", "ein Arbeitsblatt".
+ *
+ * Each entry below comes from an observed miss, not from taste.
+ */
+
+/** Widely enforced cap on a tool description; truncation eats the end. */
+const MAX_DESCRIPTION = 1024;
+
+async function allDescriptions(): Promise<Map<string, string>> {
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    return new Map(tools.map(t => [t.name, t.description ?? '']));
+  } finally {
+    await client.close();
+  }
+}
+
+/** tool → phrases its description must contain (case-insensitive). */
+const REQUIRED: Record<string, string[]> = {
+  // The default entry point. A request naming a MEDIUM ("ein Video zu …") is the
+  // commonest shape there is and must land here, not in a web search.
+  // 'search_wlo_content' since 2026-08-20: the entry point must NAME its own
+  // narrowing — the earlier wording ("als Filter, nicht in ein anderes
+  // Werkzeug") actively fought the chatbot's routing, which sends a request
+  // for a specific single-content shape to search_wlo_content.
+  search_wlo_all: ['video', 'arbeitsblatt', 'medien', 'material', 'search_wlo_content'],
+  // The deliberate narrowing — it has to name the tool it defers to, or it
+  // competes with search_wlo_all for every single-medium request.
+  search_wlo_content: ['search_wlo_all'],
+  // Encyclopedic context, explicitly NOT the article text. Measured live
+  // 2026-08-06: asked to build a record from a town's Wikipedia page, Claude ran
+  // its own web search — this tool advertises a lead extract (correct, and not
+  // what that task needed) and nothing pointed to the tool that does return the
+  // page.
+  get_wikipedia_summary: ['get_url_text'],
+  get_url_text: ['wikipedia'],
+  // The registry lookup has no natural trigger of its own: nothing in a user's
+  // question says "check which skills this collection approves". Since
+  // 2026-08-10 the search no longer attaches it either (it cost ~1.4 s per
+  // search, measured), so the ONLY way a model learns the tool applies is a
+  // pointer from the tools that hand out collection ids. Free, unlike a lookup.
+  search_wlo_collections: ['get_skill_registry'],
+  search_wlo_within_collection: ['get_skill_registry'],
+  get_skill_registry: ['get_skill'],
+  search_skill: ['get_skill_registry'],
+  // Both detail tools enumerate their optional enrichments, and both listed
+  // every one except the newest — a list that presents itself as complete is
+  // where the next field gets forgotten too.
+  get_node_details: ['qualityInfo', 'accessInfo'],
+  get_nodes_details: ['qualityInfo', 'accessInfo'],
+};
+
+for (const [name, phrases] of Object.entries(REQUIRED)) {
+  test(`${name} names the words a user would actually type`, async () => {
+    const text = (await allDescriptions()).get(name);
+    assert.ok(text, `${name} is not registered`);
+    for (const phrase of phrases) {
+      assert.ok(
+        text.toLowerCase().includes(phrase.toLowerCase()),
+        `${name}: "${phrase}" is missing — a model matches the request against this text`,
+      );
+    }
+  });
+}
+
+test('no description exceeds the length a host will truncate', async () => {
+  // Applied to `get_wlo_content_text` on 2026-08-05 for one tool; the rule holds
+  // for all of them. What truncation cuts is the end — where "do NOT use this
+  // for …" sits, i.e. exactly the half that prevents a wrong pick.
+  const tooLong = [...(await allDescriptions())]
+    .filter(([, text]) => text.length > MAX_DESCRIPTION)
+    .map(([name, text]) => `${name} (${text.length})`);
+  assert.deepEqual(tooLong, [],
+    `over ${MAX_DESCRIPTION} characters — truncation removes the guidance at the end`);
+});
+
+/**
+ * ── What a collection id actually names (2026-08-17) ────────────────────────
+ *
+ * A collection listing hands out REFERENCE ids and nothing else, so that is the
+ * id a caller passes on. Two measurements make the difference matter, and they
+ * point in opposite directions: a metadata write aimed at a reference is stored
+ * on the REFERENCE and never reaches the record (F1/F2), while a deletion aimed
+ * at one removes only the reference and leaves the record alone (F10).
+ */
+
+test('wlo_delete_content does not promise a destruction a reference id will not cause', async () => {
+  const text = await descriptionOf('wlo_delete_content');
+  // It said, flatly, that the tool "zerstört das Material für alle Sammlungen,
+  // in denen es vorkommt". True of a record id, false of a reference id — and
+  // the reference is the id a collection listing gives you.
+  assert.doesNotMatch(text, /zerstört das Material für alle Sammlungen/,
+    'die unbedingte Zusage ist über eine Verknüpfungs-id falsch');
+  assert.match(text, /Verknüpfung/, 'der Fall wird benannt');
+});
+
+test('wlo_update_content says a write follows the reference to the record', async () => {
+  const text = await descriptionOf('wlo_update_content');
+  assert.match(text, /Verknüpfung/, 'eine Sammlungs-id ist eine Verknüpfung');
+  assert.match(text, /Original/, 'und geschrieben wird am Original');
+});
+
+test('the server instructions answer to the repository’s other names', async () => {
+  // "Leg das bei WirLernenOnline an", "trag das in edu-sharing ein" — the same
+  // request, and only one of those names appeared anywhere in the surface. The
+  // aliases belong in the instructions rather than in thirteen write-tool
+  // descriptions: they are read once and apply to every tool.
+  const client = await connectedClient();
+  let instructions: string;
+  try {
+    instructions = client.getInstructions() ?? '';
+  } finally {
+    await client.close();
+  }
+  for (const alias of ['WirLernenOnline', 'edu-sharing', 'openeduhub']) {
+    assert.ok(
+      instructions.toLowerCase().includes(alias.toLowerCase()),
+      `the instructions must name "${alias}" — it is what a user calls this repository`,
+    );
+  }
+});
+
+/**
+ * ── The full-text bounds are ONE contract across three tools (2026-08-20) ────
+ *
+ * Ceiling and default are both 200 000 (user decision). The description is how
+ * a model learns the default; the schema is how the ceiling is enforced. Both
+ * are pinned here for all three tools together, so changing one alone fails.
+ */
+
+const FULLTEXT_TOOLS = ['get_wlo_content_text', 'get_url_text', 'get_wikipedia_summary'];
+
+test('all three full-text tools advertise 200000 as their default', async () => {
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    for (const name of FULLTEXT_TOOLS) {
+      const tool = tools.find(t => t.name === name);
+      assert.ok(tool, name);
+      const prop = (tool!.inputSchema as { properties?: Record<string, { description?: string }> }).properties?.maxChars;
+      assert.match(prop?.description ?? '', /200000/, `${name} must advertise the 200000 default`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test('all three full-text tools refuse maxChars above 200000', async () => {
+  const client = await connectedClient();
+  try {
+    for (const name of FULLTEXT_TOOLS) {
+      // Refused at validation, BEFORE any upstream call — so no mock is needed,
+      // and netguard would loudly catch a validation that stopped validating.
+      const args = name === 'get_url_text'
+        ? { url: 'https://example.org/x', maxChars: 250_000 }
+        : name === 'get_wikipedia_summary'
+          ? { query: 'Optik', maxChars: 250_000 }
+          : { nodeId: 'n1', maxChars: 250_000 };
+      let refused = false;
+      try {
+        const res = await client.callTool({ name, arguments: args });
+        refused = res.isError === true;
+      } catch {
+        refused = true;
+      }
+      assert.ok(refused, `${name} must refuse 250000`);
+    }
+  } finally {
+    await client.close();
+  }
+});

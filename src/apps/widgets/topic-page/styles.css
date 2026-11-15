@@ -1,0 +1,11 @@
+/* topic-page/styles.css – W4 specifics (base.css carries the shared tile/grid). */
+.wlo-topic { max-width: 960px; }
+.wlo-topic__title { margin: 0 0 16px; font-size: 1.2rem; font-weight: 700; }
+.wlo-topic__more {
+  display: inline-block;
+  margin-top: 8px;
+  min-height: 24px;
+  color: var(--wlo-accent);
+  text-decoration: underline;
+  font-size: 0.85rem;
+}

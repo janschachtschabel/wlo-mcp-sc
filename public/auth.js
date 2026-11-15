@@ -1,0 +1,112 @@
+/**
+ * auth.js — page logic for "MCP-Zugang holen".
+ *
+ * Order matters and is the security argument of the page: fetch the server's
+ * public key, encrypt in the browser, and only THEN send anything. The password
+ * never crosses the network, not even to us — what we receive is the block,
+ * which we open in memory to verify the login and register the id.
+ *
+ * German user text on purpose: the page is shown verbatim to WLO editors.
+ */
+
+import { encodeAccessBlock, fetchPublicKey } from './access-block.js';
+import { initI18n, msg, serverMessage } from './auth-i18n.js';
+
+// First: the page is in the visitor's language before anything is announced.
+initI18n();
+
+const form = document.getElementById('issue-form');
+const userInput = document.getElementById('user');
+const secretInput = document.getElementById('secret');
+const submit = document.getElementById('submit');
+const status = document.getElementById('status');
+const result = document.getElementById('result');
+const blockOut = document.getElementById('block');
+const copyButton = document.getElementById('copy');
+const copyPlainButton = document.getElementById('copy-plain');
+const copyStatus = document.getElementById('copy-status');
+
+/** The block WITHOUT the header prefix; empty until one has been issued. */
+let plainBlock = '';
+
+/** Set the live region. `kind` drives the styling; the words carry the meaning. */
+function say(text, kind) {
+  status.textContent = text;
+  status.className = kind ? `status ${kind}` : 'status';
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const user = userInput.value.trim();
+  const secret = secretInput.value;
+
+  // Checked here rather than with `required` alone so the message lands in the
+  // live region, where a screen reader announces it.
+  if (!user || !secret) {
+    say(msg('fill_both', 'Bitte Benutzername und Passwort ausfüllen.'), 'error');
+    (user ? secretInput : userInput).focus();
+    return;
+  }
+
+  submit.disabled = true;
+  say(msg('issue_busy', 'Verschlüsseln und prüfen …'), 'busy');
+  result.hidden = true;
+
+  try {
+    const block = await encodeAccessBlock(user, secret, await fetchPublicKey());
+
+    const res = await fetch('/auth/issue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: block }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      // The server distinguishes "WLO rejected these credentials" from
+      // everything else; showing its text means a typo says so plainly instead
+      // of surfacing days later as "the tools return nothing".
+      throw new Error(detail?.error ? serverMessage(detail.error) : msg('issue_failed', 'Der Zugang konnte nicht erzeugt werden.'));
+    }
+
+    plainBlock = block;
+    blockOut.value = `Bearer ${block}`;
+    result.hidden = false;
+    say(msg('issue_done', 'Zugang erzeugt. Er gilt, bis du ihn sperrst.'), 'ok');
+    // The form keeps its values — clearing it would look like a failure — but
+    // the password does not stay on screen once it is no longer needed.
+    secretInput.value = '';
+    blockOut.focus();
+  } catch (err) {
+    say(err instanceof Error ? err.message : msg('unknown_error', 'Unbekannter Fehler.'), 'error');
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+/**
+ * Two ways to copy, because there are two places the value goes and they want
+ * different things: a header field takes `Bearer <block>`, a field that asks for
+ * the block alone takes the block. Copying the prefix into the second one yields
+ * `Bearer Bearer …`, which the server refuses as an unusable token — measured
+ * the hard way on 2026-08-05.
+ *
+ * The message names WHICH form was copied, so the live region is useful rather
+ * than merely reassuring.
+ */
+async function copy(text, done) {
+  try {
+    await navigator.clipboard.writeText(text);
+    copyStatus.textContent = done();
+    copyStatus.className = 'status ok';
+  } catch {
+    // Clipboard access can be denied, and an unusable button with no
+    // explanation is worse than none: the text is selectable either way.
+    blockOut.select();
+    copyStatus.textContent = msg('copy_denied', 'Kopieren nicht erlaubt — der Wert ist jetzt markiert.');
+    copyStatus.className = 'status busy';
+  }
+}
+
+copyButton.addEventListener('click', () => copy(blockOut.value, () => msg('copied_header', 'Kopfzeilen-Wert kopiert.')));
+copyPlainButton.addEventListener('click', () => copy(plainBlock, () => msg('copied_block', 'Block kopiert.')));

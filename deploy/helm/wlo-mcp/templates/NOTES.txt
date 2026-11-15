@@ -1,0 +1,51 @@
+wlo-mcp {{ .Chart.AppVersion }} — DRAFT chart {{ .Chart.Version }}
+
+Repository served:  {{ .Values.repositoryUrl }}
+Public service:     {{ include "wlo-mcp.fullname" . }}:{{ .Values.service.public.port }}   (/mcp, /api/*, /auth*, /oauth/*)
+Internal service:   {{ include "wlo-mcp.internalName" . }}:{{ .Values.service.internal.port }}   (/health, /ready, /metrics — never through the Ingress)
+
+This service runs as exactly ONE pod (replicas: 1, strategy Recreate). Do not
+scale it and do not attach an autoscaler: approvals, plans and rate limits live
+in process memory.
+{{- if not .Values.existingSecret }}
+
+No existingSecret is set: the server reads anonymously; personal logins, the
+service account, the metrics token and trusted client keys are all off.
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is off. The access registry is lost on every restart, and
+with it every issued access block.
+{{- end }}
+{{- if and .Values.existingSecret (not .Values.config.WLO_PUBLIC_BASE_URL) }}
+
+config.WLO_PUBLIC_BASE_URL is empty. The OAuth sign-in needs the public origin;
+without it the address is derived from the Host header the caller sends (only
+with TRUST_PROXY on — otherwise every OAuth path answers 404).
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicy is ON: the public port admits only namespace
+"{{ .Values.networkPolicy.ingressNamespace }}", the internal port only namespace
+"{{ .Values.networkPolicy.monitoringNamespace }}". A wrong name cuts that traffic
+silently (the ingress answers 504, the scrape fails).
+{{- else }}
+
+NetworkPolicy is OFF (the default): nothing restricts who reaches the pod's two
+ports inside the cluster. Enable it with networkPolicy.enabled=true and BOTH
+networkPolicy.ingressNamespace and networkPolicy.monitoringNamespace.
+{{- end }}
+{{- if regexMatch "^(?i:1|true|yes)$" (toString .Values.config.TRUST_PROXY) }}
+
+TRUST_PROXY is on: every rate limit is counted by the LAST X-Forwarded-For
+entry. Make sure the ingress controller sees real client addresses
+(externalTrafficPolicy: Local, or PROXY protocol) — behind SNAT all users
+share one budget. See the chart README.
+{{- end }}
+
+Check it:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "wlo-mcp.internalName" . }} {{ .Values.service.internal.port }}
+  curl localhost:{{ .Values.service.internal.port }}/health     # the process
+  curl localhost:{{ .Values.service.internal.port }}/ready      # 503 while the repository is unreachable: alert on it, never probe it
+
+Back up the claim "{{ include "wlo-mcp.claimName" . }}" (/data/access-registry.json).

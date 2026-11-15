@@ -1,0 +1,626 @@
+/**
+ * services/collection-traversal.ts – walking the collection tree, bounded.
+ *
+ * Split out of `tools/collections.ts` when that file passed 450 lines, and
+ * joined by the browse walk from `tools/browse.ts` on 2026-08-04: the functions
+ * here answer "what is reachable from this collection", while a tool module
+ * answers "what does the tool accept and return". They change for different
+ * reasons — these follow how the repository's collection graph behaves, the
+ * tool module follows its own contract.
+ *
+ * Collections form a DAG, not a tree: a sub-collection can hang under several
+ * parents, so both walks de-duplicate by nodeId, and both cap their fan-out.
+ * Without the caps a single public request expands into a hundred-plus parallel
+ * upstream calls.
+ */
+
+import type { WloNode } from '../wlo-api.js';
+import { didNotAnswer, getChildCollectionsResult, getCollectionContents } from '../wlo-api.js';
+import { rerankNodes, sortByTitle } from '../reranker.js';
+import { positionedFlag, sortByPosition, type CollectionOrder } from '../collection-position.js';
+import type { FormattedNode } from '../formatter.js';
+import { formatNode, formatNodes } from '../formatter.js';
+import { comparable, nodeMatchesText } from '../node-match.js';
+import { mapPool } from '../concurrency.js';
+import { log } from '../logger.js';
+import { failureStatus } from './failure-code.js';
+import { isRefusal } from '../upstream-error.js';
+import { isClientGone } from '../request-scope.js';
+import { logTerm } from '../log-privacy.js';
+
+/**
+ * Said wherever a walk met a branch the repository REFUSED to open (401, 403,
+ * 404): not an outage — asking again changes nothing — and not an empty branch
+ * either. Left unsaid, a tree with a closed branch looks complete, and a model
+ * answers "there is nothing more there" (chatbot team, 2026-11-14). ONE wording
+ * for the list answers; the tree says it per node (`childrenRefused`).
+ */
+export const RESTRICTED_NOTICE = 'Hinweis: Ein Teil des durchsuchten Bereichs ist mit dieser Anmeldung nicht lesbar und fehlt in '
+  + 'dieser Antwort — ob dort etwas liegt, ist offen. Ein erneuter Aufruf ändert daran nichts.';
+
+/**
+ * Fallback collection search by tree traversal, used when the direct
+ * keyword-collection search finds nothing. From the given level-1 child
+ * collections it keeps those that match `query`, expands into a capped level 2,
+ * and — only if nothing matched yet — a scored, capped level 3. The caps (O6)
+ * stop the fallback from turning into a 100+-parallel-call avalanche; direct
+ * level-1 matches are always preserved.
+ */
+export async function findCollectionsByTreeTraversal(
+  level1: WloNode[], query: string,
+): Promise<{ matches: WloNode[]; unread: number; refused: number; capped?: true }> {
+  // De-dup by nodeId at insertion (audit Q-2): the same node can be reached more
+  // than once across levels, and duplicates would make rows and `total` lie.
+  const seen = new Set<string>();
+  const matches: WloNode[] = [];
+  const addMatches = (nodes: WloNode[]) => {
+    for (const n of nodes) {
+      if (!nodeMatchesText(n, query)) continue;
+      const id = n.ref?.id ?? '';
+      if (id) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      matches.push(n);
+    }
+  };
+  addMatches(level1);
+
+  // A cap that cut the scan is REPORTED (`capped`), not only logged: the caller
+  // says "no collection found" over what this returns, and over a part of the
+  // tree that is a statement nobody can make.
+  let capped = false;
+  const LEVEL2_PARENT_CAP = 25;
+  const LEVEL2_CHILDREN = 50;
+  const level2Parents = level1.slice(0, LEVEL2_PARENT_CAP);
+  if (level1.length > LEVEL2_PARENT_CAP) {
+    capped = true;
+    log.warn('collection search: level2 expansion capped', { from: level1.length, to: LEVEL2_PARENT_CAP, query: logTerm(query) });
+  }
+  // Listings that did not answer are COUNTED: "no collections found" over
+  // twenty-five unread sub-lists is not a statement about the catalogue.
+  let unread = 0;
+  // Sub-lists the repository REFUSED: no outage, and not "no sub-collections" either.
+  let refused = 0;
+  /**
+   * One level of sub-listings, a few at a time — it was up to twenty-five
+   * requests at once, against a gate every other caller shares. `mapPool` nulls
+   * a listing that THREW, which is the same case as one that did not answer.
+   * The listing carries no total, so a FULL page is what "there may be more"
+   * looks like from here.
+   */
+  const readLevel = async (parents: WloNode[], width: number): Promise<WloNode[]> => {
+    const listings = await mapPool(parents, TREE_CONCURRENCY, parent => getChildCollectionsResult(parent.ref?.id ?? '', width));
+    const found: WloNode[] = [];
+    for (const listing of listings) {
+      if (!listing || didNotAnswer(listing)) {
+        unread++;
+      } else if (!listing.reachable) {
+        // A REFUSED sub-list (not readable for this login) is no outage, and
+        // "try again" over it would be wrong for good (D6).
+        refused++;
+      } else {
+        if (listing.nodes.length >= width) capped = true;
+        found.push(...listing.nodes);
+        addMatches(listing.nodes);
+      }
+    }
+    return found;
+  };
+  const allLevel2Nodes = await readLevel(level2Parents, LEVEL2_CHILDREN);
+
+  if (matches.length === 0) {
+    // Both sides through `comparable`: lowercased alone, a decomposed umlaut on
+    // one side never meets the composed one on the other.
+    const queryWords = comparable(query).split(/\s+/).filter(w => w.length > 2);
+    const scoreNode = (n: WloNode): number => {
+      const text = comparable([
+        n.properties?.['cm:name']?.[0] ?? '',
+        n.properties?.['cclom:title']?.[0] ?? '',
+        n.properties?.['cclom:general_description']?.[0] ?? '',
+      ].join(' '));
+      return queryWords.reduce((s, w) => s + (text.includes(w) ? 1 : 0), 0);
+    };
+    const anyScored = allLevel2Nodes.some(n => scoreNode(n) > 0);
+    const LEVEL3_PARENT_CAP = 15;
+    const level2Candidates = anyScored
+      ? [...allLevel2Nodes].sort((a, b) => scoreNode(b) - scoreNode(a)).slice(0, LEVEL3_PARENT_CAP)
+      : allLevel2Nodes.slice(0, LEVEL3_PARENT_CAP);
+
+    if (allLevel2Nodes.length > LEVEL3_PARENT_CAP) capped = true;
+    await readLevel(level2Candidates, 30);
+  }
+
+  return { matches, unread, refused, ...(capped ? { capped: true as const } : {}) };
+}
+
+/**
+ * Cap for the LOCAL skip window of the recursive path: the BFS must gather
+ * skip+max rows before slicing, so an unbounded skipCount would let one call
+ * force a crawl of the whole subtree (amplification on a public endpoint).
+ */
+export const RECURSIVE_SKIP_MAX = 400;
+
+/**
+ * Cap on how many collections one walk may READ.
+ *
+ * The row target alone does not bound the walk: rows are only counted when they
+ * are new, so a subtree whose sub-collections share their references — the
+ * normal shape of a curated WLO tree — de-duplicates itself into a standstill
+ * and the queue keeps draining. Every collection costs two sequential upstream
+ * calls, and nothing aborts them once the caller has given up — the crawl
+ * outlives the answer it was for.
+ *
+ * Deliberately no number here any more: this said "when the client's request
+ * times out at 30 s", borrowed from `httpServer.requestTimeout`, which measured
+ * 2026-08-17 does NOT bound the work on a request (a handler answering after
+ * 35 s delivers its response). When a client gives up is invisible from here;
+ * the cap stands on the cost of the walk, which is measurable, not on a deadline
+ * that is not.
+ */
+export const RECURSIVE_VISIT_MAX = 50;
+/** Collections of one level read at the same time. Small: each is two requests, and the upstream gate is shared. */
+const RECURSIVE_POOL = 6;
+/** Files read of ONE collection. There is no paging inside the walk: what a collection holds past this is not read. */
+export const RECURSIVE_FILES_PER_COLLECTION = 50;
+
+/**
+ * What the recursive walk gathered — and what it did NOT read, which the caller
+ * has to say: each of the three used to be a log line at most, under an answer
+ * that read like the whole subtree.
+ */
+export interface RecursiveContents {
+  nodes: FormattedNode[];
+  totalHits: number;
+  incomplete?: true;
+  restricted?: true;
+  /** The walk stopped at `RECURSIVE_VISIT_MAX` collections with more of the subtree waiting. */
+  walkCapped?: true;
+  /** At least one visited collection holds more files than the `RECURSIVE_FILES_PER_COLLECTION` read of it. */
+  contentsCut?: true;
+  /**
+   * Collections of the subtree were not visited — the cap, or simply a page
+   * that was full — so `totalHits`, which sums the VISITED ones, counts only
+   * part of what is under here.
+   */
+  totalIsLowerBound?: true;
+}
+
+/**
+ * BFS over a collection and its sub-collections, collecting file children
+ * until `maxResults` rows are gathered or `RECURSIVE_VISIT_MAX` collections
+ * have been read. Result rows are de-duplicated by
+ * nodeId and filtered by `excluded`; when a query is given, each page is
+ * reranked before collection. `totalHits` is the SUM of each visited
+ * collection's backend total — an aggregate upper bound, not a de-duplicated
+ * grand total (an item referenced in two sub-collections is counted twice).
+ * It answers "how much is under here" roughly.
+ */
+export async function collectRecursiveContents(
+  rootId: string,
+  maxResults: number,
+  excluded: Set<string>,
+  query: string | undefined,
+): Promise<RecursiveContents> {
+  const visited = new Set<string>();
+  const seenNodes = new Set<string>(); // de-dup result rows across sub-collections
+  const nodes: FormattedNode[] = [];
+  let totalHits = 0;
+  let level = [rootId];
+  let unread = 0;
+  let unreadSubs = 0;
+  // Branches the repository refused to open — a sub-listing or a
+  // sub-collection's contents alike: left out, and said (`restricted`).
+  let refusedBranches = 0;
+  let contentsCut = false;
+
+  // Level by level, a few collections at a time. The walk used to read one
+  // collection after the other — two requests each, up to a hundred in series
+  // (audit 2026-11-12, P-3). The collections of one level do not depend on each
+  // other, so a group is read together; the results are taken in the order of
+  // the TREE, so the answer is what the serial walk produced.
+  //
+  // In groups rather than the whole level at once: the walk stops as soon as it
+  // has its rows, and a level of fifty read for three rows would be the waste
+  // the visit cap exists to prevent. Nobody waiting any more ends it too —
+  // `wloFetch` throws on the request's own signal, and that throw is not caught.
+  while (level.length > 0 && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
+    const next: string[] = [];
+    let at = 0;
+    // Members of a group that were asked for and not REACHED (the page was
+    // full): past `at`, and unvisited all the same.
+    let dropped = 0;
+    while (at < level.length && nodes.length < maxResults && visited.size < RECURSIVE_VISIT_MAX) {
+      const group: string[] = [];
+      while (at < level.length && group.length < RECURSIVE_POOL && visited.size + group.length < RECURSIVE_VISIT_MAX) {
+        const cid = level[at++]!;
+        if (!visited.has(cid) && !group.includes(cid)) group.push(cid);
+      }
+      // Settled, not all-or-nothing: a member's failure counts only when the
+      // loop below REACHES it. The serial walk never asked for a collection
+      // past the one that filled the page, so its failing must not fail the call.
+      const read = await Promise.allSettled(group.map(cid => Promise.all([
+        // A REFUSED sub-collection is left out like a refused sub-listing — the
+        // same answer of the repository must not end the call in one place and
+        // pass for "empty" in the other. The START node stays an error: the
+        // caller named it, and a list without it would be a list of nothing.
+        getCollectionContents(cid, 'files', RECURSIVE_FILES_PER_COLLECTION).catch((err: unknown) => {
+          const status = failureStatus(err);
+          if (cid === rootId || status === null || !isRefusal(status)) throw err;
+          return null;
+        }),
+        getChildCollectionsResult(cid),
+      ])));
+      for (let g = 0; g < group.length; g++) {
+        // Enough rows already: what the rest of the group answered is dropped,
+        // exactly as the serial walk never asked for it.
+        if (nodes.length >= maxResults) { dropped += group.length - g; break; }
+        visited.add(group[g]!);
+        const settled = read[g]!;
+        if (settled.status === 'rejected') throw settled.reason;
+        const [filesResp, subs] = settled.value;
+        if (!filesResp) refusedBranches += 1;
+        totalHits += filesResp?.pagination.total ?? 0;
+        if (filesResp && filesResp.pagination.total > filesResp.nodes.length) contentsCut = true;
+        let fileNodes = filesResp?.nodes ?? [];
+        if (excluded.size) fileNodes = fileNodes.filter(n => !excluded.has(n.ref?.id ?? ''));
+        // Drop a node already emitted from an earlier sub-collection.
+        fileNodes = fileNodes.filter(n => {
+          const id = n.ref?.id;
+          if (!id) return true;          // no id → cannot de-dup, keep
+          if (seenNodes.has(id)) return false;
+          seenNodes.add(id);
+          return true;
+        });
+        if (query?.trim()) fileNodes = rerankNodes(fileNodes, query);
+        nodes.push(...formatNodes(fileNodes));
+
+        // The branch below a listing that did not answer (a 5xx, our own full
+        // gate) is not walked — and that is said, not passed off as "no
+        // sub-collections" (chatbot feedback 2026-11-13).
+        if (didNotAnswer(subs)) unreadSubs += 1;
+        // Counted once per collection: one that refused its contents refuses its listing too.
+        else if (subs.refused && filesResp) refusedBranches += 1;
+        for (const sub of subs.nodes) {
+          const subId = sub.ref?.id ?? sub.properties?.['sys:node-uuid']?.[0];
+          if (subId && !visited.has(subId) && !next.includes(subId)) next.push(subId);
+        }
+      }
+    }
+    unread = (level.length - at) + dropped + next.length;
+    level = next;
+  }
+  const walkCapped = visited.size >= RECURSIVE_VISIT_MAX && unread > 0;
+  if (walkCapped) {
+    log.warn('recursive contents: visit cap reached, subtree not fully walked', {
+      rootId, visited: visited.size, queued: unread,
+    });
+  }
+  return {
+    nodes: nodes.slice(0, maxResults), totalHits,
+    ...(unreadSubs > 0 ? { incomplete: true as const } : {}),
+    ...(refusedBranches > 0 ? { restricted: true as const } : {}),
+    ...(walkCapped ? { walkCapped: true as const } : {}),
+    ...(contentsCut ? { contentsCut: true as const } : {}),
+    ...(unread > 0 ? { totalIsLowerBound: true as const } : {}),
+  };
+}
+
+/** One node of the browse tree: a formatted collection plus what the walk learned about it. */
+export type CollectionTreeNode = FormattedNode & {
+  fileCount?: number;
+  children?: CollectionTreeNode[];
+  /** First N content items, only when `contentPreview` was requested. */
+  contentPreview?: FormattedNode[];
+  /** Upstream holds more sub-collections than this listing shows. */
+  hasMoreChildren?: boolean;
+  /** The listing of this node's sub-collections did not answer — they are unknown, not absent. */
+  childrenUnread?: boolean;
+  /** The repository REFUSED that listing (not readable for this login, or gone): unknown too, and no retry helps. */
+  childrenRefused?: boolean;
+  /** A read of the node's own CONTENTS was refused — the node itself stays in the tree. */
+  contentsRefused?: boolean;
+  /** No read of its contents answered (count and preview alike): none this time. Never beside `contentsRefused`. */
+  contentsUnread?: boolean;
+  /**
+   * With `order: "position"` or `"stored"`, and only where this node's
+   * sub-collections were LISTED: whether set positions order them (two
+   * different ones were seen). `false`: the listing was read to its end and
+   * positions order nothing there — `position` lists them by title, `stored`
+   * in the repository's order (a caller that sorts by itself is right to).
+   * Absent: not listed, or cut (`hasMoreChildren`) with no two different
+   * positions in sight, or fewer than two sub-collections — nothing is said.
+   */
+  childrenPositioned?: boolean;
+};
+
+/**
+ * A read of ONE node's contents inside the tree walk. A failure marks the node
+ * and never removes it: thrown through `mapPool` it became a `null` that was
+ * filtered out, so a branch this login may not read — or one read that timed
+ * out — vanished from a tree that then looked complete (review 2026-11-14).
+ * Only "nobody waits any more" still ends the walk.
+ */
+export async function readNodeContents<T>(
+  node: { nodeId: string; contentsRefused?: boolean; contentsUnread?: boolean }, read: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    const out = await read();
+    // The contents WERE read: an "unread" mark an earlier read left behind
+    // would stand beside the items it says could not be read.
+    delete node.contentsUnread;
+    return out;
+  } catch (err) {
+    if (isClientGone(err)) throw err;
+    const status = failureStatus(err);
+    if (status !== null && isRefusal(status)) {
+      // Refused is the answer; "try again" beside it would contradict it.
+      delete node.contentsUnread;
+      node.contentsRefused = true;
+    } else {
+      node.contentsUnread = true;
+      // Marked in the answer AND logged: `mapPool` used to log the throw, and a
+      // repository down for every one of these reads must not leave no line.
+      log.warn('collection tree: a node\'s contents could not be read', {
+        nodeId: node.nodeId, status, error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return null;
+  }
+}
+
+/**
+ * How many direct contents (files and references) a collection holds — the ONE
+ * count request of every tool that needs the number and not the items. It is
+ * `pagination.total` of the contents listing, asked for NO item and one
+ * property: with one item the repository builds and sends that record (3.5 kB)
+ * and takes twice as long — 307 ms against 139 ms per call, same total on all
+ * 144 collections (measured 2026-11-15, `npm run measure:tree`). Never the
+ * repository's counters, which lag. Throws like the listing it reads.
+ */
+export async function countCollectionContents(collectionId: string): Promise<number> {
+  return (await getCollectionContents(collectionId, 'files', 0, 0, COUNT_PROPS)).pagination.total;
+}
+const COUNT_PROPS = ['cm:name'];
+
+/**
+ * The same count for a node of a walk: a count that could not be read MARKS the
+ * node (`readNodeContents`) and comes back undefined — never 0, which would be
+ * a statement about the collection.
+ */
+export async function countNodeContents(
+  node: { nodeId: string; contentsRefused?: boolean; contentsUnread?: boolean },
+): Promise<number | undefined> {
+  return (await readNodeContents(node, () => countCollectionContents(node.nodeId))) ?? undefined;
+}
+
+export interface CollectionTreeOptions {
+  parentId: string;
+  /** 1 = direct sub-collections only; 2 = also their children. */
+  depth: number;
+  /** Width of level 1. */
+  maxResults: number;
+  includeContentCounts: boolean;
+  /** When set (1–5), attach the first N content items of every node in the tree. */
+  contentPreview?: number;
+  /**
+   * `title` (default): every level alphabetical. `stored`: the repository's own
+   * order — the position where one was set, else the order of creation. A
+   * curriculum has a sequence, and alphabetical order loses it. `position`:
+   * the set position, else the title (`collection-position.ts`) — a branch is
+   * CUT in the repository's order first, so past a cut the children without a
+   * position are the first created, not the alphabetically first.
+   */
+  order?: CollectionOrder;
+}
+
+export type { CollectionOrder };
+
+export interface CollectionTree {
+  nodes: CollectionTreeNode[];
+  /**
+   * With `order: "position"` or `"stored"`: whether set positions order the
+   * FIRST level (`positionedFlag`: absent where the level was cut without two
+   * different positions in sight, and for fewer than two children). Each node
+   * carries the same for its own children.
+   */
+  childrenPositioned?: boolean;
+  /** At least one branch holds more than was returned. */
+  truncated: boolean;
+  /** The first node, in listing order, whose children were cut. */
+  truncatedAt?: string;
+}
+
+// Width of the level-1 fan-out — one `/children` call per node, the
+// dominant cost at depth 2 (four waves at width 5, ~2.9 s measured for
+// a 20-child portal). Level-2 nodes do not recurse, so widening this
+// does NOT multiply with the nested pool in the default case.
+const TREE_CONCURRENCY = 10;
+// The nested pool only performs I/O when includeContentCounts is set;
+// kept narrow so that opt-in path stays bounded (10 × 4 = 40 in flight)
+// rather than squaring the width above.
+const TREE_CHILD_CONCURRENCY = 4;
+
+// A depth-2 tree used to pull up to 30 sub-collections per node with no
+// overall bound: a 15-node portal returned ~100 nodes, and every opt-in
+// enrichment then cost one upstream call per node (11.7 s / 460 kB
+// measured). The slice per parent is therefore derived from a total
+// budget, DETERMINISTICALLY (same size for every parent, computed
+// before the walk) rather than by a counter that concurrent workers
+// would drain in arbitrary order. Nodes whose children were cut say so,
+// so the model can offer a targeted drill-down instead of a silent slice.
+const TREE_NODE_BUDGET = 150;
+const TREE_CHILDREN_MAX = 10;
+const TREE_CHILDREN_MIN = 3;
+
+/**
+ * Depth 3 (BOERDi wishlist item 11, 2026-11-06): a FIXED total of 300 nodes.
+ * The depth-2 rule would allow 15 × 10 × 10 = 1 665. The slice per parent is
+ * the largest k with level1 × (1 + k + k²) ≤ 300 — decided before the walk, so
+ * every parent gets the same width and the bound cannot depend on which worker
+ * ran first. `maxResults` ≤ 100 keeps k ≥ 1.
+ */
+export const TREE_DEPTH3_BUDGET = 300;
+
+function depth3Slice(level1: number): number {
+  let k = 1;
+  while (k < TREE_CHILDREN_MAX && level1 * (1 + (k + 1) + (k + 1) ** 2) <= TREE_DEPTH3_BUDGET) k++;
+  return k;
+}
+
+/**
+ * Walk a collection's sub-tree to `depth`, bounded on every axis: fan-out width,
+ * children per parent (from a total node budget), and cycles.
+ *
+ * Lived inside the `browse_collection_tree` handler until 2026-08-04. It is an
+ * algorithm, and a tool module holds its schema and its rendering — the same
+ * split the two walks above were extracted for. Out here it is reachable
+ * without going through the MCP tool surface.
+ *
+ * Throws when the level-1 listing cannot be read: the tree IS that listing, and
+ * an unread one must not be rendered as a collection that happens to have no
+ * sub-topics.
+ */
+/** The sentence for a start node the repository refused to list — an answer, not an outage (D6). */
+export function notReadable(id: string, status: number): string {
+  // `HTTP <status>` is the position `failureCode` reads: the code is then
+  // `not_found` / `forbidden`, not the `upstream_error` of an outage.
+  return `Die Sammlung ${id} wurde nicht gefunden oder ist mit dieser Anmeldung nicht lesbar (HTTP ${status}).`;
+}
+
+export async function buildCollectionTree(opts: CollectionTreeOptions): Promise<CollectionTree> {
+  const { parentId, depth, maxResults, includeContentCounts, contentPreview } = opts;
+  // ONE switch for both halves of the rule: what the repository is asked for,
+  // and whether its answer is re-sorted. `title` keeps the request it always sent.
+  const byPosition = opts.order === 'position';
+  const stored = opts.order === 'stored' || byPosition;
+  // `position` asks in the stored order too: a cut then keeps the positioned
+  // children, which the repository lists first. And both read the position
+  // itself: a caller of `stored` sorts by itself where nothing was arranged,
+  // and the flag is what tells it where (measured to cost nothing).
+  const listingOpts = { stored, ...(stored ? { withPosition: true } : {}) };
+  const arrange = (nodes: WloNode[]): WloNode[] => (byPosition ? sortByPosition(nodes) : stored ? nodes : sortByTitle(nodes));
+  // A child level, cut to `width`. `position` cuts in the repository's order
+  // FIRST, like level 1 — that order is position-ascending, so the cut keeps
+  // the positioned children. `title` sorts everything fetched and cuts then:
+  // what it always did, and its answers must not change.
+  const arrangeCut = (nodes: WloNode[], width: number): WloNode[] =>
+    (byPosition ? arrange(nodes.slice(0, width)) : arrange(nodes).slice(0, width));
+
+  // One more than shown, like every level below: without it a first level
+  // longer than `maxResults` was cut SILENTLY — the overview's
+  // `subcollectionsTruncated` could never be set (review R-C, 2026-11-06).
+  const level1Listing = await getChildCollectionsResult(parentId, maxResults + 1, 0, undefined, listingOpts);
+  if (level1Listing.refused) throw new Error(notReadable(parentId, level1Listing.refused));
+  if (!level1Listing.reachable) {
+    throw new Error(`Die Unter-Sammlungen von ${parentId} sind derzeit nicht abrufbar.`);
+  }
+  // Cut in the repository's order, before sorting: what was cut is the tail of
+  // ITS listing, not the alphabetical last.
+  const level1Cut = level1Listing.nodes.length > maxResults;
+  const sorted1 = arrange(level1Listing.nodes.slice(0, maxResults));
+
+  const childSlice = depth > 2
+    ? depth3Slice(Math.max(1, sorted1.length))
+    : depth > 1
+      ? Math.max(TREE_CHILDREN_MIN, Math.min(TREE_CHILDREN_MAX, Math.floor(TREE_NODE_BUDGET / Math.max(1, sorted1.length))))
+      : 0;
+
+  // Level-1 nodes are claimed BEFORE the walk starts, for the same reason
+  // children are claimed at scheduling time (see below): a node that is
+  // both a top-level entry and someone else's child would otherwise be
+  // emitted twice — once where it was asked for, once nested.
+  // Claiming them inside enrichOne ALMOST worked: its prefix runs
+  // synchronously, so the first TREE_CONCURRENCY of them were registered
+  // before any I/O. Number 11 onwards was not, which made the duplicate
+  // depend on the pool width — the kind of bug that hides on small inputs.
+  const visited = new Set<string>(
+    sorted1.map(n => n.ref?.id).filter((id): id is string => !!id),
+  );
+  const enrichOne = async (n: WloNode, level: number): Promise<CollectionTreeNode> => {
+    const f = formatNode(n) as CollectionTreeNode;
+    const id = n.ref?.id;
+    if (includeContentCounts && id) {
+      // `f.nodeId` is this id (`formatNode`), and the mark belongs on `f`.
+      const count = await countNodeContents(f);
+      if (count !== undefined) f.fileCount = count;
+    }
+    if (level < depth && id) {
+      // Fetch one more than shown: the extra hit proves there IS more
+      // without spending a second round-trip on a count.
+      const listing = await getChildCollectionsResult(id, childSlice + 1, 0, undefined, listingOpts);
+      const fetched = listing.nodes;
+      // Not read is not empty: the branch may have children this tree does not show.
+      if (didNotAnswer(listing)) f.childrenUnread = true;
+      // Refused is not empty either — and it is no "later" (chatbot team, 2026-11-14).
+      else if (listing.refused) f.childrenRefused = true;
+      // Over everything the listing returned, the extra hit included — and a
+      // "no" only where that was ALL of it (`positionedFlag`). A listing that
+      // did not answer says nothing about positions either.
+      else if (stored) {
+        const positioned = positionedFlag(fetched, fetched.length <= childSlice);
+        if (positioned !== undefined) f.childrenPositioned = positioned;
+      }
+      if (fetched.length > childSlice) f.hasMoreChildren = true;
+      // Claim each child in `visited` at SCHEDULING time (synchronously in
+      // this filter), not when its own enrichOne starts — otherwise two
+      // parents sharing a child could both pass the check before either
+      // marks it, emitting the same subtree twice. Claiming here makes the
+      // placement deterministic (first parent in traversal order wins).
+      const sortedChildren = arrangeCut(fetched, childSlice).filter(c => {
+        const cid = c.ref?.id;
+        if (!cid) return true;
+        if (visited.has(cid)) return false;
+        visited.add(cid);
+        return true;
+      });
+      // Level 3 runs one at a time per branch: 10 × 4 × 1 keeps the 40-in-flight
+      // bound depth 2 already had; nested pools of 4 would make it 160.
+      const width = level >= 2 ? 1 : TREE_CHILD_CONCURRENCY;
+      const enriched = await mapPool(sortedChildren, width, c => enrichOne(c, level + 1));
+      f.children = enriched.filter((c): c is CollectionTreeNode => c !== null);
+    }
+    return f;
+  };
+
+  const nodes = (await mapPool(sorted1, TREE_CONCURRENCY, n => enrichOne(n, 1)))
+    .filter((n): n is CollectionTreeNode => n !== null);
+
+  // Optional content preview: attach the first N files of each collection
+  // in the tree. A single bounded pass over the flattened node list caps
+  // upstream concurrency even for a wide depth-2 tree.
+  if (contentPreview) {
+    const flat: CollectionTreeNode[] = [];
+    const collect = (ns: CollectionTreeNode[]) => {
+      for (const n of ns) { flat.push(n); if (n.children) collect(n.children); }
+    };
+    collect(nodes);
+    // One call per node in the (now bounded) tree — the widest fan-out
+    // this walk can produce, so it runs at the level-1 width rather than 5.
+    await mapPool(flat, TREE_CONCURRENCY, async (node) => {
+      // A node whose count was just refused is not asked again.
+      if (node.contentsRefused) return null;
+      const resp = await readNodeContents(node, () => getCollectionContents(node.nodeId, 'files', contentPreview, 0));
+      if (resp) node.contentPreview = formatNodes(resp.nodes).slice(0, contentPreview);
+      return null;
+    });
+  }
+
+  const firstCut = (ns: CollectionTreeNode[]): string | undefined => {
+    for (const n of ns) {
+      if (n.hasMoreChildren) return n.nodeId;
+      const below = firstCut(n.children ?? []);
+      if (below) return below;
+    }
+    return undefined;
+  };
+  // The root's own children come first in listing order.
+  const truncatedAt = level1Cut ? parentId : firstCut(nodes);
+
+  // The extra hit counts as seen; a cut first level may say "yes", never "no".
+  const positioned1 = stored ? positionedFlag(level1Listing.nodes, !level1Cut) : undefined;
+  return {
+    nodes, truncated: truncatedAt !== undefined, ...(truncatedAt ? { truncatedAt } : {}),
+    ...(positioned1 !== undefined ? { childrenPositioned: positioned1 } : {}),
+  };
+}

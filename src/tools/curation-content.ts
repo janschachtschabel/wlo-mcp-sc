@@ -1,0 +1,629 @@
+/**
+ * tools/curation-content.ts – changing an existing WLO record.
+ *
+ * The first tool in this server that does not only read. Its shape is the
+ * pattern every later mutation follows:
+ *
+ *   call without confirmToken  → read the record, show the diff, hand out a key,
+ *                                write NOTHING
+ *   call with the matching key → write, read back, report per field what landed
+ *
+ * The refusal in anonymous mode is repeated here even though the tool is not
+ * registered in that mode: a host may serve a tool list cached from a session
+ * that had an identity, and the call would then arrive anyway.
+ */
+
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import type { WloToolResult } from '../apps/register.js';
+
+import { toolError } from './shared.js';
+import { requireWrite, writeMode } from '../services/write/credential-gate.js';
+import { buildChangeSet } from '../services/write/change-set.js';
+import { updateNodeMetadata, readWriteBaseline } from '../services/write/nodes.js';
+import { desiredOn, titleOn } from '../services/write/collection-fields.js';
+import { isCollectionNode } from '../node-kind.js';
+import { createContentNode, resolveCreateParent, REVIEW_STATUS } from '../services/write/nodes-lifecycle.js';
+import { sendSubmission } from '../services/write/submit-plan.js';
+import { refusalCode, reportWithUpload, uploadNote } from './curation-report.js';
+import { resolveContentSource, resolveFileUpload, describeUpload } from '../services/write/content-source.js';
+import { contentStateOf, uploadContent } from '../services/write/content-upload.js';
+import { findByTitle, findByUrl, type ExistingRecord } from '../services/write/duplicates.js';
+import { fileRecord, readFilingTarget, type FilingTarget } from '../services/write/create-filing.js';
+import { fileExistingRecord, filingSentence, withFiling } from './curation-create-filing.js';
+import { WLO_INBOX_ID } from '../wlo-config.js';
+import { verifyWrite } from '../services/write/verify.js';
+import { getNodeMetadata } from '../wlo-node.js';
+import { flattenText, sanitizeText } from '../text-sanitize.js';
+import {
+  registerCurationTool,
+  type WriteAuthChallenge,
+  collectDesired,
+  rejectionReply,
+  previewReply,
+  confirmOrExplain,
+  reportOutcome,
+  markWritten,
+  unverifiedReply,
+  desiredFromChangeSet,
+  errorText,
+  codedError,
+  prependText,
+  recordTitle,
+  isOutcomeOpen,
+  timeoutOrError,
+  isPreviewCall,
+  wrongKind,
+  wrongKindReply,
+  candidatesField,
+} from './curation-shared.js';
+import { ADD_FIELDS, ADD_SCHEMA, CONTENT_FIELDS, FIELD_SCHEMA, CONFIRM_TOKEN } from './curation-fields.js';
+import { findUrlMatches, normalizeSourceUrl } from '../services/url-matches.js';
+
+const updateSchema = {
+  nodeId: z.string().describe('nodeId of the record to change.'),
+  ...FIELD_SCHEMA,
+  ...ADD_SCHEMA,
+  // The same file surface as the create tool. Optional here and independent of
+  // the metadata fields: a call may change only metadata, only the file, or both.
+  content: z.string().optional()
+    .describe('Neuer Inhalt als Text (z. B. überarbeitetes Markdown). ERSETZT den vorhandenen Inhalt des ' +
+      'Datensatzes; die bisherige Fassung bleibt in der Versionshistorie.'),
+  contentFormat: z.enum(['markdown', 'text']).optional()
+    .describe('Format von content. Vorgabe: markdown. HTML wird nicht hochgeladen.'),
+  fileBase64: z.string().optional()
+    .describe('Neues Bild als Base64 oder data:-URL. ERSETZT den vorhandenen Inhalt. Erkannt werden PNG, ' +
+      'JPEG, GIF und WebP — der Typ wird aus den Daten gelesen.'),
+  confirmToken: CONFIRM_TOKEN,
+  commit: z.boolean().optional().default(false)
+    .describe('true legt eine neue Version an (für den Abschluss einer Bearbeitung); false bearbeitet den Entwurf.'),
+  // Bounded like every other free text that reaches the repository: this one
+  // lands in a permanent version-history entry, and an unbounded string out of a
+  // conversation should not get there unchecked (mirrors MAX_LENGTH in fields.ts).
+  versionComment: z.string().max(1000).optional()
+    .describe('Kommentar für die Versionshistorie, nur mit commit=true.'),
+};
+
+const createSchema = {
+  ...FIELD_SCHEMA,
+  title: z.string().describe('Titel des neuen Datensatzes. Pflichtangabe.'),
+  // Exactly one source. Optional in the schema and checked in the handler,
+  // because "exactly one of three" is a relationship between fields, and a
+  // model reads one clear sentence better than three optional flags.
+  url: z.string().optional()
+    .describe('WEG 1 — das Material liegt woanders: Quell-URL (ccm:wwwurl), nur http/https. Der Inhalt ' +
+      'bleibt extern und wird vom Repository erschlossen.'),
+  content: z.string().optional()
+    .describe('WEG 2 — der Datensatz trägt den Inhalt selbst: der Text, z. B. ein im Chat erstelltes ' +
+      'Arbeitsblatt in Markdown. Für Inhalte ohne eigene URL.'),
+  contentFormat: z.enum(['markdown', 'text']).optional()
+    .describe('Format von content. Vorgabe: markdown. HTML wird nicht hochgeladen.'),
+  fileBase64: z.string().optional()
+    .describe('WEG 2 für Bilder: die Bilddatei als Base64, wahlweise als data:-URL ' +
+      '(data:image/png;base64,…) oder als reiner Base64-Text. Erkannt werden PNG, JPEG, GIF und WebP — ' +
+      'der Typ wird aus den Daten gelesen, ein angegebener Typ wird ignoriert.'),
+  addToCollectionId: z.string().max(200).optional()
+    .describe('Optional: nodeId einer Sammlung, in die der neue Datensatz nach dem Anlegen aufgenommen wird — ' +
+      'mit DERSELBEN Bestätigung. Gibt es zur url schon einen Datensatz, bietet die Vorschau an, DIESEN aufzunehmen, ' +
+      'statt einen zweiten anzulegen.'),
+  confirmToken: CONFIRM_TOKEN,
+};
+
+const submitSchema = {
+  nodeId: z.string().describe('nodeId des Datensatzes, der zur Prüfung eingereicht werden soll.'),
+  // Travels to the editorial queue under the submitter's name, so it is bounded
+  // here and shown in the preview below — see the action string.
+  comment: z.string().max(1000).optional().describe('Notiz für die Redaktion.'),
+  confirmToken: CONFIRM_TOKEN,
+};
+
+/**
+ * A record for this URL already exists — coded `exists` with the record, so a
+ * client can offer "edit that one" without reading the sentence.
+ */
+function existsReply(existing: { nodeId: string; title: string }): WloToolResult {
+  return codedError('exists',
+    `Es gibt bereits einen Datensatz für diese URL: „${sanitizeText(existing.title)}“ ` +
+      `(${existing.nodeId}). Es wurde nichts angelegt — bitte diesen bearbeiten statt einen zweiten anzulegen.`,
+    // Known: the create was not sent. Said explicitly because after a redemption
+    // every error without it reads as an open outcome (finding 4).
+    { existing: { nodeId: existing.nodeId, title: existing.title }, outcomeOpen: false });
+}
+
+/**
+ * Records filed under a CLEANED spelling of this address (no tracking
+ * parameters, no trailing slash, no fragment) — a note in the preview, not a
+ * refusal: the same page under another spelling is strong evidence of a
+ * duplicate and still the person's call, like a same-title record (chatbot
+ * feedback 2026-11-13, Z5). The exact spelling is refused before this runs.
+ * A search that failed is SAID: no note would read as "none found".
+ */
+async function similarAddressNotes(url: string): Promise<string[]> {
+  return (await addressCheck(url)).notes;
+}
+
+const ADDRESS_UNCHECKED = 'Ob es zu einer bereinigten Schreibweise dieser Adresse schon einen Datensatz gibt, '
+  + 'ließ sich gerade nicht prüfen (find_content_by_url prüft das einzeln).';
+
+/**
+ * Both questions the create preview has about an address, from ONE look
+ * (`findUrlMatches`, three spellings): is there a record under exactly this
+ * spelling — the refusal — and are there records under a cleaned one — the
+ * notes. Asked separately they cost four searches, one of them twice.
+ *
+ * `exact` there is the comparison `findByUrl` makes (case ignored, nothing
+ * else), over the same search plus two more — so nothing `findByUrl` refuses
+ * becomes a mere note. When the look fails, the refusal still rests on
+ * `findByUrl` alone, which needs only the spelling as given; only the notes
+ * are lost, and that is said.
+ */
+async function addressCheck(url: string): Promise<{ existing: ExistingRecord | null; notes: string[] }> {
+  const normalized = normalizeSourceUrl(url);
+  if (!normalized) return { existing: await findByUrl(url), notes: [] };
+  let matches;
+  try {
+    matches = await findUrlMatches(url, normalized);
+  } catch {
+    return { existing: await findByUrl(url), notes: [ADDRESS_UNCHECKED] };
+  }
+  const exact = matches.find(m => m.match === 'exact');
+  return {
+    existing: exact ? { nodeId: exact.nodeId, title: exact.title, url: exact.url } : null,
+    notes: matches.filter(m => m.match === 'normalized').slice(0, 3).map(m =>
+      `Unter einer anderen Schreibweise derselben Adresse gibt es bereits „${sanitizeText(m.title)}“ (${m.nodeId}, ${sanitizeText(m.url)}). `
+        + 'Möglicherweise eine Dublette — beim Bestätigen wird trotzdem ein zweiter Datensatz angelegt.'),
+  };
+}
+
+export function registerCurationContentTools(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
+    name: 'wlo_update_content',
+    title: 'WLO Inhalt bearbeiten',
+    description:
+      'Ändere einen vorhandenen WLO-Datensatz: Metadaten (Titel, Beschreibung, Schlagwörter, Lizenz, Fach, ' +
+      'Bildungsstufe, Inhaltstyp …) und/oder den INHALT selbst — mit content bzw. fileBase64 wird die ' +
+      'hinterlegte Datei ERSETZT (z. B. ein überarbeitetes Arbeitsblatt); die bisherige Fassung bleibt in ' +
+      'der Versionshistorie. Beides geht einzeln oder zusammen. ZWEISTUFIG: Ohne confirmToken wird nur eine ' +
+      'Vorschau zurückgegeben und NICHTS geschrieben; erst ein zweiter Aufruf mit dem Schlüssel aus der ' +
+      'Vorschau schreibt. Danach wird der Datensatz erneut gelesen und je Feld berichtet, was tatsächlich ' +
+      'ankam. Eine id aus einer Sammlung ist eine Verknüpfung, nicht der Datensatz — geschrieben wird dann ' +
+      'am Original, und die Vorschau nennt beide ids. Fach/Stufe/Zielgruppe werden ERSETZT; ' +
+      'die add…-Parameter fügen hinzu. Gilt auch für SAMMLUNGEN (Fach, Bildungsstufe, ' +
+      'Schlagwörter …; Titel und Beschreibung landen im Sammlungsfeld). Erfordert eine Anmeldung. NICHT für neue Inhalte ' +
+      '(dafür wlo_create_content) und nicht zum Löschen.',
+    inputSchema: updateSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // Not `noauth`: this tool refuses a caller without an identity.
+    handler: async (params: Record<string, unknown>) => {
+      try {
+        requireWrite();
+
+        const nodeId = String(params['nodeId'] ?? '');
+        const collected = collectDesired(params, CONTENT_FIELDS, ADD_FIELDS);
+        if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
+        const carriesFile = typeof params['content'] === 'string' || typeof params['fileBase64'] === 'string';
+        // A file alone IS a change. Without this the tool would refuse "just
+        // replace the content", which is the main reason the file path exists
+        // on an existing record at all.
+        if (Object.keys(collected.desired).length === 0 && !carriesFile) {
+          return codedError('invalid_input', 'Es wurde kein zu änderndes Feld angegeben.');
+        }
+
+        const node = await getNodeMetadata(nodeId);
+        if (!node) {
+          // The id is echoed back sanitized: it came from the caller, and this
+          // text goes to the model.
+          return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        }
+
+        // A collection listing hands out REFERENCE ids, so this is the ordinary
+        // case. Resolved BEFORE anything is derived from the record, because
+        // from here on every read of "what is stored" has to mean the node that
+        // will be written — the reference's own view diverges once it has been
+        // written to directly (F2).
+        const baseline = await readWriteBaseline(node, nodeId);
+        if (!baseline.ok) return errorText(baseline.reason);
+        const { target, before } = baseline;
+        // A file belongs to a single record. The metadata of a collection is open
+        // to this tool; "replaces the record's content" over a collection is not
+        // something the preview could truthfully say (review of D2).
+        if (carriesFile) {
+          const wrong = wrongKind(baseline.written, 'content');
+          if (wrong) return wrongKindReply(target.targetId, wrong);
+        }
+        // A collection keeps title and description in cm:* — `collection-fields.ts`.
+        const desired = desiredOn(baseline.written, collected.desired);
+
+        const commit = params['commit'] === true;
+        const versionComment = typeof params['versionComment'] === 'string' ? params['versionComment'] : undefined;
+
+        // The file name is derived from a title, and on an update the caller may
+        // not be changing one — so the record's STORED title is what names it.
+        const resolved = resolveFileUpload(
+          collected.desired['cclom:title']?.[0] ?? recordTitle(before) ?? nodeId,
+          {
+            content: typeof params['content'] === 'string' ? params['content'] : undefined,
+            contentFormat: typeof params['contentFormat'] === 'string' ? params['contentFormat'] : undefined,
+            fileBase64: typeof params['fileBase64'] === 'string' ? params['fileBase64'] : undefined,
+          },
+        );
+        if (!resolved.ok) return errorText(resolved.reason);
+        const file = resolved.file;
+
+        // Both extras belong in the change set, and for the same reason: the
+        // token is bound to it, so anything the call will additionally DO must
+        // be visible in the preview. A commit adds a permanent version entry; a
+        // file replaces what the record currently carries.
+        //
+        // A version is made by the METADATA write — and only when it carries a
+        // field (`updateNodeMetadata` sends nothing for none). `commit: true`
+        // beside a change that has no such field (a file alone, a value the
+        // record already holds) therefore creates no version, and the preview
+        // promised one (audit 2026-11-12, K-14). It is said instead of promised.
+        const versions = commit && buildChangeSet(target.targetId, 'content', before, desired, { added: collected.added })
+          .changes.some(c => c.route === 'mds');
+        const extras = [
+          file
+            ? `Ersetzt den Inhalt des Datensatzes — die bisherige Fassung bleibt in der `
+              + `Versionshistorie. ${describeUpload(file)}`
+            : '',
+          versions
+            // Flattened at the composition site like every other foreign part of
+            // an action, so the sentence it becomes is safe on its own terms
+            // rather than relying on the renderer.
+            ? `Legt beim Übernehmen eine neue Version an${
+              versionComment ? ` mit dem Kommentar „${flattenText(versionComment)}“` : ''}.`
+            : '',
+        ].filter(Boolean);
+
+        // The token binds to the change set, so the target is fixed before it is
+        // built: deciding later would move the write to a record the preview
+        // never named.
+        const cs = buildChangeSet(target.targetId, 'content', before, desired, {
+          subject: { collection: isCollectionNode(baseline.written), title: titleOn(baseline.written, before) },
+          // Merged into `before` — the WRITTEN node's values, never the reference's.
+          added: collected.added,
+          ...(extras.length ? { action: extras.join(' ') } : {}),
+          ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
+        });
+
+        const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
+        if (!token) {
+          return previewReply(cs, 'Zum Übernehmen bitte bestätigen.', commit && !versions
+            ? [...collected.notes, 'commit=true bleibt hier ohne Wirkung: eine neue Version entsteht nur zusammen mit einer '
+              + 'Änderung an den Metadaten, und dieser Aufruf ändert keine.']
+            : collected.notes);
+        }
+
+        const refusal = confirmOrExplain(token, cs);
+        if (refusal) return refusal;
+
+        const { statuses } = await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), {
+          commit: versions,
+          versionComment,
+        });
+
+        // After the metadata, so a record whose content replacement fails still
+        // carries the fields that were meant to describe it. The two are
+        // separate repository operations and either can fail alone, so both are
+        // reported rather than merged into one verdict.
+        //
+        // Aimed at the same node for the same reason, though the repository
+        // would reach the original either way: bytes are not copied per
+        // reference (measured, F4). Sending it somewhere else than the metadata
+        // would make one call obey the confirmed preview and the other not.
+        //
+        // `before`: what the record held when it was read for the preview —
+        // without it a dropped replacement cannot be told from a stored one.
+        const upload = file ? await uploadContent(cs.nodeId, file, undefined, contentStateOf(baseline.written)) : undefined;
+
+        const fieldReport = async (): Promise<WloToolResult> => {
+          try {
+            return reportOutcome(cs, statuses, await verifyWrite(cs));
+          } catch (err) {
+            return unverifiedReply(err);
+          }
+        };
+        if (!upload) return await fieldReport();
+        // The upload is part of the RESULT (code, `outcomeOpen`), not a line in
+        // front of it. No field report for a call that changes no field: its
+        // "Es gab nichts zu ändern" stood under a file that had just been replaced.
+        return reportWithUpload(cs.changes.length > 0 ? await fieldReport() : null, upload);
+      } catch (err) {
+        return timeoutOrError('Der Datensatz konnte nicht bearbeitet werden', err,
+          `Ob die Änderung an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`, { preview: isPreviewCall(params) });
+      }
+    },
+  });
+
+  registerCurationTool(server, challenge, {
+    name: 'wlo_create_content',
+    title: 'WLO Inhalt anlegen',
+    description:
+      'Lege einen NEUEN WLO-Datensatz an. ZWEI WEGE: (1) url — das Material liegt woanders und wird ' +
+      'verlinkt; vorher wird geprüft, ob es zu dieser URL schon einen Datensatz gibt, und dann nichts ' +
+      'angelegt. (2) content oder fileBase64 — der Datensatz trägt den Inhalt selbst, als Datei. Das ist ' +
+      'der Weg für im Chat erstellte Materialien (Arbeitsblatt als Markdown, erzeugtes Bild), die keine ' +
+      'eigene URL haben. Genau eine Quelle angeben. ZWEISTUFIG: ohne confirmToken nur Vorschau, nichts ' +
+      'wird angelegt; die Vorschau nennt bei einer Datei Name, Typ, Größe und Prüfsumme. Der Datensatz ' +
+      'entsteht als Entwurf und geht NICHT automatisch in die redaktionelle Prüfung — dafür gibt es ' +
+      'wlo_submit_content. Mit addToCollectionId wird der Datensatz unter derselben Bestätigung gleich in eine ' +
+      'Sammlung aufgenommen; scheitert nur das Aufnehmen, bleibt der Datensatz bestehen (collection.status ' +
+      '"failed" mit Code). Erfordert eine Anmeldung.',
+    inputSchema: createSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    handler: async (params: Record<string, unknown>) => {
+      // Set once the token is redeemed: only from there on can an abort have
+      // created something. Before it (preview, collection and duplicate reads)
+      // an abort interrupted a READ, and saying "may have been created" sends
+      // the person looking for a record nobody asked to exist.
+      let writing = false;
+      try {
+        requireWrite();
+
+        const collected = collectDesired(params, CONTENT_FIELDS);
+        if (!collected.ok) return rejectionReply(collected.reasons, candidatesField(collected.candidates));
+        const title = collected.desired['cclom:title']?.[0];
+        if (!title) return errorText('Zum Anlegen wird mindestens ein Titel benötigt.');
+
+        const resolved = resolveContentSource({
+          title,
+          url: collected.desired['ccm:wwwurl']?.[0],
+          content: typeof params['content'] === 'string' ? params['content'] : undefined,
+          contentFormat: typeof params['contentFormat'] === 'string' ? params['contentFormat'] : undefined,
+          fileBase64: typeof params['fileBase64'] === 'string' ? params['fileBase64'] : undefined,
+        });
+        if (!resolved.ok) return errorText(resolved.reason);
+        const source = resolved.source;
+        const file = source.kind === 'file' ? source.file : undefined;
+        const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
+
+        // The collection is read BEFORE any preview: a filing that cannot run
+        // must not be offered under a key, and its name is part of the sentence
+        // the key binds to.
+        const collectionId = typeof params['addToCollectionId'] === 'string' ? params['addToCollectionId'].trim() : '';
+        let target: FilingTarget | undefined;
+        let addressNotes: string[] | undefined;
+        if (collectionId) {
+          const found = await readFilingTarget(collectionId);
+          if (!found.ok) {
+            return found.reason === 'not_a_collection'
+              ? codedError('not_a_collection', `„${sanitizeText(collectionId)}“ ist keine Sammlung. Es wurde nichts angelegt.`)
+              : codedError('not_found', `Die Sammlung „${sanitizeText(collectionId)}“ wurde nicht gefunden oder ist nicht lesbar. Es wurde nichts angelegt.`);
+          }
+          target = found.target;
+          // Known from the collection's own record: refused HERE, nothing is created for a filing that must fail.
+          if (target.readOnly) {
+            return codedError('forbidden', `An der Sammlung „${sanitizeText(target.title)}“ darf diese Anmeldung nicht schreiben — der Datensatz `
+              + 'ließe sich dort nicht aufnehmen. Es wurde nichts angelegt. (Ohne addToCollectionId anlegen und das Material danach mit '
+              + 'wlo_add_to_collection für die Sammlung vorschlagen.)', { outcomeOpen: false });
+          }
+          if (source.kind === 'url') {
+            const existing = await findByUrl(source.url);
+            if (existing) return fileExistingRecord(existing, target, token);
+          }
+        } else if (source.kind === 'url' && !token) {
+          // In the PREVIEW, not only at execution: a person must not approve a
+          // record that can never be created — the key would be spent on a
+          // refusal (chatbot feedback 2026-11-07). The create re-checks below,
+          // because a record can appear between preview and confirmation.
+          const checked = await addressCheck(source.url);
+          if (checked.existing) return existsReply(checked.existing);
+          addressNotes = checked.notes;
+        }
+
+        // A record that does not exist yet has no id, so the change set is
+        // anchored on what identifies the intended record — the URL when there
+        // is one, otherwise the title.
+        //
+        // The upload description goes in the ACTION, which means it is in the
+        // preview AND in the token's fingerprint. That is the rule the whole
+        // two-step exists for: bytes are payload, and an approval for "create a
+        // record" must not additionally authorise a file nobody saw.
+        const cs = buildChangeSet(source.kind === 'url' ? source.url : title, 'content', {}, collected.desired, {
+          action: (file
+            ? `Legt einen neuen Datensatz an. ${describeUpload(file)}`
+            : 'Legt einen neuen Datensatz an:') + (target ? filingSentence(target) : ''),
+          ...(target ? { addTo: target } : {}),
+        });
+
+        if (!token) {
+          // Only for the file path: a URL duplicate is refused above, before any
+          // preview, while a same-title record is weaker evidence and is the
+          // person's call — so it belongs in the preview, as a note beside the
+          // change set rather than inside the fingerprint.
+          const notes = [...collected.notes];
+          // Already looked up above where no collection is named; with one, the
+          // refusal took its own path (`findByUrl`) and the notes are asked here.
+          if (source.kind === 'url') notes.push(...(addressNotes ?? await similarAddressNotes(source.url)));
+          if (file) {
+            const twin = await findByTitle(title, resolveCreateParent(writeMode(), WLO_INBOX_ID));
+            if (twin) {
+              notes.push(
+                `An diesem Ablageort gibt es bereits „${sanitizeText(twin.title)}" (${twin.nodeId}). ` +
+                  'Möglicherweise eine Dublette — beim Bestätigen wird trotzdem ein zweiter Datensatz angelegt.',
+              );
+            }
+          }
+          return previewReply(cs, 'Zum Anlegen bitte bestätigen.', notes);
+        }
+
+        const refusal = confirmOrExplain(token, cs);
+        if (refusal) return refusal;
+
+        writing = true;
+        const result = await createContentNode(collected.desired, {
+          mode: writeMode(),
+          ...(file ? { file } : {}),
+        });
+        if (result.status === 'duplicate') return existsReply(result.existing);
+        if (result.status === 'failed') {
+          // `open`: a 5xx, or an answer without an id — the record may exist
+          // (measured 2026-11-06: a create answered 500 and had created). Said
+          // as such; "refused" there read as "start over" and made a second one.
+          return codedError(result.open ? 'unverified' : 'refused',
+            `Der Datensatz konnte nicht angelegt werden: ${result.detail}`
+              + (result.open ? ' Ob er trotzdem angelegt wurde, ist offen — bitte am Ablageort nachsehen, bevor der Aufruf wiederholt wird.' : ''),
+            { outcomeOpen: result.open === true });
+        }
+
+        // The metadata step ran against the new node, so the read-back has to
+        // compare against THAT id, not the URL the change set was anchored on.
+        const stored = buildChangeSet(result.nodeId, 'content', {}, collected.desired);
+        // The upload has its own read-back, so it gets its own line — and an
+        // upload that did not land is stated as such next to the id, never
+        // folded into a general success.
+        const created = `Angelegt: ${result.nodeId}`;
+        let fields: WloToolResult;
+        try {
+          fields = reportOutcome(stored, result.statuses, await verifyWrite(stored));
+        } catch (err) {
+          fields = unverifiedReply(err);
+        }
+        // A file that did not arrive makes the answer an ERROR with the id in
+        // it (`markWritten`): as a line above a success, a record created
+        // without its content was replayed as done (audit 2026-11-14, W1).
+        //
+        // `markWritten` in every case, the failed read-back included: the
+        // read-back failed, the create did not. Without it the spent-key advice
+        // was "preview again" over a record this very answer names (review of phase 3).
+        let report = markWritten(
+          result.upload ? reportWithUpload(fields, result.upload, `${created} — `) : prependText(fields, created),
+          result.nodeId);
+        if (result.incomplete) {
+          // The record exists and a step after the create got no answer. An
+          // error whatever the read-back shows of the fields — the file's state
+          // is not in it — and one that carries the id (K-6).
+          const head = `${created}${result.upload ? ` — ${uploadNote(result.upload)}` : ''}`;
+          const open = codedError('unverified',
+            `${head} — ${result.incomplete} NICHT erneut anlegen: der Datensatz existiert. `
+              + 'Was fehlt, lässt sich mit wlo_update_content nachtragen.',
+            { outcomeOpen: true, recordExists: true, nodeId: result.nodeId });
+          report = { ...open, content: [...open.content, ...fields.content] };
+        }
+        // Create first, then file: a failed filing leaves the record and is
+        // reported beside it, never as a failure of the whole call.
+        const filing = target ? await fileRecord(result.nodeId, target) : undefined;
+        return withFiling(report, { nodeId: result.nodeId, title }, target, filing);
+      } catch (err) {
+        if (isOutcomeOpen(err) && !writing) {
+          return codedError('timeout', 'Vom Repository kam keine Antwort (Zeitüberschreitung oder Verbindungsabbruch) — beim Vorbereiten, vor jeder '
+            + 'Änderung. Es wurde nichts angelegt. Bitte den Aufruf erneut ausführen.', { outcomeOpen: false });
+        }
+        // After the token: the abort interrupted a write that may well have completed.
+        if (isOutcomeOpen(err)) {
+          return codedError('timeout',
+            'Vom Repository kam keine Antwort (Zeitüberschreitung oder Verbindungsabbruch). Ob der Datensatz angelegt wurde, ist damit ' +
+              'unklar — der Abbruch trifft die Antwort, nicht die Arbeit. Bitte den Aufruf ohne confirmToken ' +
+              'erneut senden: Gibt es den Datensatz zu dieser URL bereits, nennt die neue Vorschau ihn mit seiner ID, ' +
+              'statt einen zweiten anzulegen.',
+            { outcomeOpen: true });
+        }
+        return toolError('Der Datensatz konnte nicht angelegt werden', err);
+      }
+    },
+  });
+
+  registerCurationTool(server, challenge, {
+    name: 'wlo_submit_content',
+    title: 'WLO Inhalt zur Prüfung einreichen',
+    description:
+      'Reiche einen vorhandenen Datensatz zur redaktionellen Prüfung ein (WLO-Upload-Workflow) — nur einzelne ' +
+      'Datensätze, keine Sammlungen oder Ordner. Das ist ein ' +
+      'eigener Schritt: Anlegen und Bearbeiten reichen NICHTS automatisch ein, damit kein Entwurf ' +
+      'versehentlich in der Redaktions-Warteschlange landet. ZWEISTUFIG: ohne confirmToken nur Vorschau. ' +
+      'Erfordert eine Anmeldung.',
+    inputSchema: submitSchema,
+    // A second submission answers `already_submitted` before any key.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    handler: async (params: Record<string, unknown>) => {
+      try {
+        requireWrite();
+
+        const nodeId = String(params['nodeId'] ?? '');
+        // What is SHOWN is what is sent: flattened once, for the preview and for
+        // the queue — the raw note carried invisible characters past the person
+        // who approved it (the batch tool's rule).
+        const comment = typeof params['comment'] === 'string' ? flattenText(params['comment']) : '';
+
+        const node = await getNodeMetadata(nodeId);
+        if (!node) return codedError('not_found', `Der Datensatz „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        // The editorial queue reviews single records. The metadata tools stay
+        // open for collections; this one does not (user decision 2026-11-13).
+        const wrong = wrongKind(node, 'content');
+        if (wrong) return wrongKindReply(nodeId, wrong);
+
+        // Already in the queue: the read-back after a second submission would
+        // find the status the FIRST one left, and report this call as the one
+        // that submitted (K-14 — "a receipt that is not its own"). Refused
+        // before any key; there is nothing to confirm.
+        if (node.properties?.['ccm:wf_status']?.[0] === REVIEW_STATUS) {
+          return codedError('already_submitted',
+            `„${recordTitle(node.properties)}“ (${sanitizeText(nodeId)}) liegt bereits zur redaktionellen Prüfung vor `
+              + `(Status ${REVIEW_STATUS}). Es wurde nichts geändert.`, { outcomeOpen: false });
+        }
+
+        // The note is IN the action, which means it is in the preview and in the
+        // token's fingerprint. Without that, an approval for "submit this
+        // record" would carry whatever note arrived with the confirming call —
+        // unseen, and attributed to the person who approved something else.
+        // Flattened rather than capped: it is exactly the text they must read.
+        const cs = buildChangeSet(nodeId, 'content', node.properties ?? {}, {}, {
+          action: `Reicht „${recordTitle(node.properties)}“ (${nodeId}) zur redaktionellen Prüfung ein.`
+            + (comment ? ` Notiz an die Redaktion: „${comment}“` : ''),
+        });
+
+        const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
+        if (!token) {
+          return previewReply(
+            cs,
+            'Danach liegt der Datensatz bei der Redaktion und kann nicht mehr unbemerkt zurückgezogen werden.',
+          );
+        }
+
+        const refusal = confirmOrExplain(token, cs);
+        if (refusal) return refusal;
+
+        // ONE reading for both submit tools (`sendSubmission`): the codes, and
+        // the look at the record after a 5xx, are the batch tool's.
+        const outcome = await sendSubmission(nodeId, comment);
+        switch (outcome.status) {
+          case 'submitted':
+            return { content: [{ type: 'text' as const, text:
+              `Zur redaktionellen Prüfung eingereicht — der Datensatz trägt jetzt den Status ${REVIEW_STATUS}` +
+              `${outcome.receiver ? ` und liegt bei ${sanitizeText(outcome.receiver)}` : ''}.` }] };
+          case 'not_stored':
+            // The measured failure this read-back exists for: the call succeeds
+            // and the record shows no submission. "Eingereicht" would leave a
+            // draft in nobody's queue while the user believes an editor has it.
+            // Read back, so it is KNOWN that nothing is in the queue.
+            return codedError('not_stored',
+              'Das Einreichen wurde mit Erfolg beantwortet, der Datensatz zeigt danach aber keinen ' +
+                'Workflow-Status. Er wurde also NICHT eingereicht — bitte die Rechte an diesem Datensatz prüfen.',
+              { outcomeOpen: false });
+          case 'unverified':
+            return codedError('unverified',
+              `Das Einreichen wurde abgeschickt, konnte danach aber nicht überprüft werden. Ob der Datensatz ` +
+                `in der Redaktions-Warteschlange liegt, ist damit offen. (${outcome.detail})`, { outcomeOpen: true });
+          case 'pending':
+            return codedError(outcome.code,
+              `Das Einreichen wurde nicht bestätigt (${outcome.detail}), und der Datensatz ließ sich danach nicht ` +
+                'verlässlich lesen. Ob er in der Redaktions-Warteschlange liegt, ist damit offen — bitte am Datensatz ' +
+                'nachsehen, bevor erneut eingereicht wird.', { outcomeOpen: true });
+          default:
+            // A refusal wrote nothing; after a 5xx the record was read and is NOT in the queue —
+            // which is no proof either (a proxy may answer while the PUT is still on its way).
+            return outcome.outcomeOpen
+              ? codedError(outcome.code, `Das Einreichen ist fehlgeschlagen: ${outcome.detail} Der Datensatz zeigt gerade keinen `
+                + 'Workflow-Status; ob die Anfrage noch wirkt, ist offen — bitte am Datensatz nachsehen, bevor erneut eingereicht wird.',
+                { outcomeOpen: true })
+              : codedError(refusalCode(outcome.httpStatus), `Das Einreichen wurde abgelehnt: ${outcome.detail} Es wurde nichts eingereicht.`,
+                { outcomeOpen: false });
+        }
+      } catch (err) {
+        return timeoutOrError('Der Datensatz konnte nicht eingereicht werden', err,
+          `Ob „${sanitizeText(String(params['nodeId'] ?? ''))}“ in der Redaktions-Warteschlange liegt, ist offen`, { preview: isPreviewCall(params) });
+      }
+    },
+  });
+}

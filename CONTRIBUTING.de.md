@@ -1,0 +1,118 @@
+# Contributing (Beitragen)
+
+> 🇩🇪 Deutsch · 🇬🇧 [English version](CONTRIBUTING.md)
+
+Kurzleitfaden für Änderungen an diesem Repository. Ziel: kleine, verifizierte,
+gut lesbare Änderungen, die das Projekt wartbar halten.
+
+## Workflow
+
+1. Vor dem Coden: die betroffenen Dateien lesen, kleinste sinnvolle Änderung planen.
+2. Bei neuer Logik oder Bugfixes: **Test zuerst** (`node:test`), rot sehen, dann grün.
+3. Vor „fertig“: alle vier Prüfungen unten laufen lassen — grün, und den Output
+   ansehen. Genau diese laufen in CI; was hier rot ist, ist dort ein roter PR.
+4. Docs (README, CHANGELOG, Kommentare) in derselben Änderung mitziehen.
+
+```bash
+npm install
+npm run build      # tsc (strict)
+npm run typecheck  # Typ-Gate über src + tests + Widget-Einstiegspunkte
+npm run lint       # ESLint, nur Korrektheitsregeln
+npm test           # Offline-Suite (node:test), kein Netzwerk nötig
+```
+
+`npm run test:live` gibt es ebenfalls und gehört bewusst **nicht** zu den
+Prüfungen: es schreibt wirklich gegen das Staging-Repositorium und braucht
+Dienst-Zugangsdaten aus `.env`, die CI nicht hat. Laufen lassen, wer die
+Schreib-Pipeline ändert — die Offline-Suite fälscht das Upstream und belegt
+damit, was wir senden, nie was das Repositorium annimmt.
+
+„Kein Netzwerk nötig" ist erzwungen, nicht bloß beabsichtigt: `npm test` lädt
+`tests/netguard.mjs`, das jeden Fetch an einen Nicht-Loopback-Host abbricht, den
+kein `installFetchMock` abgefangen hat. Erscheint `netguard: the test suite must
+not reach the network`, fehlt dem Test darunter sein Mock — ein echter
+Upstream-Aufruf macht die Suite von einem laufenden Repository abhängig und kann
+einen Test aus dem falschen Grund grün werden lassen (eine Zusicherung, die nur
+prüft „irgendetwas ist fehlgeschlagen", unterscheidet einen Validierungsfehler
+nicht von einem Verbindungsfehler).
+
+## Sprache
+
+- **Code-Bezeichner** (Variablen, Funktionen, Typen): Englisch.
+- **Kommentare & Tool-/Parameter-Beschreibungen**: gemischt Deutsch/Englisch ist
+  im Bestand üblich und akzeptiert. Regel: **die Sprache des umgebenden Codes
+  beibehalten** — eine Datei nicht mitten im Kommentarfluss umsprachen.
+  Nutzer-sichtbare Tool-Beschreibungen dürfen Deutsch sein (Zielgruppe WLO).
+- Kommentare erklären **warum**, nicht was der Code offensichtlich tut.
+
+## Dokumentation
+
+Einstieg ist [`docs/README.md`](docs/README.md) — dort steht, welches Dokument
+welche Frage beantwortet, für wen und in welcher Sprache. Die bindenden Regeln
+je Bereich stehen in [`docs/rules/`](docs/rules/README.md).
+
+Die Werkzeugtabelle steht **von Hand in sechs Dokumenten** (`README.md`,
+`README.de.md`, `docs/TOOLS.md`, `docs/TOOLS-KOMPAKT.md`, `docs/INTEGRATION.md`,
+`docs/MCP-REFERENZ.md`). Wer ein Werkzeug hinzufügt, umbenennt oder entfernt:
+
+1. `npm run docs:tools` gibt jedes registrierte Werkzeug mit dem ersten Satz
+   seiner Beschreibung als Markdown-Tabelle aus, direkt vom Server
+   (`WLO_BATCH_UPLOAD_ENABLED=1 npm run docs:tools` nimmt die Stapel-Werkzeuge
+   dazu). Die Zeile von dort kopieren, nicht aus dem Gedächtnis schreiben.
+2. In alle sechs Dokumente eintragen und die dort genannten Zahlen korrigieren.
+3. `node --import tsx --test tests/docs-claims.test.ts` schlägt fehl, wenn eines
+   der sechs ein registriertes Werkzeug nicht nennt oder eine Zahl nennt, der
+   der Server widerspricht.
+
+`npm run dump:tools` gibt die ganze `tools/list`-Antwort als JSON aus (mit
+Schemata), wenn die Kurzfassung nicht reicht.
+
+## Tests
+
+- Nur externe Grenzen mocken (Netzwerk via `tests/fetchMock.ts`), nie die zu
+  testende Einheit selbst.
+- Tests sind deterministisch (kein `Date.now()`/Zufall/Timing-Abhängigkeit ohne Not).
+- Keinen Test abschwächen/skippen, nur um die Suite grün zu bekommen.
+
+## Sicherheit
+
+- Keine Secrets im Code — alles über Env.
+- Externe Eingaben an Vertrauensgrenzen validieren (zod-Schemata der Tools).
+- IDs vor der Interpolation in URLs kodieren (`encodeURIComponent`).
+- Alle Upstream-Requests über `wloFetch` (erzwingt Timeout).
+- Logging nur über `src/logger.ts` (JSON-Zeilen; unter stdio nach stderr, weil
+  stdout dort dem MCP-Protokoll gehört — über HTTP nach stdout).
+
+## Commits
+
+- [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`,
+  `refactor:`, `test:`, `docs:`, `chore:`, `ci:`, `build:`.
+- Eine logische Änderung pro Commit; keine gebündelten Feature+Refactor+Format-Sweeps.
+- Kein Debug-Output, keine auskommentierten Code-Reste, keine Secrets committen.
+
+## Umgebungsvariablen
+
+Neue Env-Variablen immer in `README.md` (Tabelle) **und** `.env.example` dokumentieren.
+
+## Abhängigkeiten
+
+Die Laufzeit besteht bewusst aus zwei Paketen (`@modelcontextprotocol/sdk`,
+`zod`). Vor einem dritten prüfen, ob Standardbibliothek, eine vorhandene
+Abhängigkeit oder vorhandener Projektcode das schon abdeckt.
+
+Die zwei Laufzeitpakete sind auf einen **Patch-Bereich** (`~`) festgelegt, und
+Dependabot öffnet für jedes einen eigenen Pull Request: der Code stützt sich auf
+ihre Interna — `src/apps/output-schema.ts` liest zods `_zod.def` und hängt sich
+in dessen `toJSONSchema`, und mehrere Regeln beruhen auf gemessenem Verhalten
+einer SDK-Version. Ein Minor-Update ist eine Änderung, die gelesen und getestet
+wird, kein Routine-Schritt.
+
+Updates der Entwicklungspakete innerhalb der Version (`npm update`) sind Routine.
+Zwei Majors werden
+absichtlich zurückgehalten — sie gehören in eine eigene Änderung mit eigenem
+Testlauf, nicht als Nebenwirkung fremder Arbeit:
+
+| Paket | Bleibt auf | Grund |
+|---|---|---|
+| `@types/node` | 22.x | Muss die ÄLTESTE unterstützte Laufzeit beschreiben (`engines.node: ">=22.12.0"`). Neuere Typen ließen Code gegen APIs typprüfen, die Node 22 nicht hat. |
+| `typescript` | 5.x | Ein Compiler-Major; bewusst hochziehen, mit voller Suite und Build als Gate. |

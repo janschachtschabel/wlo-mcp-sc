@@ -1,0 +1,228 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { createRateLimiter, createDistinctValueLimiter, clientKey, forwardedClientKey } from '../src/rate-limit.js';
+
+const T0 = 1_000_000; // fixed base clock (ms); tests inject all timestamps
+
+test('allows up to the limit, blocks beyond it within a window', () => {
+  const rl = createRateLimiter(3, 60_000);
+  assert.equal(rl.check('a', T0), false);       // 1
+  assert.equal(rl.check('a', T0 + 1), false);   // 2
+  assert.equal(rl.check('a', T0 + 2), false);   // 3
+  assert.equal(rl.check('a', T0 + 3), true);    // 4 → over
+  assert.equal(rl.check('a', T0 + 4), true);    // 5 → over
+});
+
+test('resets after the window elapses', () => {
+  const rl = createRateLimiter(2, 60_000);
+  assert.equal(rl.check('a', T0), false);
+  assert.equal(rl.check('a', T0 + 1), false);
+  assert.equal(rl.check('a', T0 + 2), true);          // over within window
+  assert.equal(rl.check('a', T0 + 60_001), false);    // new window → allowed again
+});
+
+test('limit <= 0 disables limiting entirely', () => {
+  const rl = createRateLimiter(0);
+  for (let i = 0; i < 1000; i++) assert.equal(rl.check('a', T0 + i), false);
+});
+
+test('separate IPs have independent budgets', () => {
+  const rl = createRateLimiter(1, 60_000);
+  assert.equal(rl.check('a', T0), false);
+  assert.equal(rl.check('b', T0), false);   // different IP, own budget
+  assert.equal(rl.check('a', T0 + 1), true); // a is now over
+  assert.equal(rl.check('b', T0 + 1), true); // b is now over
+});
+
+test('sweep removes only expired buckets, active ones survive', () => {
+  const rl = createRateLimiter(3, 60_000);
+  // 'old' is used once at T0, then never again → it expires.
+  rl.check('old', T0);
+  // Advance past the window so the next check triggers a sweep that deletes
+  // 'old'. 'fresh' starts its bucket in this same call and must NOT be swept.
+  rl.check('fresh', T0 + 60_001);            // count 1
+  rl.check('fresh', T0 + 60_002);            // count 2
+  rl.check('fresh', T0 + 60_003);            // count 3
+  // If 'fresh' had wrongly been swept, its count would have reset and this
+  // 4th hit would still be allowed. It being over-limit proves survival.
+  assert.equal(rl.check('fresh', T0 + 60_004), true, 'fresh reached its 4th hit → over limit 3');
+});
+
+test('clientKey: uses remoteAddress when proxy is not trusted', () => {
+  assert.equal(clientKey('1.2.3.4', '10.0.0.1', false), '10.0.0.1');
+  assert.equal(clientKey(undefined, '10.0.0.1', false), '10.0.0.1');
+});
+
+test('clientKey: uses the RIGHTMOST X-Forwarded-For hop (proxy-appended) when trusted', () => {
+  // The trusted proxy appends the real client IP as the LAST hop; the leftmost
+  // value is client-supplied and spoofable, so it must NOT be the key.
+  assert.equal(clientKey('1.2.3.4, 203.0.113.5', '10.0.0.1', true), '203.0.113.5');
+  assert.equal(clientKey(['9.9.9.9, 203.0.113.5'], '10.0.0.1', true), '203.0.113.5');
+  // A forged leftmost value is ignored.
+  assert.notEqual(clientKey('1.2.3.4, 203.0.113.5', '10.0.0.1', true), '1.2.3.4');
+});
+
+test('clientKey: falls back to remoteAddress when trusted but no header', () => {
+  assert.equal(clientKey(undefined, '10.0.0.1', true), '10.0.0.1');
+  assert.equal(clientKey('', '10.0.0.1', true), '10.0.0.1');
+});
+
+test('clientKey: returns "unknown" when nothing identifies the client', () => {
+  assert.equal(clientKey(undefined, undefined, false), 'unknown');
+});
+
+// ── Credential-stuffing relay guard ──────────────────────────────────────────
+// The MCP endpoint forwards a client-supplied Basic header upstream, which
+// makes it usable as a relay for guessing WLO logins behind OUR ip. A plain
+// requests-per-minute cap is the wrong tool: a legitimate per-user client sends
+// a header on EVERY call and would be throttled, while an attacker rotating
+// credentials stays under any per-credential cap. The distinguishing signal is
+// the number of DISTINCT credentials one address presents.
+
+test('distinct-credential limiter: one client using one login is never limited', () => {
+  const lim = createDistinctValueLimiter(3, 60_000);
+  for (let i = 0; i < 500; i++) {
+    assert.equal(lim.check('1.2.3.4', 'anna:pw', 1000 + i), false, `call ${i}`);
+  }
+});
+
+test('distinct-credential limiter: rotating credentials trips it', () => {
+  const lim = createDistinctValueLimiter(3, 60_000);
+  assert.equal(lim.check('1.2.3.4', 'a:1', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'b:2', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'c:3', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'd:4', 1000), true, 'the fourth distinct login is refused');
+});
+
+test('distinct-credential limiter: separate addresses have separate budgets', () => {
+  const lim = createDistinctValueLimiter(1, 60_000);
+  assert.equal(lim.check('1.1.1.1', 'a:1', 1000), false);
+  assert.equal(lim.check('2.2.2.2', 'b:2', 1000), false, 'another client is unaffected');
+  assert.equal(lim.check('1.1.1.1', 'z:9', 1000), true);
+});
+
+test('distinct-credential limiter: the window resets', () => {
+  const lim = createDistinctValueLimiter(1, 60_000);
+  assert.equal(lim.check('1.2.3.4', 'a:1', 1000), false);
+  assert.equal(lim.check('1.2.3.4', 'b:2', 2000), true);
+  assert.equal(lim.check('1.2.3.4', 'b:2', 1000 + 60_001), false, 'a new window starts clean');
+});
+
+test('distinct-credential limiter: a limit of 0 disables it', () => {
+  const lim = createDistinctValueLimiter(0, 60_000);
+  for (const v of ['a:1', 'b:2', 'c:3', 'd:4']) {
+    assert.equal(lim.check('1.2.3.4', v, 1000), false);
+  }
+});
+
+test('distinct-credential limiter: the raw credential is never retained', () => {
+  // Whatever this holds sits in memory for a whole window, so it must be a
+  // digest — a password in a long-lived Set is a needless liability.
+  const lim = createDistinctValueLimiter(5, 60_000);
+  lim.check('1.2.3.4', 'anna:sehr-geheimes-passwort', 1000);
+  assert.ok(
+    !JSON.stringify(lim.inspectForTest()).includes('sehr-geheimes-passwort'),
+    'the credential must not be recoverable from the limiter state',
+  );
+});
+
+// ── IPv6 prefix keying (audit 2026-11-05) ───────────────────────────────────
+// A single IPv6 customer usually holds a whole /64; keyed per full address, one
+// client had ~2^64 independent budgets for both the request limiter and the
+// password-guessing guard.
+
+test('clientKey: every address in one IPv6 /64 shares a bucket', () => {
+  assert.equal(clientKey(undefined, '2001:db8:aa:bb::1', false), clientKey(undefined, '2001:db8:aa:bb:ffff:1:2:3', false));
+  assert.equal(clientKey(undefined, '2001:db8:aa:bb::1', false), '2001:db8:aa:bb::/64');
+});
+
+test('clientKey: different /64s stay apart', () => {
+  assert.notEqual(clientKey(undefined, '2001:db8:aa:bb::1', false), clientKey(undefined, '2001:db8:aa:bc::1', false));
+});
+
+test('clientKey: IPv4 clients reported as mapped IPv6 keep their OWN address', () => {
+  // Node reports IPv4 peers on a dual-stack socket as ::ffff:a.b.c.d. A naive
+  // /64 cut would put EVERY IPv4 client into one shared bucket.
+  assert.equal(clientKey(undefined, '::ffff:203.0.113.7', false), '203.0.113.7');
+  assert.notEqual(clientKey(undefined, '::ffff:203.0.113.7', false), clientKey(undefined, '::ffff:203.0.113.8', false));
+});
+
+test('clientKey: plain IPv4, loopback and the trusted proxy header are unchanged', () => {
+  assert.equal(clientKey(undefined, '203.0.113.7', false), '203.0.113.7');
+  assert.equal(clientKey(undefined, '::1', false), '::1');
+  assert.equal(clientKey('198.51.100.1, 2001:db8:1:2::9', '10.0.0.1', true), '2001:db8:1:2::/64');
+});
+
+test('retryAfterSeconds is the rest of the fixed window, never below 1 (chatbot S2)', () => {
+  const limiter = createRateLimiter(1, 60_000);
+  limiter.check('a', 0);
+  assert.equal(limiter.retryAfterSeconds?.('a', 45_000), 15);
+  assert.equal(limiter.retryAfterSeconds?.('a', 59_500), 1);
+  assert.equal(limiter.retryAfterSeconds?.('a', 60_000), 1, 'a window that just ended still says 1, never 0');
+  assert.equal(limiter.retryAfterSeconds?.('unknown', 1_000), 1);
+});
+
+test('the distinct-login limiter also says how long until its window ends', () => {
+  const limiter = createDistinctValueLimiter(1, 600_000);
+  limiter.check('ip', 'a', 0);
+  assert.equal(limiter.retryAfterSeconds?.('ip', 100_000), 500);
+  assert.equal(limiter.retryAfterSeconds?.('ip', 600_000), 1);
+  assert.equal(limiter.retryAfterSeconds?.('fremd', 0), 1);
+});
+
+// ── the address a trusted forwarder names (chatbot team, 2026-11-15) ─────────
+
+test('forwardedClientKey: the hop the forwarder added — the last one, or the one before our own proxy', () => {
+  // The forwarder connects to us directly: the address it names is the last hop.
+  assert.equal(forwardedClientKey(undefined, '203.0.113.5', false), '203.0.113.5');
+  assert.equal(forwardedClientKey(undefined, '10.0.0.1, 203.0.113.5', false), '203.0.113.5', 'not what the person\'s browser claimed');
+  // Behind our own proxy (TRUST_PROXY) the last hop is the forwarder itself.
+  assert.equal(forwardedClientKey(undefined, '203.0.113.5, 198.51.100.2', true), '203.0.113.5');
+  assert.equal(forwardedClientKey(undefined, ['203.0.113.5', '198.51.100.2'], true), '203.0.113.5', 'a repeated header joins');
+});
+
+test('forwardedClientKey: nothing, or something that is no address, names nobody', () => {
+  assert.equal(forwardedClientKey(undefined, undefined, false), null);
+  assert.equal(forwardedClientKey(undefined, '', false), null);
+  assert.equal(forwardedClientKey(undefined, '198.51.100.2', true), null, 'only our proxy\'s hop: the forwarder named nobody');
+  assert.equal(forwardedClientKey(undefined, 'jemand', false), null);
+  assert.equal(forwardedClientKey(undefined, '203.0.113.5:4711', false), null, 'with a port it is no address');
+});
+
+test('forwardedClientKey: counted in the same units as clientKey (an IPv6 /64, a mapped IPv4 as itself)', () => {
+  assert.equal(forwardedClientKey(undefined, '2001:db8:1:2::7', false), clientKey('2001:db8:1:2::7', undefined, true));
+  assert.equal(forwardedClientKey(undefined, '::ffff:203.0.113.5', false), '203.0.113.5');
+  assert.equal(forwardedClientKey(undefined, '[2001:db8:1:2::7]', false), '2001:db8:1:2::/64');
+});
+
+// ── the address in its own header (chatbot team, third answer, 2026-11-15) ──
+
+test('forwardedClientKey: X-WLO-Client-Address wins — a proxy that drops X-Forwarded-For cannot lose it', () => {
+  // Traefik, by default, throws away X-Forwarded-* from senders it does not
+  // trust and writes only the connection's address: under TRUST_PROXY nothing
+  // would be left. A header of our own passes every proxy untouched.
+  assert.equal(forwardedClientKey('203.0.113.9', '198.51.100.2', true), '203.0.113.9');
+  assert.equal(forwardedClientKey('203.0.113.9', '10.0.0.1, 198.51.100.2', false), '203.0.113.9', 'whatever X-Forwarded-For says');
+  assert.equal(forwardedClientKey(' 2001:db8:1:2::7 ', undefined, false), '2001:db8:1:2::/64', 'trimmed, in the units of clientKey');
+  assert.equal(forwardedClientKey('::ffff:203.0.113.9', undefined, true), '203.0.113.9');
+});
+
+test('forwardedClientKey: a named header that is no single address names nobody — no fallback to X-Forwarded-For', () => {
+  for (const bad of ['203.0.113.9:4711', 'jemand', '', '203.0.113.9, 198.51.100.7', '[2001:db8::1]:443']) {
+    assert.equal(forwardedClientKey(bad, '203.0.113.5', false), null, JSON.stringify(bad));
+  }
+  assert.equal(forwardedClientKey(['203.0.113.9', '203.0.113.9'], '203.0.113.5', false), null, 'sent twice');
+});
+
+test('an address with a zone id names nobody, in either header — and never throws (review 2026-11-15)', () => {
+  // `isIP` accepts a zone id, colons included; cutting such a value to its /64
+  // used to throw (`Array(-1)`), and the handler gave no answer at all.
+  for (const zoned of ['1:2:3:4:5:6:7:8%::x', '1:2:3:4:5:6:7:8%a:b:c', 'fe80::1%eth0']) {
+    assert.equal(forwardedClientKey(zoned, undefined, false), null, `named ${zoned}`);
+    assert.equal(forwardedClientKey(undefined, zoned, false), null, `forwarded ${zoned}`);
+    assert.doesNotThrow(() => clientKey(zoned, undefined, true), `clientKey ${zoned}`);
+    assert.doesNotThrow(() => clientKey(undefined, zoned, false), `remote ${zoned}`);
+  }
+  assert.equal(forwardedClientKey('[2001:db8::1]', undefined, false), null, 'the own header takes no brackets');
+});

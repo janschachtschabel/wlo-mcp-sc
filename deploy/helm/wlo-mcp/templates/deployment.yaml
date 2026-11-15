@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wlo-mcp.fullname" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+spec:
+  # ONE instance, not a default: confirmation keys, plans, batches, upload slots,
+  # OAuth codes and the rate limiters live in process memory, the access registry
+  # is one file. Not templated on purpose (docs/DEPLOYMENT.md §5.0.2).
+  replicas: 1
+  # Never two pods alive at once: the old one ends before the new one starts.
+  # The price is a gap of "longest running call + start" on every rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "wlo-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wlo-mcp.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # A changed ConfigMap restarts the pod; a changed Secret does NOT (the
+        # chart does not own it) — restart by hand after rotating a key.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # The server never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: wlo-mcp
+          image: {{ include "wlo-mcp.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.public.port }}
+              protocol: TCP
+            - name: internal
+              containerPort: {{ .Values.service.internal.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "wlo-mcp.fullname" . }}
+          {{- if .Values.existingSecret }}
+          env:
+            {{- range splitList " " (include "wlo-mcp.secretKeys" .) }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.existingSecret | quote }}
+                  key: {{ . }}
+                  optional: true
+            {{- end }}
+          {{- end }}
+          # Both probes ask the process itself, never the repository: the
+          # repository being down is not this pod's fault, and taking the only
+          # pod out of service for it helps nobody. That state is an alert.
+          #
+          # Liveness on the INTERNAL port: it keeps answering while the public
+          # listener drains after SIGTERM, so a draining pod is not killed early.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: internal
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          # Readiness on the PUBLIC port: once it stops accepting, traffic stops.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "wlo-mcp.claimName" . }}
+          {{- else }}
+          # Without a claim the registry dies with the pod: every access block is
+          # invalid after each restart. Only for anonymous-only deployments.
+          emptyDir: {}
+          {{- end }}
+        # The compose file's tmpfs; the server itself writes nothing there.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

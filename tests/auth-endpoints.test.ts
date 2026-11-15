@@ -1,0 +1,777 @@
+/**
+ * auth-endpoints.test.ts – issuing and revoking access blocks over HTTP (P5).
+ *
+ * The rule that shapes `/auth/issue` came out of the P0 probe and is easy to get
+ * wrong: at this API, **a 200 is not proof of a login**. An anonymous call to
+ * `/node/v1/nodes/-home-/-userhome-/children` answers 200, and the identity
+ * endpoint answers 200 with `esguest`. So issuance must read the reported
+ * AUTHORITY, never `res.ok` — otherwise we hand out blocks for credentials that
+ * do not work, and the holder finds out days later when every tool returns
+ * nothing. `200 from WLO with the guest authority is not a login` pins exactly
+ * that.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { handleAuthEndpoint } from '../src/rest/auth-pages.js';
+import { credentialFromHeader, setAccessSupport } from '../src/auth/credential.js';
+import { encodeAccessToken, loadAuthKeys, type AuthKeys } from '../src/auth/access-token.js';
+import { openRegistry, type AccessRegistry } from '../src/auth/access-registry.js';
+import { createDistinctValueLimiter, createRateLimiter } from '../src/rate-limit.js';
+
+/** Fake upstream: the identity endpoint reports whatever authority we choose. */
+function upstream(authority: string | null, status = 200) {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify(authority ? { person: { authorityName: authority } } : {}),
+    { status, headers: { 'content-type': 'application/json' } },
+  )) as typeof fetch;
+  return () => { globalThis.fetch = original; };
+}
+
+/**
+ * `content-type` defaults to what all three access-block pages actually send.
+ * The endpoints REQUIRE it (see the 415 tests below), so a helper that omitted
+ * it would test a request no real client makes.
+ */
+const req = (method: string, url: string, body?: string, contentType = 'application/json') => ({
+  method,
+  url,
+  headers: { 'content-type': contentType } as Record<string, string | string[] | undefined>,
+  async *[Symbol.asyncIterator]() { if (body) yield Buffer.from(body); },
+});
+
+function res() {
+  const out = { status: 0, body: '' };
+  const headers: Record<string, string> = {};
+  return {
+    out,
+    headers,
+    json: () => (out.body ? JSON.parse(out.body) as Record<string, unknown> : null),
+    writeHead(status: number, h?: Record<string, string>) {
+      out.status = status;
+      if (h) Object.assign(headers, h);
+    },
+    end(body?: string) { out.body = body ?? ''; },
+  };
+}
+
+function deps(over: Partial<Parameters<typeof handleAuthEndpoint>[2]> = {}) {
+  return {
+    ip: '198.51.100.7',
+    maxBodyBytes: 1_000_000,
+    rateLimiter: createRateLimiter(100),
+    authAbuseLimiter: createDistinctValueLimiter(3, 600_000),
+    ...over,
+  };
+}
+
+async function support(
+  t: { after: (fn: () => void) => void },
+): Promise<{ keys: AuthKeys; registry: AccessRegistry; path: string }> {
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-endpoints-'));
+  const path = join(dir, 'registry.json');
+  const registry = await openRegistry(path);
+  assert.ok(registry);
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  return { keys, registry, path };
+}
+
+const block = (keys: AuthKeys, jti = 'id-1', u = 'lehrerin', secret = 'geheim', iat = Math.floor(Date.now() / 1000)) =>
+  encodeAccessToken({ v: 2, jti, u, secret, iat }, keys.publicKeyPem);
+
+const post = (url: string, token: string) => req('POST', url, JSON.stringify({ token }));
+
+// ── the public key ─────────────────────────────────────────────────────────
+
+test('the public key is served so the page can encrypt', async (t) => {
+  const { keys } = await support(t);
+  const r = res();
+  assert.equal(await handleAuthEndpoint(req('GET', '/auth/public-key'), r, deps()), true);
+  assert.equal(r.out.status, 200);
+  assert.equal(r.json()?.['publicKey'], keys.publicKeyPem);
+});
+
+test('with the feature switched off the endpoints do not exist', async () => {
+  setAccessSupport(null);
+  for (const [method, url] of [['GET', '/auth/public-key'], ['POST', '/auth/issue'], ['POST', '/auth/revoke'], ['POST', '/auth/ticket']]) {
+    const r = res();
+    assert.equal(await handleAuthEndpoint(req(method!, url!, '{}'), r, deps()), true);
+    assert.equal(r.out.status, 404, `${method} ${url}`);
+  }
+});
+
+// ── /auth/ticket — the embedding exchange ───────────────────────────────────
+
+const TICKET = 'TICKET_c001d00dfeedface0123456789abcdef01234567';
+const postTicket = (ticket: string) => req('POST', '/auth/ticket', JSON.stringify({ ticket }));
+
+test('an accepted ticket is answered with a block the Bearer path honours', async (t) => {
+  const { registry } = await support(t);
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  assert.equal(await handleAuthEndpoint(postTicket(TICKET), r, deps()), true);
+  assert.equal(r.out.status, 200);
+  const body = r.json();
+  assert.equal(body?.['ok'], true);
+  assert.equal(body?.['authority'], 'lehrerin');
+  const issued = body?.['block'];
+  assert.ok(typeof issued === 'string' && issued.startsWith('wlo2.'), 'an ordinary wlo2. block');
+  assert.ok(!issued.includes(TICKET), 'the ticket is not readable in it');
+
+  // The very block the response carries authenticates on the Bearer path and
+  // resolves to the EDU-TICKET scheme — the whole point of the exchange.
+  const cred = credentialFromHeader(`Bearer ${issued}`);
+  assert.ok(cred, 'listed and decodable');
+  assert.equal(cred.header, `EDU-TICKET ${TICKET}`);
+  assert.equal(cred.label, 'lehrerin');
+  assert.ok(cred.jti && registry.has(cred.jti));
+});
+
+test('TICKET_ALLOWED_ORIGINS: a foreign browser origin is refused before the repository is asked', async (t) => {
+  await support(t);
+  let calls = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { calls++; return new Response('{}'); }) as typeof fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const allowed = new Set(['https://redaktion.example.org']);
+
+  const foreign = postTicket(TICKET);
+  foreign.headers['origin'] = 'https://evil.example';
+  const r = res();
+  assert.equal(await handleAuthEndpoint(foreign, r, deps({ ticketAllowedOrigins: allowed })), true);
+  assert.equal(r.out.status, 403);
+  assert.equal(r.json()?.['code'], 'origin_not_allowed');
+  assert.equal(calls, 0, 'no upstream call for a refused origin');
+});
+
+test('TICKET_ALLOWED_ORIGINS: a listed origin and a request without Origin exchange as before', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const allowed = new Set(['https://redaktion.example.org']);
+
+  const listed = postTicket(TICKET);
+  listed.headers['origin'] = 'https://redaktion.example.org';
+  const a = res();
+  await handleAuthEndpoint(listed, a, deps({ ticketAllowedOrigins: allowed }));
+  assert.equal(a.out.status, 200, 'listed origin');
+
+  const b = res();
+  await handleAuthEndpoint(postTicket(TICKET), b, deps({ ticketAllowedOrigins: allowed }));
+  assert.equal(b.out.status, 200, 'server to server, no Origin');
+
+  const anyOrigin = postTicket(TICKET);
+  anyOrigin.headers['origin'] = 'https://anywhere.example';
+  const c = res();
+  await handleAuthEndpoint(anyOrigin, c, deps());
+  assert.equal(c.out.status, 200, 'no list changes nothing');
+});
+
+test('TICKET_ALLOWED_ORIGINS: a refused origin still spends the address budget, so the refusal log is bounded', async (t) => {
+  await support(t);
+  const allowed = new Set(['https://redaktion.example.org']);
+  const limiter = createRateLimiter(1);
+  const foreign = () => { const q = postTicket(TICKET); q.headers['origin'] = 'https://evil.example'; return q; };
+  const a = res();
+  await handleAuthEndpoint(foreign(), a, deps({ ticketAllowedOrigins: allowed, rateLimiter: limiter }));
+  assert.equal(a.out.status, 403);
+  const b = res();
+  await handleAuthEndpoint(foreign(), b, deps({ ticketAllowedOrigins: allowed, rateLimiter: limiter }));
+  assert.equal(b.out.status, 429, 'the second refusal is the budget, not another log line');
+});
+
+test('TICKET_ALLOWED_ORIGINS concerns the ticket exchange only', async (t) => {
+  const { keys } = await support(t);
+  t.after(upstream('lehrerin'));
+  const issue = req('POST', '/auth/issue', JSON.stringify({ token: block(keys) }));
+  issue.headers['origin'] = 'https://evil.example';
+  const r = res();
+  await handleAuthEndpoint(issue, r, deps({ ticketAllowedOrigins: new Set(['https://redaktion.example.org']) }));
+  assert.notEqual(r.out.status, 403);
+});
+
+test('a guest ticket is refused — the authority decides, not the status code', async (t) => {
+  await support(t);
+  t.after(upstream('esguest'));
+  const r = res();
+  await handleAuthEndpoint(postTicket(TICKET), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.match(r.out.body, /nicht angenommen/);
+});
+
+test('the ticket endpoint requires a declared JSON body like its siblings', async (t) => {
+  await support(t);
+  const r = res();
+  await handleAuthEndpoint(req('POST', '/auth/ticket', `{"ticket":"${TICKET}"}`, 'text/plain'), r, deps());
+  assert.equal(r.out.status, 415);
+});
+
+test('a missing or malformed ticket field is a 400, not an upstream call', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  for (const body of ['{}', '{"ticket":""}', '{"ticket":42}', '{"token":"' + TICKET + '"}']) {
+    const r = res();
+    await handleAuthEndpoint(req('POST', '/auth/ticket', body), r, deps());
+    assert.equal(r.out.status, 400, body);
+  }
+});
+
+test('tickets do NOT spend the password budget — a shared address is the normal case', async (t) => {
+  // The password budget is ten distinct logins per address, which is right for a
+  // human-chosen secret with guessable neighbours. A ticket is machine-issued
+  // and unguessable, and the address it arrives from is routinely shared: a
+  // school behind one NAT puts a whole class in one bucket. Spending the
+  // password budget there refused legitimate, signed-in people from the
+  // eleventh onwards — the relay-client failure this project has already made
+  // once, on POST /mcp.
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({
+    authAbuseLimiter: createDistinctValueLimiter(1, 600_000),
+    ticketAbuseLimiter: createDistinctValueLimiter(50, 600_000),
+  });
+
+  for (const suffix of ['aa', 'bb', 'cc']) {
+    const r = res();
+    await handleAuthEndpoint(postTicket(`${TICKET}${suffix}`), r, d);
+    assert.equal(r.out.status, 200, `ticket ${suffix} must not be refused by the password budget`);
+  }
+});
+
+test('the ticket budget still bounds, and carries the long Retry-After', async (t) => {
+  // Higher is not unlimited: the bucket retains one digest per distinct ticket
+  // for the whole window, so it stays bounded per address.
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({ ticketAbuseLimiter: createDistinctValueLimiter(1, 600_000) });
+
+  const first = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), first, d);
+  assert.equal(first.out.status, 200);
+
+  const second = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), second, d);
+  assert.equal(second.out.status, 429);
+  assert.equal(second.headers['Retry-After'], '600', 'the distinct-login window, not the per-request one');
+});
+
+test('without its own limiter the ticket path falls back to the tighter budget', async (t) => {
+  // The fail-safe direction: an entry point that forgets to wire the ticket
+  // limiter over-refuses rather than letting the exchange run unbounded.
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({ authAbuseLimiter: createDistinctValueLimiter(1, 600_000) });
+
+  const first = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), first, d);
+  assert.equal(first.out.status, 200);
+
+  const second = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), second, d);
+  assert.equal(second.out.status, 429);
+});
+
+test('a path we do not own falls through', async (t) => {
+  await support(t);
+  assert.equal(await handleAuthEndpoint(req('GET', '/mcp'), res(), deps()), false);
+});
+
+test('a wrong method on a known path is 405, not 404', async (t) => {
+  await support(t);
+  const r = res();
+  await handleAuthEndpoint(req('GET', '/auth/issue'), r, deps());
+  assert.equal(r.out.status, 405);
+});
+
+/**
+ * `/auth/revoke` is the path the design names for the revocation PAGE and the
+ * one people guess, because it mirrors `/auth`. It is also the POST endpoint —
+ * so this module owns the POST and hands the GET back to the static map, rather
+ * than answering the person who came to block a compromised access with
+ * `{"error":"Method not allowed. Use POST."}`.
+ */
+test('a GET on the revocation path is left to the page, not refused', async (t) => {
+  await support(t);
+  const r = res();
+  assert.equal(await handleAuthEndpoint(req('GET', '/auth/revoke'), r, deps()), false);
+  assert.equal(r.out.status, 0, 'nothing was written — the static branch answers');
+});
+
+/**
+ * Measured before the fix: with a registry that cannot write — a full disk, a
+ * volume not mounted, a permission — the rejection left `handleAuthEndpoint`,
+ * node:http never awaits a handler's return value, and the caller got NO answer
+ * at all. The socket stayed open until `requestTimeout`: thirty seconds of
+ * "Verschlüsseln und prüfen …" right after someone typed their password, then a
+ * network error that says nothing. The MCP branch has had such a boundary from
+ * the start; this one had none.
+ */
+test('a registry that cannot write is answered, not left hanging', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-endpoints-'));
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  const path = join(dir, 'registry.json');
+  const registry = await openRegistry(path);
+  assert.ok(registry);
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(keys);
+  setAccessSupport({ keys, registry });
+  mkdirSync(`${path}.tmp`); // a directory where the write wants its temp file
+  t.after(upstream('lehrerin'));
+
+  const r = res();
+  const handled = await handleAuthEndpoint(post('/auth/issue', block(keys)), r, deps());
+  assert.equal(handled, true, 'the endpoint still owns the request');
+  assert.equal(r.out.status, 500);
+  assert.match(r.out.body, /Serverfehler/);
+  assert.doesNotMatch(r.out.body, /EISDIR|registry\.json/, 'and leaks no internals');
+});
+
+/**
+ * On a REFUSED issuance nothing has confirmed `u` — it is whatever the caller
+ * encrypted, up to `MAX_BODY_BYTES` of text of their choosing, per request, in
+ * the operator's log. The project's rule for foreign text at a boundary is
+ * `sanitizeText`; `identity.ts` applies it even to the authority name we asked
+ * for ourselves.
+ */
+test('a username offered for issuance is capped and flattened before it is logged', async (t) => {
+  const { keys } = await support(t);
+  t.after(upstream('esguest')); // WLO refuses: nothing about `u` is verified
+
+  const captured: string[] = [];
+  const realWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => { captured.push(String(chunk)); return true; }) as never;
+  try {
+    const flood = `zeile\nzwei${'x'.repeat(4000)}`;
+    await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-1', flood)), res(), deps());
+  } finally { process.stderr.write = realWrite; }
+
+  const logged = captured.join('');
+  assert.ok(logged.length < 600, `one refusal must not flood the log, got ${logged.length} chars`);
+  assert.doesNotMatch(logged, /zeile\\nzwei/, 'and carries no line break of the caller’s choosing');
+});
+
+/**
+ * `iat` inside the block comes from the BROWSER's clock — whoever built the
+ * block chose it, and a wrong system time or a deliberate value lands in the
+ * registry as the issue date an operator would prune or audit by. Record when
+ * WE registered it instead.
+ */
+test('the registry records our own issue time, not the one inside the block', async (t) => {
+  const { keys, path } = await support(t);
+  t.after(upstream('lehrerin'));
+  const before = Math.floor(Date.now() / 1000);
+
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-1', 'lehrerin', 'geheim', before - 3600)), res(), deps());
+
+  const stored = JSON.parse(readFileSync(path, 'utf8')) as { entries: { iat: number }[] };
+  assert.equal(stored.entries.length, 1);
+  assert.ok(stored.entries[0]!.iat >= before, `expected our clock, got ${stored.entries[0]!.iat}`);
+});
+
+// ── T14: issuing ───────────────────────────────────────────────────────────
+
+test('a block for working credentials is registered', async (t) => {
+  const { keys, registry } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys)), r, deps());
+  assert.equal(r.out.status, 200);
+  assert.equal(registry.has('id-1'), true, 'the id must be on the allow-list afterwards');
+});
+
+test('200 from WLO with the guest authority is not a login', async (t) => {
+  const { keys, registry } = await support(t);
+  const restore = upstream('esguest'); // exactly what wrong/absent credentials yield
+  t.after(restore);
+
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys)), r, deps());
+  assert.equal(r.out.status, 400, 'res.ok is not the test — the authority is');
+  assert.equal(registry.has('id-1'), false, 'nothing may be registered for a login that does not work');
+  assert.match(String(r.json()?.['error']), /Zugangsdaten/, 'and the page must be able to say why');
+});
+
+test('a rejected login is not registered and says so in German', async (t) => {
+  const { keys, registry } = await support(t);
+  const restore = upstream(null, 401);
+  t.after(restore);
+
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys)), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.equal(registry.has('id-1'), false);
+});
+
+test('a block we cannot open is refused without touching the registry', async (t) => {
+  const { registry } = await support(t);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', 'wlo2.aa.bb.cc'), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.equal(registry.has('id-1'), false);
+});
+
+test('a malformed body is refused', async (t) => {
+  await support(t);
+  for (const body of ['not json', '{}', JSON.stringify({ token: 42 })]) {
+    const r = res();
+    await handleAuthEndpoint(req('POST', '/auth/issue', body), r, deps());
+    assert.equal(r.out.status, 400, body);
+  }
+});
+
+test('no response ever carries the password back', async (t) => {
+  const { keys } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-9', 'lehrerin', 'streng-geheim')), r, deps());
+  assert.ok(!r.out.body.includes('streng-geheim'));
+});
+
+// ── T15: revoking ──────────────────────────────────────────────────────────
+
+test('revoking a listed block removes it', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', block(keys)), r, deps());
+  assert.equal(r.out.status, 200);
+  assert.equal(r.json()?.['revoked'], true);
+  assert.equal(registry.has('id-1'), false);
+});
+
+test('revoking an unlisted block reports honestly instead of erroring', async (t) => {
+  // 200 with `revoked: false`, not 404: a distinct answer for "this id exists"
+  // would turn the endpoint into an oracle for guessing ids.
+  const { keys } = await support(t);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', block(keys, 'never-listed')), r, deps());
+  assert.equal(r.out.status, 200);
+  assert.equal(r.json()?.['revoked'], false);
+});
+
+test('an expired block is unusable — the one place that opens a block checks the expiry', async (t) => {
+  const { keys, registry } = await support(t);
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: nowS - 100, exp: nowS - 1, k: 'ticket' });
+  await registry.add({ jti: 'id-2', label: 'lehrerin', iat: nowS - 100, exp: nowS + 3600, k: 'ticket' });
+  assert.equal(credentialFromHeader(`Bearer ${block(keys, 'id-1')}`), null, 'expired → /mcp answers 401');
+  assert.ok(credentialFromHeader(`Bearer ${block(keys, 'id-2')}`), 'not yet expired');
+});
+
+// ── R1 hardening (review 2026-11-07): the expiry cannot be issued away ─────
+
+test('re-issuing a block that is already listed keeps its expiry — /auth/issue cannot make it permanent', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'widget', label: 'lehrerin', iat: nowS, exp: nowS + 3600 });
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'widget')), r, deps());
+  assert.equal(r.out.status, 200, 'the same access, confirmed');
+  assert.equal(registry.expiresAt('widget'), nowS + 3600, 'and its expiry untouched');
+});
+
+test('an EXPIRED block cannot be issued again — it stays ended', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+  const nowS = Math.floor(Date.now() / 1000);
+  await registry.add({ jti: 'widget', label: 'lehrerin', iat: nowS - 50_000, exp: nowS - 10 });
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'widget', 'lehrerin', 'geheim', nowS - 50_000 + 3600 * 13)), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.equal(registry.has('widget'), false);
+});
+
+test('a block made more than a day ago cannot be newly issued — the entry it once had may be long gone', async (t) => {
+  const { keys, registry } = await support(t);
+  t.after(upstream('lehrerin'));
+  const old = Math.floor(Date.now() / 1000) - 25 * 3600;
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'alt', 'lehrerin', 'geheim', old)), r, deps());
+  assert.equal(r.out.status, 400);
+  assert.equal(registry.has('alt'), false);
+});
+
+// ── R2: self-revocation by possession (plan 2026-11-07) ────────────────────
+
+/** A server-to-server logout: the block in the header, no body, no content-type. */
+const bearerRevoke = (token: string, body?: string) => {
+  const q = req('POST', '/auth/revoke', body);
+  delete q.headers['content-type'];
+  if (body) q.headers['content-type'] = 'application/json';
+  q.headers['authorization'] = `Bearer ${token}`;
+  return q;
+};
+
+test('POST /auth/revoke with the block as Bearer revokes exactly it — the next /mcp call is a 401', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+  await registry.add({ jti: 'id-2', label: 'lehrerin', iat: 1 });
+  const mine = block(keys, 'id-1');
+  assert.ok(credentialFromHeader(`Bearer ${mine}`), 'usable before');
+
+  const r = res();
+  assert.equal(await handleAuthEndpoint(bearerRevoke(mine), r, deps()), true);
+  assert.equal(r.out.status, 200);
+  assert.equal(r.json()?.['revoked'], true);
+  assert.equal(credentialFromHeader(`Bearer ${mine}`), null, 'unusable after → /mcp answers 401');
+  assert.equal(registry.has('id-2'), true, 'the person’s other accesses stay');
+});
+
+test('Bearer revocation tells nobody which case it was — unreadable, foreign, unlisted look alike', async (t) => {
+  const { keys } = await support(t);
+  const answers: string[] = [];
+  for (const token of ['wlo2.xx.yy.zz', 'kein-block', block(keys, 'never-listed')]) {
+    const r = res();
+    await handleAuthEndpoint(bearerRevoke(token), r, deps());
+    answers.push(`${r.out.status} ${r.out.body}`);
+  }
+  assert.deepEqual(new Set(answers).size, 1, answers.join(' | '));
+  assert.match(answers[0]!, /^200 /);
+});
+
+test('the Bearer header wins over a body token', async (t) => {
+  const { keys, registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+  await registry.add({ jti: 'id-2', label: 'lehrerin', iat: 1 });
+  const r = res();
+  await handleAuthEndpoint(bearerRevoke(block(keys, 'id-1'), JSON.stringify({ token: block(keys, 'id-2') })), r, deps());
+  assert.equal(registry.has('id-1'), false);
+  assert.equal(registry.has('id-2'), true);
+});
+
+test('a Basic header is not a Bearer revocation — the body path still needs its JSON', async (t) => {
+  const { registry } = await support(t);
+  await registry.add({ jti: 'id-1', label: 'lehrerin', iat: 1 });
+  const q = req('POST', '/auth/revoke');
+  delete q.headers['content-type'];
+  q.headers['authorization'] = `Basic ${Buffer.from('a:b').toString('base64')}`;
+  const r = res();
+  await handleAuthEndpoint(q, r, deps());
+  assert.equal(r.out.status, 415);
+  assert.equal(registry.has('id-1'), true);
+});
+
+test('revoking needs a block we can open', async (t) => {
+  await support(t);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', 'wlo2.xx.yy.zz'), r, deps());
+  assert.equal(r.out.status, 400);
+});
+
+// ── T16: the brute-force guard ─────────────────────────────────────────────
+
+test('issuing is rate limited per address', async (t) => {
+  const { keys } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+  const d = deps({ rateLimiter: createRateLimiter(2) });
+
+  const codes: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const r = res();
+    await handleAuthEndpoint(post('/auth/issue', block(keys, `id-${i}`)), r, d);
+    codes.push(r.out.status);
+  }
+  assert.ok(codes.includes(429), `expected a 429 among ${codes.join(',')}`);
+});
+
+test('a stream of DIFFERENT logins from one address is refused as guessing', async (t) => {
+  // /auth/issue verifies credentials against WLO, so without this it is a
+  // password-guessing oracle with our address as the origin.
+  const { keys } = await support(t);
+  const restore = upstream('esguest'); // every attempt fails, as when guessing
+  t.after(restore);
+  const d = deps({ authAbuseLimiter: createDistinctValueLimiter(2, 600_000) });
+
+  const codes: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const r = res();
+    await handleAuthEndpoint(post('/auth/issue', block(keys, `id-${i}`, `user${i}`, `pw${i}`)), r, d);
+    codes.push(r.out.status);
+  }
+  assert.ok(codes.includes(429), `expected a 429 among ${codes.join(',')}`);
+});
+
+test('a body that is not declared JSON is refused before anything is read', async (t) => {
+  // The guessing guard on /auth/issue counts per client ADDRESS. A cross-origin
+  // `fetch` cannot reach here — no CORS header is sent, so the preflight fails —
+  // but a plain <form enctype="text/plain"> is a SIMPLE request that needs no
+  // preflight, and its body can be crafted to be valid JSON. Without this check
+  // a page could make every visitor submit a guess from their own address, and
+  // the author would read the outcome by presenting the block at /mcp later.
+  // That turns a per-address cap into no cap at all.
+  //
+  // Requiring the header is what makes the request non-simple again.
+  const { keys } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+
+  for (const path of ['/auth/issue', '/auth/revoke']) {
+    const r = res();
+    const body = JSON.stringify({ token: block(keys) });
+    await handleAuthEndpoint(req('POST', path, body, 'text/plain'), r, deps());
+    assert.equal(r.out.status, 415, `${path} refuses a text/plain body`);
+  }
+});
+
+test('a missing content-type is refused too, and the charset parameter is allowed', async (t) => {
+  const { keys } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+  const body = JSON.stringify({ token: block(keys) });
+
+  const missing = res();
+  await handleAuthEndpoint(req('POST', '/auth/revoke', body, ''), missing, deps());
+  assert.equal(missing.out.status, 415, 'absent is not "close enough"');
+
+  // `fetch` sends the charset on a string body in some runtimes; refusing that
+  // would break the very pages this server ships.
+  const charset = res();
+  await handleAuthEndpoint(
+    req('POST', '/auth/revoke', body, 'application/json; charset=utf-8'), charset, deps());
+  assert.equal(charset.out.status, 200, 'a parameter after the type is still JSON');
+});
+
+/**
+ * What revocation actually requires — pinned because the registry's own comment
+ * claimed something stronger until 2026-08-06 ("revoking a block requires
+ * holding it"), and the cap it argues for rests on this being understood right.
+ *
+ * Anyone can build a block: the public key is published so the browser can
+ * encrypt with it. So what `/auth/revoke` proves is knowledge of the access ID,
+ * not possession of the original block. That is deliberate — a compromised block
+ * must be revocable by whoever notices — but it means the ID is the secret, and
+ * a single log line or response field carrying one would turn this into "anyone
+ * can end anyone's access". The last two assertions are that boundary.
+ */
+test('revocation is authenticated by the access id, and the id never leaks', async (t) => {
+  const { keys, registry } = await support(t);
+  const restore = upstream('lehrerin');
+  t.after(restore);
+
+  const issued = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'id-geheim')), issued, deps());
+  assert.equal(issued.out.status, 200);
+  assert.equal(registry.has('id-geheim'), true);
+  // The issuance answer carries the label and nothing that identifies the block.
+  assert.doesNotMatch(issued.out.body, /id-geheim/, 'the access id must not be handed back');
+
+  // A DIFFERENT block, built by anyone against the published key, carrying the
+  // same id — and it revokes.
+  const forged = encodeAccessToken(
+    { v: 2, jti: 'id-geheim', u: 'jemand-anders', secret: 'x', iat: 1 }, keys.publicKeyPem);
+  const revoked = res();
+  await handleAuthEndpoint(post('/auth/revoke', forged), revoked, deps());
+  assert.equal(revoked.json()?.['revoked'], true);
+  assert.equal(registry.has('id-geheim'), false);
+});
+
+// ── 429 shape (chatbot team feedback 2026-11-07, B1) ───────────────────────
+
+test('the address budget answers like every other REST 429: code, retryAfter, the REST of the window', async (t) => {
+  // Before: a fixed `Retry-After: 60` and a bare `{error}` — a client branching
+  // on `code` saw nothing here, unlike on /api and /auth/status.
+  await support(t);
+  // A 20 s window, so "the rest of the window" (20) cannot pass for the old fixed 60.
+  const limiter = createRateLimiter(1, 20_000);
+  const d = deps({ rateLimiter: limiter });
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), res(), d);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), r, d);
+  assert.equal(r.out.status, 429);
+  const body = r.json();
+  assert.equal(body?.code, 'rate_limited');
+  const wait = Number(r.headers['Retry-After']);
+  assert.equal(body?.retryAfter, wait, 'header and body agree');
+  assert.equal(wait, 20, 'the rest of the window, not a fixed 60');
+  assert.match(String(body?.error), /Zu viele Anfragen/, 'the pages show this text to a person — it stays German');
+});
+
+test('too many distinct logins on /auth/issue carry code too_many_logins and the rest of THAT window', async (t) => {
+  const { keys } = await support(t);
+  t.after(upstream('esguest'));
+  const abuse = createDistinctValueLimiter(1, 120_000); // 120, never the old fixed 600
+  const d = deps({ authAbuseLimiter: abuse });
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'g-1', 'a', 'p1')), res(), d);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/issue', block(keys, 'g-2', 'a', 'p2')), r, d);
+  assert.equal(r.out.status, 429);
+  const body = r.json();
+  assert.equal(body?.code, 'too_many_logins');
+  assert.equal(body?.retryAfter, Number(r.headers['Retry-After']));
+  assert.equal(Number(r.headers['Retry-After']), 120);
+  assert.match(String(body?.error), /Zu viele verschiedene Anmeldungen/);
+});
+
+// ── review of B1–B3: an outage is not a refusal (finding 1) ────────────────
+
+for (const path of ['/auth/issue', '/auth/revoke-all'] as const) {
+  test(`${path}: an unreachable repository answers 503 upstream_unreachable, never "Zugangsdaten nicht akzeptiert"`, async (t) => {
+    const { keys, registry } = await support(t);
+    t.after(upstream(null, 503));
+    const r = res();
+    await handleAuthEndpoint(post(path, block(keys, 'down-1')), r, deps());
+    assert.equal(r.out.status, 503);
+    const body = r.json();
+    assert.equal(body?.code, 'upstream_unreachable');
+    assert.equal(body?.retryAfter, Number(r.headers['Retry-After']));
+    assert.ok(Number(r.headers['Retry-After']) > 0);
+    assert.match(String(body?.error), /nicht erreichbar/);
+    assert.doesNotMatch(String(body?.error), /nicht akzeptiert/);
+    assert.equal(registry.has('down-1'), false, 'nothing is granted on an unanswered check');
+  });
+}
+
+test('/auth/ticket: an unreachable repository is 503, not "ticket refused" — a widget must not drop a valid ticket', async (t) => {
+  await support(t);
+  t.after(upstream(null, 502));
+  const r = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}dd`), r, deps());
+  assert.equal(r.out.status, 503);
+  assert.equal(r.json()?.code, 'upstream_unreachable');
+});
+
+test('a refusal stays a 400 — the outage branch must not swallow it', async (t) => {
+  await support(t);
+  t.after(upstream(null, 401));
+  const r = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}ee`), r, deps());
+  assert.equal(r.out.status, 400);
+});
+
+test('the address-budget text uses the singular for one second (finding 7)', async (t) => {
+  await support(t);
+  const d = deps({ rateLimiter: createRateLimiter(1, 1_000) });
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), res(), d);
+  const r = res();
+  await handleAuthEndpoint(post('/auth/revoke', 'x'), r, d);
+  assert.equal(r.out.status, 429);
+  assert.match(String(r.json()?.error), /in einer Sekunde/);
+});
+
+test('the ticket path’s 429 waits out the TICKET limiter’s window, not the password one (finding 9)', async (t) => {
+  await support(t);
+  t.after(upstream('lehrerin'));
+  const d = deps({ ticketAbuseLimiter: createDistinctValueLimiter(1, 90_000), authAbuseLimiter: createDistinctValueLimiter(3, 600_000) });
+  await handleAuthEndpoint(postTicket(`${TICKET}aa`), res(), d);
+  const r = res();
+  await handleAuthEndpoint(postTicket(`${TICKET}bb`), r, d);
+  assert.equal(r.out.status, 429);
+  assert.equal(r.headers['Retry-After'], '90');
+});

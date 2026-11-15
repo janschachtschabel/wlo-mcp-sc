@@ -1,134 +1,66 @@
 /**
  * reranker.ts – Client-side relevance scoring + multi-query RRF reranking
- * Ported from wlo-search-app/src/searchStrategy.ts + api.ts
+ * Ported from wlo-search-app/src/searchStrategy.ts + api.ts.
+ * Query expansion (variants, synonyms, stopwords) lives in query-expand.ts.
  */
 
 import type { WloNode, SearchResponse, SearchCriterion, NgsearchContentType } from './wlo-api.js';
-import { ngsearch } from './wlo-api.js';
+import { ngsearch, resolvePositiveInt } from './wlo-api.js';
+import type { QueryVariant } from './query-expand.js';
+import { expandQuery } from './query-expand.js';
+import { comparable, nodeTitle, queryTerms as signalTerms, termMatches } from './node-match.js';
+import { log } from './logger.js';
+import { isClientGone } from './request-scope.js';
+import { logTerm } from './log-privacy.js';
 
-// ── Query Expansion ──────────────────────────────────────────────────────────
+// Candidate pool PER search variant for ranking — NOT the number of results
+// delivered (that is maxResults). Smaller pool = faster/smaller fetches at
+// minimally lower recall. Default 25 (reduced from 40), overridable via the
+// ``WLO_POOL_SIZE`` env var.
+const POOL_SIZE: number = resolvePositiveInt(process.env['WLO_POOL_SIZE'], 25, 'WLO_POOL_SIZE');
+/** How far one ranked window advances the backend offset — `enhancedSearch` reads this many per variant, whatever `maxResults` is. */
+export const ENHANCED_POOL_SIZE = POOL_SIZE;
 
-// Kandidaten-Pool JE Such-Variante fürs Ranking — NICHT die ausgelieferte
-// Trefferzahl (das ist maxResults). Kleinerer Pool = schnellere/kleinere
-// Fetches bei minimal geringerem Recall. Default 25 (von 40 gesenkt),
-// per Env ``WLO_POOL_SIZE`` übersteuerbar.
-const POOL_SIZE: number = (() => {
-  const v = parseInt(process.env['WLO_POOL_SIZE'] ?? '', 10);
-  return Number.isFinite(v) && v > 0 ? v : 25;
-})();
-
-// O4: Obergrenze für parallele Query-Varianten (= parallele ngsearch-Calls).
-// Varianten werden nach Gewicht sortiert und auf die besten MAX_VARIANTS
-// gekürzt, damit ein synonym-/termreicher Query nicht zweistellig viele
-// Backend-Calls auslöst. ``full:`` (Gewicht 1.0) bleibt dadurch immer dabei.
-const MAX_VARIANTS = 5;
-
-const DE_STOPWORDS = new Set([
-  'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einer', 'einem', 'einen', 'eines',
-  'und', 'oder', 'aber', 'als', 'auch', 'auf', 'aus', 'bei', 'bis', 'für', 'mit', 'nach',
-  'von', 'vor', 'wie', 'über', 'unter', 'durch', 'gegen', 'ohne', 'zwischen',
-  'ich', 'du', 'er', 'sie', 'wir', 'ihr', 'uns', 'sich',
-  'ist', 'sind', 'war', 'hat', 'wird', 'kann', 'soll', 'zum', 'zur', 'vom',
-  'nicht', 'noch', 'nur', 'sehr', 'schon', 'dann', 'wenn', 'dass', 'weil',
-  'im', 'am', 'an', 'in', 'zu', 'so', 'es', 'ob',
-]);
-
-const SYNONYM_MAP: Record<string, string[]> = {
-  'ki':                     ['künstliche intelligenz', 'artificial intelligence'],
-  'künstliche intelligenz': ['ki'],
-  'oer':                    ['open educational resources', 'freie bildungsmaterialien'],
-  'mathe':                  ['mathematik'],
-  'mathematik':             ['mathe'],
-  'bio':                    ['biologie'],
-  'biologie':               ['bio'],
-  'physik':                 ['physics'],
-  'chemie':                 ['chemistry'],
-  'geo':                    ['geographie', 'erdkunde'],
-  'geographie':             ['erdkunde', 'geo'],
-  'erdkunde':               ['geographie', 'geo'],
-  'info':                   ['informatik'],
-  'informatik':             ['info', 'computer science'],
-  'grundschule':            ['primarstufe'],
-  'primarstufe':            ['grundschule'],
-  'klima':                  ['klimawandel', 'klimaschutz'],
-  'klimawandel':            ['klima', 'klimaschutz', 'climate change'],
-  'nachhaltigkeit':         ['nachhaltige entwicklung', 'bne', 'sustainability'],
-  'bne':                    ['bildung für nachhaltige entwicklung', 'nachhaltigkeit'],
-};
-
-interface QueryVariant {
-  label: string;
-  weight: number;
-  criteria: SearchCriterion[];
-}
-
-function expandQuery(query: string): QueryVariant[] {
-  const trimmed = query.trim();
-  if (!trimmed) return [{ label: 'all', weight: 1, criteria: [{ property: 'ngsearchword', values: ['*'] }] }];
-
-  const terms = trimmed.split(/\s+/).filter(t => t.length >= 2);
-  const significantTerms = terms.filter(t => t.length >= 3);
-  const contentTerms = terms.filter(t => !DE_STOPWORDS.has(t.toLowerCase()));
-  const variants: QueryVariant[] = [];
-
-  variants.push({ label: `full:"${trimmed}"`, weight: 1.0, criteria: [{ property: 'ngsearchword', values: [trimmed] }] });
-  variants.push({ label: `title:"${trimmed}"`, weight: 0.95, criteria: [{ property: 'cclom:title', values: [trimmed] }] });
-
-  if (significantTerms.length > 0) {
-    variants.push({ label: `kw:${significantTerms.join(',')}`, weight: 0.9, criteria: [{ property: 'cclom:general_keyword', values: significantTerms }] });
-  }
-
-  if (contentTerms.length > 0 && contentTerms.length < terms.length) {
-    variants.push({ label: `nostop:"${contentTerms.join(' ')}"`, weight: 0.85, criteria: [{ property: 'ngsearchword', values: [contentTerms.join(' ')] }] });
-  }
-
-  const queryLower = trimmed.toLowerCase();
-  const synonymQueries = new Set<string>();
-  for (const [term, synonyms] of Object.entries(SYNONYM_MAP)) {
-    // Match on word boundaries (umlaut-aware) so a key like "klima" does NOT
-    // fire inside "klimawandel", and the replace can't corrupt a substring
-    // (the old `.replace(term, syn)` turned "geographie" → "geographiegrafie").
-    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(?<![\\wäöüß])${esc}(?![\\wäöüß])`, 'i');
-    if (re.test(queryLower)) {
-      for (const syn of synonyms) {
-        const expanded = queryLower.replace(re, syn);
-        if (expanded !== queryLower) synonymQueries.add(expanded);
-      }
-    }
-  }
-  for (const synQuery of synonymQueries) {
-    variants.push({ label: `syn:"${synQuery}"`, weight: 0.6, criteria: [{ property: 'ngsearchword', values: [synQuery] }] });
-  }
-
-  // O4: Die früheren Einzelterm-Varianten (term:"X", Gewicht 0.5) sind
-  // entfernt — sie erzeugten je 1 ngsearch-Call PRO Term bei geringstem
-  // Mehrwert, da die Keyword-Variante (kw:) die Einzelterme über
-  // cclom:general_keyword bereits abdeckt. Stattdessen: nach Gewicht
-  // sortieren und auf die besten MAX_VARIANTS deckeln.
-  variants.sort((a, b) => b.weight - a.weight);
-  return variants.slice(0, MAX_VARIANTS);
-}
+// Final-score blend: text/metadata quality dominates, cross-variant RRF
+// consensus nudges the order, and appearing in several variants earns a small
+// bonus capped below either weight — so consensus can break ties but never
+// outvote actual relevance.
+const QUALITY_WEIGHT = 0.8;
+const RRF_WEIGHT = 0.1;
+const APPEARANCE_BONUS_MAX = 0.1;
 
 // ── Relevance Scoring ────────────────────────────────────────────────────────
 
-function termInText(term: string, text: string): boolean {
-  return text.includes(term);
-}
+// Scoring and the local matcher must agree on what counts as a hit — they were
+// two copies of `text.includes(term)`, and the copy here decided the ranking a
+// user sees. `termMatches` holds the rule and the measurement behind it.
+const termInText = termMatches;
 
 function computeRelevanceScore(node: WloNode, query: string): number {
   let score = 0;
   const props = node.properties ?? {};
-  const queryLower = query.toLowerCase();
-  const queryTerms = queryLower.split(/\s+/).filter(t => t.length >= 2);
+  // `comparable` on BOTH sides: the terms come back in one Unicode form, and a
+  // title that is only lowercased keeps its own — a decomposed umlaut then
+  // matches neither the composed query nor, any longer, a decomposed one.
+  const queryLower = comparable(query);
+  // Drop stopwords: a stopword ("die", "und", …) must not act as a relevance
+  // signal (a title merely containing "die" is not a match). Phrase-level checks
+  // below still use the full `queryLower`, so exact-phrase matches are unaffected.
+  const queryTerms = signalTerms(queryLower);
 
-  const title = (props['cclom:title']?.[0] ?? props['cm:name']?.[0] ?? '').toLowerCase();
-  const desc  = (props['cclom:general_description']?.[0] ?? '').toLowerCase();
-  const keywords = (props['cclom:general_keyword'] ?? []).map((k: string) => k.toLowerCase());
+  // Shared title chain (node-match.ts) so a node titled only at cm:title /
+  // node-level scores against its real title, not an empty string.
+  const title = comparable(nodeTitle(node));
+  const desc  = comparable(props['cclom:general_description']?.[0] ?? '');
+  const keywords = (props['cclom:general_keyword'] ?? []).map((k: string) => comparable(k));
   const allKw = keywords.join(' ');
 
-  // Title relevance
-  if (title.includes(queryLower)) {
+  // Title relevance. The phrase check goes through `termMatches` too: it awards
+  // the largest single bonus here (+30), and for a ONE-WORD query it is exactly
+  // the substring test the term branch below already had to give up. A phrase of
+  // more than three characters — which every multi-word query is — still matches
+  // anywhere, so real phrase behaviour is untouched.
+  if (termInText(queryLower, title)) {
     score += 30;
     if (title === queryLower) score += 20;
     else if (title.startsWith(queryLower)) score += 10;
@@ -148,7 +80,7 @@ function computeRelevanceScore(node: WloNode, query: string): number {
   if (queryTerms.length > 1 && kwHits === queryTerms.length) score += 10;
 
   // Description relevance
-  if (desc.includes(queryLower)) score += 8;
+  if (termInText(queryLower, desc)) score += 8;
   else { for (const term of queryTerms) { if (termInText(term, desc)) score += 3; } }
 
   // Penalty: not in title or keywords
@@ -189,12 +121,13 @@ function getNodeId(node: WloNode): string {
 }
 
 function isDeletedNode(node: WloNode): boolean {
-  const props = node.properties ?? {};
-  const title = props['cclom:title']?.[0] ?? props['cm:name']?.[0] ?? node.name ?? '';
-  const desc  = props['cclom:general_description']?.[0] ?? '';
+  // Full title chain (incl. cm:title + node.title): a page variant titled only
+  // at cm:title must not be misclassified as a deleted placeholder.
+  const title = nodeTitle(node);
+  const desc  = node.properties?.['cclom:general_description']?.[0] ?? '';
   if (title.includes('Element wurde gelöscht') || title.includes('Element was removed')) return true;
   if (desc.includes('Element wurde gelöscht') || desc.includes('Element was removed')) return true;
-  if (!title.trim() && !node.title) return true;
+  if (!title.trim()) return true;
   return false;
 }
 
@@ -228,8 +161,8 @@ function mergeAndRank(
   for (const e of entries) {
     const normRrf     = e.rrfScore / maxRrf;
     const normQuality = e.qualityScore / maxQuality;
-    const bonus       = Math.min(e.appearances / results.length, 1) * 0.1;
-    e.finalScore = normQuality * 0.8 + normRrf * 0.1 + bonus;
+    const bonus       = Math.min(e.appearances / results.length, 1) * APPEARANCE_BONUS_MAX;
+    e.finalScore = normQuality * QUALITY_WEIGHT + normRrf * RRF_WEIGHT + bonus;
   }
 
   // Deterministic tie-breaker: when scores are equal, sort by nodeId
@@ -242,8 +175,10 @@ function mergeAndRank(
     return a.nodeId.localeCompare(b.nodeId);
   });
 
-  const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
-  const minScore   = Math.max(5, queryTerms.length * 3);
+  // Same stopword-filtered term list as computeRelevanceScore: the floor must
+  // be calibrated on the terms that can actually score, or a stopword-heavy
+  // query over-filters and silently flips to the RRF-only fallback below.
+  const minScore   = Math.max(5, signalTerms(query).length * 3);
   const passing = entries.filter(e => e.qualityScore >= minScore);
   // Graceful degradation: if the text-overlap quality floor would discard
   // EVERY hit (e.g. the backend matched via full-text/PDF body or keywords
@@ -255,18 +190,59 @@ function mergeAndRank(
 
 // ── Public: Enhanced search ──────────────────────────────────────────────────
 
+/**
+ * What a caller may trade for speed. Every field defaults to the single
+ * search's behaviour — `search_wlo_content` and `searchAll` pass none of them.
+ * The batch search (`services/content-search-many.ts`) passes all three.
+ */
+export interface EnhancedSearchOptions {
+  /** Keep only the best N variants by weight (`full` always survives). */
+  maxVariants?: number;
+  /** Candidates read per variant, instead of `WLO_POOL_SIZE`. */
+  poolSize?: number;
+  /** Runs each repository request — the seam for a pool SHARED across searches. */
+  schedule?: <T>(task: () => Promise<T>) => Promise<T>;
+}
+
+/** A ranked search's answer plus the score each returned node was ranked by. */
+export interface ScoredSearch {
+  response: SearchResponse;
+  /** nodeId → final rerank score (0…1, relative to the best hit of THIS query). */
+  scores: Map<string, number>;
+}
+
 export async function enhancedSearch(
   query: string,
   contentType: NgsearchContentType,
   additionalCriteria: SearchCriterion[],
   maxResults: number,
+  skipCount = 0,
+  opts: EnhancedSearchOptions = {},
 ): Promise<SearchResponse> {
-  const variants = expandQuery(query);
+  return (await enhancedSearchScored(query, contentType, additionalCriteria, maxResults, skipCount, opts)).response;
+}
+
+/** `enhancedSearch`, with the scores — for a caller that compares hits ACROSS searches. */
+export async function enhancedSearchScored(
+  query: string,
+  contentType: NgsearchContentType,
+  additionalCriteria: SearchCriterion[],
+  maxResults: number,
+  skipCount = 0,
+  opts: EnhancedSearchOptions = {},
+): Promise<ScoredSearch> {
+  // `expandQuery` returns its variants sorted by weight, so a cut keeps the best.
+  const variants = expandQuery(query).slice(0, opts.maxVariants);
+  const poolSize = opts.poolSize ?? POOL_SIZE;
 
   const settled = await Promise.allSettled(
     variants.map(async variant => {
       const criteria = [...variant.criteria, ...additionalCriteria];
-      const response = await ngsearch(criteria, contentType, POOL_SIZE);
+      // skipCount is the backend offset applied per variant before the pool is
+      // merged/reranked — enables "more results" paging. Default 0 = first page.
+      const request = () => ngsearch(criteria, contentType, poolSize, skipCount);
+      // Without a scheduler the request is sent exactly as before — no extra turn.
+      const response = await (opts.schedule ? opts.schedule(request) : request());
       return { variant, response };
     })
   );
@@ -275,23 +251,51 @@ export async function enhancedSearch(
     .filter((r): r is PromiseFulfilledResult<{ variant: QueryVariant; response: SearchResponse }> => r.status === 'fulfilled')
     .map(r => r.value);
 
-  if (successful.length === 0) return { nodes: [], pagination: { total: 0, from: 0, count: 0 } };
+  // One variant failing is what allSettled is for — the others still answer.
+  // But ALL of them failing is not an empty result set, it is a search that
+  // could not be performed: the repository is unreachable, or it rejected our
+  // credentials. Reporting "0 hits" there turns a configuration fault into an
+  // apparent fact about the world, and the model passes it on as one. Measured
+  // 2026-07-31: a wrong service password made every call 401 and every search
+  // answer "Gefundene Treffer gesamt: 0" with no error at all.
+  // The client of this request hung up: `allSettled` has swallowed that into
+  // ordinary rejections. Passed on as what it is — wrapped into "search failed"
+  // it was logged as a warning here and an error in the tool, for every caller
+  // that merely closed a tab.
+  const gone = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected' && isClientGone(r.reason));
+  if (gone) throw gone.reason;
+  if (successful.length === 0) {
+    const reason = settled.find(r => r.status === 'rejected')?.reason;
+    const detail = reason instanceof Error ? reason.message : String(reason ?? 'unknown');
+    log.warn('every query variant failed — reporting an error, not an empty result', { query: logTerm(query), detail });
+    throw new Error(`search failed: no query variant could be executed (${detail})`);
+  }
 
   const ranked   = mergeAndRank(successful, query);
   const filtered = ranked.filter(r => !isDeletedNode(r.node));
-  const topNodes = filtered.slice(0, maxResults).map(r => r.node);
+  const top = filtered.slice(0, maxResults);
+  const topNodes = top.map(r => r.node);
   // Report the TRUE backend hit count of the primary full-query variant
   // (label "full:…") as the total. Previously this was clamped to
-  // filtered.length (≤ POOL_SIZE = 40), badly under-reporting "found N" for
-  // broad queries. `count` stays the number actually returned this page.
+  // filtered.length (≤ the merged POOL_SIZE window), badly under-reporting
+  // "found N" for broad queries. `count` stays the number returned this page.
   const fullVariant = successful.find(r => r.variant.label.startsWith('full:'));
   const apiTotal = fullVariant
     ? fullVariant.response.pagination.total
     : Math.max(...successful.map(r => r.response.pagination.total), 0);
 
   return {
-    nodes: topNodes,
-    pagination: { total: apiTotal, from: 0, count: topNodes.length },
+    response: {
+      nodes: topNodes,
+      pagination: { total: apiTotal, from: skipCount, count: topNodes.length },
+      // The last window: every variant came back short of a full pool. A variant
+      // that FAILED tells nothing, so with one of those the end is not claimed.
+      exhausted: successful.length === settled.length && successful.every(r => r.response.nodes.length < poolSize),
+      // Said, not only withheld from `exhausted`: a caller that reads an empty
+      // window as the end would otherwise report "no hits" over a variant nobody read.
+      ...(successful.length < settled.length ? { incomplete: true } : {}),
+    },
+    scores: new Map(top.map(r => [r.nodeId, r.finalScore])),
   };
 }
 
@@ -311,8 +315,8 @@ export function rerankNodes(nodes: WloNode[], query: string): WloNode[] {
 /** Deterministic alphabetical sort by title (with nodeId tie-breaker). */
 export function sortByTitle(nodes: WloNode[]): WloNode[] {
   return [...nodes].sort((a, b) => {
-    const ta = (a.properties?.['cclom:title']?.[0] ?? a.properties?.['cm:name']?.[0] ?? a.name ?? '').toLowerCase();
-    const tb = (b.properties?.['cclom:title']?.[0] ?? b.properties?.['cm:name']?.[0] ?? b.name ?? '').toLowerCase();
+    const ta = nodeTitle(a).toLowerCase();
+    const tb = nodeTitle(b).toLowerCase();
     if (ta !== tb) return ta.localeCompare(tb, 'de');
     return getNodeId(a).localeCompare(getNodeId(b));
   });

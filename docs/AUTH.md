@@ -1,0 +1,849 @@
+# Authentication — how a person signs in to this server
+
+Who this is for: whoever operates this deployment, and whoever has to change the
+auth code later. It explains **what runs, why it is built that way, and which
+decisions must not be quietly undone.** Every number and behaviour here was
+measured against a live repository; where a claim rests on a measurement, the
+date is given, and the design documents in `docs/plans/` hold the raw figures.
+
+---
+
+## 1. The constraint everything follows from
+
+edu-sharing has no token to hand out.
+
+Probed 2026-07-30: its own OpenAPI declares exactly two security schemes,
+`basicAuth` and `cookieAuth`. There is no OIDC discovery document, no dynamic
+client registration, and a `Bearer` header is **ignored rather than rejected** —
+a request carrying one looks authenticated and silently is not.
+
+That rules out the obvious design. This server cannot receive a token, exchange
+it, and forward it upstream, because there is nothing upstream that would accept
+one. **Every scheme that reaches edu-sharing therefore carries the user's actual
+password.** The whole of the rest of this document is about carrying it as
+little and as briefly as possible.
+
+Do not re-derive this. If you want to contradict it, re-measure it.
+
+A second measurement shapes the code just as much. Asked "who am I?" without a
+credential, edu-sharing answers **200** with the authority `esguest`; with a
+*wrong* credential it answers **401** (measured against production 2026-07-31, on
+the identity endpoint and the search endpoints alike). So:
+
+> **A 200 is not proof of a login.** Every check of a credential in this server
+> reads the reported *authority*, never the status code. `auth/identity.ts` owns
+> that rule and `auth/access-issue.ts` is its only gate-keeping caller.
+
+---
+
+## 2. The three identities
+
+| Mode | Where it comes from | May read | May write |
+|---|---|---|---|
+| **anonymous** | no header — or the explicit `wlo-anon.v1` token (§5b) | public material | never |
+| **service** | `WLO_SERVICE_USER` + `WLO_SERVICE_PASSWORD` | whatever that account sees — **for everybody** | only with `WLO_ALLOW_SERVICE_WRITES` |
+| **user** | the caller's own access block | that person's rights | always |
+
+The service account is a shared identity: everything it can see, every user of
+this deployment can see, and every change it makes is attributed to it rather
+than to a person. That is why writing under it is off by default — it is a
+decision, not a default.
+
+Two scopes worth stating explicitly:
+
+- The service account applies to **`POST /mcp` only.** The public REST layer
+  (`GET /api/*`) and the launcher run anonymously by construction
+  (`runAnonymous` wraps the whole HTTP handler; the MCP branch elevates
+  deliberately). Otherwise everything the account can see would be world-readable
+  without a login.
+- **Write permission is not the same as authentication.** `services/write/credential-gate.ts`
+  decides it separately, and it is stricter.
+
+---
+
+## 3. The access block
+
+An access block is the user's WLO credential, encrypted so that only this server
+can open it.
+
+```
+wlo2.<b64u(wrappedKey)>.<b64u(iv)>.<b64u(ciphertext||gcmTag)>
+```
+
+- A fresh **AES-256-GCM** key encrypts the payload; **RSA-2048-OAEP-SHA256**
+  wraps that key. Hybrid rather than plain RSA because OAEP caps the plaintext at
+  190 bytes — a long password plus the id can exceed it, and the failure would
+  hit only some users and only in production.
+- The payload is `{ v: 2, jti, u, secret, iat }` (plus `k` for a ticket or
+  session block): the access id, the WLO user name, the password, and the
+  issuing browser's clock — for a ticket or session block the server's listing
+  instant instead, compared exactly (§5c, §5d).
+- **Everything is inside the AEAD, especially the `jti`.** Revocation acts on
+  that id, so an id sitting *outside* the authenticated payload could be swapped
+  — a holder of a revoked block would splice in one that is still listed and
+  carry on. `tests/access-token.test.ts` pins that splice as unreadable.
+
+**The password is encrypted in the browser.** `/auth` and `/oauth/authorize`
+fetch the public key from `GET /auth/public-key` and use WebCrypto; what leaves
+the device is the block. The server opens it in memory to verify the login and
+to build the `Authorization: Basic` header for the repository — it is never
+written to disk.
+
+`src/auth/access-token.ts` is pure: no HTTP, no filesystem, no environment. It
+also contains `encodeAccessToken`, which production never calls — it is the
+executable specification of the wire format, and it is what the browser
+implementation is validated against.
+
+### Where the credential may travel
+
+One rule, one place: `src/wlo-fetch.ts` is the only module that attaches a
+credential, and it attaches it only to the configured repository host. Nothing
+else in the codebase can put a password on the wire.
+
+---
+
+## 4. The allow-list
+
+`src/auth/access-registry.ts` holds which blocks are still valid. Two properties
+matter more than the mechanism:
+
+**It is an ALLOW-list, not a deny-list.** A deny-list that goes missing silently
+resurrects every revoked block; an allow-list that goes missing invalidates
+everything and people fetch a new one. Inconvenient beats unsafe, so *every*
+failure here closes the door: only an **absent** file counts as "first start". A
+present-but-unreadable or malformed one disables the feature and logs why.
+
+**It holds ids, never credentials** — `{ jti, label, iat }` plus the optional kind `k`, session marker `sess`, expiry `exp` and confirmed account name `acct`, and nothing else,
+asserted by test. It is also the only module in this project that writes to disk
+at runtime, which is why the container mounts exactly one writable volume and
+keeps everything else read-only. `tests/shared-rule-discipline.test.ts` enforces
+that claim against the source rather than trusting this paragraph.
+
+**An entry may carry an expiry** (`exp`, 2026-11-07, chatbot R1). The token
+stays the block — no wrapper, no refresh token — and the expiry lives in the
+entry, checked where every block is opened (`registry.has`, called by
+`credentialFromHeader`); an expired block reads exactly like a revoked one, 401
+on `/mcp`. **12 h for ticket blocks** (a fresh exchange of the same live ticket
+writes the entry again once it has expired — before that it is not extended, so
+a session longer than 12 h meets one 401 and exchanges again) **and for OAuth logins whose verified
+`redirect_uri` lies in `WIDGET_OAUTH_ORIGINS`**. Everything else — a pasted block,
+an AI host's OAuth login, every entry written before — never expires. Optional
+field, no format bump: an old build ignores it, which on a rollback lifts the
+expiry rather than the access. `GET /auth/status` reports it as `expiresAt`.
+Expired entries never count against the per-account cap (they are deleted 48 h
+after expiry, at the account's next write): a widget's OAuth login has no `k` and counts
+with the pasted blocks, and logging in every 12 h would otherwise retire the
+block pasted into an AI host within a week (the 2026-08-13 defect, by a new
+route). A separate kind would do it too, but an unknown `k` fails an old build
+closed on rollback.
+
+**The expiry cannot be issued away** (review 2026-11-07). `registry.add` replaces
+a whole entry, and `/auth/issue` or a consent through any non-widget
+`redirect_uri` would otherwise have listed a stolen widget block again WITHOUT
+its expiry. So issuance (`access-issue.ts`) confirms a listed id without
+rewriting it, refuses an id that is known but expired — expired entries are
+kept as that record for `EXPIRED_KEPT_S` (48 h) and do not count against the
+cap — and refuses a block whose own `iat` is more than 24 h off our clock
+(`ISSUE_MAX_SKEW_S`), so a block can never outlive its record. The pages mint
+a fresh block moments before issuing it, so none of this touches a real login.
+What it does not close: a block REVOKED within its first day can be issued again
+by whoever holds it — revocation by id was never durable against a holder; a
+password change is.
+
+Writes are serialised and **undone on failure**, so the list never grants what it
+could not record. Ten blocks per WLO account **and kind** (`MAX_BLOCKS_PER_LABEL`
+= 10, counted apart for pasted/OAuth blocks and for ticket blocks, §5c); the
+oldest of that kind is evicted beyond that, because nothing removes an entry
+without an expiry on its own — both revocation paths below need a person to act.
+
+**A block is length-bounded where it is decoded** (`MAX_BLOCK_CHARS` = 4096,
+`decodeAccessToken` — the one place the paste route, the `Bearer` header and the
+OAuth consent all pass through). The payload takes arbitrary padding, and
+`/oauth/authorize` retains the block string in the code store; a real block is
+573 characters (605 measured against the deployed key), and the bound leaves
+room for an RSA-4096 rotation.
+
+### What revocation actually proves
+
+There are two paths, and they prove different things. That is not redundancy:
+each one is the *only* path available on one of the two routes into the server.
+
+**`POST /auth/revoke` — by block.** Takes a block, decrypts it, removes its
+`jti`. Note carefully what that does and does not establish:
+
+> Revocation requires **knowledge of the access id**, not possession of the
+> original block. The public key is published so browsers can encrypt, so anyone
+> can build a block carrying a given id.
+
+That is the intended trade — whoever notices a compromise must be able to act
+immediately — but it makes the id the secret. **It must never be logged and never
+appear in a response.** `tests/auth-endpoints.test.ts` pins both halves: a forged
+block with a listed id revokes, and the issuance answer does not carry the id.
+
+**The same endpoint takes the block as `Authorization: Bearer`** (2026-11-07,
+chatbot R2) — for a client logging a person out: the chatbot backend holds the
+block the widget signed in with (ticket exchange or OAuth) and ends exactly that
+one. No body and no JSON needed: the header already makes the request
+preflight-bound, and `/auth*` answers no foreign origin. The answer is `200
+{revoked}` for every case — unreadable, foreign, unlisted, already revoked —
+because logging out is idempotent and the distinction helps only someone without
+the block. It grants nothing the body path did not: the property above (knowing
+the id is enough) is unchanged. The header wins over a body token.
+
+**`POST /auth/revoke-all` — by account.** Verifies a WLO login and removes every
+entry of the account the repository confirms for it. This exists because the path above is unreachable
+for OAuth users: there the block goes to the AI host and **the person never sees
+it**, so an id they cannot read is an id they cannot revoke. Until 2026-08-06 an
+OAuth-issued access could only be ended by the operator editing the registry file
+— a gap found in use, not in review.
+
+Here the password is the proof, and the check that establishes it may never be
+skipped. The same published key that lets anyone forge a block carrying an *id*
+lets anyone forge one carrying a *name*; without the upstream check, a guessed
+username would disconnect a stranger's AI host. So the login is verified at the
+reported **authority** — not at the status code, which is `200` either way — in
+`auth/access-verify.ts`, the single module all three password-checking endpoints
+go through. `tests/shared-rule-discipline.test.ts` pins that there is one such
+module and that both callers use it; `tests/auth-revoke-all.test.ts` pins that a
+rejected login removes nothing.
+
+Matching is by the **confirmed account**, exactly. edu-sharing accepts one login
+in several spellings — measured on staging 2026-11-12: `LEHRERIN` and `Lehrerin`
+sign in as `lehrerin` — so an entry carries, beside the spelling its block uses
+(`label`, what the block is bound to), the account the repository confirmed
+(`acct`, in full, not the 120-character display form). Revocation and the
+per-account cap go by `acct`. No case is folded by rule: on an instance where
+`Jan` and `jan` are two accounts that would wipe a stranger's accesses.
+
+Entries listed before 2026-11-12 carry no `acct`. They are found by their label:
+by the confirmed account, or by the spelling typed now — the latter only for
+entries without an `acct`, never against somebody's confirmed name. **What is
+left:** such an entry under a spelling that is neither is missed until its block
+is issued once more (which records the account) — the page reports the number
+removed, so the miss is visible rather than silent.
+
+---
+
+## 5. Three ways in — and a fourth for one deployment shape
+
+All end at the same place: a `wlo2.…` block the caller presents as
+`Authorization: Bearer …`.
+
+### 5a. Paste it once — `/auth`
+
+For a client with a header or API-key field. The user opens `/auth`, types their
+WLO login, the page encrypts locally, `POST /auth/issue` verifies the login
+upstream and lists the id, and the page shows the block. Two copy buttons: with
+and without the `Bearer ` prefix, because a client that wants only the token
+silently fails when the word travels with it (that cost a live afternoon).
+
+The three pages a person sees — `/auth`, `/auth-revoke.html` and the OAuth consent screen — are German
+as served and English for a browser that prefers it; a DE/EN switch sits at the top, `?lang=de|en` forces one,
+and nothing about the choice is stored. Messages the server returns stay German and are labelled as such.
+
+Revoke at `/auth-revoke.html` (or `GET /auth/revoke`, the same page) — by pasting
+the block back, or by logging in to end every access of the account at once.
+
+### 5b. OAuth 2.1 — every other client
+
+Measured 2026-08-05: ChatGPT's connector offers **no header or API-key field at
+all** — only OAuth, none, or mixed. So for that client the block cannot be
+entered by hand, and OAuth is the only mechanism that reaches every host.
+
+```
+client → GET /.well-known/oauth-authorization-server   (RFC 8414)
+       → GET /.well-known/oauth-protected-resource     (RFC 9728)
+       → POST /oauth/register                          (RFC 7591, open)
+       → browser to GET /oauth/authorize               (consent + WLO login)
+       → POST /oauth/authorize                         (mints a code)
+       → POST /oauth/token                             (code → access token)
+```
+
+Both spellings of each discovery path are served (`…/mcp` too): our issuer has no
+path component, so the plain form is the correct one, but a client guessing wrong
+would otherwise see a 404 and conclude this server has no OAuth at all.
+
+Verified live: **ChatGPT (2026-08-05) and Claude (2026-08-06) both discover this
+unprompted**, with no client id or secret entered by hand.
+
+The consent page has **three** exits, not two: sign in, connect without an
+account, or refuse.
+
+The middle one exists because of a shape that only shows up live (measured
+2026-08-06 on claude.ai): a client that has found the discovery documents *wants
+a token* and cannot simply send no header. Without an answer for "I have no WLO
+account" its only choices are signing in or cancelling — and cancelling is not a
+connection. Someone who just wants to search was stuck.
+
+That exit yields the token `wlo-anon.v1`, and it is a **constant on purpose**:
+
+- It grants exactly what a request with no `Authorization` grants. Forging it
+  saves the forger the trouble of omitting the header.
+- So it needs no key material, no allow-list entry, no revocation and no expiry
+  — none of those would protect anything. It therefore also works on a
+  deployment that has no access blocks configured.
+- Nothing is verified when it is issued, because there is no credential to
+  verify: no upstream call, no registry write, and the guessing limiter is not
+  touched (it counts credentials, and there is none).
+
+Two properties keep it honest. **The intent must be stated** — a consent request
+that merely forgot its access block still fails, rather than quietly becoming an
+anonymous connection. And **the match is exact**: a typo in the token surfaces as
+a broken token (401), not as anonymous. Where "anonymous" lands is defined by
+§2 — it behaves exactly like a call with no header, which on a deployment with a
+service account means that account's rights.
+
+Three further decisions are load-bearing:
+
+**The access token IS the block.** No second credential is minted, so nothing
+rests on disk and no session store exists to lose on a restart — and one entry in
+the allow-list covers both routes, so revoking it ends both. There is no
+`refresh_token` and no `expires_in`: access ends when the block is revoked, the
+WLO password changes, or — for ticket and widget blocks — the allow-list entry
+expires (§4). Do not wrap it in another token.
+
+What that does *not* mean, and the correction is the point: the block itself
+never reaches the OAuth user, so **`/auth/revoke` is unreachable for them** —
+for the PERSON; the client that holds the token can end it with
+`POST /auth/revoke` and the token as `Bearer` (§4).
+Ending an OAuth access is what `/auth/revoke-all` is for (§4). An earlier version
+of this document claimed a single revocation covered both ways in without saying
+which revocation — true for the paste route, false for OAuth.
+
+**A request with no `Authorization` still answers 200, anonymously.** The `401`
+fires only for a Bearer that was *presented and cannot be used* — forged, or
+revoked. That is the doorway the MCP specification prescribes, and it carries
+`WWW-Authenticate` with the `resource_metadata` pointer. A `Basic` header we
+cannot parse degrades to anonymous instead: that is a WLO login the caller got
+wrong, not a token of ours, and an authorization flow would answer a question
+they did not ask.
+
+**The request is checked before anyone sees a password field, and a refusal
+never redirects.** Sending an error to a `redirect_uri` we did not recognise
+would turn this server into a redirector. The check lives once, in
+`src/auth/oauth-authorize.ts`, and both the GET (what to show) and the POST (what
+to mint) run it — a second copy is where the PKCE requirement quietly disappears
+from the path that actually hands out the code.
+
+### The pieces the flow needs
+
+| | Shape | Lifetime | Why |
+|---|---|---|---|
+| `client_id` | `wloc1.<iv>.<ct‖tag>`, AES-256-GCM under a key derived from the RSA key via HKDF | forever | carries its own registration, so a deploy does not break every client — the allow-list is the only disk writer |
+| authorization code | `mcp_ac_` + 32 random bytes, stored under its SHA-256 | 60 s, one use, ≤1000 outstanding | a one-time bearer of somebody's access |
+| PKCE | S256 only; challenge 43 chars, verifier 43–128 (RFC 7636 §4.1) | per flow | `plain` proves nothing — the "proof" is the string that travelled in the URL |
+
+The code store deliberately does **not** import `access-token.ts`: the block
+waits there as a ciphertext and is never opened between authorization and token
+exchange. We hold the key and could — we do not, because nothing on that path
+needs the password.
+
+At `/oauth/token` the code is **removed from the store before any check runs**. A
+failed PKCE proof must not leave it retryable. And every failure answers the same
+`invalid_grant` text, because which check failed is exactly what the holder of a
+stolen code would like to learn.
+
+### 5c. A ticket from the host page — `POST /auth/ticket`
+
+For a chat widget embedded **inside an edu-sharing page**. The page already
+knows who is signed in and can hand the widget that person's ticket (the same
+`?ticket=…` convention the md-editor consumes in production); typing a WLO
+password a second time inside somebody else's page is exactly the shape §1
+refuses to normalise. The widget posts `{"ticket": "…"}`, this server proves it
+upstream — at the reported **authority**, never the status code, through the
+same `proveLogin` the password paths use — and answers with an ordinary block:
+
+```
+POST /auth/ticket          {"ticket": "TICKET_…"}
+  → 200 {"ok": true, "block": "wlo2.…", "authority": "…", "displayName": "…"}
+  → 400  ticket refused (invalid or expired)
+  → 503  {code: "upstream_unreachable", retryAfter} — the repository gave no answer: no verdict on the ticket
+  → 404  this deployment does not issue blocks (no WLO_AUTH_PRIVATE_KEY)
+  → 429  too many distinct credentials from this address
+```
+
+The block carries `k: 'ticket'` in its payload and decodes to
+`Authorization: EDU-TICKET <ticket>` upstream instead of `Basic` — the scheme
+edu-sharing accepts for tickets. Everything else is deliberately NOT special:
+same registry entry (labelled with the verified authority, so
+`/auth/revoke-all` ends ticket accesses together with the account's other
+blocks), same revocation, same abuse buckets.
+
+**When the ticket dies at the repository, access ends — loudly** (measured
+2026-08-13, against staging, and the earlier claim of `401` here was wrong):
+
+| presented                  | `/iam/…/-me-`      | search, node, children |
+|----------------------------|--------------------|------------------------|
+| nothing                    | 200, `esguest`     | 200, results           |
+| `Basic`, wrong password    | 401                | —                      |
+| **`EDU-TICKET`, dead**     | **404**            | **500** `A valid SecureContext was not provided` |
+| `Bearer`, anything         | 200, `esguest`     | — (ignored, P0 2026-07-30) |
+
+The row that matters is the one that is NOT there: a dead ticket never answers
+200 as a guest. That was the fear worth measuring, because it is the failure
+`auth/identity.ts` exists for — a credential that looks accepted and silently
+is not. Here the repository refuses outright, `ngsearch` throws on any non-OK
+rather than degrading (`wlo-search.ts`, and its comment says why: an empty
+result set would be read as "nothing matched"), and the tool reports an error.
+`wlo_auth_status` names it too, since `checkIdentity` reads 404 as
+not-authenticated.
+
+So the ticket's own end needs no expiry of ours (the 12-hour one of §4 bounds
+the BLOCK and came later, 2026-11-07, for a different reason): the repository
+enforces it, visibly, on every call. A well-formed but unknown ticket stands in
+for an expired one in that measurement — a ticket is a session key looked up in
+a table, and an expired session is simply absent from it.
+
+Three decisions worth naming:
+
+- **The access id is a hash of the ticket, not a random id — and that is only
+  half of what keeps the list honest.** An embedded widget exchanges on every
+  page load; with random ids each reload would list a fresh entry until
+  `MAX_BLOCKS_PER_LABEL` started evicting the person's OTHER blocks — the ones
+  pasted into their AI hosts. Same ticket, same id, same entry. The id stays a
+  usable revocation secret: its only preimage is the ticket.
+
+  What the hash cannot do is stop the NEXT session, which brings a new ticket
+  and therefore a new entry — so a widget files roughly one entry per working
+  day, against a cap whose own reasoning counts deliberate acts ("a laptop, a
+  phone, two or three AI hosts"). Ten days of use evicted the block that person
+  had pasted into ChatGPT weeks earlier; their connector answered 401, and
+  re-pasting the same block did not help, because it was off the allow-list.
+  Since 2026-08-13 the entry carries `k: 'ticket'` and **the cap applies per
+  kind**, so automatic entries are only ever retired by other automatic
+  entries. Revocation is untouched by the split: `/auth/revoke-all` still takes
+  both kinds, because a ticket block is exactly as much of an access as a
+  pasted one.
+
+  **A ticket block belongs to one listing of its id** (chatbot team,
+  2026-11-15; until then R2 of 2026-11-07: logging out lasted until the next
+  exchange). The id is the ticket's hash, so after a revocation or after the
+  twelve hours the next exchange of the SAME, still-valid ticket lists it
+  again. The block therefore carries the listing's `iat` (seconds with a
+  millisecond fraction, never rounded) and the decoder compares it with the
+  entry, as for a session block (§5d): a revoked or expired listing stays dead,
+  while a reload during a listing gets a block of that same listing — decided
+  inside the registry's serialised write, so two tabs exchanging at once share
+  one. What the next exchange still does is sign the person in again with a NEW
+  block — they ARE signed in at edu-sharing, and that session is the authority
+  here; what ends a ticket access for good is ending it, after which the ticket
+  fails upstream and every exchange with it is refused. Blocks issued before
+  this change by a reload (not the first exchange of a listing) carry another
+  instant and answer 401 once; the widget exchanges again. Revocation still goes
+  by the id alone (§4): revoking with a dead block of an EARLIER listing ends the
+  current listing too — a backend that retries a logout with a stale block also
+  signs out a tab the person opened since. That is the safe direction, and
+  intended.
+- **This is the one `/auth*` path that carries CORS** (exact-match carve-out in
+  `isCredentialSurface`). Its only real client is a widget on a foreign
+  origin, and what a hostile page could make visitors present here is not a
+  human-chosen password with guessable neighbours but a repository-issued,
+  high-entropy ticket. The distinct-credential limiter still applies — on its
+  OWN budget (`TICKET_CREDENTIAL_LIMIT`, 200) and its own buckets, not the
+  password one beside it. Both halves of that matter: the same argument that
+  allows the carve-out says counting *different* tickets from one address proves
+  little, while the address here is routinely SHARED — an embedded widget on a
+  portal page puts a whole class behind one NAT, and on the password budget of
+  ten the eleventh signed-in person of the day was refused. Separate instance,
+  so a visitor's page reloads cannot spend that address's `/auth/issue` budget
+  either. An entry point that fails to wire it falls back to the tighter budget,
+  so forgetting over-refuses instead of running unbounded.
+- **`TICKET_ALLOWED_ORIGINS` narrows the carve-out** (2026-11-07). With a list,
+  another browser origin gets `403 origin_not_allowed` before the body is
+  read (after the per-address request budget, so a forged `Origin` cannot
+  flood the log), and the CORS answer mirrors only a listed origin
+  (`Vary: Origin`), so a foreign browser already fails at the preflight. A
+  request without `Origin` is a server and is never refused; an empty list is
+  the old wildcard. `Origin` does not stop curl — what the list closes is a
+  foreign PAGE exchanging its visitor's ticket and reading the block back; a
+  server that holds a ticket holds the stronger secret already.
+- **Wrapping beats holding.** The widget could keep the raw ticket and send it
+  per request — but a raw ticket is a live repository credential, while a
+  block is useless anywhere except against this server and revocable here.
+  The ticket transits once and is never logged.
+
+Issuing the ticket is the host's business, not ours: browsers cannot fetch one
+(measured — no endpoint of the repository hands a forwardable credential to a
+browser), so the embedding page must template it server-side.
+
+---
+
+### 5d. The session of the host page — `POST /auth/session` (optional)
+
+For the same widget as §5c when the page has **no ticket to hand over**. Off
+unless `WLO_SESSION_EXCHANGE` is set, because it only works in one deployment
+shape: this path is reachable **on the repository's host below `/edu-sharing`**
+(an ingress rule that forwards, say, `/edu-sharing/services/wlo-mcp/auth/session` unchanged, named in
+`WLO_SESSION_MOUNT_PATH` — no rewrite, which on ingress-nginx would switch the whole host to regex paths; or one that rewrites it
+to `/auth/session`). The session cookie reaches the server only there:
+`JSESSIONID` is `HttpOnly` with `Path=/edu-sharing`, so no script can read it and
+hand it over (measured 2026-08-12). It carries no `SameSite` attribute, so what a
+browser attaches to a cross-site request is the browser's decision — the defence
+against a foreign page is the JSON body and the `Origin` check below, not the
+cookie.
+
+```
+POST /auth/session          {}          Cookie: JSESSIONID=…   Origin: <the repository>
+  → 200 {"ok": true, "block": "wlo2.…", "authority": "…", "displayName": "…"}
+  → 400  no session came along, or it names no signed-in person
+  → 403  {code: "origin_not_allowed"} — not a page of the repository (or no Origin at all)
+  → 404  not switched on, or this deployment issues no blocks
+  → 415 / 429 / 503 as for a ticket
+```
+
+The block carries `k: 'session'` and the two cookies of a session — `JSESSIONID`
+and, when it came along, the balancer's `INGRESSCOOKIE` (the session lives on one
+repository node). Its registry entry is filed as a ticket entry with `sess: true`,
+not under a kind of its own: an older build fails its whole registry closed on a
+kind it does not know, and a rollback must not switch every personal access off.
+The older build reads the entry as a ticket entry and refuses the session block
+itself (401). From there it is an ordinary block: same header, same registry,
+twelve hours, same revocation. The widget may hand it to its own backend; the
+backend sends it as `Authorization: Bearer` from anywhere.
+
+**The second form: a trusted forwarder** (chatbot team, 2026-11-15). The path
+on the repository's host may lead to another service instead — the chatbot's
+backend — which checks the request and passes the exchange on server to server
+to `POST /auth/session` at this server's root. Nothing on the browser side
+changes, and this server need not run in the repository's cluster. It receives
+the cookie, the page's `Origin` (passed on only when the browser sent exactly
+that), the empty JSON body, the forwarder's `X-WLO-Client-Key` and the
+person's address — in `X-WLO-Client-Address` (one address, no port), or as the
+hop it adds to `X-Forwarded-For`. The `Origin` rule is unchanged.
+
+What changes is the budget. Every exchange of such a forwarder arrives from its
+one address, where the request budget (`API_RATE_LIMIT_RPM`, shared with
+`/auth/revoke`) and the distinct-session guard (`TICKET_CREDENTIAL_LIMIT`)
+would cap the whole platform at one address's share — a class loading at once
+was refused. With a key from `TRUSTED_CLIENT_KEYS`, `/auth/session` and
+`/auth/revoke` therefore spend the client's **protocol budget** (three times its
+rate, the one `/auth/status` spends), and the guard counts **per address the
+client names** (`client:<name>|ip:<address>`), read only behind a valid key:
+`X-WLO-Client-Address` when it is sent (then only it — a value that is no single
+address names nobody), else the `X-Forwarded-For` hop the forwarder added. The
+own header exists because a proxy in front of this server may drop
+`X-Forwarded-For` from senders it does not trust — Traefik does by default and
+writes only the connection's address — while it passes an unknown header
+untouched (chatbot team, 2026-11-15). Anyone else's headers stay free text,
+read no further than `TRUST_PROXY` says. When a forwarder names no usable
+address its people share one bucket, and the log says so
+(`… named no usable address …`, with the client's name); every exchange logs
+the address it was counted under as a pseudonym. A forged name costs only the key
+holder's own budget — which is then the only bound on how many distinct
+sessions it presents, and the same pot as its POSTs to `/mcp` and its
+`/auth/status`. `TRUST_PROXY` does not help here: it would make every caller's
+header count. For the `X-Forwarded-For` form it still decides which hop is the
+forwarder's, so it must fit the forwarder's way to this server (through the one
+proxy, or directly with it off); `X-WLO-Client-Address` does not depend on it. The paths that check a password (`/auth/issue`, `/auth/revoke-all`) keep
+the address, whoever forwards.
+
+What is different on the wire, and measured (`scripts/session-disableguest-probe.mjs`,
+staging, 2026-11-15) — `src/auth/upstream-auth.ts` is the one place:
+
+| presented to the repository | identity | search |
+|---|---|---|
+| live session | 200, the person | 200 |
+| unknown or ended session | 200, **`esguest`** | 200, the public results |
+| unknown or ended session + `DisableGuest: true` | **401** | **401** |
+
+So every call of a session block carries `DisableGuest: true`, and never an
+`Authorization` header beside the cookie. A session that ends therefore ends the
+access out loud — the first 401 marks the login as refused for the rest of the
+request, like a wrong password. A write needs no CSRF token (measured
+2026-08-12), and `tests/live/session-exchange.test.ts` creates and deletes a
+collection with nothing but the session.
+
+What is deliberate:
+
+- **This is the only place the server reads a `Cookie` header**, and it takes two
+  named cookies out of it. A test fails on a second reader or a second writer.
+- **No CORS header, and `Origin` is required.** The page that asks has the
+  repository's origin (`WLO_REPOSITORY_URL`) or is listed in
+  `WLO_SESSION_ALLOWED_ORIGINS` — a list of its own: a page listed for tickets
+  is not thereby entitled to sessions, and setting a list here does not narrow
+  the ticket path. A request that names no origin is no browser, and without a
+  browser there is no person whose session this could be.
+- **Two different `JSESSIONID` values in one request are refused.** A sibling
+  subdomain can set a cookie of that name with a longer path, which the browser
+  sends first; taking either would let that page choose whose session the widget
+  works with.
+- **The kind is bound to the entry.** A session's access id is a hash of the
+  session id; a password or a ticket encrypted under that id is refused, and so
+  is a cookie string of any other shape than the one the exchange builds.
+- **The body must be declared JSON**, like every sibling: a form of a foreign
+  page cannot send it without a preflight, and the preflight gets no answer.
+
+What this costs, and it is accepted: **the exchange turns an `HttpOnly` session
+into something a script holds.** Any script that runs on the repository's origin
+— the widget, but also a cross-site-scripting hole there — can obtain a block
+that works outside the browser, for up to twelve hours and for as long as the
+session lives. It is no new right (that script can already act with the session
+inside the browser), it ends with the session (401, measured), and it is why the
+path is off by default.
+
+**A session block belongs to one listing of its id** (chatbot team, 2026-11-15).
+The id is derived from the session, so after a revocation or after the twelve
+hours the next exchange of a still-living session lists the SAME id again.
+Without a second binding every block of the earlier listing would have worked
+again with it — one taken in the first hour, or the one a person had just
+revoked in another tab. The block therefore carries the listing's `iat` (seconds
+with a millisecond fraction, never rounded) and the decoder compares it with the entry: a revoked or expired
+listing stays dead, while a reload during a listing gets a block of that same
+listing — decided inside the registry's serialised write, so two tabs
+exchanging at once share one listing, and a fresh listing is stamped there,
+strictly after the previous one (never with the caller's clock, under which two
+listings around a revocation could share an instant). What the next exchange still does is sign the person in again — they
+ARE signed in to the repository; only ending that session ends access for good.
+
+**The twelve hours are not extended by exchanging again**: the entry keeps its
+first expiry; after it, the next exchange of a still-living session lists it
+anew, and the blocks of the old listing do not come back.
+
+Ticket blocks follow the same rule since the chatbot team asked for it the same
+day (§5c).
+
+Not measured: whether the repository keeps a session id across a change of
+login (the exchange replaces the entry if it does), whether every endpoint
+honours `DisableGuest` (identity, search and a collection write were measured),
+and what production does at logout (staging was measured).
+
+## 6. Why the write tools are visible to people who cannot use them
+
+Until 2026-08-05 the curation tools (13 at the time) were simply absent without a
+write-capable identity. It looked like the safer choice and it was the reason
+the login never started: **a model that never sees a write tool never calls one,
+so nothing ever asks the host to authenticate**, and a connector added without
+OAuth stayed anonymous forever.
+
+They are now always in `tools/list`, declare
+`securitySchemes: [{type:'oauth2', scopes:['wlo']}]`, and refuse at call time
+with `_meta["mcp/www_authenticate"]` on the result — which is the client's cue to
+run the flow. The HTTP status stays 200, so anonymous reading is untouched. This
+is the pattern OpenAI's own mixed-auth example uses.
+
+**The refusal is unchanged and absolute.** An anonymous call reaches no write
+code and makes no upstream request — asserted against the recorded fetch calls,
+not against the reply text. The gate lives in exactly one place,
+`registerCurationTool` in `src/tools/curation-shared.ts`, and a source scan fails
+the build if a curation tool is ever registered past it.
+
+---
+
+## 7. Abuse limits
+
+`/auth/issue`, `/auth/revoke-all`, `POST /oauth/authorize` and `POST /auth/ticket`
+are the endpoints on this server that check a credential, which makes each a
+guessing oracle with our address as the origin. All four answer a failed check
+the same way (`rest/login-failure.ts`): 400 refused, 429 `too_many_logins` with
+the rest of the guard's window, and 503 `upstream_unreachable` when the
+repository gave no answer — which is no verdict on the login, so it must not
+read as a wrong password (until 2026-11-07 an outage answered 400 here, and an
+embedded widget dropped a valid ticket over a repository blip). All four pass two limiters:
+
+- **requests per address** (`API_RATE_LIMIT_RPM`, default 30/min — the tight
+  budget of the public surface, not the MCP endpoint's `RATE_LIMIT_RPM`);
+- **distinct logins per address** (`AUTH_CREDENTIAL_LIMIT`) — the guessing guard.
+  It counts *credentials*, not requests, because a per-user client legitimately
+  sends its header on every call. It runs after decoding (so only logins we would
+  really try upstream count) and before the upstream call (so a guesser never
+  reaches WLO).
+
+`POST /mcp` passes the same credential guard, for the same reason: it forwards a
+caller-supplied credential upstream. **What differs there is the bucket, and it
+is not the address for every scheme** (`abuseBucketKey`, `auth/credential.ts`):
+
+| Scheme | Bucket | Why |
+|---|---|---|
+| `Basic` | the client address | the guesser has no identity to bound, and this is the scheme that carries a guessable secret |
+| `wlo2.` block | its **`jti`** | under a valid access id there is exactly ONE correct password, so rotating them is guessing wherever it comes from |
+
+That sentence is only true because **a block is bound to the name its id was
+listed for** (`credentialFromAccessBlock`, since 2026-11-12). The public key is
+published, so whoever holds a listed id — their own — can mint blocks carrying
+it with any name and any password. Until the binding existed, each id was a
+fresh budget of guesses against a stranger's account, whatever the address; now
+such a block is simply not that access and answers 401. The limiter also counts
+one address in ONE bucket across `/mcp`, `/auth/status` and `/auth*` — the bare
+address on one path and `ip:<address>` on the other were two, i.e. twice the
+budget.
+
+`POST /api/uploads` (batch filing, only with `WLO_BATCH_UPLOAD_ENABLED`) proves
+the login against the repository too and uses **the same bucket** — since
+2026-11-07. Until then it keyed every scheme by address and repeated the relay
+defect below on the one route a chatbot backend calls once per file.
+`proveLogin` takes the bucket from that caller only: issuance sees freshly
+minted ids and must stay per address.
+
+Keying a block by address was wrong in both directions, and each half was
+measured (2026-08-12, `docs/plans/2026-08-12-relay-credential-limiter.md`).
+
+*It refused a legitimate caller.* A **relay client** — a chatbot backend serving
+many people from one address, forwarding each person's own block — hit the cap at
+its **11th signed-in person** in a window. The signature is misleading: signed-in
+users break while anonymous ones keep working, because a request with no
+credential is never counted.
+
+*And it under-bounded a guesser.* §4 explains that the public key is published,
+so **anyone who learns a `jti` can mint blocks carrying it** and any password
+they like. Against the address key that guesser simply rotated addresses and
+multiplied their budget; against the `jti` key the attempts land in one bucket.
+
+Two things follow and must not be undone. **Do not exclude blocks from the
+counter** on the argument that they are "already proven" — the paragraph above is
+why that is false. And **the bucket key must never be logged or returned**: for a
+block it *is* the access id, and §4 makes that the secret revocation hangs on.
+The refusal names its `scope` (`access-block` / `address`) and the address, never
+the key.
+
+**The in-memory write stores have their own budgets, split by whether the login
+is proven** (2026-11-14, `src/services/write/store-budget.ts`). Confirmation
+keys, approved plans and prepared batches are each bounded, and a bound means
+somebody's entry goes when room is needed. A `Basic` login is never proven
+before a preview — and some previews cost no upstream call — so each store is
+two pools with half its total each: **proven** (an account the repository
+confirmed, a block on the allow-list, the operator's service account) and
+**unproven** (a `Basic` header, keyed by the name *plus a keyed digest of the
+whole header*, and anonymous). A caller fills and evicts only within its own
+pool, and gives up its own oldest entry first; typing somebody's account name
+with another password no longer shares — or evicts — that person's pending keys
+and plans. This decides caps and eviction only: who may redeem a key or continue
+a plan is unchanged. What remains, and is accepted: unproven callers can evict
+each other — whoever needs to be safe from that signs in with an access block or
+OAuth.
+
+Two things make those limits hold:
+
+**No CORS header on `/auth*` or `/oauth/authorize`** — with the one exact-match
+exception of `POST /auth/ticket` (§5c). Both limiters count per
+client *address*, so a wildcard origin would let a page spend every visitor's
+quota on a guess and read the outcome. The rest of the OAuth surface keeps the
+wildcard and needs it — the discovery documents are public and secret-free.
+
+**Those endpoints require `Content-Type: application/json`** (415 otherwise).
+Without it the CORS argument does not hold: a `<form enctype="text/plain">` is a
+*simple* request, needs no preflight, and its body can be crafted to parse as
+JSON — so a page could make every visitor submit a guess from their own address
+and learn the outcome out of band. Requiring the header makes the request
+non-simple again, so the browser must preflight, and the preflight fails.
+(`/oauth/register` and `/oauth/token` are deliberately exempt: neither carries a
+credential.)
+
+---
+
+## 8. Operator setup
+
+| Variable | Effect |
+|---|---|
+| `WLO_AUTH_PRIVATE_KEY` | PKCS#8 PEM. **Setting it is all it takes** to enable personal logins and the whole OAuth surface. Unset ⇒ `/auth*` and `/oauth/*` answer 404 and a Bearer is refused. |
+| `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | Rotation window — tried after the current key, so blocks issued under the old one keep working. |
+| `WLO_AUTH_REGISTRY_PATH` | The allow-list file. Must point **into a writable volume**; anywhere else and the feature stays off with the reason in the log. Default `/data/access-registry.json`. Read once at startup and held in memory: **one server instance per file** — a revocation reaches only the instance that performed it. |
+| `WLO_PUBLIC_BASE_URL` | This deployment's public origin. It is the issuer, so whoever sets it decides where a login happens — derived from the `Host` header it would be the *caller*. Consulted from the header only under `TRUST_PROXY`. Without a resolvable issuer, OAuth is off. |
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048
+```
+
+> **This key decrypts every issued block back into a live WLO password.** Keep it
+> in the server's `.env`. Never in the image, never in the repository.
+
+The public key is *derived* from the private one, so there is no second variable
+to drift.
+
+### Checking it works
+
+```bash
+docker compose logs mcp-server | grep -m1 'access blocks'
+```
+
+`access blocks are enabled` with the registry path, or one of two errors naming
+which half failed. A first start **writes** the empty registry rather than
+assuming it could — reading proves nothing about writing, and a Docker named
+volume mounted where the image never created the directory belongs to root while
+the container runs as `node` (measured 2026-08-05). One line in the boot log
+beats a correct-looking startup and a 500 for a stranger.
+
+From a chat, `wlo_auth_status` reports the current mode. Read it carefully:
+`mode: "service"` together with `authenticated: false` means WLO is *rejecting*
+the configured credentials — and then every query fails, returning nothing at
+all rather than public content.
+
+---
+
+## 9. What this does and does not protect
+
+**Protected.** The password never travels in the clear from the browser. A block
+is useless anywhere except this server, unlike a `Basic` header, which works
+against all of WLO. Compromise is revocable in one step by whoever holds the
+block. Nothing containing a credential is written to disk. A stolen
+authorization code is useless without the PKCE verifier, and is spent on first
+presentation either way.
+
+**Not protected, and deliberately so.** The operator of this server can read
+every password: it holds the private key and builds a `Basic` header from the
+result. That is not a flaw in the scheme, it is the consequence of §1 — there is
+no token to relay, so anything that reaches edu-sharing carries the password. A
+deployment is therefore a trust relationship with its operator, and the
+`WLO_REPOSITORY_URL` must be `https` (the server warns at startup otherwise,
+because HTTP Basic is base64, not encryption).
+
+**Also not protected.** Anyone who learns a `jti` can revoke that access (§4). A
+person who can read the server's environment has everything. And an access block
+survives a WLO password change only until the repository stops accepting the old
+one — a pasted block has no expiry of our own (ticket and widget blocks do, §4).
+
+**Not protected and not meant to be:** the anonymous token. It is a public
+constant, and anyone may use it. That is not a weakness, because it authorises
+exactly what an unauthenticated request already authorises — treating it as a
+secret would be theatre. It is worth stating plainly so that nobody later
+"hardens" it into something that looks like a credential and is then trusted like
+one.
+
+---
+
+## 10. Rules that bind future changes
+
+Each of these was paid for once. Changing any of them is a decision, not a
+refactor.
+
+1. **A 200 from edu-sharing is not proof of a login.** Read the authority — in
+   `auth/access-verify.ts`, which every password-checking endpoint goes through.
+   On the revocation path this is what stands between a guessed username and a
+   stranger's accesses.
+2. **The access id lives inside the AEAD**, or revocation can be dodged by
+   swapping it.
+3. **The registry is an allow-list where every failure closes the door**, holds
+   ids and never a credential, and is the only runtime disk writer. A failed
+   write is undone rather than left granting what it could not record.
+4. **`/auth*` and `/oauth/authorize` send no CORS header and require
+   `application/json`.** Both halves are needed; either alone is bypassable.
+5. **The authorization request is checked before a password field is shown, and a
+   refusal gets a page, never a redirect.** The check lives once.
+6. **The access token IS the block.** No wrapper, no refresh token, no expiry IN the
+   block (the 12-hour one of ticket and widget blocks lives in the allow-list, §4) —
+   it is the only reason one allow-list entry covers both routes. The block still
+   never reaches the OAuth user, so revoking *that* access needs the account
+   path, not the block path.
+7. **The code is consumed before it is judged**, and every failure answers the
+   same text.
+8. **A request with no `Authorization` keeps answering 200 anonymously.** This is
+   the property the whole undertaking most easily breaks.
+9. **Write tools refuse at call time**, through the single gate in
+   `registerCurationTool`. They are *visible* to everyone on purpose; the refusal
+   is what is absolute.
+10. **The anonymous token is the one Bearer whose "no credential" is an answer,
+    not a failure.** It must never reach the 401, its match must stay exact, and
+    the intent must be stated explicitly at the consent endpoint. Do not give it
+    key material or an allow-list entry — it grants nothing that would justify
+    either, and both would suggest it protects something.
+11. **The guessing guard bounds distinct secrets per IDENTITY, and a block's
+    identity is its `jti`, not its address** (§7). One client may legitimately be
+    a relay for many people; one `jti` may legitimately hold one password. Do not
+    exempt blocks from the counter, and do not put the key in a log or a reply.
+
+Design documents and the measurements behind them:
+`docs/plans/2026-08-04-mcp-access-token-design.md`,
+`docs/plans/2026-08-05-mcp-oauth-design.md`,
+`docs/plans/2026-07-31-write-support-research.md`. The rules that bind a change
+here, with dates and reasons: `docs/rules/auth.md`. Current state:
+`docs/plans/STATUS.md`; the dated findings are in its archive,
+`docs/plans/archive/`.

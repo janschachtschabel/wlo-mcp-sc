@@ -1,0 +1,177 @@
+/**
+ * fetchMock.ts – Test helper (NOT a test file; excluded by the `*.test.ts`
+ * glob). Installs a global `fetch` stub that routes by URL so the search
+ * pipeline and tool handlers can be exercised fully offline.
+ */
+
+import { clearShortCaches } from '../src/short-cache.js';
+import assert from 'node:assert/strict';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+
+import type { WloNode } from '../src/wlo-api.js';
+import { createMcpServer } from '../src/server.js';
+
+/**
+ * Fresh MCP server wired to an in-memory client — the standard harness for
+ * tool-level tests (was duplicated verbatim across ~19 test files). Callers
+ * `await client.close()` in a finally.
+ *
+ * Takes no write mode any more: since 2026-08-05 every server offers the same
+ * tool list and the curation tools refuse at call time, so what a test needs to
+ * vary is the CREDENTIAL in scope (`setServiceCredentialForTest`), not the way
+ * the server was built.
+ *
+ * STRICT since 2026-11-14 (audit, T5b): the tool list is fetched once, and with
+ * it in hand the SDK client validates EVERY `structuredContent` against the
+ * advertised `outputSchema` — an `isError` answer included. That is what a
+ * specification-following host does. Until then only the ten files that asked
+ * for `strictClient()` validated anything, so an undeclared key in a tool's
+ * answer (`additionalProperties: false`) failed nowhere else — the auditor made
+ * this client strict and the whole suite still passed, which is the state this
+ * pins. A test that needs the lenient client must build its own and say why.
+ */
+export async function connectedClient(): Promise<Client> {
+  const server = createMcpServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  await client.listTools();
+  return client;
+}
+
+/** The same client under the name the first ten strict test files use. */
+export const strictClient = connectedClient;
+
+type AdvertisedTool = { name: string; outputSchema?: unknown };
+
+/** The validator the SDK client builds for a tool's advertised output schema. */
+export function outputValidator(tool: AdvertisedTool): (value: unknown) => { valid: boolean; errorMessage?: string } {
+  assert.ok(tool.outputSchema, `${tool.name} advertises an output schema`);
+  return new AjvJsonSchemaValidator().getValidator(tool.outputSchema as never) as never;
+}
+
+/** The SUCCESS branch of an advertised output schema (the other one is the coded error). */
+export function successSchemaOf(tool: AdvertisedTool): { properties?: Record<string, unknown> } & Record<string, unknown> {
+  const branches = (tool.outputSchema as { anyOf?: Array<Record<string, unknown>> } | undefined)?.anyOf;
+  assert.ok(Array.isArray(branches) && branches.length === 2, `${tool.name}: success and error branch`);
+  return branches[0]!;
+}
+
+export interface MockResult {
+  status?: number;
+  /** JSON body (default). Ignored when `text` or `body` is given. */
+  json?: unknown;
+  /** Raw text body — for non-JSON endpoints (e.g. the eduservlet file download). */
+  text?: string;
+  /** Binary body — for image endpoints (the inline-preview fetch). */
+  body?: Uint8Array;
+  /** Extra/override response headers (e.g. an image content-type). */
+  headers?: Record<string, string>;
+}
+
+export interface InstalledMock {
+  /** Every fetch call seen, in order. */
+  calls: Array<{ url: string; init?: RequestInit }>;
+  restore: () => void;
+}
+
+/**
+ * Replace `globalThis.fetch` with a handler that maps (url, init) → a JSON
+ * Response. Returns the captured calls and a restore() to put the real fetch
+ * back — always call restore() in a `finally`.
+ */
+export function installFetchMock(
+  handler: (url: string, init?: RequestInit) => MockResult,
+): InstalledMock {
+  const real = globalThis.fetch;
+  // A new mock is a new repository: what a short cache kept from the last one
+  // would answer this test's question with another test's data.
+  clearShortCaches();
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: any, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : String(input?.url ?? input);
+    calls.push({ url, init });
+    const { status = 200, json, text, body, headers } = handler(url, init);
+    const isRaw = text !== undefined;
+    const payload = body !== undefined ? body : isRaw ? text : JSON.stringify(json);
+    // Lower-cased and merged BEFORE the Headers object is built: an init object
+    // holding both 'Content-Type' and 'content-type' appends both, and the
+    // resulting "a, b" value fails every equality check downstream.
+    const merged: Record<string, string> = {
+      'content-type': body !== undefined
+        ? 'application/octet-stream'
+        : isRaw ? 'text/markdown; charset=utf-8' : 'application/json',
+    };
+    for (const [k, v] of Object.entries(headers ?? {})) merged[k.toLowerCase()] = v;
+    return new Response(payload as BodyInit, { status, headers: merged });
+  }) as typeof fetch;
+  return { calls, restore: () => { globalThis.fetch = real; } };
+}
+
+/**
+ * Assert that a tool call is rejected by SCHEMA VALIDATION — i.e. before the
+ * handler runs, and therefore before any upstream request.
+ *
+ * Calling a test "(no network)" does not make it so. Measured 2026-08-03: with
+ * the `excludeNodeIds` cap deleted from the schema, the handler ran, its upstream
+ * call failed because the network was unreachable, and the `catch` around the
+ * call reported that failure AS the rejection — the test stayed green over a
+ * removed input-validation constraint. Only the upstream-call count proves the
+ * cap is doing the work.
+ *
+ * Both rejection shapes are accepted (the SDK surfaces invalid params either as
+ * a thrown error or as an isError result, depending on version); the call count
+ * is what makes the assertion real.
+ */
+export async function assertRejectsWithoutUpstream(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+  message: string,
+): Promise<void> {
+  const mock = installFetchMock(url => { throw new Error(`unexpected upstream call: ${url}`); });
+  try {
+    let rejected = false;
+    try {
+      const result = await client.callTool({ name, arguments: args });
+      rejected = (result as { isError?: boolean }).isError === true;
+    } catch {
+      rejected = true;
+    }
+    // Checked first: it produces the informative failure when a constraint is gone.
+    assert.equal(mock.calls.length, 0, `${message} — validation must reject BEFORE any upstream request`);
+    assert.equal(rejected, true, message);
+  } finally {
+    mock.restore();
+  }
+}
+
+/** Build a minimal WloNode with the given id/title and extra properties. */
+export function makeNode(
+  id: string,
+  title: string,
+  props: Record<string, string[]> = {},
+): WloNode {
+  return {
+    ref: { id, repo: '-home-' },
+    type: 'ccm:io',
+    properties: { 'cclom:title': [title], ...props },
+  };
+}
+
+/**
+ * Extract the concatenated text of all text-content parts of a tool result.
+ * Takes `unknown` because the SDK's CallToolResult is a union that includes a
+ * legacy `{toolResult}` shape without `content` — narrowing happens here once
+ * instead of with an `as any` at every call site.
+ */
+export function toolText(result: unknown): string {
+  const content = (result as { content?: Array<{ type: string; text?: string }> }).content ?? [];
+  return content
+    .filter(p => p.type === 'text' && typeof p.text === 'string')
+    .map(p => p.text as string)
+    .join('\n');
+}

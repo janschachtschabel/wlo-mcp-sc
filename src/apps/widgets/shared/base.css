@@ -1,0 +1,396 @@
+/*
+ * base.css – Shared widget styling: theme tokens + tile + grid + chips.
+ *
+ * Inlined into every widget by build.mjs (ahead of the widget-specific
+ * styles.css). Theme-aware (light/dark via prefers-color-scheme), WCAG 2.2 AA
+ * contrast, no nested scroll (the host sizes the iframe), touch targets ≥ 24px.
+ * Self-contained: no host CSS variables are assumed, so contrast holds even if
+ * the iframe does not inherit host theme tokens.
+ */
+
+:root {
+  color-scheme: light dark;
+  --wlo-fg: #1a1a1a;
+  --wlo-muted: #565656;
+  --wlo-accent: #14539a;
+  --wlo-surface: #ffffff;
+  --wlo-surface-2: #f4f6f9;
+  --wlo-border: #c4c9d2;
+  --wlo-chip-bg: #eaeef4;
+  --wlo-chip-fg: #2c3340;
+  --wlo-focus: #0b5fff;
+  --wlo-radius: 10px;
+  --wlo-gap: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wlo-fg: #f1f2f4;
+    --wlo-muted: #b9bec7;
+    --wlo-accent: #7db0ff;
+    --wlo-surface: #1f2126;
+    --wlo-surface-2: #262a31;
+    --wlo-border: #3a3f48;
+    --wlo-chip-bg: #2c313a;
+    --wlo-chip-fg: #dfe3ea;
+    --wlo-focus: #7db0ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--wlo-fg);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+#wlo-root { padding: 12px; }
+
+/* ── Sections ─────────────────────────────────────────────────────────── */
+.wlo-section { margin: 0 0 20px; }
+.wlo-section__title {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+/* Collections + topic pages grouped in a lightly separated band above the
+ * material grid (edu-sharing look): a subtle divider + spacing, no heavy box. */
+.wlo-results__coll-band {
+  margin: 0 0 18px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--wlo-border);
+}
+.wlo-results__coll-band .wlo-section:last-child { margin-bottom: 0; }
+.wlo-results__query {
+  margin: 0 0 16px;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+/* ── Tile grid ────────────────────────────────────────────────────────── */
+.wlo-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: var(--wlo-gap);
+}
+
+.wlo-tile {
+  display: flex;
+  flex-direction: column;
+  background: var(--wlo-surface);
+  border: 1px solid var(--wlo-border);
+  border-radius: var(--wlo-radius);
+  overflow: hidden;
+}
+
+/* Every tile in a row must be the same size, whatever its image and text.
+   Previews are portrait (teaching material is mostly A4), and ONE ratio for all
+   of them: without it a tall scan next to a wide video thumbnail made the cards
+   ragged (user report 2026-07-28). `cover` crops to the box instead of letting
+   the image dictate the height. */
+.wlo-tile__thumb {
+  /* 16/9, not the former 3/4. A portrait thumb made the card ~470px tall at a
+     220px column — "extrem schmal und lang" (user report 2026-07-30) — and
+     cropped the material previews, which are overwhelmingly landscape (video
+     stills, worksheet screenshots). The CARD stays portrait; only the image
+     stops dictating the height. */
+  aspect-ratio: 16 / 9;
+  background: var(--wlo-surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.wlo-tile__img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.wlo-tile__icon { font-size: 2rem; }
+
+/* Selection checkbox, pinned to the preview corner. The label is the hit area,
+   sized well past the 24px minimum (WCAG 2.2 SC 2.5.8), and sits on its own
+   backdrop so it stays visible over any thumbnail. */
+.wlo-tile__thumb { position: relative; }
+.wlo-tile__pick {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-start: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--wlo-surface) 88%, transparent);
+  border: 1px solid var(--wlo-border);
+  cursor: pointer;
+}
+.wlo-tile__pickbox { width: 17px; height: 17px; margin: 0; cursor: pointer; accent-color: var(--wlo-accent); }
+
+/* `flex: 1` lets the body absorb the leftover height so the footer below can be
+   pushed to the bottom edge rather than trailing whatever text came before it. */
+.wlo-tile__body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+
+/* Clamped to a fixed line count AND given that height up front, so a one-line
+   title and a two-line one occupy the same space. The full text stays in the
+   DOM for screen readers; the title link leads to the complete resource. */
+.wlo-tile__title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-height: calc(2 * 1.3em);
+}
+.wlo-tile__link { color: var(--wlo-accent); text-decoration: underline; }
+/* Keyboard focus is visible by DEFAULT for every link and button (WCAG 2.4.7).
+   Focus rings used to be declared per class, so each new control shipped
+   without one until someone remembered; the per-class rules below are now
+   redundant but harmless. */
+.wlo-tile__link:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--wlo-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+a.wlo-tile__link { display: inline-block; min-height: 24px; }
+
+/* Same idea as the title: a fixed three-line window, reserved up front, so a
+   terse description and a verbose one leave the tile the same height. */
+.wlo-tile__desc {
+  margin: 0;
+  color: var(--wlo-muted);
+  font-size: 0.88rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  min-height: calc(3 * 1.4em);
+}
+
+.wlo-tile__chips { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.wlo-chip {
+  background: var(--wlo-chip-bg);
+  color: var(--wlo-chip-fg);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.76rem;
+}
+
+.wlo-tile__meta { margin: 4px 0 0; color: var(--wlo-muted); font-size: 0.76rem; }
+
+/* ── edu-sharing style collection tiles ──────────────────────────────── */
+.wlo-grid--coll {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
+}
+.wlo-coll__block {
+  background: var(--wlo-accent);
+  aspect-ratio: 5 / 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wlo-coll__glyph {
+  font-size: 1.6rem;
+  color: var(--wlo-surface);
+  background: color-mix(in srgb, var(--wlo-surface) 22%, transparent);
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wlo-badge {
+  align-self: flex-start;
+  background: var(--wlo-chip-bg);
+  color: var(--wlo-chip-fg);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.76rem;
+}
+
+/* ── Labelled fact rows (Lizenz / Quelle) ────────────────────────────── */
+/* `margin-top: auto` anchors the facts (and the Details button under them) to
+   the bottom of the tile, so licence and source line up across a row instead of
+   floating wherever the description happened to end. */
+.wlo-tile__facts { margin: 4px 0 0; margin-top: auto; padding-top: 4px; font-size: 0.78rem; }
+.wlo-facts__row { display: flex; justify-content: space-between; gap: 8px; }
+.wlo-facts__row dt { color: var(--wlo-muted); }
+.wlo-facts__row dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+
+/* Follow-up action on a collection tile: the card's primary action, so it is
+   filled rather than outlined, and anchored to the bottom like the fact rows. */
+.wlo-tile__followup {
+  margin-top: auto;
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--wlo-surface);
+  background: var(--wlo-accent);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.wlo-tile__followup:hover { filter: brightness(1.08); }
+/* Two actions on one card (collection + Themenseite): only the FIRST button
+   keeps the push-to-bottom auto margin — on both, flexbox splits the card's
+   leftover height into a stray gap between the pair. The body's gap spaces them. */
+.wlo-tile__followup + .wlo-tile__followup { margin-top: 0; }
+
+/* Collection facts line ("59 Inhalte · 3 Skills") — muted, plain text. */
+.wlo-tile__meta { margin: 0; font-size: 0.78rem; color: var(--wlo-muted); }
+
+.wlo-detail__actions {
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wlo-detail__actions .wlo-tile__followup { margin-top: 0; }
+
+/* ── Details button + Einzelansicht ──────────────────────────────────── */
+.wlo-tile__details {
+  margin-top: 6px;
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--wlo-accent);
+  background: transparent;
+  border: 1px solid var(--wlo-accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.wlo-tile__details:hover { background: var(--wlo-chip-bg); }
+.wlo-tile__details:focus-visible,
+.wlo-detail__back:focus-visible {
+  outline: 2px solid var(--wlo-focus);
+  outline-offset: 2px;
+}
+
+.wlo-detail { display: flex; flex-direction: column; gap: 10px; }
+.wlo-detail__back {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--wlo-fg);
+  background: var(--wlo-surface-2);
+  border: 1px solid var(--wlo-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.wlo-detail__thumb {
+  aspect-ratio: 16 / 9;
+  max-height: 260px;
+  background: var(--wlo-surface-2);
+  border-radius: var(--wlo-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.wlo-detail__img { width: 100%; height: 100%; object-fit: contain; }
+.wlo-detail__title { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.wlo-detail__desc { margin: 0; color: var(--wlo-fg); }
+.wlo-detail .wlo-tile__facts { max-width: 420px; font-size: 0.88rem; }
+.wlo-detail__links { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.wlo-detail__cta {
+  display: inline-block;
+  min-height: 24px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--wlo-accent);
+  color: var(--wlo-surface);
+  text-decoration: none;
+}
+.wlo-detail__cta--secondary {
+  background: transparent;
+  color: var(--wlo-accent);
+  border: 1px solid var(--wlo-accent);
+}
+
+/* ── Topic page header ───────────────────────────────────────────────── */
+.wlo-topic__head { margin: 0 0 18px; }
+.wlo-topic__desc { margin: 6px 0 0; color: var(--wlo-muted); max-width: 70ch; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .wlo-tile__details, .wlo-detail__back, .wlo-detail__cta { transition: background 120ms ease; }
+}
+
+/* Visually hidden, present for assistive tech — the live region that
+   announces the loading→result transition (shared/announce.ts) sits OUTSIDE
+   #wlo-root so repaints cannot destroy it, and must never paint pixels. */
+.wlo-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Loading (the tool call has not answered yet) ─────────────────────── */
+/* Shown INSTEAD of a renderer's empty state while the host still owes us a
+   result — see shared/loading.ts. The bars are decoration; the label above
+   them is the message, and the only thing a screen reader gets. */
+.wlo-loading { padding: 8px 0; }
+.wlo-loading__label { margin: 0 0 12px; color: var(--wlo-muted); font-size: 0.95rem; }
+.wlo-loading__bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Filled with the border tone, not the surface tone: a placeholder nobody can
+   see is not a placeholder. Ragged widths read as text rather than as a table. */
+.wlo-skel { height: 14px; border-radius: 6px; background: var(--wlo-border); }
+.wlo-skel--0 { width: 100%; }
+.wlo-skel--1 { width: 88%; }
+.wlo-skel--2 { width: 62%; }
+
+@keyframes wlo-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: no-preference) {
+  .wlo-skel { animation: wlo-pulse 1.4s ease-in-out infinite; }
+}
+
+/* The error state (shared/failure.ts): full foreground contrast and a rule on
+   the leading edge, so it cannot be mistaken for the muted empty state. No
+   colour carries the meaning — the sentence does. */
+.wlo-error {
+  padding: 8px 12px;
+  border-left: 3px solid var(--wlo-fg);
+  max-width: 60ch;
+}
+.wlo-error__message { margin: 0; color: var(--wlo-fg); font-size: 0.95rem; }
+.wlo-error__hint { margin: 6px 0 0; color: var(--wlo-muted); font-size: 0.9rem; }
+
+.wlo-empty { color: var(--wlo-muted); font-size: 0.95rem; padding: 8px 0; }
+/* The reason an empty result is empty is the one thing on this screen that
+   prevents a wrong conclusion, so it carries full foreground contrast rather
+   than the muted tone of the generic line above it. */
+.wlo-empty__reason {
+  color: var(--wlo-fg);
+  font-size: 0.95rem;
+  max-width: 60ch;
+  margin: 0;
+  padding-bottom: 8px;
+}

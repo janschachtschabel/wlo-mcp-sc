@@ -1,0 +1,85 @@
+/**
+ * text-line.ts – keeping repository-supplied values from forging lines in
+ * the line-oriented text answers.
+ *
+ * Split out of `formatter.ts` (audit 2026-11-05) so the skill-catalogue
+ * renderer can use `oneLine` without importing the formatter that imports it.
+ */
+
+/** A character a reader breaks the line at. `\p{Zl}`/`\p{Zp}` are LINE and PARAGRAPH SEPARATOR. */
+const LINE_BREAK = /[\r\n\u0085\p{Zl}\p{Zp}]/u;
+/** A whole run of whitespace; NEL is named because `\s` does not include it. */
+const BLANK_RUN = /[\s\u0085]+/g;
+
+/**
+ * Collapse line breaks so a value cannot break out of its line.
+ *
+ * The text format below is line-oriented — `## title` opens a record, `Key: value`
+ * carries a field — and every value in it is repository-supplied: titles,
+ * descriptions, publisher names, server-side `_DISPLAYNAME` labels, URLs. A
+ * newline in any of them opened a second, fabricated record with its own nodeId
+ * and its own `Lizenz:` line, and a forged licence is precisely the claim a
+ * teacher acts on. This is not sanitizing (the text stays as it is, it is data —
+ * see `text-sanitize.ts` for the elevated-authority boundary); it is the renderer
+ * protecting its own delimiters.
+ *
+ * Exported because several tools render their own line-oriented text instead of
+ * going through `renderToText` (the collection tree, the Fachportal list, the
+ * Themenseiten listing, the swimlane outline). They have the same delimiters and
+ * therefore need the same protection — one implementation, not four.
+ */
+export function oneLine(value: string): string {
+  // NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR too: many readers break a line
+  // there, and a title carrying one forged the next line just the same
+  // (chatbot team, 2026-11-14).
+  //
+  // Two steps, each one character class with one quantifier, so the scan is
+  // linear. The single expression this replaces put a whitespace run on BOTH
+  // sides of the break, and a long run of spaces with no break behind it was
+  // re-scanned from every one of its positions: 40 000 spaces took 3.9 s, in a
+  // function that runs over nearly every output line.
+  if (!LINE_BREAK.test(value)) return value;
+  return value.replace(BLANK_RUN, run => (LINE_BREAK.test(run) ? ' ' : run));
+}
+
+/**
+ * A repository-supplied title for the END of a line that also carries an id.
+ *
+ * Titles are data, and ahead of the id a title could spell out an id of its own:
+ * a collection called `Mechanik (nodeId: …)` read as the real line. So every
+ * line that names a record puts what the SERVER knows first — id, counts, path
+ * — and the title last, in quotes whose marks the title cannot contain (they
+ * are replaced; the data fields keep the title as it is). Found on the
+ * candidate lines of `collection-arg.ts` (chatbot team, 2026-11-14) and applied
+ * to the other title-before-id lines on 2026-11-15.
+ */
+export function quotedTitle(title: string | undefined, fallback = '(ohne Titel)'): string {
+  // Zero-width characters are no title: `„“` would look like an empty pair of quotes (the quotes around nothing visible).
+  const t = (title ?? '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim();
+  // Every mark a reader takes for a double quote, in any script.
+  return t ? `„${t.replace(/[„“”‟"«»＂❝❞〝〞]/g, '\'')}“` : fallback;
+}
+
+/**
+ * The `nodeId:` line, saying when the id names a REFERENCE rather than a record.
+ *
+ * Both ids are stated, because both are needed and for different things: either
+ * one loads the material, only the original may be written to, and only the
+ * original resolves a skill's companion files without a second lookup.
+ *
+ * Shared rather than repeated: the skill tools have rendered this sentence since
+ * before ordinary results could, and one wording for one fact is the point — a
+ * caller should not have to learn that "(Verknüpfung; Original: …)" and some
+ * second phrasing mean the same thing.
+ *
+ * `originalId` equal to `nodeId` is treated as no reference at all. Search
+ * results carry the DTO field, which is simply absent on an original, while the
+ * skill catalogue derives its own from `ccm:original`, which points at the
+ * record itself. One rule absorbs both.
+ */
+export function nodeIdLine(nodeId: string, originalId?: string): string {
+  return originalId && originalId !== nodeId
+    ? `nodeId: ${nodeId} (Verknüpfung; Original: ${originalId})`
+    : `nodeId: ${nodeId}`;
+}
+

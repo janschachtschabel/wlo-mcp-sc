@@ -1,0 +1,39 @@
+{{- if and .Values.sessionIngress.enabled .Values.sessionIngress.createIngress }}
+{{- $host := required "sessionIngress.host is required when the session Ingress is created — the repository's host" .Values.sessionIngress.host }}
+# The session exchange on the REPOSITORY's host (values.yaml, sessionIngress):
+# exactly <path>/auth/session, forwarded UNCHANGED — the server answers that
+# path itself (WLO_SESSION_MOUNT_PATH). No rewrite annotation on purpose: on
+# ingress-nginx it turns on regex matching for every path of the host, the
+# repository's own Ingress included. No other path of this server is reachable here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-session" (include "wlo-mcp.fullname" .) }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+  {{- with .Values.sessionIngress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.sessionIngress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.sessionIngress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ required "sessionIngress.tls.secretName is required when sessionIngress.tls.enabled" .Values.sessionIngress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: {{ include "wlo-mcp.sessionMountPath" . | quote }}
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "wlo-mcp.fullname" . }}
+                port:
+                  name: http
+{{- end }}

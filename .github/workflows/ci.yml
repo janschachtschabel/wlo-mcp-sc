@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: build/test/audit only needs to read the repo. Without this
+# block the job token inherits the org/repo default, which is often read/write.
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    # A hung step must fail the run, not hold a runner for the default six hours.
+    timeout-minutes: 20
+    steps:
+      # Actions pinned to full commit SHAs (tag hijack protection); the tag is
+      # kept as a comment for readability. Verified against the GitHub API.
+      # v5 runs on the Node 24 action runtime — v4 targets the deprecated Node 20
+      # runtime, which GitHub now force-migrates and warns about on every run.
+      # NOTE: this is the runtime of the ACTIONS; `node-version` below is our
+      # app's runtime and stays 22 (what package.json engines + the Docker image
+      # declare), so CI keeps testing the runtime we actually ship.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Type gate over what the build project cannot see: tests/ (tsx strips
+      # types) and the widget DOM entry points (esbuild does not type-check).
+      # See tsconfig.typecheck.json.
+      - run: npm run typecheck
+      # Correctness rules only (see eslint.config.mjs) — no formatter, and the
+      # project-specific invariants stay in tests/shared-rule-discipline.test.ts.
+      - run: npm run lint
+      - run: npm test
+      # Gate on SHIPPED vulnerabilities: production dependency tree must be
+      # free of high/critical advisories. Dev-only findings (e.g. the tsx →
+      # esbuild dev-server chain, which is not shipped) are reported separately
+      # and do not fail the build. See README "Sicherheit & Abhängigkeiten".
+      - name: Audit production dependencies (gate)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit full tree (informational)
+        run: npm audit || true
+      # The chart: tests/helm-chart.test.ts reads it as text; this renders it.
+      # The two values without a default are given here, as an installer must.
+      - name: Lint and render the Helm chart
+        run: |
+          helm lint --strict deploy/helm/wlo-mcp \
+            --set image.repository=example.invalid/wlo-mcp \
+            --set repositoryUrl=https://repository.example.invalid/edu-sharing
+          helm template wlo-mcp deploy/helm/wlo-mcp \
+            --set image.repository=example.invalid/wlo-mcp \
+            --set repositoryUrl=https://repository.example.invalid/edu-sharing > /dev/null
+      # The image itself: everything above runs the sources, none of it the
+      # Dockerfile, the HEALTHCHECK or the entry point the container starts.
+      # Builds it, starts it under the compose file's restrictions, and checks
+      # /health, tools/list, a clean `docker stop` and the refusal of an address
+      # that cannot work. At run time nothing leaves the runner (see the script).
+      - name: Build and smoke-test the image
+        run: npm run smoke:image

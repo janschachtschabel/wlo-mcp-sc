@@ -1,0 +1,341 @@
+/**
+ * services/write/change-set.ts – the concrete diff a person confirms.
+ *
+ * Everything a write tool intends to do is first expressed here, as a list of
+ * old value → new value, and rendered in German for the user. Two properties
+ * are load-bearing:
+ *
+ *   - Unchanged fields are dropped. A preview listing ten fields of which one
+ *     actually changes trains people to skim it, and a skimmed confirmation is
+ *     no confirmation.
+ *   - Every value is sanitized before it is rendered. The values come out of
+ *     the repository, written by someone else; without flattening, a title
+ *     containing line breaks could end the sentence around it and open what
+ *     reads like a fresh instruction block.
+ *
+ * The ChangeSet is also what a confirmation token is bound to (`confirm.ts`),
+ * so its shape decides what "the same change" means.
+ */
+
+import { collectionTitleFromProperties, titleFromProperties } from '../../node-match.js';
+import { flattenText } from '../../text-sanitize.js';
+import { cutAtWordBoundary } from '../../text-cap.js';
+import { WRITABLE_FIELDS, type FieldRoute } from './fields.js';
+import { labelFromUri, type VocabKey } from '../../vocabs.js';
+import { scaleLabel } from '../../vocabs-quality-scale.js';
+import { LRT_CONCEPTS } from '../../vocabs-lrt.js';
+
+export type ChangeKind = 'content' | 'collection' | 'compendium' | 'topic-page';
+
+export interface FieldChange {
+  property: string;
+  /** German label shown in the preview. */
+  label: string;
+  before: string[] | null;
+  after: string[] | null;
+  route: FieldRoute;
+  /**
+   * Set when the caller's values were ADDED to what the field held (keywords
+   * always; subject, level and target group through their `add…` parameter).
+   * `after` is the whole list either way — that is what is sent and read back.
+   * The mode decides how the preview words the change, and it is in the
+   * fingerprint: an approval to add is not an approval to replace.
+   */
+  mode?: 'add';
+}
+
+export interface ChangeSet {
+  /** The node that will be written. Not necessarily the one the caller named. */
+  nodeId: string;
+  kind: ChangeKind;
+  changes: FieldChange[];
+  /** True for deletions — the tools word and confirm those differently. */
+  destructive: boolean;
+  /** Title of the affected node at planning time, for the deletion preview. */
+  title: string;
+  /**
+   * What the node IS, when the tool knows — then the preview opens with
+   * "<what>: „title“ (id)". A metadata preview used to consist of its field
+   * lines alone, and nobody reading it saw WHICH record they were about to
+   * change (chatbot feedback 2026-11-13, Z2). Title and id are in the
+   * fingerprint either way.
+   */
+  named?: 'Datensatz' | 'Sammlung';
+  /**
+   * The id the caller named, when it is NOT the one being written: they named a
+   * collection reference and the write was redirected to the original
+   * (`resolveWriteTarget`).
+   *
+   * It is carried in the change set rather than handled inside the write call
+   * because the token binds to this object. A redirection decided after the
+   * preview would move the write to a record the user never saw named — the
+   * same hole as sending a different field with an approved token.
+   */
+  redirectedFrom?: string;
+  /**
+   * A mutation that changes no field but still needs confirming — submitting a
+   * record for review, adding it to a collection. One German sentence, rendered
+   * as the first line of the preview and part of what the token is bound to.
+   */
+  action?: string;
+  /**
+   * The collection the record is filed in as part of the SAME confirmation
+   * (`wlo_create_content` + `addToCollectionId`, BOERDi wishlist item 4). In the
+   * fingerprint, so an approval for "create" cannot also authorise a filing
+   * nobody saw — the same rule `redirectedFrom` follows.
+   */
+  addTo?: { nodeId: string; title: string };
+  /**
+   * One line per planned step of a multi-step change (`wlo_create_collection_tree`,
+   * `wlo_add_to_collections`). Rendered line by line — the action is flattened to
+   * one line, and forty steps in one line is not something anyone can check — and
+   * in the fingerprint, so the key authorises exactly these steps.
+   */
+  items?: string[];
+}
+
+/** Properties whose new values are ALWAYS added to what is there, not put in its place. */
+const MERGED_PROPERTIES = new Set(['cclom:general_keyword']);
+
+function sameValues(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Union of existing and new values, comparing case-insensitively so that adding
+ * "mathematik" to a record already tagged "Mathematik" is correctly recognised
+ * as no change at all. Existing spellings are kept — re-casing someone else's
+ * keyword is not what was asked for.
+ */
+function merge(before: string[], added: string[]): string[] {
+  const seen = new Set(before.map(v => v.toLowerCase()));
+  const out = [...before];
+  for (const v of added) {
+    if (seen.has(v.toLowerCase())) continue;
+    seen.add(v.toLowerCase());
+    out.push(v);
+  }
+  return out;
+}
+
+/** What an added change brings: the values of `after` the field did not hold. */
+export function addedValues(c: Pick<FieldChange, 'before' | 'after'>): string[] {
+  const existing = new Set((c.before ?? []).map(v => v.toLowerCase()));
+  return (c.after ?? []).filter(v => !existing.has(v.toLowerCase()));
+}
+
+/**
+ * Build the diff between a node's current properties and the desired values.
+ *
+ * `desired` is expected to have passed `validateField` already — this step is
+ * about what changes, not about what is allowed.
+ */
+export function buildChangeSet(
+  nodeId: string,
+  kind: ChangeKind,
+  before: Record<string, string[]>,
+  desired: Record<string, string[]>,
+  opts: {
+    destructive?: boolean; action?: string; redirectedFrom?: string;
+    addTo?: { nodeId: string; title: string }; items?: string[];
+    /** Properties of `desired` whose values are added to the stored ones instead of replacing them. */
+    added?: readonly string[];
+    /** The node the tool READ: names it in the preview's first line, by the title of its own kind. */
+    subject?: { collection: boolean; title: string };
+  } = {},
+): ChangeSet {
+  const changes: FieldChange[] = [];
+
+  for (const [property, values] of Object.entries(desired)) {
+    const spec = WRITABLE_FIELDS[property];
+    if (!spec) continue; // unknown properties were already rejected upstream
+    const current = before[property] ?? [];
+    const adds = MERGED_PROPERTIES.has(property) || opts.added?.includes(property) === true;
+    const after = adds ? merge(current, values) : values;
+    if (sameValues(current, after)) continue;
+    changes.push({
+      property,
+      label: spec.label,
+      before: current.length > 0 ? current : null,
+      after,
+      route: spec.route,
+      ...(adds ? { mode: 'add' as const } : {}),
+    });
+  }
+
+  return {
+    nodeId,
+    kind,
+    changes,
+    destructive: opts.destructive === true,
+    // By KIND: a collection is named by the title its own endpoint writes.
+    title: opts.subject ? opts.subject.title
+      : kind === 'content' ? titleFromProperties(before) : collectionTitleFromProperties(before),
+    ...(opts.subject ? { named: opts.subject.collection ? 'Sammlung' as const : 'Datensatz' as const } : {}),
+    ...(opts.action ? { action: opts.action } : {}),
+    ...(opts.addTo ? { addTo: opts.addTo } : {}),
+    ...(opts.items?.length ? { items: opts.items } : {}),
+    ...(opts.redirectedFrom ? { redirectedFrom: opts.redirectedFrom } : {}),
+  };
+}
+
+/** True when there is something for the user to confirm. */
+export function hasSomethingToConfirm(cs: ChangeSet): boolean {
+  return cs.changes.length > 0 || cs.destructive || cs.action !== undefined || Boolean(cs.items?.length);
+}
+
+/**
+ * How much of ONE value the preview shows before it has to say it cut something.
+ *
+ * Not a safety limit — `flattenText` below is what makes a value safe to embed,
+ * and it runs whatever the length. This is the reading budget, and it used to be
+ * `sanitizeText`'s 120 characters: enough for a title, far too little for the
+ * fields that carry prose. The write surface allows 20 000 characters for a
+ * description and 100 000 for a compendium text (`fields.ts`), so the routine
+ * case was a person approving text the preview never showed them. 600 fits
+ * essentially every real WLO description whole, which turns truncation from the
+ * normal case back into the exception it should be.
+ */
+const VALUE_PREVIEW_MAX = 600;
+
+/**
+ * One foreign value, made safe and made readable — and honest about the
+ * difference when the two conflict.
+ *
+ * `sanitizeText` cuts at 120 with a bare ellipsis, which says *that* something
+ * was left out but never *how much*. Over a 20 000-character description that
+ * reads like a rounding, not like an omission, and the token binds the full
+ * value regardless. So the cut is disclosed with the total length, the way
+ * `text-cap.ts` states the rule for every other truncation in this codebase.
+ */
+function previewValue(raw: string): string {
+  const flat = flattenText(raw);
+  if (flat.length <= VALUE_PREVIEW_MAX) return flat;
+  return `${cutAtWordBoundary(flat, VALUE_PREVIEW_MAX)} […] (Anfang gezeigt, insgesamt ${flat.length} Zeichen)`;
+}
+
+/**
+ * Which vocabulary a property's URIs come from, for the preview only.
+ *
+ * A separate map from `FIELD_VOCAB` in `fields.ts`, and deliberately so: that
+ * one decides what may be WRITTEN, this one only what a sentence says. Keeping
+ * them apart means a field can be shown readably without becoming writable.
+ */
+const PREVIEW_VOCAB: Record<string, VocabKey> = {
+  'ccm:educationalcontext': 'educationalContext',
+  'ccm:taxonid': 'discipline',
+  'ccm:educationalintendedenduserrole': 'userRole',
+  'ccm:oeh_quality_correctness': 'qualityFinding',
+  'ccm:oeh_quality_copyright_law': 'qualityFinding',
+  'ccm:oeh_quality_criminal_law': 'qualityFinding',
+  'ccm:oeh_quality_personal_law': 'qualityFinding',
+  'ccm:oeh_quality_protection_of_minors': 'qualityFinding',
+};
+
+/**
+ * One value as a person can check it.
+ *
+ * The confirmation preview is the sentence the token binds to, and this project
+ * already holds the rule elsewhere: a technical id is not something anyone can
+ * check (`nameOf` in `services/write/topic-page.ts`). Until 2026-08-19 every
+ * vocabulary field showed its raw URI — `Bildungsstufe: (leer) →
+ * "http://…/sekundarstufe_1"` — which was survivable while the values were
+ * subjects and school levels a reader could still decode, and stopped being so
+ * when quality RATINGS became writable: "…/quality_didactics/4" tells a curator
+ * nothing about what they are approving.
+ *
+ * A value no table names is shown exactly as it is. Nothing is invented, and
+ * the free-text fields (title, description) never enter either lookup.
+ */
+export function displayValue(property: string, value: string): string {
+  const scale = scaleLabel(property, value);
+  if (scale) return scale;
+  // The content type draws from `new_lrt`, which is not one of the `VocabKey`
+  // tables: its own lookup, or old and new stood there as two addresses (Z2).
+  if (property === 'ccm:oeh_lrt') return LRT_LABEL.get(value) ?? value;
+  const vocab = PREVIEW_VOCAB[property];
+  return vocab ? labelFromUri(value, vocab) : value;
+}
+
+// A name two concepts share is shown with its parent: a switch between the two
+// otherwise reads „Suchmaschine“ → „Suchmaschine“.
+const LRT_LABEL = new Map(LRT_CONCEPTS.map(c => [
+  c.uri,
+  LRT_CONCEPTS.some(o => o !== c && o.label === c.label) ? `${c.label} (unter: ${c.path})` : c.label,
+]));
+
+/**
+ * Quoted so the reader can see where a value begins and ends — trailing spaces
+ * and commas are otherwise invisible. `(leer)` stays unquoted: it is a
+ * statement about the field, not a value it holds.
+ */
+function renderValues(property: string, values: string[] | null): string {
+  if (!values || values.length === 0) return '(leer)';
+  return `„${previewValue(values.map(v => displayValue(property, v)).join(', '))}“`;
+}
+
+/**
+ * Render the diff as the German preview the user reads before confirming.
+ * One change per line, so a long list stays scannable.
+ */
+export function renderChangeSet(cs: ChangeSet): string {
+  const lines: string[] = [];
+
+  // First, ahead of the action and every field: WHICH record is edited outranks
+  // what changes in it. A reader who stops after one line must not have missed
+  // that the id they passed is not the id that changes. Both ids are flattened
+  // like every other foreign value here — one of them came from the caller.
+  //
+  // What it does NOT say is that the reference will show the new value. It
+  // usually will, by inheritance — but a reference that was overridden once
+  // keeps its own value for good (measured, F2), and this preview has not read
+  // it. An unverified promise is the one thing a confirmation must not contain.
+  if (cs.redirectedFrom) {
+    lines.push(
+      `Achtung: „${flattenText(cs.redirectedFrom)}“ ist eine Verknüpfung in einer Sammlung, `
+        + `kein eigener Datensatz. Geändert wird das Original: ${flattenText(cs.nodeId)}.`,
+    );
+  }
+
+  // Flattened, not capped. The action is a whole sentence built from parts that
+  // were sanitized individually (a title via `recordTitle`, a suggestion id via
+  // `sanitizeText`); capping it again spends the 120-character budget on the
+  // fixed German prose. Measured: a submit preview then ended at "… zur…" and a
+  // decline preview — which has no field changes and is therefore ONLY this line
+  // — lost both the nodeId and the clause saying the record stays untouched.
+  // Only over something to confirm: "Keine Änderung" stays the whole answer when there is none.
+  if (cs.named && !cs.destructive && hasSomethingToConfirm(cs)) {
+    lines.push(`${cs.named}: ${cs.title ? `„${previewValue(cs.title)}“` : '(ohne Titel)'} (${flattenText(cs.nodeId)})`);
+  }
+  if (cs.action) lines.push(flattenText(cs.action));
+  // Each step on its own line, each flattened on its own — never the joined block.
+  for (const item of cs.items ?? []) lines.push(`- ${flattenText(item)}`);
+
+  // A destructive PLAN names what it deletes in its step lines; the line below
+  // is for the deletion of the ONE node the change set is anchored on.
+  if (cs.destructive && !cs.items?.length) {
+    // The title is WHAT is being deleted, so a silent cut here is the worst
+    // place for one: the reader would confirm the removal of a record they
+    // cannot fully name.
+    const what = cs.title ? previewValue(cs.title) : '(ohne Titel)';
+    lines.push(`Löscht: ${what} (${cs.nodeId})`);
+  }
+
+  for (const c of cs.changes) {
+    if (c.mode === 'add' && MERGED_PROPERTIES.has(c.property)) {
+      // Keywords: free text that is only ever added. Clients read this line as it is.
+      lines.push(`${c.label}: + ${previewValue(addedValues(c).map(v => displayValue(c.property, v)).join(', '))}`);
+      continue;
+    }
+    if (c.mode === 'add') {
+      // The WHOLE list is sent, so what the field holds is part of what is
+      // approved — the addition alone hid everything that is written again.
+      lines.push(`${c.label}: ${renderValues(c.property, c.before)} + ${renderValues(c.property, addedValues(c))}`);
+      continue;
+    }
+    lines.push(`${c.label}: ${renderValues(c.property, c.before)} → ${renderValues(c.property, c.after)}`);
+  }
+
+  if (lines.length === 0) return 'Keine Änderung — die gewünschten Werte stehen bereits so im Datensatz.';
+  return lines.join('\n');
+}

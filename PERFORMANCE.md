@@ -1,153 +1,328 @@
-# WLO-MCP — Performance & Optimierungen
+# WLO-MCP — Performance & Optimizations
 
-Stand: 2026-06-01. Dieses Dokument hält die latenzrelevanten Designentscheidungen
-des MCP-Servers fest — was umgesetzt ist, welche Werte aktiv sind und wo noch
-Potenzial liegt.
+> 🇬🇧 English · 🇩🇪 [Deutsche Fassung](PERFORMANCE.de.md)
 
-## Kontext
-Ein Such-Turn im Chatbot dauerte gemessen **9–18 s** (Faktenfrage ohne Suche ~4 s).
-Hauptkosten: die edu-sharing-Suchen (Vercel-Cold-Starts + mehrere edu-sharing-
-REST-Calls je Tool) und mehrere sequenzielle LLM-Calls im Backend. Die folgenden
-MCP-Änderungen senken Anzahl + Größe der edu-sharing-Calls.
+As of: 2026-06-01. This document records the latency-relevant design decisions
+of the MCP server — what has been implemented, which values are active, and where
+potential still remains.
 
-## Umgesetzte Optimierungen (2026-06-01)
+## Context
+A search turn in the chatbot took a measured **9–18 s** (a factual question without
+search ~4 s). Main costs: the edu-sharing searches (several edu-sharing REST calls
+per tool) and several sequential LLM calls in the backend. The following MCP
+changes reduce the number + size of the edu-sharing calls.
 
-### O1 — Kombiniertes Tool `search_wlo_all`
-Liefert **Einzel-Inhalte + Sammlungen + Themenseiten in EINEM Aufruf**, intern
-`Promise.all`-parallel. Spart dem Backend die separaten Aufrufe von
-`search_wlo_content` + `search_wlo_collections` (= weniger MCP-Round-Trips /
-Cold-Starts). Rückgabe ist ein strukturiertes Envelope:
+> **Operating mode:** the deployment is the **self-hosted, persistent** HTTP
+> mode (Docker on the vServer). There is no serverless target, so anything below
+> about cold starts describes a constraint this server does not have.
+
+## Implemented optimizations (2026-06-01)
+
+### O1 — Combined tool `search_wlo_all`
+Delivers **individual content + collections + topic pages in ONE call**, internally
+`Promise.all`-parallel. Saves the backend the separate calls to
+`search_wlo_content` + `search_wlo_collections` (= fewer MCP round trips /
+cold starts). The return value is a structured envelope:
 ```json
 { "query": "...",
   "content":     { "total": N, "count": M, "results": [...] },
   "collections": { "total": N, "count": M, "results": [...] },
   "topicPages":  { "total": N, "count": M, "results": [...] } }
 ```
-Themenseiten = Sammlungen mit `ccm:page_config_ref` → eine Sammlungssuche bedient
-beide Töpfe (kein separater Durchlauf). Nutzt bewusst den schnellen Keyword-Pfad
-(nicht den Baumlauf) → niedrige Concurrency.
-*Status: im MCP implementiert UND im Backend verdrahtet (2026-06-01).* Der
-Chatbot ruft `search_wlo_all` im spekulativen Prefetch für generische Inhalts-/
-Sammlungs-Such-Turns (1 MCP-Call statt 3 separater) und splittet das Envelope in
-drei Per-Tool-Payloads, die der bestehende `parse_wlo_cards`/Box-Pfad unverändert
-verarbeitet. Explizite Themenseiten-Anfragen (Nutzer tippt „Themenseite"/
-„Fachportal" oder LLM-Tool-Hint = `search_wlo_topic_pages`) nutzen weiter das
-dedizierte, session-stateful `search_wlo_topic_pages`. Live verifiziert: gleiche
-Query „Photosynthese" 12,2 s (3 Calls) → 9,1 s (1 Call); Karten-Töpfe korrekt
-getrennt (content/collections/topicPages).
+Topic pages = collections with `ccm:page_config_ref` → a single collection search
+serves both pots (no separate pass). Deliberately uses the fast keyword path
+(not the tree walk) → low concurrency.
+*Status: implemented in the MCP AND wired up in the backend (2026-06-01).* The
+chatbot calls `search_wlo_all` in the speculative prefetch for generic content/
+collection search turns (1 MCP call instead of 3 separate ones) and splits the
+envelope into three per-tool payloads, which the existing `parse_wlo_cards`/box
+path processes unchanged. Explicit topic-page requests (user types "Themenseite"/
+"Fachportal" or LLM tool hint = `search_wlo_topic_pages`) continue to use the
+dedicated, session-stateful `search_wlo_topic_pages`. Verified live: same query
+"Photosynthese" 12.2 s (3 calls) → 9.1 s (1 call); card pots correctly separated
+(content/collections/topicPages).
 
-### O2 — Kuratierter `propertyFilter`
-edu-sharing akzeptiert Feldauswahl NUR als **wiederholten** `propertyFilter=`-Param
-(Kommaliste → 0 Properties). Statt `-all-` (~59 Properties/Node) werden nur die
-real genutzten ~24 Felder angefordert (`DISPLAY_PROPS` / für Themenseiten
-`TOPIC_PAGE_PROPS` in `wlo-api.ts`). Die `_DISPLAYNAME`-Label-Felder müssen
-explizit mitgelistet werden — kommen dann korrekt zurück (verifiziert).
-Behaltene „Extras": `ccm:oeh_lrt(_DISPLAYNAME)`, `ccm:replicationsource(_DISPLAYNAME)`
-(= Bezugsquelle, z.B. Klexikon), `ccm:author_freetext`.
-Top-Level-Felder (`preview`, `content.url`, `mimetype`, `size`, `downloadUrl`)
-sind NICHT von propertyFilter betroffen.
-`get_node_details` bleibt bewusst auf `-all-` (Einzelknoten, Detail-Tool).
+### O2 — Curated `propertyFilter`
+edu-sharing accepts field selection ONLY as a **repeated** `propertyFilter=` param
+(comma list → 0 properties). Instead of `-all-` (~59 properties/node), only the
+~24 fields actually used are requested (`DISPLAY_PROPS` / for topic pages
+`TOPIC_PAGE_PROPS` in `topic-page-variant.ts` — it moved there from `topic-page-api.ts` on 2026-08-11). The `_DISPLAYNAME` label fields must be
+listed explicitly — they then come back correctly (verified).
+Retained "extras": `ccm:oeh_lrt(_DISPLAYNAME)`, `ccm:replicationsource(_DISPLAYNAME)`
+(= source, e.g. Klexikon), `ccm:author_freetext`.
+Top-level fields (`preview`, `content.url`, `mimetype`, `size`, `downloadUrl`)
+are NOT affected by propertyFilter.
+`get_node_details` deliberately stays on `-all-` (single node, detail tool).
 
-### O4 — `enhancedSearch` gezähmt
-Query-Expansion erzeugte 6–9 parallele `ngsearch`-Calls. Jetzt: Einzelterm-
-Varianten entfernt + Hard-Cap `MAX_VARIANTS = 5` (nach Gewicht sortiert,
-`full:` bleibt immer dabei).
+### O4 — `enhancedSearch` tamed
+Query expansion produced 6–9 parallel `ngsearch` calls. Now: single-term
+variants removed + hard cap `MAX_VARIANTS = 5` (sorted by weight,
+`full:` always stays in).
 
-### O5 — Themenseiten-Loops parallelisiert
-`getCollectionThemePages` holt die page_config-Kinder jetzt `Promise.all`-parallel
-statt sequenziell (`for … await`). `getTopicPageContent` braucht den per-Kind-
-Fan-out gar nicht mehr (siehe Stage-3-Befund unten: die Variante IST das
-page_config-Kind) → noch weniger Calls.
+### O5 — Topic-page loops parallelized
+`getCollectionThemePages` now fetches the page_config children `Promise.all`-parallel
+instead of sequentially (`for … await`). `getTopicPageContent` no longer needs the
+per-child fan-out at all (see Stage 3 finding below: the variant IS the
+page_config child) → even fewer calls.
 
-### O6 — Collections-Baumlauf gedeckelt
-Fallback-Traversal begrenzt: level2 ≤ 25 Parents, level3 ≤ 15 (mit Warn-Log).
-Verhindert die frühere 100+-Parallel-Call-Lawine. Direkte level1-Treffer bleiben
-vollständig.
+### O6 — Collections tree walk capped
+Fallback traversal limited: level2 ≤ 25 parents, level3 ≤ 15 (with warn log).
+Prevents the earlier 100+-parallel-call avalanche. Direct level1 hits remain
+complete.
 
-### O8 — Reranking vereinheitlicht (Sammlungen + Themenseiten)
-Bisher wurden NUR Einzel-Inhalte gerankt (`enhancedSearch`); Sammlungen kamen in
-roher edu-sharing-API-Reihenfolge → off-topic Treffer oben (z.B. „Musik der
-Klassik" bei „Französische Revolution"). Jetzt wird `rerankNodes(query)`
-einheitlich angewandt:
-- `search_wlo_collections` (im `renderOut`, vor dem Slice),
-- `search_wlo_all` (Sammlungen → daraus erben die Themenseiten die Reihenfolge),
-- `search_wlo_topic_pages` Mode B (Eingangs-Sammlungen + Default-Sortierung bei
-  Query = „relevance" statt „alpha").
+### O8 — Reranking unified (collections + topic pages)
+Previously ONLY individual content was ranked (`enhancedSearch`); collections came
+in raw edu-sharing API order → off-topic hits at the top (e.g. "Musik der
+Klassik" for "Französische Revolution"). Now `rerankNodes(query)` is applied
+uniformly:
+- `search_wlo_collections` (in `renderOut`, before the slice),
+- `search_wlo_all` (collections → from which the topic pages inherit the order),
+- `search_wlo_topic_pages` Mode B (incoming collections + default sorting for
+  query = "relevance" instead of "alpha").
 
-`rerankNodes` **sortiert nur um + entfernt gelöschte Knoten** (kein `minScore`-
-Drop) → kann nichts Relevantes verlieren. Verlust-Check über 6 Queries
-(`test_rerank_loss.mjs`): **0 relevante Treffer aus Top-3 verloren**, durchweg
-Gewinn (Exakt-Treffer von #3 → #1; z.B. „Klimawandel"/„Mittelalter" rückten von
-3 off-topic-Sammlungen auf 3 exakte). Browse ohne Query bleibt unverändert.
+`rerankNodes` **only reorders + removes deleted nodes** (no `minScore` drop) → it
+cannot lose anything relevant. Loss check over 6 queries:
+**0 relevant hits lost from top 3**, gains throughout
+(exact hit from #3 → #1; e.g. "Klimawandel"/"Mittelalter" moved up from
+3 off-topic collections to 3 exact ones). Browse without query stays unchanged.
 
-## Aktuell aktive Einstellungen
-| Knopf | Wert | Bedeutung |
+## Currently active settings
+| Knob | Value | Meaning |
 |---|---|---|
-| `POOL_SIZE` (`WLO_POOL_SIZE`) | **25** (von 40) | Kandidaten-Pool **je Variante** fürs Ranking — NICHT die ausgelieferte Trefferzahl |
-| `MAX_VARIANTS` | 5 | max. parallele Such-Varianten |
-| `search_wlo_content` maxResults | Default 8 | ausgelieferte Inhalte (Backend setzt real 10 spekulativ / 4 im Loop) |
+| `POOL_SIZE` (`WLO_POOL_SIZE`) | **25** (from 40) | candidate pool **per variant** for ranking — NOT the delivered hit count |
+| `MAX_VARIANTS` | 5 | max. parallel search variants |
+| `search_wlo_content` maxResults | Default 8 | delivered content (backend really sets 10 speculatively / 4 in the loop) |
 | `search_wlo_collections` maxResults | Default 5 | |
 | `search_wlo_all` maxContent / maxCollections | 8 / 5 | |
-| Collections-Baumlauf | level1 ≤100 · level2 ≤25 · level3 ≤15 | |
-| `minScore` | max(5, Terme×3) | Quality-Floor im Reranking |
-| Properties/Node | ~24 (statt ~59) | O2 |
+| Collections tree walk | level1 ≤100 · level2 ≤25 · level3 ≤15 | |
+| `minScore` | max(5, terms×3) | quality floor in reranking |
+| Properties/node | ~24 (instead of ~59) | O2 |
+| `WLO_COMPENDIUM_SECTION_MAX` | **2000** | characters per main section of a compendium text delivered without a `query` — O11 |
 
-## Was nach dem Ranking ausgeliefert wird
-`enhancedSearch`: ≤5 Varianten × `POOL_SIZE` Kandidaten → RRF-Merge +
-Quality-Score (`computeRelevanceScore`) → `minScore`-Filter (Graceful-Fallback
-auf den Pool) → gelöschte Knoten raus → **auf `maxResults` gekürzt** → diese
-Top-N als formatierte Knoten + der **echte edu-sharing-Treffer-Total**. Der
-Kandidaten-Pool verlässt den MCP nie.
+## What gets delivered after ranking
+`enhancedSearch`: ≤5 variants × `POOL_SIZE` candidates → RRF merge +
+quality score (`computeRelevanceScore`) → `minScore` filter (graceful fallback
+to the pool) → deleted nodes removed → **trimmed to `maxResults`** → these
+top N as formatted nodes + the **real edu-sharing hit total**. The
+candidate pool never leaves the MCP.
 
-## Themenseiten-Inhalte (`get_topic_page_content`) — Stand 2026-06-01
+## Topic-page content (`get_topic_page_content`) — as of 2026-06-01
 
-**Bugfix (umgesetzt):** Die Variantenauflösung war kaputt — sie durchsuchte die
-*Inhalte* der `page_config_ref`-Kinder (das sind `WIDGET_*`-Knoten OHNE
-`ccm:page_variant_config`) und lieferte daher **immer 0 Swimlanes**. Tatsächlich
-tragen die page_config-**Kind-Collections selbst** den `ccm:page_variant_config`
-(Titel z.B. „Variante_Ideal" / „PAGE_VARIANT_…"). Fix in `getTopicPageContent`:
-direkt unter den Kindern die echte (Nicht-Template-)Variante wählen. Verifiziert
-gegen Staging: „Nachhaltigkeit" liefert jetzt **8 Swimlanes** mit echten
-Überschriften („Test Tina 2", „Akkordeonelement", „Ankermenü", …).
+**Bugfix (implemented):** The variant resolution was broken — it searched the
+*contents* of the `page_config_ref` children (these are `WIDGET_*` nodes WITHOUT
+`ccm:page_variant_config`) and therefore **always returned 0 swimlanes**. In
+reality the page_config **child collections themselves** carry the
+`ccm:page_variant_config` (title e.g. "Variante_Ideal" / "PAGE_VARIANT_…"). Fix in
+`getTopicPageContent`: pick the real (non-template) variant directly among the
+children. Verified against staging: "Nachhaltigkeit" now returns **8 swimlanes**
+with real headings ("Test Tina 2", "Akkordeonelement", "Ankermenü", …).
 
-**`outputFormat:'json'` = RENDER-READY (umgesetzt):** Die Swimlane-Items sind
-**WIDGET-Knoten** (`ccm:map` mit `ccm:widget_config`). Der json-Branch löst je
-Swimlane das **erste inhaltstragende Widget** zu echten Karten auf — drei in WLO
-vorkommende Formen:
-| Widget-Typ | config-Feld | Auflösung |
+**`outputFormat:'json'` = RENDER-READY (implemented):** The swimlane items are
+**WIDGET nodes** (`ccm:map` with `ccm:widget_config`). The json branch resolves, per
+swimlane, the **first content-bearing widget** into real cards — three forms that
+occur in WLO:
+| Widget type | config field | Resolution |
 |---|---|---|
-| `content-teaser` | `propertyFilters` (gespeicherte Query) | → `ngsearch(FILES)` |
-| `wlo-collection-chips` | `sortedNodeIds` (feste Liste) | → `getCollectionMetadata` |
-| `wlo-media-rendering` | `selectedNodeId` (Einzelknoten) | → `getCollectionMetadata` |
+| `content-teaser` | `propertyFilters` (stored query) | → `ngsearch(FILES)` |
+| `wlo-collection-chips` | `sortedNodeIds` (fixed list) | → `getNodesMetadata` |
+| `wlo-media-rendering` | `selectedNodeId` (single node) | → `getNodesMetadata` |
 
-Andere Widgets (Text / AI-Text / `wlo-topics-column-browser` / `editorial-members`
-/ iframe) tragen keine Inhalte → leere Swimlane (Frontend überspringt sie).
-Output je Swimlane: `{heading, type, items:[Karte…≤maxPerSwimlane], hasMore}` +
-`variantTitle` + `topicPageUrl`. Gedeckelt: ≤ `MAX_LANES=12` Swimlanes, 1 Widget/
-Swimlane, `maxPerSwimlane` (Default 3) Karten — hält die Call-Zahl beschränkt.
-**Live verifiziert (Staging):** „Nachhaltigkeit" füllt 5/8 Swimlanes —
-content-teaser → echte Inhalte („Wie funktioniert das Internet?"), collection-chips
-→ Sammlungen („Klimawandel", „Nachhaltige Ernährung"), media-rendering → 1 Knoten.
-*Backend-/Frontend-Verdrahtung (Intent/Pattern + Swimlane-Boxen mit „(Auszug)" +
-Absprung-Button) steht noch aus — Backend ruft das Tool noch nicht.*
+Other widgets (Text / AI text / `wlo-topics-column-browser` / `editorial-members`
+/ iframe) carry no content → empty swimlane (frontend skips them).
+Output per swimlane: `{heading, type, items:[card…≤maxPerSwimlane], hasMore}` +
+`variantTitle` + `topicPageUrl`. Capped: ≤ `MAX_LANES=12` swimlanes, 1 widget/
+swimlane, `maxPerSwimlane` (default 3) cards — keeps the call count bounded.
+**Verified live (staging):** "Nachhaltigkeit" fills 5/8 swimlanes —
+content-teaser → real content ("Wie funktioniert das Internet?"), collection-chips
+→ collections ("Klimawandel", "Nachhaltige Ernährung"), media-rendering → 1 node.
+*Backend/frontend wiring (intent/pattern + swimlane boxes with "(Auszug)" +
+jump-off button) is still outstanding — the backend does not yet call the tool.*
 
-## Offenes Optimierungspotenzial
+## O8 — Topic-page listing (Mode C)  *(implemented 2026-07-27)*
+A client reported **17–19 s** for `search_wlo_topic_pages` without a `query`
+(analysis: `docs/plans/2026-07-27-topic-pages-latency.md`). Three causes, all
+fixed:
+- **Dead upstream call:** every variant fetched its owning collection's metadata
+  just to read `ccm:page_config_ref` — a value the parent walk already holds (it
+  picks that collection precisely because of it) and that `buildTopicPageUrl`
+  only truthiness-checks. Removed outright → half the round-trips.
+- **Cache stampede:** the parent cache stored the resolved *value* instead of the
+  in-flight *promise*, so concurrently enriched sibling variants all missed it
+  and re-ran the same walk. It now caches the promise.
+- **Candidate floor:** `max(50, maxResults * 5)` charged a 5-result request for
+  50 variants. Now `max(10, maxResults * 3)` (three = the maximum variants per
+  topic page) with a single top-up to the former pool if the merge falls short.
 
-### O7 — Persistenter Betrieb + In-Process-Cache  *(NICHT umgesetzt)*
-**Größter verbliebener Hebel.** Der MCP läuft aktuell **stateless serverless**
-(`api/mcp.ts`: ein Server je Request, `server.close()` danach) → Vercel-**Cold-
-Starts** (~1–3 s/Call) **und** kein Caching über Requests hinweg.
-- Ein **persistenter Prozess** (vorhandener `Dockerfile`/stdio-Modus oder Vercel
-  „fluid"/keep-warm) eliminiert Cold-Starts und ermöglicht erst einen
-  **In-Process-Result-Cache** (Suchergebnisse, Node-Metadaten, Vokabular mit TTL).
-- Auf serverless wäre ein solcher Cache ein No-op (überlebt Requests nicht).
-- Code-seitig könnte der Cache hinter einem Env-Flag vorbereitet werden; er greift
-  aber erst mit einem persistenten Deployment. **Daher an die Betriebsart-
-  Entscheidung gekoppelt.**
-- Workaround ohne Umbau: **Keep-Warm-Cron** (alle ~5 min `/mcp` pingen) gegen
-  Cold-Starts.
+The parent walk also asks for the three fields it reads instead of `-all-` (~59
+properties for every node of the ancestor chain), and `WLO_TOPIC_POOL` makes the
+concurrency of this fan-out configurable.
 
-### Kleinere, optionale Hebel
-- `POOL_SIZE` weiter senken (25→15) — minimal weniger Recall.
-- edu-sharing-Antwortzeit selbst (~1–4 s/ngsearch) ist Infra (Staging; Prod evtl.
-  schneller) — nicht im MCP-Code lösbar; wir senken nur Anzahl + Größe der Calls.
+**The real finding surfaced while profiling the remaining seconds:** `/parents`
+answers **500 (AccessDenied)** for anonymous callers on page-config folders.
+`getNodeParents` degrades a failed response to `[]`, so the owner resolution
+failed silently for every variant. The listing showed identical
+"Fachportalstartseite" titles, no topic-page URLs, and a `collectionId` that was
+really the variant id. Mode C was not just slow but unusable — and paid ~1.1 s
+per variant for it.
+
+Replaced with two `/metadata` reads along `virtual:primaryparent_nodeid`
+(variant → page-config folder → collection). That endpoint works anonymously at
+~0.19 s. Pool factor also 3 → 2, because the data averages just 1.10 variants
+per page (108 variants across 98 pages).
+
+Narrowing the listing to a single target-group variant was evaluated and
+rejected: 98 of 108 variants carry no target group at all, and a server-side
+`teacher` filter returns 3 variants covering 3 of 98 pages.
+
+Measured (locally against the production repository, `scripts/measure-topic-pages.mjs`):
+
+| Call | originally reported | after pool/projection | after the `/metadata` fix |
+|---|---|---|---|
+| `{maxResults: 20}` | 17–19 s | 9.9 s | **3.2 s** |
+| `{maxResults: 10}` | 8.5 s | 4.5 s | **1.4 s** |
+| `{maxResults: 5}`  | 8.2 s | 2.8 s | **0.66 s** |
+| `{maxResults: 20, educationalContext}` | 3.4 s | 1.5 s | **0.55 s** |
+
+All at `WLO_TOPIC_POOL=10`; the payload actually **grew**, because it now
+carries real titles and links. That 10 and 5 differ at all (previously 8.5 s vs
+8.2 s — both on the floor of 50) is additional evidence the floor is gone.
+
+Scope of the `/parents` defect: the endpoint is fine for ordinary collections
+(200, ~0.4 s) and also fails for content nodes (`ccm:io`), which
+`getNodeBreadcrumb` already documents and tolerates. Only the page-config case
+was undiagnosed.
+
+## O10 — Bounded, self-disclosing browse tree  *(implemented 2026-07-27)*
+Measuring the **opt-in modes** — which O9 had skipped — exposed the real
+outlier: `browse_collection_tree` at depth 2 with `includeContentPreview` took
+**11.7 s and returned 460 kB**. The tree fetched up to 30 sub-collections per
+node with no overall bound (a 15-node portal yields ~100 nodes), and every
+enrichment then cost one upstream call per node — up to 1500 upstream calls from
+a single tool call in the worst case.
+
+- **The tree is bounded.** The slice per parent derives from a total node budget
+  (150), capped at 10, computed *before* the walk so every parent gets the same
+  size — a counter drained by concurrent workers would make the output
+  nondeterministic. Depth stays capped at 2. *(As of 2026-07-27. Since
+  2026-11-06 there is also `depth: 3`, with its own budget of at most 300 nodes
+  in total, `TREE_DEPTH3_BUDGET`, likewise computed before the walk; the
+  measurements below are for depth 1 and 2.)*
+- **Truncation is disclosed.** Cut nodes carry `hasMoreChildren`, the envelope
+  carries `truncated`, and the Markdown output names the exact follow-up call.
+  The tool description instructs the model to say so and open a branch
+  deliberately rather than present a slice as the whole tree. Detecting "there
+  is more" is free: the walk fetches exactly one child more than it shows.
+
+| Mode | before | after |
+|---|---|---|
+| depth 2 + content preview | 11.7 s / 460 kB | **6.5 s / 362 kB** |
+| depth 2 + counts | 5.1 s / 103 kB | **4.0 s / 84 kB** |
+| depth 1 + counts | 2.0 s | **1.5 s** |
+
+Still expensive by nature: `includeContentPreview` costs one upstream call per
+tree node. It is opt-in and off by default — a caller that enables it on a wide
+tree should expect seconds.
+
+## O9 — Fan-out sweep across every tool  *(implemented 2026-07-27)*
+All 22 tools registered at that date were benchmarked live with realistic
+arguments to locate the bottleneck instead of guessing at it. Most answer in
+under a second; three call sites carried avoidable waiting.
+(`get_wlo_content_text`, the 23rd tool, was added afterwards and is not part of
+these numbers.)
+
+- **The Mode-B candidate check now uses `WLO_TOPIC_POOL`** instead of a
+  hard-coded width of 4. `findTopicPagesByQuery` examines up to 12 candidates,
+  each costing a metadata read plus possibly a children read — three to four
+  sequential waves. Measured in isolation: 1797 ms at width 4, 788 ms in one wave.
+- **`getTopicPageContent` gained a both-ids fast path.** With the collection and
+  variant ids both known, the two nodes are read **in parallel** instead of
+  walking collection → page-config folder → variant. The resolver returns both
+  ids anyway. Measured: 1238 ms → 774 ms.
+- **`browse_collection_tree`: level-1 width 5 → 10.** At depth 2 each level-1
+  node costs exactly one `/children` call and level-2 nodes do not recurse, so
+  the width was four sequential waves. The nested pool is now a separate,
+  deliberately narrow constant (4) because it only performs I/O on the opt-in
+  `includeContentCounts` path — bounding the worst case at 40 concurrent calls
+  instead of squaring the wider level-1 width.
+
+Measured (locally against the production repository, best of two runs):
+
+| Tool | before | after |
+|---|---|---|
+| `get_topic_page_content` (query) | 3253 ms | **2175 ms** |
+| `browse_collection_tree` depth 2 | 2899 ms | **1968 ms** |
+| `browse_collection_tree` depth 1 | 1378 ms | **943 ms** |
+| `search_wlo_topic_pages` (query) | 1621 ms | **1191 ms** |
+
+Every other tool was already at or below ~1.2 s and was left alone.
+
+**Concurrency was measured, not assumed:** against the live server five
+simultaneous tool calls cost the same per call as a single one (factor 0.96) and
+ten cost 1.65× — far from the factor 10 that serialization would produce. What
+slows down at ten is edu-sharing, not this server.
+
+## O11 — Compendium answers a question instead of arriving whole  *(implemented 2026-08-18)*
+
+**Problem.** `get_compendium_text` returned the untruncated editorial prose of a
+collection. Measured over the 11 collections on staging that carry such a text:
+median 9 473 characters, p90 16 411, **max 65 250**. A model asking about one
+curriculum received the whole thing and paid for all of it.
+
+**Change.** Every answer opens with the outline of the document's headings.
+Without a `query` the whole text follows, each main section capped on its own;
+with a `query` only the passages that answer it, ranked by BM25
+(`src/text-bm25.ts`) and each labelled with its heading path.
+
+| call on the largest text (65 250 chars) | delivered | ms |
+|---|---|---|
+| without `query` (before this change) | 65 250 | — |
+| without `query` | **20 802** | 739–1 121 |
+| `query: "Lehrplan Thüringen Regelschule"` | **4 964** | 588–601 |
+| `query: "Brechung an der Linse"` | 8 725 | 572–833 |
+| `query` with no match (outline only) | 2 083 | 466–526 |
+
+**Costs nothing upstream.** The selection is local: the same single metadata read
+fetches the text, and the ranking is CPU only — the absolute worst case, 25
+collections × the largest text × 7 query terms, measured **91 ms**.
+
+Three shapes the measurement ruled out, each of which looked obvious first:
+capping "per H1" would have capped each document as a whole (10 of 10 texts put
+their title in a single H1); a raw paragraph is the wrong BM25 unit (329 of 972
+real paragraphs are under 40 characters, and length normalisation puts a bare
+table row above the prose explaining it, so paragraphs are accumulated to 200
+characters first); and a whole section is too coarse (largest own-body section:
+16 317 characters).
+
+**Deliberately untouched:** `GET /api/compendium` and the `includeCompendium`
+bundling inside `search_wlo_all` still deliver the full text — they call
+`getCompendiumTexts` directly, which this change did not alter.
+
+## Open optimization potential
+
+### O7 — In-process cache  *(NOT implemented)*
+> *As of 2026-11-15:* a general result cache as described here still does not
+> exist. Two narrow caches have been added since: the skill-registry cache per
+> collection (`src/services/skill-registry-cache.ts`, TTL 10 minutes) and a
+> one-minute cache for a few reads every request repeats, such as the list of
+> subject portals (`src/short-cache.ts`, 60 s). The caveat below already
+> applies there: what depends on a login's rights is held per login.
+
+
+**Largest remaining lever.** In its target deployment the server runs
+**persistently** (Docker on the vServer); only a per-request MCP server object is
+created and closed, the process itself stays up. An **in-process result cache**
+(search results, node metadata, vocabulary with TTL) would therefore take effect,
+unlike in a serverless deployment where it does not survive requests.
+- Most valuable for topic pages: the parent walk and collection metadata rarely
+  change and dominate the listing.
+- **Reconcile with the auth work before building it**
+  (`docs/plans/2026-07-25-wlo-mcp-optional-auth.md`): once responses depend on the
+  logged-in user's rights, the cache key must include the identity — otherwise
+  user B receives user A's rights-filtered result.
+- Suggested order: measure O8 in production first, then decide whether O7 is
+  still needed at all.
+
+### Smaller, optional levers
+- Lower `POOL_SIZE` further (25→15) — minimally less recall.
+- edu-sharing's own response time (~1–4 s/ngsearch) is infra (staging; prod possibly
+  faster) — not solvable in the MCP code; we only reduce the number + size of the calls.

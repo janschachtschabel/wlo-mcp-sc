@@ -1,0 +1,463 @@
+/**
+ * auth/credential.ts – WHICH identity the server calls edu-sharing with.
+ *
+ * The server resolves a credential per request along a chain:
+ *
+ *   1. the individual user — an `Authorization: Basic` header the AI host
+ *      sends from its connector settings; the model never sees it
+ *   2. a service account from the environment — one identity for everyone
+ *   3. nothing → anonymous, exactly today's behaviour
+ *
+ * HTTP Basic, not Bearer: edu-sharing's own OpenAPI declares exactly
+ * `basicAuth` and `cookieAuth` as its security schemes, and probing (P0,
+ * 2026-07-30) confirmed a Bearer header is ignored rather than honoured.
+ *
+ * The credential is read in ONE place (`wloFetch`) and bounded by one rule:
+ * it travels only to the configured repository. See `auth/identity.ts` for why
+ * a configured credential must also be VERIFIED — wrong credentials do not
+ * fail, they silently answer as guest.
+ */
+
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { decodeAccessToken, type AuthKeys } from './access-token.js';
+import type { AccessRegistry } from './access-registry.js';
+import { sessionCookiesFrom, sessionCredentialHeader, sessionJti } from './upstream-auth.js';
+
+/** The authority name edu-sharing reports for an unauthenticated caller. */
+export const ANONYMOUS_AUTHORITY = 'esguest';
+
+/**
+ * The token that means "connect me without a WLO account of my own".
+ *
+ * A client that has found our discovery documents cannot simply send no header
+ * — it wants a token, and without an answer for "no account" its only exits are
+ * signing in or cancelling, and cancelling is not a connection. This is that
+ * answer.
+ *
+ * **It is a constant, and that is deliberate.** It grants exactly what a request
+ * with no `Authorization` grants, so forging it saves the forger the trouble of
+ * omitting the header. No key material, no allow-list entry, no revocation, no
+ * expiry — none of that would protect anything. Which is also why it works on a
+ * deployment that has no access blocks configured at all.
+ *
+ * The version suffix is there so a future change of meaning gets a new value
+ * rather than silently changing what an issued one does.
+ */
+export const ANONYMOUS_ACCESS_TOKEN = 'wlo-anon.v1';
+
+/**
+ * Was this header the anonymous token, exactly?
+ *
+ * Exact match on purpose: a typo must surface as a broken token (401), not slip
+ * through as "anonymous". The scheme keyword is case-insensitive because HTTP
+ * says so; the value is not.
+ */
+export function isAnonymousToken(raw: string | undefined): boolean {
+  const m = /^Bearer\s+(\S+)$/i.exec((raw ?? '').trim());
+  return m?.[1] === ANONYMOUS_ACCESS_TOKEN;
+}
+
+export interface WloCredential {
+  /** Ready-to-send `Authorization` header value. */
+  header: string;
+  /** Human-readable identity for logs and the status tool — never the secret. */
+  label: string;
+  source: 'service' | 'user';
+  /**
+   * The access id, when this credential came from a `wlo2.` block.
+   *
+   * Present ONLY on that branch — a `Basic` header carries no id, and the
+   * service account is not a block. `abuseBucketKey` is the one reader; it is a
+   * SECRET (revocation acts on it, `AUTH.md` §4) and must never be logged or
+   * returned.
+   */
+  jti?: string;
+  /**
+   * The account the repository CONFIRMED for this login, where the allow-list
+   * recorded one (`RegistryEntry.acct`). `label` is the spelling the block
+   * carries, and one login has several accepted spellings (measured
+   * 2026-11-12) — so a cap counted per label is no cap per person. Read by the
+   * per-account caps of the write side ONLY; what a confirm key is bound to
+   * stays the credential itself. Absent for `Basic`, the service account and
+   * entries listed before the account was recorded.
+   */
+  acct?: string;
+}
+
+/**
+ * Which bucket the abuse limiter counts this credential in.
+ *
+ * `POST /mcp` forwards a caller-supplied credential upstream, so it can be used
+ * as an oracle for guessing WLO logins. What must be bounded is how many
+ * DISTINCT secrets are tried against one identity — and which identity that is
+ * depends on the scheme:
+ *
+ * - **`Basic`** has none. The guesser is bounded by the only thing available,
+ *   their address. Unchanged, and it must stay: this is the scheme that carries
+ *   a guessable secret in the clear.
+ * - **A `wlo2.` block** has one, its `jti`. Under a valid access id there is
+ *   exactly ONE correct password — and ONE name, which `credentialFromAccessBlock`
+ *   enforces; until 2026-11-12 it did not, and "one correct password" was only
+ *   true of honest blocks — so a legitimate holder contributes a single entry
+ *   for the life of the block, while a guesser contributes many — and they land
+ *   in the same bucket however many addresses they come from.
+ *
+ * Keying a block by address instead was wrong in both directions. It refused a
+ * RELAY client (a chatbot backend serving many people from one address hit the
+ * cap at its 11th signed-in person), and it let a guesser who had learned a
+ * `jti` multiply their budget simply by rotating addresses.
+ *
+ * The prefix keeps the two key spaces apart, so neither scheme can spend the
+ * other's budget.
+ */
+export function abuseBucketKey(cred: WloCredential, ip: string): string {
+  return cred.jti ? `jti:${cred.jti}` : addressBucket(ip);
+}
+
+/**
+ * The bucket of one client address — the ONE spelling. Whoever asks the limiter
+ * how long an address must wait uses this too: a bare address is a different
+ * key, and reads back "no wait" for a bucket that is full (audit 2026-11-12, S-6).
+ */
+export function addressBucket(ip: string): string {
+  return `ip:${ip}`;
+}
+
+/**
+ * Build the service credential from raw env values, or null when it is not
+ * configured. Both halves are required: sending Basic with an empty password
+ * would not fail loudly, it would downgrade to guest — a configuration mistake
+ * that looks exactly like "auth is off".
+ */
+export function resolveServiceCredential(env: { user?: string; password?: string }): WloCredential | null {
+  const user = (env.user ?? '').trim();
+  const password = (env.password ?? '').trim();
+  if (!user || !password) return null;
+  return {
+    header: `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`,
+    label: user,
+    source: 'service',
+  };
+}
+
+/**
+ * Turn an incoming `Authorization` header into this request's credential.
+ *
+ * This is how an individual WLO user logs in: they configure their own
+ * credentials once in their AI host's connector settings, the host sends the
+ * header with every request, and the model never sees it. Nothing is stored
+ * here — the header lives for the duration of one request.
+ *
+ * Two schemes, and the difference matters. **Basic** is taken as-is. **Bearer**
+ * is accepted only as a `wlo2.` access block, which is DECODED here into a
+ * Basic credential — the Bearer itself never leaves this server. That preserves
+ * the older rule rather than breaking it: edu-sharing ignores a Bearer header
+ * rather than rejecting it (probed 2026-07-30), so forwarding one would produce
+ * a request that looks authenticated and silently is not. Anything else under
+ * either scheme is refused.
+ *
+ * Both halves must be non-empty, the same rule `resolveServiceCredential`
+ * applies: a half-filled login is not an identity. A connector whose password
+ * field stayed empty would otherwise resolve to `mode: 'user'`, get the write
+ * tools registered, and then fail every single call with 401.
+ */
+export function credentialFromHeader(raw: string | undefined): WloCredential | null {
+  const value = (raw ?? '').trim();
+  const bearer = /^Bearer\s+(\S+)$/i.exec(value);
+  if (bearer) return credentialFromAccessBlock(bearer[1]!);
+  const m = /^Basic\s+(\S+)$/i.exec(value);
+  if (!m) return null;
+  let decoded: string;
+  try {
+    decoded = Buffer.from(m[1], 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  const sep = decoded.indexOf(':');
+  if (sep <= 0 || sep === decoded.length - 1) return null; // user AND password
+  return { header: value, label: decoded.slice(0, sep), source: 'user' };
+}
+
+/**
+ * Key material plus the allow-list, or null when per-user access blocks are not
+ * configured. Module-level like `serviceCredential` below and for the same
+ * reason: it is decided once at startup and read on every request, and
+ * threading it through `credentialFromHeader` would change a signature four
+ * call sites and a dozen tests depend on.
+ */
+export interface AccessSupport {
+  keys: AuthKeys;
+  registry: AccessRegistry;
+}
+
+let accessSupport: AccessSupport | null = null;
+
+/** Install (or clear) access-block support. Called once at startup, and by tests. */
+export function setAccessSupport(support: AccessSupport | null): void {
+  accessSupport = support;
+}
+
+/**
+ * The installed support, or null when the feature is off. Read by the `/auth/*`
+ * endpoints so there is ONE answer to "are access blocks enabled" — a second
+ * copy of that state would let the pages offer what the header path refuses.
+ */
+export function currentAccessSupport(): AccessSupport | null {
+  return accessSupport;
+}
+
+/**
+ * Turn a `wlo2.` block into the credential it carries.
+ *
+ * Two gates, both required: the block must decrypt under a key we hold, and its
+ * id must still be on the allow-list. The second is what revocation acts on —
+ * without it the list would be decoration, since a decodable block would
+ * authenticate forever.
+ */
+function credentialFromAccessBlock(raw: string): WloCredential | null {
+  if (!accessSupport) return null;
+  const payload = decodeAccessToken(raw, accessSupport.keys);
+  if (!payload) return null;
+  if (!accessSupport.registry.has(payload.jti)) return null;
+  // The id is listed for ONE name. The public key is published, so whoever holds
+  // a listed id — their own — can mint blocks carrying it with any name and any
+  // password; without this line that was a fresh guessing budget per id against
+  // a stranger's account (audit 2026-11-12, S-1).
+  if (accessSupport.registry.labelOf(payload.jti) !== payload.u) return null;
+  // A ticket block carries an edu-sharing ticket, and the scheme the repository
+  // accepts for one is `EDU-TICKET` (the md-editor's production embedding path).
+  // Everything else about the block — registry, revocation, abuse bucket — is
+  // kind-agnostic and stays shared.
+  const account = accessSupport.registry.accountOf(payload.jti);
+  // The kind is the ENTRY's kind, for a session: its id is a hash of a session
+  // id, and the holder of that listed id can encrypt any content under it (the
+  // public key is published) — a password or a ticket under a session's id is
+  // not something this server issued. Only this direction: an entry written
+  // before the kinds existed carries none, and a ticket block must keep
+  // decoding against it.
+  if ((accessSupport.registry.kindOf(payload.jti) === 'session') !== (payload.k === 'session')) return null;
+  // …and what may become a `Cookie` header is checked again, for the same reason:
+  // it must be the exact cookie string the exchange builds, and its session id
+  // the one this listed id was derived from. Without the second half, whoever
+  // knows a listed session could send ANOTHER session under it — no new right at
+  // the repository, but counted, labelled and revocable as the wrong person.
+  if (payload.k === 'session') {
+    const session = sessionCookiesFrom(payload.secret);
+    if (!session || session.cookie !== payload.secret || sessionJti(session.sessionId) !== payload.jti) return null;
+  }
+  // A block of an EXCHANGE belongs to the CURRENT listing of its id: the id is
+  // derived from the ticket or the session, so a revoked or expired listing would
+  // otherwise come back with the next exchange (`ticket-exchange.ts`,
+  // `session-exchange.ts`; chatbot team, 2026-11-15). A password block's id is
+  // minted fresh and never listed twice.
+  if ((payload.k === 'ticket' || payload.k === 'session') && payload.iat !== accessSupport.registry.listedAt(payload.jti)) {
+    return null;
+  }
+  const header = payload.k === 'ticket'
+    ? `EDU-TICKET ${payload.secret}`
+    : payload.k === 'session'
+      ? sessionCredentialHeader(payload.secret)
+      : `Basic ${Buffer.from(`${payload.u}:${payload.secret}`).toString('base64')}`;
+  return {
+    header,
+    label: payload.u,
+    source: 'user',
+    // The only branch that has an access id. `abuseBucketKey` bounds guessing
+    // per id rather than per address — see there for why that is both safer and
+    // what makes a relay client work.
+    jti: payload.jti,
+    // From the ALLOW-LIST, never from the block: the block's content is the
+    // caller's to write (the public key is published), the entry is ours.
+    ...(account ? { acct: account } : {}),
+  };
+}
+
+/** What one `Authorization` header amounts to — every question an entry point asks of it. */
+export interface PresentedAuthorization {
+  /** The credential it carries, or null (`credentialFromHeader`). */
+  credential: WloCredential | null;
+  /** Presented and not usable (`isUnusableAuthorization`). */
+  unusable: boolean;
+  /** …and it was a Bearer: the case that earns a 401 (`isUnusableBearer`). */
+  unusableBearer: boolean;
+}
+
+/**
+ * Read a header ONCE and answer all three questions from that one reading.
+ *
+ * The three functions below each decode again, and opening a block is an RSA
+ * private-key operation per configured key — so a request with a garbage Bearer
+ * cost up to three passes (six during a key rotation) before it was refused,
+ * for anyone who cared to send one (audit 2026-11-14, S5). An entry point calls
+ * this; the single-question functions stay for callers that ask one.
+ */
+export function readAuthorization(raw: string | undefined): PresentedAuthorization {
+  const credential = credentialFromHeader(raw);
+  const value = (raw ?? '').trim();
+  // The anonymous token yields no credential ON PURPOSE — see `isUnusableBearer`.
+  const unusable = credential === null && value.length > 0 && !isAnonymousToken(raw);
+  return { credential, unusable, unusableBearer: unusable && /^Bearer\s/i.test(value) };
+}
+
+/**
+ * The caller PRESENTED an `Authorization` header and we cannot use it.
+ *
+ * Not the same situation as sending none, and the difference decides what an
+ * entry point may do next: "nothing presented" falls back to the service
+ * account, "presented and refused" must not — that caller asked to act as
+ * themselves, and silently lending them a shared identity gives them rights
+ * they never asked for and attributes their changes to nobody.
+ */
+export function isUnusableAuthorization(raw: string | undefined): boolean {
+  if (isAnonymousToken(raw)) return false;
+  return (raw ?? '').trim().length > 0 && credentialFromHeader(raw) === null;
+}
+
+/**
+ * The narrower case: a **Bearer** was presented and we could not open it —
+ * forged, revoked, or encrypted for a key we do not hold.
+ *
+ * Separate from `isUnusableAuthorization` because the two lead somewhere
+ * different. A Bearer we cannot use is OUR token failing, and the honest answer
+ * is `401` with the pointer to where a new one is issued (see
+ * `oauth-metadata.ts`). A `Basic` header we cannot parse is a WLO login the
+ * caller got wrong; sending them into an authorization flow would answer a
+ * question they did not ask, so that one keeps degrading to anonymous.
+ */
+export function isUnusableBearer(raw: string | undefined): boolean {
+  // The anonymous token is a Bearer that yields no credential ON PURPOSE. It is
+  // the one value where "no credential" is the answer rather than the failure,
+  // so it must not reach the 401 — which would turn a deliberate anonymous
+  // connection into an error on every single call.
+  if (isAnonymousToken(raw)) return false;
+  const value = (raw ?? '').trim();
+  return /^Bearer\s/i.test(value) && credentialFromHeader(value) === null;
+}
+
+/**
+ * True when sending a credential to this repository would put it on the wire in
+ * the clear. HTTP Basic is base64, not encryption, so `http://` exposes the
+ * password to anyone on the path — and nothing in the response would reveal it.
+ *
+ * Loopback is exempt: a local edu-sharing over http is the ordinary development
+ * setup, and a warning that fires there trains the operator to ignore the one
+ * that matters. An unparseable URL counts as insecure — unknown is not safe.
+ *
+ * Takes the URL as an argument rather than reading the resolved config so this
+ * module stays free of a `wlo-config` import (which imports this one).
+ */
+export function isInsecureCredentialTransport(repositoryUrl: string): boolean {
+  let url: URL;
+  try { url = new URL(repositoryUrl); } catch { return true; }
+  if (url.protocol === 'https:') return false;
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  return !(host === 'localhost' || host === '127.0.0.1' || host === '::1');
+}
+
+let serviceCredential: WloCredential | null = resolveServiceCredential({
+  user: process.env['WLO_SERVICE_USER'],
+  password: process.env['WLO_SERVICE_PASSWORD'],
+});
+
+/**
+ * Per-request credential store. One HTTP endpoint serves every user, so the
+ * individual identity CANNOT live in a module variable — two concurrent
+ * requests would overwrite each other's rights. AsyncLocalStorage scopes it to
+ * the request that carried it (`node:async_hooks`, no dependency).
+ *
+ * A store of `null` is NOT the same as no store: it means "this call is
+ * explicitly anonymous" and stops the service-account fallback below. That
+ * distinction is what keeps the public REST surface public.
+ */
+const perRequest = new AsyncLocalStorage<WloCredential | null>();
+
+/** Run `fn` with this request's credential in scope. */
+export function runWithCredential<T>(cred: WloCredential, fn: () => T): T {
+  return perRequest.run(cred, fn);
+}
+
+/**
+ * Run `fn` with NO credential, whatever the environment configures.
+ *
+ * For surfaces that are open to the internet without any authentication — the
+ * public REST layer and the launcher. Without this they would inherit the
+ * service account, and everything that account can see beyond public would be
+ * readable by anyone, with no login and no audit trail. The elevated rights
+ * belong to the MCP endpoint, which is where a client presents an identity.
+ */
+export function runAnonymous<T>(fn: () => T): T {
+  return perRequest.run(null, fn);
+}
+
+/**
+ * The credential for the current call, walking the chain:
+ * per-request user → service account → none (anonymous).
+ */
+/**
+ * Whose rights a read in this scope is made with, as far as SHARING its answer
+ * goes: `anonymous`, `service` (one account for everybody), or `null` for a
+ * personal login — whose answers are never shared. A short cache keyed without
+ * this served a description read with one person's rights to an anonymous
+ * caller for a minute (review of audit package 14).
+ */
+export function sharedReadScope(): 'anonymous' | 'service' | null {
+  const cred = currentCredential();
+  if (!cred) return 'anonymous';
+  return cred.source === 'service' ? 'service' : null;
+}
+
+export function currentCredential(): WloCredential | null {
+  const scoped = perRequest.getStore();
+  // `undefined` = no scope was opened (fall back to the service account);
+  // `null` = an explicitly anonymous scope, which must NOT fall back.
+  return scoped !== undefined ? scoped : serviceCredential;
+}
+
+/**
+ * The configured service account, ignoring any scope currently in effect.
+ *
+ * For an entry point that must ELEVATE deliberately: the internet-facing HTTP
+ * surface runs anonymous by default, so the MCP endpoint resolves the chain
+ * itself instead of relying on a fallback that would also apply to any surface
+ * added later.
+ */
+export function configuredServiceCredential(): WloCredential | null {
+  return serviceCredential;
+}
+
+/**
+ * Personal logins the repository has REJECTED (HTTP 401) during the request
+ * that carried them.
+ *
+ * Keyed on the credential OBJECT, which is what scopes it to one request: the
+ * HTTP entry point builds a fresh one per request (`credentialFromHeader`), so
+ * a rejection is forgotten with the request and a transient 401 cannot lock
+ * anyone out beyond it. A WeakSet, so nothing is retained after that.
+ *
+ * Personal logins only. The service account is ONE object shared by every
+ * request — marking it would end the server for everyone after a single 401 —
+ * and its rejection is an operator problem the boot log already reports
+ * (`verifyConfiguredCredential`).
+ *
+ * Why it exists (auth review 2026-11-05): a block stays listed after its owner
+ * changes their WLO password, and a search fans out into several upstream
+ * calls, each a failed login against the person's real account.
+ */
+const rejectedThisRequest = new WeakSet<WloCredential>();
+
+/** Record that the repository answered 401 to the credential in scope. */
+export function markCurrentCredentialRejected(): void {
+  const cred = currentCredential();
+  if (cred && cred.source === 'user') rejectedThisRequest.add(cred);
+}
+
+/** Has the repository rejected the personal login of the current request? */
+export function isCurrentCredentialRejected(): boolean {
+  const cred = currentCredential();
+  return Boolean(cred && cred.source === 'user' && rejectedThisRequest.has(cred));
+}
+
+/** Test seam — production code sets the credential from the environment only. */
+export function setServiceCredentialForTest(c: WloCredential | null): void {
+  serviceCredential = c;
+}

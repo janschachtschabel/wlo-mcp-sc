@@ -1,0 +1,213 @@
+/**
+ * tools/topic-page-content.ts – get_topic_page_content:
+ * Resolve the swimlane structure of a Themenseite; in JSON mode the widget
+ * configs (saved queries / node lists) are executed into real content cards
+ * per swimlane.
+ */
+
+import { incompleteNotice } from '../services/collection-search.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+
+import type { TargetGroup } from '../topic-page-variant.js';
+import { getTopicPageContent } from '../topic-page-structure.js';
+import type { SwimlanePayload } from '../services/topic-page.js';
+import { findTopicPagesByQueryResult, resolveTopicPageSwimlanes } from '../services/topic-page.js';
+import { oneLine } from '../formatter.js';
+import { log } from '../logger.js';
+import { codedErrorResult, subjectRegistryText, toolError } from './shared.js';
+import { registerWloTool } from '../apps/register.js';
+import { swimlanePayloadSchema } from '../apps/outputSchemas.js';
+
+/**
+ * @param topicPageWidgetUri – the W4 (topic-page/swimlane) `ui://` resource,
+ *   when built; attached so an Apps-SDK host renders the swimlanes.
+ */
+export function registerTopicPageContentTool(server: McpServer, topicPageWidgetUri?: string): void {
+  registerWloTool(server, {
+    name: 'get_topic_page_content',
+    widgetUri: topicPageWidgetUri,
+    title: 'WLO Themenseiten-Inhalt',
+    description: `Zeige eine WLO-Themenseite zu einem Thema mit ihren Schwimmlinien (swimlanes) — z.B. "zeig die Themenseite zu Optik". Der Widget-Knopf „Themenseite öffnen" führt hierher. Liefert die render-fertigen Abschnitte mit echten Inhaltskarten (die Schwimmlinien-Ansicht der Themenseite).
+
+Gib EINES an:
+- query: ein Themenname (z.B. "Optik") — das Tool findet die passende Themenseite
+  selbst und liefert ihre Schwimmlinien in EINEM Aufruf. Nutze dies für eine
+  direkte Anfrage wie "zeig die Themenseite zu Optik"; kein vorheriges
+  search_wlo_topic_pages nötig.
+- variantId (eine "Variante-ID") oder collectionId (eine "Sammlung-nodeId") aus
+  search_wlo_topic_pages, wenn du diese Suche schon ausgeführt hast.`,
+    inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
+      query: z.string().optional().describe(
+        'Topic name (German), e.g. "Optik". Resolves the best matching Themenseite internally and renders its swimlanes in ONE call — no prior search_wlo_topic_pages needed. Alternative to variantId/collectionId.'
+      ),
+      collectionId: z.string().optional().describe(
+        'Owning collection nodeId of the Themenseite (the "Sammlung-nodeId" from search_wlo_topic_pages).'
+      ),
+      variantId: z.string().optional().describe(
+        'A specific page-variant nodeId (the "Variante-ID" from search_wlo_topic_pages). Faster than collectionId.'
+      ),
+      targetGroup: z.enum(['teacher', 'learner', 'general']).optional().describe(
+        'When resolving by collectionId, pick the variant for this target group.'
+      ),
+      outputFormat: z.enum(['markdown', 'json']).optional().default('markdown').describe(
+        '"markdown" (default) or "json". JSON is RENDER-READY: each swimlane carries its heading + up to maxPerSwimlane real content cards (resolved by EXECUTING the swimlane widget\'s saved query) + a hasMore flag, plus variantTitle and a topicPageUrl jump link. Use JSON to show "Themenseiten-Inhalte".'
+      ),
+      maxPerSwimlane: z.number().int().min(1).max(10).optional().default(3).describe(
+        'JSON only: max real content cards resolved per swimlane (default 3). hasMore signals there is more on the full topic page (topicPageUrl).'
+      ),
+    },
+    outputSchema: swimlanePayloadSchema,
+    annotations: { readOnlyHint: true },
+    handler: async (params) => {
+      try {
+        const tg = params.targetGroup as TargetGroup | undefined;
+        let collectionId = params.collectionId;
+        let lookupIncomplete = false;
+        let variantId = params.variantId;
+
+        if (!collectionId && !variantId) {
+          if (!params.query?.trim()) {
+            log.warn('get_topic_page_content called without query, collectionId or variantId');
+            return codedErrorResult('invalid_input', 'Bitte query, collectionId oder variantId angeben.');
+          }
+          // One-step topic path: resolve the best Themenseite for the topic so
+          // the swimlane widget triggers without a prior search_wlo_topic_pages
+          // call. Pass BOTH ids on: the collection carries the page header, the
+          // variant lets getTopicPageContent skip the page-config walk and read
+          // the two nodes in parallel instead.
+          // No match falls through to the empty-payload path below.
+          const lookup = await findTopicPagesByQueryResult(params.query, { targetGroup: tg });
+          const found = lookup.pages;
+          if (found.length) {
+            collectionId = found[0].collectionId ?? undefined;
+            variantId = found[0].variantId || undefined;
+          }
+          // Nothing found beside a source that did not answer is not "no page
+          // for this query" — it gets its own reason below.
+          lookupIncomplete = lookup.incomplete && !found.length;
+        }
+
+        const { structure: struct, reason } = (collectionId || variantId)
+          ? await getTopicPageContent({ collectionId, variantId, targetGroup: tg })
+          : { structure: null, reason: lookupIncomplete ? 'source_unreachable' as const : 'no_match' as const };
+        if (!struct || struct.swimlanes.length === 0) {
+          // A valid-but-empty payload keeps the structuredContent contract even
+          // when no variant / an empty config is found (this is not an error).
+          // `reason` names WHICH of the five causes it was, so a caller can act
+          // instead of blind-probing further candidates.
+          const empty: SwimlanePayload = {
+            variantId: struct?.variantId ?? variantId ?? '',
+            collectionId: struct?.collectionId ?? collectionId ?? null,
+            variantTitle: struct?.variantTitle ?? '',
+            // Header fields survive the empty case so the widget can still say
+            // WHAT is empty (schema-optional; undefined is valid and dropped).
+            collectionTitle: struct?.collectionTitle,
+            description: struct?.description,
+            topicPageUrl: null,
+            swimlaneCount: 0,
+            swimlanesTotal: struct?.swimlanes.length ?? 0,
+            swimlanes: [],
+            ...(reason ? { reason } : {}),
+          };
+          // Still worth answering: the caller named a collection, and whether it
+          // has approved skills does not depend on its page having swimlanes.
+          const emptyRegistry = await subjectRegistryText(empty.collectionId ?? '', params.skillContext);
+          // Honour outputFormat here too: the success path emits JSON in this
+          // text block, so emitting prose only on the empty path broke every
+          // client that parses it (client report 2026-07-27). JSON keeps the
+          // catalogue as its own block; markdown carries it INLINE — same rule
+          // and same reason as the success path below.
+          if (params.outputFormat === 'json') {
+            const emptyContent = [{ type: 'text' as const, text: JSON.stringify(empty) }];
+            if (emptyRegistry) emptyContent.push({ type: 'text' as const, text: emptyRegistry });
+            return { content: emptyContent, structuredContent: empty };
+          }
+          // Three cases, three sentences: an outage, a refusal (the phrase the
+          // chatbot recognises a refusal by), and "there is none".
+          const prose = reason === 'source_unreachable'
+            ? incompleteNotice('Themenseiten', true)
+            : reason === 'node_not_readable'
+              ? 'Die Themenseite ist mit dieser Anmeldung nicht lesbar (node_not_readable).'
+              : `Keine Themenseite mit Inhalten gefunden (${reason ?? 'unbekannt'}).`;
+          return {
+            content: [{ type: 'text' as const, text: emptyRegistry ? `${prose}\n\n${emptyRegistry}` : prose }],
+            structuredContent: empty,
+          };
+        }
+
+        // RENDER-READY Themenseiten content: the swimlane resolver executes each
+        // swimlane's widget config (saved query / node list / single node) into
+        // real content cards, bounded (≤ maxPerSwimlane cards, ≤ MAX_LANES
+        // swimlanes). It IS the structuredContent contract (widget + model) and
+        // is therefore resolved in BOTH formats; markdown keeps its lightweight
+        // structure text below. topicPageUrl provides the jump-off point.
+        // A Themenseite IS a collection, so its approved skills hang off the
+        // COLLECTION id — never the variant, which is one rendering of it. In
+        // json mode it stays its OWN content block: block 1 is pure JSON there,
+        // and prose inside it would break every parser (the swimlane schema has
+        // nowhere to put a catalogue). Markdown carries it INLINE instead,
+        // since 2026-08-19: it travelled as a second block, and at least one
+        // real client hands the model only the first — the server had answered
+        // "which skills are approved here?" and the model never saw it.
+        // Both run at once: the catalogue needs only the collection id, and in
+        // sequence it added ~1 s to a 3.5 s answer (measured 2026-11-05).
+        const [payload, registryText] = await Promise.all([
+          resolveTopicPageSwimlanes(struct, params.maxPerSwimlane ?? 3),
+          subjectRegistryText(struct.collectionId ?? '', params.skillContext),
+        ]);
+        if (params.outputFormat === 'json') {
+          const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(payload) }, ...registryBlock],
+            structuredContent: payload,
+          };
+        }
+
+        const lines: string[] = [];
+        // Collection title first, variant title only as the fallback — the same
+        // order the widget uses. The variant title is a technical page name
+        // ("Fachportalstartseite"); heading the answer with it made a model
+        // summarizing the page call it that instead of "Mathematik".
+        //
+        // oneLine on every rendered value: headings and widget names come from
+        // the page configuration, so a newline in one of them would add an
+        // outline section with nodeIds this page does not contain (same rule as
+        // renderToText).
+        const heading = struct.collectionTitle || struct.variantTitle;
+        if (heading) lines.push(oneLine(`# ${heading}`));
+        lines.push(`Abschnitte (Swimlanes): ${struct.swimlanes.length}`);
+        lines.push('');
+        struct.swimlanes.forEach((sl, i) => {
+          lines.push(oneLine(`## ${i + 1}. ${sl.heading || '(ohne Überschrift)'}${sl.type ? ` [${sl.type}]` : ''}`));
+          for (const it of sl.items) {
+            lines.push(oneLine(`  - ${it.widget || 'widget'}${it.nodeId ? ` → nodeId: ${it.nodeId}` : ''}`));
+          }
+        });
+        if (struct.referencedNodeIds.length) {
+          lines.push('');
+          lines.push(`Eingebettete nodeIds (${struct.referencedNodeIds.length}): ${struct.referencedNodeIds.join(', ')}`);
+        }
+        if (registryText) {
+          lines.push('');
+          // Line-oriented like everything above it; each line was built through
+          // the shared registry renderer, so it is NOT oneLine'd again here.
+          lines.push(...registryText.split('\n'));
+        }
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return toolError('Fehler beim Abruf des Themenseiten-Inhalts', err);
+      }
+    },
+  });
+}

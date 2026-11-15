@@ -1,0 +1,77 @@
+/**
+ * tools/health.ts – wlo_health_check:
+ * Reachability/latency probe against the configured repository.
+ */
+
+import { nodeTitle } from '../node-match.js';
+import { registerReadTool } from '../apps/register.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { BUSY_RETRY_DEFAULT_S, failureFields } from '../services/failure-code.js';
+import { codeOfStatus } from '../services/node-details.js';
+
+import {
+  BASE_URL,
+  WLO_REPOSITORY_URL,
+  WLO_ROOT_COLLECTION_ID,
+  readNodeMetadata,
+} from '../wlo-api.js';
+
+export function registerHealthTool(server: McpServer): void {
+  registerReadTool(server,
+    'wlo_health_check',
+    `Probe whether the WLO repository API is reachable and responding.
+Returns latency in ms, the resolved root collection nodeId, and a status flag.
+Useful for callers (e.g. chatbots) to quickly tell "WLO is down" from "your query produced no hits".`,
+    {},
+    { readOnlyHint: true },
+    async () => {
+      const t0 = Date.now();
+      try {
+        const root = WLO_ROOT_COLLECTION_ID;
+        const { node, status } = await readNodeMetadata(root);
+        const latencyMs = Date.now() - t0;
+        // An error STATUS is a resolved Response, not a throw — so it is mapped
+        // here, or a 503 reads as "reachable, root not found" (review 2026-11-07).
+        if (!node && status !== 200) {
+          const code = codeOfStatus(status);
+          const message = `Das Repository antwortete mit HTTP ${status}.`;
+          const payload = {
+            ok: false, repositoryUrl: WLO_REPOSITORY_URL, baseUrl: BASE_URL, rootNodeId: root,
+            error: message, latencyMs, checkedAt: new Date().toISOString(),
+          };
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(payload) }], isError: true,
+            structuredContent: { ...payload, error: {
+              code, message, ...(code === 'upstream_busy' ? { retryAfter: BUSY_RETRY_DEFAULT_S } : {}),
+            } },
+          };
+        }
+        const ok = node !== null;
+        const payload = {
+          ok,
+          repositoryUrl: WLO_REPOSITORY_URL,
+          baseUrl: BASE_URL,
+          rootNodeId: root,
+          rootResolved: ok ? (nodeTitle(node) || null) : null,
+          latencyMs,
+          checkedAt: new Date().toISOString(),
+        };
+        return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const payload = {
+          ok: false,
+          repositoryUrl: WLO_REPOSITORY_URL,
+          baseUrl: BASE_URL,
+          error: msg,
+          latencyMs: Date.now() - t0,
+          checkedAt: new Date().toISOString(),
+        };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }], isError: true,
+          structuredContent: { ...payload, error: { ...failureFields(err), message: msg } },
+        };
+      }
+    },
+  );
+}

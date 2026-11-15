@@ -1,0 +1,617 @@
+/**
+ * docs-claims.test.ts – documents that make a claim about the server must not
+ * outlive the claim.
+ *
+ * Three files say publicly what this server does: the privacy policy an operator
+ * publishes, the checklist an app-store reviewer reads, and `llms.txt`, which is
+ * SERVED to AI fetchers at `/llms.txt`. Write support landed in 2026-08 and all
+ * three still described a read-only, unauthenticated proxy — a privacy policy
+ * that omits "accepts and forwards credentials" and "writes to the repository",
+ * and a submission checklist that told the reviewer "no write tools" while the
+ * server registered thirteen.
+ *
+ * Nothing catches that: the code was right, the prose was stale, and no test
+ * connected them. This one does, in the direction that matters — the SOURCE is
+ * the fact and the documents have to agree with it. It deliberately checks
+ * claims, not wording: a rewrite is free, a false claim is not.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { connectedClient } from './fetchMock.js';
+import { registerSkillTools } from '../src/tools/skills.js';
+
+const root = new URL('../', import.meta.url);
+
+/**
+ * Read a document this suite makes claims about.
+ *
+ * A missing one is a HARD failure and stays one — a document listed here and
+ * silently skipped is a check that has stopped running while still reporting
+ * green. What changed on 2026-08-18 is only the message: `CLAUDE.md` had never
+ * been uploaded to the repository, so CI failed with a bare
+ * `ENOENT ... open '/home/runner/work/.../CLAUDE.md'` under a test named "no
+ * document states a tool count the server contradicts". Nothing in that pointed
+ * at the actual problem, and locally every file was present, so reproducing it
+ * took cloning the repository and running the suite against it. The file name
+ * and the reason belong in the failure.
+ */
+const read = (name: string): string => {
+  try {
+    return readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // `cause` keeps the original ENOENT — with its resolved path — reachable
+    // behind the sentence that says what to do about it. Losing it would trade
+    // one unhelpful message for another: the reader could no longer see WHERE
+    // the file was looked for, which is what tells a missing file apart from a
+    // wrong root.
+    throw new Error(
+      `${name} is missing from the repository. This suite checks the claims that document makes `
+      + '(tool counts, tool names, parameters), so it must be checked in — not skipped. '
+      + 'If it genuinely does not belong in the repository, remove it from the list that names it.',
+      { cause: err },
+    );
+  }
+};
+
+/** Curation tool names as the source actually registers them. */
+function curationToolNames(): string[] {
+  const dir = fileURLToPath(new URL('src/tools/', root));
+  const names: string[] = [];
+  for (const file of readdirSync(dir).filter(f => f.startsWith('curation-') && f.endsWith('.ts'))) {
+    const src = readFileSync(`${dir}${file}`, 'utf8');
+    for (const m of src.matchAll(/name: '(wlo_[a-z_]+)'/g)) names.push(m[1]!);
+  }
+  return [...new Set(names)];
+}
+
+test('the server really does register write tools — the premise of this file', () => {
+  // If this ever fails legitimately (write support removed), the claims below
+  // become true again and this whole file should go with the feature.
+  assert.ok(curationToolNames().length > 0, 'no curation tools found — has the source moved?');
+});
+
+// ── The privacy policy ───────────────────────────────────────────────────────
+
+/**
+ * Claims that were literally in the published policy and are false while
+ * curation tools exist. Anchored loosely enough to survive rewording, tightly
+ * enough not to fire on an honest sentence — "no user accounts **of its own**"
+ * and "read-only tools" are both fine and must stay matchable.
+ */
+const FALSE_PRIVACY_CLAIMS: ReadonlyArray<[RegExp, string]> = [
+  [/\bno authentication\b/i, 'the server accepts and forwards an Authorization header'],
+  [/never writes/i, 'the curation tools write to the repository'],
+  [/all tools and REST endpoints are \*{0,2}read-only/i, 'the MCP tool list includes write tools'],
+  [/no write\/?(mutation)? tools exist/i, 'thirteen of them exist'],
+  [/it has none\b/i, 'said of credentials — the server does receive them'],
+];
+
+test('the privacy policy claims nothing the source contradicts', () => {
+  const policy = read('docs/PRIVACY.md');
+  for (const [pattern, why] of FALSE_PRIVACY_CLAIMS) {
+    assert.doesNotMatch(policy, pattern, `docs/PRIVACY.md: ${why}`);
+  }
+});
+
+test('the privacy policy names what it now has to disclose', () => {
+  const policy = read('docs/PRIVACY.md');
+  // Each of these is a processing activity or a recipient that exists only
+  // because of a configurable capability. Naming them is the point of the file.
+  const mustMention: ReadonlyArray<[string, string]> = [
+    ['Authorization', 'the credential a user\'s host may send'],
+    ['WLO_TEXT_EXTRACTION_URL', 'a third-party recipient of URLs'],
+    ['WLO_ALLOW_SERVICE_WRITES', 'the gate on writes under the shared account'],
+    ['X-Forwarded-For', 'how the rate-limit key is derived'],
+  ];
+  for (const [needle, why] of mustMention) {
+    assert.ok(policy.includes(needle), `docs/PRIVACY.md must mention ${needle} — ${why}`);
+  }
+});
+
+test('the privacy policy describes the rightmost forwarded hop, not the first', () => {
+  // `clientKey` takes the hop the trusted proxy appended; the leftmost value is
+  // client-supplied and spoofable. The policy used to say "first".
+  const policy = read('docs/PRIVACY.md');
+  assert.match(policy, /rightmost/i);
+  assert.doesNotMatch(policy, /the \*{0,2}first\*{0,2} `?X-Forwarded-For`? hop/i);
+});
+
+// ── The submission checklist ─────────────────────────────────────────────────
+
+test('the submission checklist does not tell a reviewer there are no write tools', () => {
+  const checklist = read('docs/apps-sdk-submission-checklist.md');
+  assert.doesNotMatch(checklist, /no write tools/i,
+    'the reviewer can see thirteen of them in tools/list with a login');
+  assert.doesNotMatch(checklist, /read-only, no PII stored/i,
+    'the parenthetical summarised the policy as read-only');
+});
+
+// ── llms.txt (served at /llms.txt) ───────────────────────────────────────────
+
+test('llms.txt states no tool count that can go stale', () => {
+  // It said "22 read-only tools" long after there were 25. A number that has to
+  // be maintained by hand in a served file is a number that will be wrong; the
+  // fix is to not state one.
+  const llms = read('public/llms.txt');
+  assert.doesNotMatch(llms, /\b\d+\s+read-only tools\b/i,
+    'drop the count rather than maintain it — tools/list is authoritative');
+});
+
+// ── The tool overviews ───────────────────────────────────────────────────────
+
+/**
+ * Every user-facing document that describes WHEN a tool is visible.
+ *
+ * The rule changed on 2026-08-05 — the curation tools are listed for every
+ * caller and refuse at call time — and three documents said the opposite in
+ * three different phrasings. A reader who believes the old sentence concludes
+ * "the login is broken" when they see thirteen tools they cannot use, which is
+ * the exact opposite of what they should conclude.
+ */
+const OVERVIEW_DOCS = ['README.md', 'README.de.md', 'docs/TOOLS.md'];
+
+test('no overview still claims the write tools are hidden without a login', () => {
+  for (const doc of OVERVIEW_DOCS) {
+    const body = read(doc);
+    // Narrow on purpose, and it took a second attempt to get right: "sichtbar,
+    // aber nur mit Anmeldung BENUTZBAR" is exactly the true sentence these docs
+    // now carry, and a first version of this test forbade it. What may not be
+    // said is that the tools are ABSENT — so the patterns below all require the
+    // visibility word to be the thing being conditioned.
+    for (const [pattern, why] of [
+      [/nur (mit|bei)[^.\n]{0,40}sichtbar/i, 'they are visible to everyone'],
+      [/curation tools[^.\n]{0,40}appear (only )?(with|when)/i, 'they are always listed'],
+      [/registered only (for|when)[^.\n]{0,30}(identity|login)/i, 'registration is unconditional'],
+    ] as ReadonlyArray<[RegExp, string]>) {
+      assert.doesNotMatch(body, pattern, `${doc}: ${why}`);
+    }
+  }
+});
+
+test('the auth document exists and names the rules it is there to protect', () => {
+  // AUTH.md is the one place a maintainer looks before changing the login. If a
+  // rule is missing from it, the next change undoes it without noticing.
+  const auth = read('docs/AUTH.md');
+  const mustMention: ReadonlyArray<[string, string]> = [
+    ['WLO_AUTH_PRIVATE_KEY', 'the switch that turns the whole feature on'],
+    ['allow-list', 'the direction the registry fails in'],
+    ['PKCE', 'the proof at the token endpoint'],
+    ['application/json', 'the CSRF defence on the password-carrying endpoints'],
+    ['esguest', 'why a 200 is not proof of a login'],
+    ['refresh_token', 'stated as absent, so nobody adds one'],
+  ];
+  for (const [needle, why] of mustMention) {
+    assert.ok(auth.includes(needle), `docs/AUTH.md must mention ${needle} — ${why}`);
+  }
+});
+
+// ── Counts ───────────────────────────────────────────────────────────────────
+
+/**
+ * A number beside a noun that names what is being counted.
+ *
+ * Every one of these was wrong somewhere on 2026-08-11, and two of them
+ * disagreed inside the SAME file (README.md said "28 read tools" in its opening
+ * and "27 MCP read tools" fifty lines later). `llms.txt` solved this by stating
+ * no count at all — right for a served file, wrong for a README, where the
+ * number is orientation a reader actually wants. So the number stays and the
+ * source decides it.
+ *
+ * The worst one was not stale, it was FALSE: both READMEs told a reader that an
+ * anonymous request gets "25" / "27" public tools, when it gets all 42 — the
+ * curation tools included, refusing at call time. That is the claim
+ * `no overview still claims the write tools are hidden without a login` above
+ * exists to forbid, walking past it in the shape of a digit.
+ */
+const COUNTED_DOCS = [
+  'README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md',
+  'docs/INTEGRATION.md', 'docs/DEPLOYMENT.md', 'docs/PRIVACY.md',
+  // Added 2026-11-08: the reference the chatbot team works from said "48" and
+  // "16" in five places while every document above said 51 and 19 — nobody
+  // had listed it here, so nothing ever checked it.
+  'docs/MCP-REFERENZ.md',
+  // Added 2026-11-14: both said "16 curation tools" resp. "13 curation tools"
+  // as a present-tense fact over a server with 26. A count that is HISTORY
+  // ("13 at the time") is worded so no pattern below reads it as a claim.
+  'docs/apps-sdk-submission-checklist.md', 'docs/AUTH.md',
+];
+
+/**
+ * `CLAUDE.md` is deliberately NOT in that list (2026-08-18, the user's
+ * decision).
+ *
+ * It states tool counts, so listing it looked right — but it is a local
+ * agent-instruction file in this project and has never been part of the
+ * repository, which made CI fail on a file that was never going to be there
+ * while every local run stayed green. The alternative was publishing 1521 lines
+ * of internal measurements and design rationale to a public repository, which is
+ * a bigger change than a doc check is worth.
+ *
+ * Nothing a reader sees loses coverage: the five documents above are the ones
+ * this project publishes, and every count claim in them is still checked.
+ */
+
+/**
+ * How many tools each skill mode registers, MEASURED rather than assumed.
+ *
+ * This used to be `names.length - 1` with a comment saying one-tool swaps two
+ * tools for one. On 2026-08-16 `get_skill` became unconditional — the swap is
+ * now 1:1 and the count is unchanged — and the arithmetic went on producing the
+ * old number, so every document kept its stale "41" with the suite green. A
+ * count derived from a sentence about the code checks the sentence, not the
+ * code; `createMcpServer` reads the mode from the environment at import time,
+ * so the delta is taken from the one function the mode actually reaches.
+ */
+function skillToolsPerMode(): { 'two-tool': number; 'one-tool': number; 'no-search': number; 'no-search+one-tool': number } {
+  const count = (mode: 'two-tool' | 'one-tool', disableSearch = false): number => {
+    const names: string[] = [];
+    const probe = {
+      // Every tool is registered through the one seam, which calls `registerTool`.
+      registerTool: (name: string) => { names.push(name); return {}; },
+    } as unknown as Parameters<typeof registerSkillTools>[0];
+    registerSkillTools(probe, { collectionId: '', mode, disableSearch });
+    return names.length;
+  };
+  // `WLO_DISABLE_SKILL_SEARCH` measured too — the skill table's expectations
+  // used to be ARITHMETIC (`total - 1`), the very thing this function replaced.
+  return {
+    'two-tool': count('two-tool'), 'one-tool': count('one-tool'),
+    'no-search': count('two-tool', true), 'no-search+one-tool': count('one-tool', true),
+  };
+}
+
+async function realCounts(): Promise<{
+  total: number; readTools: number; curation: number; oneTool: number; noSearch: number; noSearchOneTool: number;
+}> {
+  const client = await connectedClient();
+  try {
+    const names = (await client.listTools()).tools.map(t => t.name);
+    const curation = curationToolNames();
+    const perMode = skillToolsPerMode();
+    return {
+      total: names.length,
+      readTools: names.filter(n => !curation.includes(n)).length,
+      curation: curation.length,
+      oneTool: names.length - perMode['two-tool'] + perMode['one-tool'],
+      noSearch: names.length - perMode['two-tool'] + perMode['no-search'],
+      noSearchOneTool: names.length - perMode['two-tool'] + perMode['no-search+one-tool'],
+    };
+  } finally {
+    await client.close();
+  }
+}
+
+test('no document states a tool count the server contradicts', async () => {
+  const { total, readTools, curation, oneTool, noSearch, noSearchOneTool } = await realCounts();
+  // The tools only `WLO_BATCH_UPLOAD_ENABLED` registers: curation tools that are not always listed.
+  const batch = curation - (total - readTools);
+
+  const claims: ReadonlyArray<[RegExp, number, string]> = [
+    [/(\d+)\s+(?:MCP\s+)?read tools/gi, readTools, 'read tools'],
+    [/(\d+)\s+lesende(?:n)?(?:\s+(?:MCP-Tools|Werkzeuge))?\b/gi, readTools, 'lesende Werkzeuge'],
+    [/(\d+)\s+kuratierende(?:n)?(?:\s+(?:MCP-Tools|Werkzeuge))?\b/gi, curation, 'kuratierende Werkzeuge'],
+    // The same count in a heading, written the other way round. `docs/TOOLS.md`
+    // carried "Lesende MCP-Tools (27)" and "Kuratierende MCP-Tools (13)" while
+    // the prose above it said 42 — a section heading is exactly where a reader
+    // looks for the number, and exactly where nobody looks when updating one.
+    [/Lesende MCP-Tools \((\d+)\)/g, readTools, 'read tools (heading)'],
+    [/Kuratierende MCP-Tools \((\d+)\)/g, curation, 'curation tools (heading)'],
+    // The compact overview's own spellings.
+    [/^## Lesend \((\d+)\)/gm, readTools, 'read tools (compact heading)'],
+    [/^## Kuratierend \((\d+)\)/gm, curation, 'curation tools (compact heading)'],
+    [/\*\*(\d+) lesend\*\*/g, readTools, 'read tools (compact intro)'],
+    [/\*\*(\d+) kuratierend\*\*/g, curation, 'curation tools (compact intro)'],
+    [/dann (\d+) Werkzeuge/g, oneTool, 'one-tool mode drops exactly one tool'],
+    // The stale pre-2026-08-16 claim in its own words: both READMEs said the
+    // mode swaps TWO tools for one ("41 tools instead of 42" / "41 statt 42"),
+    // and none of the patterns above matched that spelling — so the suite
+    // stayed green over a number the server contradicts. The swap is 1:1;
+    // `get_skill` is registered in every mode.
+    [/(\d+)\s+tools instead of/gi, oneTool, 'one-tool count, English spelling'],
+    [/(\d+)\s+statt\s+\d+\s+Werkzeuge/g, oneTool, 'one-tool count, German spelling'],
+    [/registers all (\d+) tools/gi, total, 'the factory registers every tool'],
+    // The anonymous listing is the WHOLE list — this is a claim about
+    // visibility, not a headcount, which is why a wrong number here is a lie
+    // rather than a typo.
+    [/(?:same )?(\d+)\s+(?:public tools|öffentlichen Werkzeuge)/gi, total, 'anonymous callers see every tool'],
+    [/(\d+) Tools —[^\n]*get_skill_for_task/gi, oneTool, 'one-tool mode drops exactly one tool'],
+    // Spellings the patterns above walked past while every one of them said 42
+    // over a server that lists 48 (chatbot feedback 2026-11-07): the headline
+    // count, the "all N" of the anonymous listing, and the always-listed
+    // curation tools (without the four batch tools that need their switch).
+    [/\*\*(\d+) MCP-Tools\*\*/g, total, 'the headline count'],
+    // The space between number and noun was missing here, so this matched only
+    // "alle N MCP-Werkzeuge" and never "alle 48 Werkzeuge" — green over three
+    // wrong counts (overall review W1–W4, 2026-11-08).
+    [/\balle (\d+) (?:MCP-)?Werkzeuge/gi, total, 'all tools (German)'],
+    [/(\d+) Kurations-Werkzeuge/g, total - readTools, 'always-listed curation tools (German)'],
+    // With the batch switch: the total and the curation count both grow by the batch tools.
+    [/\((\d+) (?:and|und) \d+ (?:with|mit) `WLO_BATCH_UPLOAD_ENABLED`/g, total + batch, 'all tools with the batch switch'],
+    [/\(\d+ (?:and|und) (\d+) (?:with|mit) `WLO_BATCH_UPLOAD_ENABLED`/g, curation, 'curation tools with the batch switch'],
+    [/\((\d+) mit `WLO_BATCH_UPLOAD_ENABLED`/g, total + batch, 'all tools with the batch switch'],
+    [/mit `WLO_BATCH_UPLOAD_ENABLED` (\d+)/g, total + batch, 'all tools with the batch switch'],
+    [/\*\*Standard\*\* \| (\d+) Tools/g, total, 'the default mode lists every tool'],
+    // `docs/MCP-REFERENZ.md`'s own spellings.
+    [/(\d+) lesend · \d+ kuratierend = \*\*\d+\*\*/g, readTools, 'read tools (reference summary)'],
+    [/\d+ lesend · (\d+) kuratierend = \*\*\d+\*\*/g, total - readTools, 'always-listed curation tools (reference summary)'],
+    [/\d+ lesend · \d+ kuratierend = \*\*(\d+)\*\*/g, total, 'all tools (reference summary)'],
+    [/alle (\d+), die Kuratier-Werkzeuge eingeschlossen/g, total, 'the anonymous listing is the whole list'],
+    [/\| alle (\d+) \| alle \d+ \|/g, readTools, 'read tools per login (reference)'],
+    [/\| alle \d+ \| alle (\d+) \|/g, total - readTools, 'curation tools per login (reference)'],
+    [/die (\d+) Kuratier-Werkzeuge/g, total - readTools, 'always-listed curation tools (reference)'],
+    [/Alle (\d+) sind für jeden Aufrufer/g, total - readTools, 'always-listed curation tools (reference)'],
+    // The skill-mode table in `docs/MCP-REFERENZ.md` said 42/41/42 long after the
+    // server had 51 tools — a dated measurement nobody re-took (2026-11-08).
+    [/^\| nichts gesetzt \| [^|]+\| (\d+) \|/gm, total, 'skill table: default'],
+    [/^\| \*\*`WLO_DISABLE_SKILL_SEARCH=1`\*\* \| [^|]+\| \*\*(\d+)\*\* \|/gm, noSearch, 'skill table: search switched off'],
+    [/^\| dasselbe \*\*\+ `WLO_SKILL_TOOL_MODE=one-tool`\*\* \| [^|]+\| (\d+) \|/gm, noSearchOneTool, 'skill table: search off + one-tool'],
+    // The sentence wraps across a line; this pattern matched NOTHING in its
+    // first form ("(N Werkzeuge im Registry-Modus)") and stayed green.
+    [/heute\s+(\d+) Werkzeuge im Registry-Modus/g, noSearch, 'skill table: registry mode'],
+    [/\ball (\d+) tools/gi, total, 'all tools (English)'],
+    [/Die (\d+) MCP-Werkzeuge/g, total, 'the tool list heading'],
+    [/\d+ der (\d+) Werkzeuge/g, total, 'a share of all tools'],
+    [/Die (\d+)\s+Kurations-Tools/g, total - readTools, 'always-listed curation tools'],
+    [/\b(\d+) curation (?:\(write\) )?tools/gi, total - readTools, 'always-listed curation tools'],
+    // `docs/INTEGRATION.md`'s own spellings — it said "28 lesend, 14
+    // kuratierend" and "Lesen — 28 Werkzeuge" while every pattern above stayed
+    // green (found 2026-11-07).
+    [/\*\*Werkzeuge\*\* \| (\d+) —/g, total, 'the summary table count'],
+    [/\| \d+ — (\d+) lesend/g, readTools, 'read tools in the summary table'],
+    [/lesend, (\d+) kuratierend/g, total - readTools, 'always-listed curation tools in the summary table'],
+    [/Lesen — (\d+) Werkzeuge/g, readTools, 'read tools (integration heading)'],
+    [/Kuratieren — (\d+) Werkzeuge/g, total - readTools, 'always-listed curation tools (integration heading)'],
+    // Both READMEs said "the count stays 42" / "die Zahl bleibt 42" — no "bei",
+    // so the old pattern walked past it (review of the follow-ups, finding 3).
+    [/Zahl bleibt (?:bei )?(\d+)/g, oneTool, 'one-tool mode keeps the count'],
+    [/count stays (\d+)/gi, oneTool, 'one-tool mode keeps the count (English)'],
+    [/`search_skill` heraus \(dann (\d+)\)/g, total - 1, 'WLO_DISABLE_SKILL_SEARCH drops one tool'],
+    // `docs/TOOLS.md`'s switch table. Its `WLO_DISABLE_SKILL_SEARCH=1` row said
+    // "51 Tools" over a server that lists 59 in that mode (found 2026-11-14):
+    // the skill-table patterns above are written for `docs/MCP-REFERENZ.md`'s
+    // three-column rows and never matched this two-column one. The last pattern
+    // is the net under the table: ANY "N Tools" cell in a switch row must be one
+    // of the counts a mode can produce.
+    [/^\| \*\*`WLO_DISABLE_SKILL_SEARCH=1`\*\* \| (\d+) Tools/gm, noSearch, 'switch table: search switched off'],
+    [/^\| \*\*`WLO_SKILL_TOOL_MODE=one-tool`\*\* \| (\d+) Tools/gm, oneTool, 'switch table: one-tool'],
+    [/\(Standard: (\d+)\)/g, total + batch, 'switch table: default with the batch tools'],
+    [/curation tools \((\d+) with `WLO_BATCH_UPLOAD_ENABLED`\)/g, curation, 'curation tools with the batch switch (English)'],
+  ];
+
+  // The net under every switch table: a row of the form "| **…** | N Tools" may
+  // only state a count some mode really produces. Catches a row no pattern above
+  // was written for — which is how the 51 survived.
+  const possible = new Set([total, oneTool, noSearch, noSearchOneTool, total + batch]);
+  const strayRows: string[] = [];
+  for (const doc of COUNTED_DOCS) {
+    for (const m of read(doc).matchAll(/^\| \*\*[^|]+\| (\d+) Tools\b[^\n]*/gm)) {
+      if (!possible.has(Number(m[1]))) strayRows.push(`${doc}: "${m[0].trim().slice(0, 90)}"`);
+    }
+  }
+  assert.deepEqual(strayRows, [], `a switch-table row states a count no mode produces (possible: ${[...possible].join(', ')})`);
+
+  // A pattern that matches nothing guards nothing. These must hit at least once
+  // — each was written for a spelling that IS in the docs, and one of them did
+  // not match it (review of the follow-ups, finding 2).
+  const mustMatch = new Set([
+    'skill table: default', 'skill table: search switched off', 'skill table: search off + one-tool',
+    'skill table: registry mode', 'one-tool mode keeps the count', 'one-tool mode keeps the count (English)',
+    'switch table: search switched off', 'switch table: one-tool', 'switch table: default with the batch tools',
+    'curation tools with the batch switch (English)',
+  ]);
+  const matched = new Set<string>();
+  const wrong: string[] = [];
+  for (const doc of COUNTED_DOCS) {
+    const body = read(doc);
+    for (const [pattern, expected, what] of claims) {
+      for (const m of body.matchAll(pattern)) {
+        matched.add(what);
+        if (Number(m[1]) !== expected) {
+          wrong.push(`${doc}: "${m[0].trim()}" — ${what} is ${expected}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(wrong, [], 'the source is the fact; these numbers are not');
+  assert.deepEqual([...mustMatch].filter(w => !matched.has(w)), [], 'a guard that matched nothing');
+});
+
+/**
+ * A registered tool that no user-facing overview names.
+ *
+ * `get_skill_registry` shipped on 2026-08-10 and neither README mentioned it —
+ * `docs/TOOLS.md` had it, so the reference was complete while the two documents
+ * people actually open were not. A tool nobody reads about is a tool nobody
+ * asks for, which is the same failure as not shipping it.
+ *
+ * Checked against BOTH READMEs together rather than each alone: they are
+ * translations of one another, so a name missing from one is a translation gap,
+ * and a name missing from both is a documentation gap. `docs/TOOLS.md` is the
+ * reference and must carry every one on its own.
+ */
+test('every registered tool is named in the tool reference and in both READMEs', async () => {
+  const client = await connectedClient();
+  let names: string[];
+  try {
+    names = (await client.listTools()).tools.map(t => t.name);
+  } finally {
+    await client.close();
+  }
+
+  // Both files claim completeness — the reference in full, the compact list as
+  // "alle 42 Werkzeuge auf einen Blick". A claim of completeness is the one kind
+  // of document where a missing row is a defect rather than an omission.
+  // Since 2026-11-14 the two documents the integrating teams work from are held
+  // to it as well: each carries the full tool table by hand, and neither was
+  // checked — the table exists in six places, and a tool added to four of them
+  // is the likely next defect. `npm run docs:tools` prints the rows to copy.
+  for (const doc of ['docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md', 'docs/INTEGRATION.md', 'docs/MCP-REFERENZ.md']) {
+    const body = read(doc);
+    const missing = names.filter(n => !new RegExp(String.raw`\b${n}\b`).test(body));
+    assert.deepEqual(missing, [], `${doc} claims to list every tool`);
+  }
+
+  for (const doc of ['README.md', 'README.de.md']) {
+    const body = read(doc);
+    const missing = names.filter(n => !new RegExp(String.raw`\b${n}\b`).test(body));
+    assert.deepEqual(missing, [], `${doc} does not name these tools`);
+  }
+});
+
+/**
+ * A document that still calls a skill a prompt.
+ *
+ * Skills moved from `ai_prompt` to `ai_skill` on 2026-08-12. The filter that
+ * finds them was migrated with a constant, and the tool descriptions are guarded
+ * by `tests/tools-skills.test.ts` — the DOCUMENTS were migrated by hand and two
+ * were missed. A reader who learns "a skill is a KI-Prompt" then searches the
+ * repository for a term it no longer indexes; nothing fails loudly when they do.
+ *
+ * Scoped to the four overview documents, which describe TOOLS. The editorial
+ * guides (`docs/SKILLS.md`, `docs/SKILL-TRIGGER.md`) and the changelog describe
+ * the VOCABULARY, where the old term is still the right word for the one thing
+ * that kept it: the registry document. This guard must not push them into
+ * calling a registry something it is not.
+ */
+test('no overview still calls a skill a KI-Prompt', () => {
+  const wrong: string[] = [];
+  for (const doc of ['README.md', 'README.de.md', 'docs/TOOLS.md', 'docs/TOOLS-KOMPAKT.md']) {
+    read(doc).split('\n').forEach((line, i) => {
+      const m = line.match(/\b(?:KI-Prompts?|AI prompts?)\b/i);
+      if (m) wrong.push(`${doc}:${i + 1}: "${m[0]}" — a skill carries ai_skill since 2026-08-12`);
+    });
+  }
+  assert.deepEqual(wrong, [], 'these lines teach a vocabulary term the repository dropped');
+});
+
+/**
+ * A parameter the READMEs document that the tool does not take.
+ *
+ * `search_wlo_collections` was documented with `userRole?` (it has no such
+ * parameter — `search_wlo_content` does, and the entries sit next to each other)
+ * and `get_node_collections` with `maxResults?`, which it never had. A model
+ * reading either sends an argument the schema rejects, and the tool call fails
+ * for a reason the documentation caused.
+ *
+ * The rule is drawn along the documents' OWN convention: an optional parameter
+ * is written `name?` in backticks, while enum values and type names are written
+ * without the question mark. That makes the check exact — it found these two and
+ * nothing else across 28 tool entries in two languages.
+ */
+test('the READMEs document no parameter the schema does not have', async () => {
+  const client = await connectedClient();
+  let schemas: Map<string, Set<string>>;
+  try {
+    schemas = new Map((await client.listTools()).tools.map(t => [
+      t.name,
+      new Set(Object.keys((t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {})),
+    ]));
+  } finally {
+    await client.close();
+  }
+
+  const wrong: string[] = [];
+  for (const doc of ['README.md', 'README.de.md']) {
+    const body = read(doc);
+    // `**12. \`tool_name\`** — …` up to the blank line that ends the entry.
+    // `\r?` is not decoration: these files are CRLF, and a first version with a
+    // bare `\n\n` matched ZERO entries and passed by checking nothing — which is
+    // worse than the defect it was written to catch.
+    const entries = [...body.matchAll(/\*\*\d+\.\s+`([a-z_]+)`\*\*([\s\S]{0,900}?)(?=\r?\n\r?\n)/g)];
+    assert.ok(entries.length > 20, `${doc}: only ${entries.length} tool entries parsed — the scan is broken`);
+    for (const entry of entries) {
+      const [, tool, blob] = entry;
+      const params = schemas.get(tool!);
+      if (!params) continue;
+      for (const p of blob!.matchAll(/`([a-zA-Z][a-zA-Z0-9_]*)\?`/g)) {
+        if (!params.has(p[1]!)) wrong.push(`${doc}: ${tool} has no parameter \`${p[1]}\``);
+      }
+    }
+  }
+  assert.deepEqual(wrong, [], 'a documented parameter that does not exist makes the tool call fail');
+});
+
+/**
+ * A parameter the READMEs call REQUIRED that the schema leaves optional.
+ *
+ * Found 2026-11-15: `get_collection_contents`, `search_wlo_within_collection`
+ * and `get_node_details` were documented with `nodeId` (required) long after
+ * the tools took a collection by title (`collection`) or a list (`nodeIds`)
+ * instead — a reader never learned the alternative existed. The check above
+ * cannot see that: it looks at `name?` only. This one reads the documents' other
+ * convention, `` `name` (required … `` / `` `name` (erforderlich … ``, and
+ * compares it with the schema's `required` list.
+ */
+test('the READMEs call no parameter required that the schema leaves optional', async () => {
+  const client = await connectedClient();
+  let required: Map<string, Set<string>>;
+  try {
+    required = new Map((await client.listTools()).tools.map(t => [
+      t.name,
+      new Set((t.inputSchema as { required?: string[] }).required ?? []),
+    ]));
+  } finally {
+    await client.close();
+  }
+
+  const wrong: string[] = [];
+  let claims = 0;
+  for (const doc of ['README.md', 'README.de.md']) {
+    const entries = [...read(doc).matchAll(/\*\*\d+\.\s+`([a-z_]+)`\*\*([\s\S]{0,900}?)(?=\r?\n\r?\n)/g)];
+    assert.ok(entries.length > 20, `${doc}: only ${entries.length} tool entries parsed — the scan is broken`);
+    for (const entry of entries) {
+      const [, tool, blob] = entry;
+      const must = required.get(tool!);
+      if (!must) continue;
+      // `(array, 1–50, required)` as well as `(required, the seed)`: the word anywhere inside the parenthesis.
+      for (const p of blob!.matchAll(/`([a-zA-Z][a-zA-Z0-9_]*)`\s*\((?:[^()]*?\b)?(?:required|erforderlich)\b/g)) {
+        claims += 1;
+        if (!must.has(p[1]!)) wrong.push(`${doc}: ${tool} does not require \`${p[1]}\``);
+      }
+    }
+  }
+  // 11 on the day this was written (5 + 6); far fewer means the pattern stopped matching.
+  assert.ok(claims >= 6, `only ${claims} "required" claims parsed — the scan is broken`);
+  assert.deepEqual(wrong, [], 'a parameter called required hides the alternative the tool takes');
+});
+
+/**
+ * A setting the server reads and no table names (audit 2026-11-12, D-3).
+ *
+ * Eight variables were missing from both README tables — every one of them
+ * added with a feature whose own documentation was complete, which is exactly
+ * how a table falls behind: nothing fails when it does. Measured from the
+ * SOURCE (`process.env[...]`), not from a list somebody keeps.
+ */
+test('every environment variable the server reads is documented where an operator looks', () => {
+  const srcDir = fileURLToPath(new URL('../src', import.meta.url));
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+    .flatMap(e => (e.isDirectory() ? walk(`${dir}/${e.name}`) : e.name.endsWith('.ts') ? [`${dir}/${e.name}`] : []));
+  const used = new Set<string>();
+  for (const file of walk(srcDir)) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(/process\.env(?:\[['"]|\.)([A-Z][A-Z0-9_]{2,})/g)) used.add(m[1]!);
+    // Read through a helper that takes the NAME (`envMs('WLO_…', …)`): not a `process.env[...]` literal.
+    for (const m of text.matchAll(/\benvMs\(\s*'([A-Z][A-Z0-9_]{2,})'/g)) used.add(m[1]!);
+  }
+  assert.ok(used.size > 30, `the scan found only ${used.size} variables — the pattern no longer matches the code`);
+  // NODE_ENV and the like are the platform's, not settings of this server.
+  for (const platform of ['NODE_ENV']) used.delete(platform);
+
+  const missing: string[] = [];
+  for (const doc of ['README.md', 'README.de.md', 'docs/MCP-REFERENZ.md', '.env.example']) {
+    const text = read(doc);
+    // The WHOLE name: `PORT` is not documented by `HOST_PORT`, nor `WLO_SKILL_CACHE` by `WLO_SKILL_CACHE_TTL_MS`.
+    for (const name of used) if (!new RegExp(`(?<![A-Z0-9_])${name}(?![A-Z0-9_])`).test(text)) missing.push(`${doc}: ${name}`);
+  }
+  // The compose file passes every setting through — except PORT, which is the
+  // container's own (3000) and published through HOST_PORT.
+  const compose = read('docker-compose.yml');
+  for (const name of used) if (name !== 'PORT' && !new RegExp(`(?<![A-Z0-9_])${name}:`).test(compose)) missing.push(`docker-compose.yml: ${name}`);
+  assert.deepEqual(missing, [], 'a setting nobody can find is a setting nobody uses');
+});

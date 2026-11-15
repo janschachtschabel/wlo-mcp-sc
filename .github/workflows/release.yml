@@ -1,0 +1,129 @@
+name: Release
+
+# A tag vX.Y.Z publishes the image and the Helm chart under that number
+# (platform guide, chapter 4: tagged images and one chart per version).
+# The tag must equal package.json "version" — the chart's version and
+# appVersion equal it too (tests/helm-chart.test.ts), so image, chart and
+# `/health` name the same version.
+#
+# Published to the GitHub Container Registry of the repository owner:
+#   ghcr.io/<owner>/wlo-mcp:X.Y.Z and :X.Y
+#   oci://ghcr.io/<owner>/charts/wlo-mcp  (version X.Y.Z)
+# A new package there is PRIVATE until its owner changes that. `latest` is not
+# pushed: production runs tagged versions only.
+#
+# A version is published ONCE and only from `main`. What already exists under
+# the version is left as it is and skipped — so a run that broke between the
+# image and the chart can be run again and finishes the rest, and nothing
+# somebody may have deployed is replaced.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that runs project code. No registry permission, no token.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      minor: ${{ steps.v.outputs.minor }}
+      owner: ${{ steps.v.outputs.owner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history: the tagged commit must lie on main.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is the package version, and on main
+        id: v
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          # Plain X.Y.Z only: a pre-release would publish a wrong `:X.Y`.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package.json version ${VERSION} is not a plain X.Y.Z" >&2; exit 1
+          fi
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}" >&2; exit 1
+          fi
+          git rev-parse --verify --quiet origin/main >/dev/null || { echo "origin/main was not fetched" >&2; exit 1; }
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "the tagged commit ${GITHUB_SHA} is not on main" >&2; exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "minor=${VERSION%.*}" >> "$GITHUB_OUTPUT"
+          echo "owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # The gates of the CI run (.github/workflows/ci.yml), on the tagged commit.
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Audit production dependencies (gate)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Lint the Helm chart
+        run: |
+          helm lint --strict deploy/helm/wlo-mcp \
+            --set image.repository=example.invalid/wlo-mcp \
+            --set repositoryUrl=https://repository.example.invalid/edu-sharing
+      - name: Build and smoke-test the image
+        run: npm run smoke:image
+
+  # Builds from the same commit and pushes. Runs no npm script.
+  publish:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.gate.outputs.version }}
+      MINOR: ${{ needs.gate.outputs.minor }}
+      IMAGE: ghcr.io/${{ needs.gate.outputs.owner }}/wlo-mcp
+      CHARTS: oci://ghcr.io/${{ needs.gate.outputs.owner }}/charts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Log in to the registry
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+          echo "$REGISTRY_TOKEN" | helm registry login ghcr.io -u "$REGISTRY_USER" --password-stdin
+      - name: Push the image
+        run: |
+          # Exists → leave it. Anything but "it is not there" stops the run:
+          # an unreachable registry must not read as "not published".
+          if OUT="$(docker manifest inspect "${IMAGE}:${VERSION}" 2>&1)"; then
+            echo "${IMAGE}:${VERSION} is already published — left as it is"
+            exit 0
+          fi
+          echo "registry said: ${OUT}"
+          if ! grep -qiE 'manifest unknown|name unknown|not found|denied|no such manifest' <<<"$OUT"; then
+            echo "could not tell whether ${IMAGE}:${VERSION} exists" >&2; exit 1
+          fi
+          docker build -t "${IMAGE}:${VERSION}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" .
+          docker tag "${IMAGE}:${VERSION}" "${IMAGE}:${MINOR}"
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:${MINOR}"
+      - name: Package and push the chart
+        run: |
+          if helm show chart "${CHARTS}/wlo-mcp" --version "${VERSION}" >/dev/null 2>&1; then
+            echo "chart wlo-mcp ${VERSION} is already published — left as it is"
+            exit 0
+          fi
+          helm package deploy/helm/wlo-mcp --destination "$RUNNER_TEMP/chart"
+          helm push "$RUNNER_TEMP/chart/wlo-mcp-${VERSION}.tgz" "${CHARTS}"

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WLO-Launcher · Boerdi</title>
+  <meta name="description" content="Boerdi, die WLO-Eule, hilft dir, die Dienste von WirLernenOnline in deinem KI-Chat zu nutzen: offene Bildungsinhalte über die REST-API abrufen und fertige Skills aus einer WLO-Sammlung anwenden." />
+  <style>
+    /* Design tokens — a calm blue accent on a slate-blue neutral scale, plus one
+       warm amber pop for Boerdi. Dark mode is a token variation. All UI colours
+       meet WCAG AA. */
+    :root {
+      --bg: #f3f7fc;
+      --surface: #ffffff;
+      --surface-2: #e7eef8;
+      --text: #12212f;
+      --text-muted: #47586a;
+      --border: #b3c6da;
+      /* The border of something you OPERATE — a field, a chip, a button — must
+         reach 3:1 (WCAG 1.4.11), where the decorative `--border` above measures
+         1.75:1 on this surface. Text ratios passing is what makes this easy to
+         miss: the page looks right and the input is hard to find. Same value as
+         `auth.css`, so the site keeps one palette. */
+      --border-control: #7f8fa3;
+      --accent: #1565c0;
+      --accent-fg: #ffffff;
+      --accent-weak: #dbeafe;
+      --accent-strong: #0d4a94;
+      --danger: #9a2b2b;
+      --ok: #1d6b3a;
+      --amber: #ef8f1c;
+      --owl-body: #1e88e5;
+      --owl-belly: #cfe6fb;
+      --owl-dark: #0d4a94;
+      --owl-eye: #14304d;
+      --radius: 12px;
+      --maxw: 48rem;
+      --ring: 3px solid var(--accent);
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1826;
+        --surface: #14273d;
+        --surface-2: #1d3350;
+        --text: #e6eef8;
+        --text-muted: #a6b8cd;
+        --border: #34527a;
+        --border-control: #6486b5;
+        --accent: #64b5f6;
+        --accent-fg: #08243f;
+        --accent-weak: #12294a;
+        --accent-strong: #90caf9;
+        --danger: #f2a3a3;
+        --ok: #7fd39c;
+        --amber: #f6a623;
+        --owl-body: #4a90d9;
+        --owl-belly: #16385c;
+        --owl-dark: #90caf9;
+        --owl-eye: #0b2138;
+      }
+    }
+    :root[data-theme="dark"] { color-scheme: dark; }
+    :root[data-theme="light"] { color-scheme: light; }
+
+    * { box-sizing: border-box; }
+    html { color-scheme: light dark; }
+    body {
+      margin: 0; font-family: var(--font); font-size: 1rem; line-height: 1.55;
+      color: var(--text); background: var(--bg);
+    }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+
+    /* Header with Boerdi */
+    .topbar { display: flex; justify-content: flex-end; margin-bottom: 0.25rem; }
+    .hero { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .owl { flex: 0 0 auto; width: 88px; height: 88px; }
+    .hero-text { flex: 1 1 16rem; min-width: 14rem; }
+    h1 { font-size: 1.55rem; margin: 0; line-height: 1.15; }
+    .sub { font-size: 0.95rem; font-weight: 600; color: var(--accent-strong); margin: 0.2rem 0 0; }
+    .speech {
+      position: relative; background: var(--accent-weak); color: var(--text);
+      border-radius: var(--radius); padding: 0.7rem 0.9rem; margin: 0.75rem 0 1.5rem;
+      font-size: 0.97rem;
+    }
+
+    .lang { display: inline-flex; border: 1px solid var(--border-control); border-radius: 999px; overflow: hidden; }
+    .lang button {
+      appearance: none; border: 0; background: var(--surface); color: var(--text);
+      padding: 0.35rem 0.8rem; font: inherit; cursor: pointer; min-height: 2.25rem;
+    }
+    .lang button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.1rem 1.15rem; margin-top: 1.1rem;
+    }
+    .card > h2 { font-size: 1.1rem; margin: 0 0 0.15rem; display: flex; align-items: center; gap: 0.5rem; }
+    .card .lead { color: var(--text-muted); margin: 0.1rem 0 0.9rem; font-size: 0.95rem; }
+    .step { font-weight: 700; color: var(--accent-strong); }
+
+    /* App picker as accessible radio chips */
+    fieldset { border: 0; margin: 0; padding: 0; }
+    legend { font-weight: 600; padding: 0; margin-bottom: 0.5rem; }
+    .apps { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip { position: relative; }
+    .chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+    .chip span {
+      display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.75rem;
+      padding: 0.5rem 0.9rem; border: 1.5px solid var(--border-control); border-radius: 999px;
+      background: var(--surface); color: var(--text); font-weight: 600; cursor: pointer;
+    }
+    .chip input:checked + span { border-color: var(--accent); background: var(--accent-weak); color: var(--accent-strong); }
+    .chip input:focus-visible + span { outline: var(--ring); outline-offset: 2px; }
+    /* Selected chip carries a trailing check — a non-colour cue (WCAG 1.4.1) on
+       top of the border/background/text shift, so selection is clear without
+       relying on colour alone. A text glyph, not a sized box, so it cannot be
+       stretched by the flex row. */
+    .chip input:checked + span::after { content: "✓"; font-weight: 700; }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
+    button.btn, a.btn {
+      appearance: none; font: inherit; font-weight: 600; cursor: pointer;
+      border-radius: var(--radius); padding: 0.7rem 1.2rem; min-height: 2.85rem;
+      border: 1.5px solid var(--border-control); background: var(--surface); color: var(--text);
+      text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+    button.btn:hover, a.btn:hover { background: var(--surface-2); }
+    .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .btn.primary:hover { filter: brightness(1.06); }
+    .btn[hidden] { display: none; }
+    button.btn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+    .note {
+      margin-top: 0.6rem; font-size: 0.88rem; color: var(--text-muted);
+      background: var(--surface-2); border-radius: 8px; padding: 0.5rem 0.65rem;
+    }
+    .status { margin-top: 0.75rem; font-weight: 600; min-height: 1.5rem; }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+    .result-list { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+    .result-list li { margin: 0.15rem 0; }
+
+    /* Collapsible advanced / preview */
+    details { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); margin-top: 1.1rem; }
+    details > summary {
+      cursor: pointer; padding: 0.85rem 1.1rem; font-weight: 600; list-style: none;
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: 2.85rem;
+    }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::after { content: "▸"; color: var(--text-muted); }
+    details[open] > summary::after { content: "▾"; }
+    details > summary:focus-visible { outline: var(--ring); outline-offset: -2px; border-radius: var(--radius); }
+    .details-body { padding: 0 1.1rem 1.1rem; }
+
+    form { display: grid; gap: 1.05rem; }
+    .field { display: grid; gap: 0.35rem; }
+    label { font-weight: 600; }
+    .hint { color: var(--text-muted); font-size: 0.875rem; margin: 0; }
+    input[type="text"], input[type="search"], select, textarea {
+      font: inherit; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border-control); border-radius: 10px;
+      padding: 0.6rem 0.7rem; width: 100%; min-height: 2.75rem;
+    }
+    textarea { min-height: 11rem; resize: vertical; line-height: 1.45; font-size: 0.92rem; }
+    .row { display: grid; gap: 1.05rem; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 34rem) { .row { grid-template-columns: 1fr; } }
+    :focus-visible { outline: var(--ring); outline-offset: 2px; }
+
+    .url {
+      display: block; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.83rem; word-break: break-all; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.7rem;
+    }
+    .url + .hint { margin-top: 0.75rem; }
+
+    .spin {
+      width: 1rem; height: 1rem; border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+    footer { margin-top: 2.5rem; color: var(--text-muted); font-size: 0.875rem; }
+    footer a, .card a { color: var(--accent-strong); }
+    ul.tight { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    ul.tight li { margin: 0.2rem 0; }
+
+    /* Wayfinding in the footer. A real <nav> with a real heading, so a screen
+       reader can jump to it — the heading is small, not hidden: someone looking
+       for "where else can I go" benefits from seeing it too.
+       Laid out as a wrapping row of links rather than a card grid; six links do
+       not need six boxes. Each link keeps a 44px-tall hit area (SC 2.5.8) via
+       padding, which the bare footer list did not have. */
+    .nav-h { font-size: 0.875rem; font-weight: 700; color: var(--text); margin: 1.5rem 0 0.25rem; }
+    ul.navlist { list-style: none; display: flex; flex-wrap: wrap; gap: 0 1.1rem; margin: 0; padding: 0; }
+    ul.navlist a { display: inline-flex; align-items: center; min-height: 2.75rem; }
+    code.inline { background: var(--surface-2); border-radius: 5px; padding: 0.05rem 0.3rem; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="lang" role="group" aria-label="Sprache / Language">
+        <button type="button" id="lang-de" aria-pressed="true" lang="de">DE</button>
+        <button type="button" id="lang-en" aria-pressed="false" lang="en">EN</button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <svg class="owl" viewBox="0 0 120 120" role="img" aria-labelledby="owl-title">
+        <title id="owl-title" data-i18n="owl_alt">Boerdi, die WLO-Eule</title>
+        <rect x="20" y="99" width="80" height="7" rx="3.5" fill="#8a5a2b"/>
+        <path d="M34 30 L45 47 L27 45 Z" fill="var(--owl-body)"/>
+        <path d="M86 30 L93 45 L75 47 Z" fill="var(--owl-body)"/>
+        <ellipse cx="60" cy="61" rx="35" ry="39" fill="var(--owl-body)"/>
+        <ellipse cx="60" cy="72" rx="22" ry="26" fill="var(--owl-belly)"/>
+        <circle cx="47" cy="53" r="15.5" fill="#ffffff"/>
+        <circle cx="73" cy="53" r="15.5" fill="#ffffff"/>
+        <circle cx="49" cy="55" r="7" fill="var(--owl-eye)"/>
+        <circle cx="71" cy="55" r="7" fill="var(--owl-eye)"/>
+        <circle cx="51.4" cy="52.6" r="2.3" fill="#ffffff"/>
+        <circle cx="73.4" cy="52.6" r="2.3" fill="#ffffff"/>
+        <path d="M33 41 q13 -8 25 0" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M62 41 q13 -8 25 0" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M60 61 l-7 9 h14 Z" fill="var(--amber)"/>
+        <path d="M51 98 v6 M47 104 h8 M69 98 v6 M65 104 h8" stroke="var(--amber)" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path d="M27 60 q-4 21 9 31" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M93 60 q4 21 -9 31" stroke="var(--owl-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+      </svg>
+      <div class="hero-text">
+        <h1 data-i18n="title">WLO-Launcher</h1>
+        <p class="sub" data-i18n="subtitle">mit Boerdi, der WLO-Eule</p>
+      </div>
+    </div>
+
+    <p class="speech" data-i18n="speech">
+      Hallo, ich bin <strong>Boerdi</strong>! Ich helfe dir, die Dienste von
+      WirLernenOnline in deiner KI zu nutzen. Wähle deine KI, klick auf „Öffnen“ –
+      und dein Chat weiß, wie er offene Bildungsinhalte findet und fertige Skills anwendet.
+    </p>
+
+    <!-- Primary action: choose AI + one button -->
+    <section class="card" aria-labelledby="use-h">
+      <h2 id="use-h"><span class="step">1.</span> <span data-i18n="use_h">Öffne WLO in deiner KI</span></h2>
+      <p class="lead" data-i18n="use_lead">Wähle deine KI. Der „Öffnen“-Button übergibt ihr die Anleitung, wie sie die WLO-Dienste selbst nutzt.</p>
+      <fieldset>
+        <legend data-i18n="app_legend">Deine KI</legend>
+        <div class="apps" id="apps">
+          <label class="chip"><input type="radio" name="target" value="claude" checked /><span>Claude</span></label>
+          <label class="chip"><input type="radio" name="target" value="chatgpt" /><span>ChatGPT</span></label>
+          <label class="chip"><input type="radio" name="target" value="copilot" /><span>Copilot</span></label>
+          <label class="chip"><input type="radio" name="target" value="gemini" /><span>Gemini</span></label>
+          <label class="chip"><input type="radio" name="target" value="copy" /><span><span data-i18n="app_copy">Nur kopieren</span></span></label>
+        </div>
+      </fieldset>
+      <div class="actions">
+        <a class="btn primary" id="open" href="#" target="_blank" rel="noopener noreferrer" data-i18n="open">In KI öffnen</a>
+        <button type="button" class="btn" id="copy" data-i18n="copy">Anleitung kopieren</button>
+      </div>
+      <p class="note" id="gemini-note" hidden data-i18n="gemini_note">
+        Gemini füllt das Eingabefeld nicht automatisch. Beim Öffnen wird die
+        Anleitung in die Zwischenablage kopiert – bitte in Gemini einfügen.
+      </p>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- Skills -->
+    <section class="card" aria-labelledby="skills-h">
+      <h2 id="skills-h">🧩 <span data-i18n="skills_h">Fertige Skills</span></h2>
+      <p class="lead" data-i18n="skills_lead">
+        Neben der Suche liefert Boerdi fertige „Skills“ – kurze Anleitungen aus einer
+        WirLernenOnline-Sammlung. Titel und Beschreibung sagen, was ein Skill tut und
+        wann du ihn nutzt; das rohe Markdown wird über die Download-URL des Treffers geladen.
+      </p>
+      <p class="hint" data-i18n="skills_url_label">Skill-Liste (der Chat lädt hier die verfügbaren Skills):</p>
+      <code class="url" id="skills-url"></code>
+      <p class="note" data-i18n="skills_native">
+        Hast du den WLO-MCP nativ in deiner KI eingetragen? Dann nutze das Tool
+        <code class="inline">find_wlo_skills</code> – es findet passende Skills und liefert ihre Instruktionen direkt.
+      </p>
+    </section>
+
+    <!-- Targeted search (collapsed) -->
+    <details id="adv">
+      <summary data-i18n="adv_summary">🔍 Gezielte Suche (optional)</summary>
+      <div class="details-body">
+        <form id="launcher" novalidate>
+          <div class="field">
+            <label for="q" data-i18n="q_label">Suchbegriff</label>
+            <input type="search" id="q" name="q" autocomplete="off" aria-describedby="q-hint" enterkeyhint="search" />
+            <p class="hint" id="q-hint" data-i18n="q_hint">Wird zum ersten Suchauftrag in der Anleitung – bei Claude entfällt damit das Rein-Kopieren – und dient für „RAW-Ergebnis laden“.</p>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="discipline" data-i18n="fach_label">Fach</label>
+              <input type="text" id="discipline" name="discipline" list="discipline-list" autocomplete="off" />
+              <datalist id="discipline-list">
+                <option value="Mathematik"></option><option value="Physik"></option>
+                <option value="Biologie"></option><option value="Chemie"></option>
+                <option value="Deutsch"></option><option value="Geschichte"></option>
+                <option value="Informatik"></option><option value="Englisch"></option>
+              </datalist>
+            </div>
+            <div class="field">
+              <label for="educationalContext" data-i18n="stufe_label">Bildungsstufe</label>
+              <select id="educationalContext" name="educationalContext">
+                <option value="" data-i18n="any">beliebig</option>
+                <option value="Primarstufe">Primarstufe</option>
+                <option value="Sekundarstufe I">Sekundarstufe I</option>
+                <option value="Sekundarstufe II">Sekundarstufe II</option>
+                <option value="Berufliche Bildung">Berufliche Bildung</option>
+                <option value="Hochschule">Hochschule</option>
+                <option value="Erwachsenenbildung">Erwachsenenbildung</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="learningResourceType" data-i18n="typ_label">Materialtyp</label>
+            <input type="text" id="learningResourceType" name="learningResourceType" list="type-list" autocomplete="off" />
+            <datalist id="type-list">
+              <option value="Video"></option><option value="Arbeitsblatt"></option>
+              <option value="Website"></option><option value="Bild"></option>
+              <option value="Audio"></option><option value="Interaktives Medium"></option>
+            </datalist>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn" id="test" data-i18n="test" disabled>RAW-Ergebnis laden</button>
+          </div>
+          <p class="status" id="adv-status" role="status" aria-live="polite"></p>
+          <ul class="result-list" id="results" hidden></ul>
+        </form>
+      </div>
+    </details>
+
+    <!-- Preview (collapsed) -->
+    <details id="preview">
+      <summary data-i18n="preview_summary">📋 Vorschau: Was der Chat bekommt</summary>
+      <div class="details-body">
+        <div class="field">
+          <label for="prompt" data-i18n="prompt_label">Diese Nachricht bekommt der Chat</label>
+          <textarea id="prompt" readonly aria-live="polite"></textarea>
+        </div>
+        <p class="hint" id="example-label" data-i18n="exampleurl_label">Beispiel-Such-URL (RAW-JSON):</p>
+        <code class="url" id="rest-url"></code>
+        <p class="hint" id="deeplink-label" data-i18n="deeplink_label">Deeplink:</p>
+        <code class="url" id="deeplink"></code>
+      </div>
+    </details>
+
+    <!-- Install help -->
+    <section class="card" aria-labelledby="install-h">
+      <h2 id="install-h">🛠️ <span data-i18n="install_h">WLO-Dienste einrichten</span></h2>
+      <p class="lead" data-i18n="install_lead">Zwei Wege, wie deine KI WLO nutzt – Boerdi hilft bei beiden:</p>
+      <ul class="tight">
+        <li data-i18n="install_a"><strong>Ohne Installation:</strong> diese Seite. Wähle oben deine KI und klick „Öffnen“ – fertig.</li>
+        <li data-i18n="install_b"><strong>Nativ (MCP):</strong> trägst du den WLO-MCP-Server in deiner KI (z. B. Claude Desktop) ein, hast du alle WLO-Tools direkt, inkl. <code class="inline">find_wlo_skills</code>.</li>
+      </ul>
+
+      <p class="hint" id="mcp-url-label" data-i18n="mcp_url_label">Diese Adresse trägst du in deiner KI ein:</p>
+      <code class="url" id="mcp-url"></code>
+      <div class="actions">
+        <button type="button" class="btn" id="copy-mcp" data-i18n="mcp_copy">Adresse kopieren</button>
+      </div>
+      <p class="status" id="mcp-status" role="status" aria-live="polite"></p>
+
+      <p class="note" data-i18n="mcp_anon">
+        Ohne Anmeldung kannst du <strong>suchen und lesen</strong> – mehr braucht es für den Anfang nicht.
+        Nur zum <strong>Anlegen und Bearbeiten</strong> von WLO-Inhalten ist ein WLO-Konto nötig.
+      </p>
+      <ul class="tight">
+        <li data-i18n="mcp_auth_get"><a href="/auth">Zugang holen</a> – wenn deine KI ein Feld für einen Schlüssel hat.</li>
+        <li data-i18n="mcp_auth_revoke"><a href="/auth-revoke.html">Zugang sperren</a> – per Block oder per WLO-Anmeldung, wenn du den Block nie gesehen hast.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p data-i18n="footer_html">
+        Öffentliche, nur lesende Schnittstelle von WirLernenOnline. Schnellzugriff per
+        <a href="bookmarklet.md">Bookmarklet</a>.
+      </p>
+      <nav aria-labelledby="nav-h">
+        <h2 id="nav-h" class="nav-h" data-i18n="nav_h">Alle Seiten dieses Servers</h2>
+        <ul class="navlist">
+          <li><a href="/" data-i18n="nav_home">Startseite (diese Seite)</a></li>
+          <li><a href="/auth" data-i18n="nav_auth">Zugang holen</a></li>
+          <li><a href="/auth-revoke.html" data-i18n="nav_revoke">Zugang sperren</a></li>
+          <!-- A real path, not an empty href: the script replaces it with an
+               absolute one, but `href=""` resolves to the current document, so
+               a scripting failure would turn the one link in this list that
+               needs JS into a page reload. -->
+          <li><a href="/api/search/Bruchrechnung" id="nav-search" data-i18n="nav_search">Beispiel-Suche im Browser</a></li>
+          <li><a href="/llms.txt" data-i18n="nav_llms">Selbstbeschreibung für KI-Programme</a></li>
+          <li><a href="bookmarklet.md" data-i18n="nav_bookmarklet">Bookmarklet</a></li>
+        </ul>
+      </nav>
+    </footer>
+  </div>
+
+  <script src="/launcher.js"></script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+/**
+ * node-match.ts – Local (client-side) node matching for the paths where the
+ * backend search cannot be used: the collection tree-traversal fallback
+ * (tools/collections.ts) and the /children fallback for reference collections
+ * (services/search.ts). Leaf module (type-only imports) so both layers share
+ * one matcher instead of drifting copies.
+ */
+
+import { DE_STOPWORDS } from './query-expand.js';
+import type { SearchCriterion, WloNode } from './wlo-types.js';
+
+/** Above this length a term may match anywhere in a word (see {@link termMatches}). */
+const SHORT_TERM_MAX = 3;
+
+/**
+ * The words of a query that can carry a signal.
+ *
+ * A stopword carries none, and it is not merely useless — it is actively
+ * harmful, because German stopwords sit inside ordinary words ("Stu-die-n",
+ * "Me-die-n"). Measured live 2026-08-03 over a 60-node pool: `"Bruchrechnung"`
+ * matched 0 nodes, and `"die Bruchrechnung"` matched 43 — one article turned a
+ * correct rejection into a 72% pass rate. Single characters are dropped for the
+ * same reason.
+ */
+export function queryTerms(query: string): string[] {
+  return comparable(query).split(/\s+/).filter(t => t.length >= 2 && !DE_STOPWORDS.has(t));
+}
+
+/**
+ * A text as the matchers here compare it: lowercase, and in ONE Unicode form.
+ *
+ * An umlaut is either one code point or the base letter plus a combining mark
+ * (NFD — what macOS file names and some editors produce). Compared by code
+ * unit the two never meet, so a decomposed "Größe" in a title was invisible to
+ * the composed one in a query. Both sides of every comparison go through here.
+ */
+export function comparable(text: string): string {
+  return text.normalize('NFC').toLowerCase();
+}
+
+/**
+ * Does `term` occur in `text` as a signal rather than by accident?
+ *
+ * A plain substring test is right for German: "Rechnung" belongs inside
+ * "Bruchrechnung" and "Mittelalter" inside "mittelalterlichen". For a SHORT
+ * term the same test is mostly accident — measured live 2026-08-03, the query
+ * "IT" put "s-it-ting", "Maur-it-ius", "Pol-it-ik" and "C-it-izenship" in the
+ * top five results.
+ *
+ * What separates the two is WHERE the match sits: a compound or an inflection
+ * carries the term at a word START, while the accidental ones bury it mid-word.
+ * So a short term must match at a word boundary — which still keeps "EU" in
+ * "Europäische" and "Bio" in "Biologie" — and a longer one keeps the substring
+ * behaviour German needs. Only the START is checked: requiring a boundary at
+ * the end too would reject exactly those compounds.
+ *
+ * `text` is expected lowercase, as is `term` — both as `comparable` makes them.
+ */
+export function termMatches(term: string, text: string): boolean {
+  if (!term) return false;
+  if (term.length > SHORT_TERM_MAX) return text.includes(term);
+  for (let from = 0; ; from += 1) {
+    const at = text.indexOf(term, from);
+    if (at === -1) return false;
+    if (at === 0 || !/[\p{L}\p{N}]/u.test(text[at - 1]!)) return true;
+    from = at;
+  }
+}
+
+/**
+ * Canonical human-readable title fallback chain, shared by every consumer
+ * (formatter, reranker scoring/sorting/deleted-check, breadcrumbs). cm:title
+ * before cm:name: on page-variant nodes cm:name is a technical placeholder
+ * ("PAGE_VARIANT_<uuid>") while the readable title lives in cm:title.
+ */
+export function nodeTitle(node: WloNode): string {
+  return titleFromProperties(node.properties) || node.name || node.title || '';
+}
+
+type Properties = Record<string, string[]> | undefined;
+
+/**
+ * The canonical chain on a bare property bag — for code that holds a record's
+ * properties and not the node (change sets, previews). '' when none is set.
+ *
+ * ONE place for the order, with the next function. The write path had five
+ * hand-written chains, and they differed in exactly the way that matters: two
+ * of them skipped `cm:title`, the carrier this repository actually fills on
+ * collections and page variants, and fell through to the technical `cm:name`
+ * (audit 2026-11-12, A-7). A chain written out anywhere else fails a test.
+ */
+export function titleFromProperties(properties: Properties): string {
+  const p = properties ?? {};
+  return p['cclom:title']?.[0] || p['cm:title']?.[0] || p['cm:name']?.[0] || '';
+}
+
+/**
+ * A COLLECTION's title: `cm:title` first. That is the property the collection
+ * endpoint writes (measured 2026-08-02 — `wlo_rename_collection` sets it), so
+ * it is the one that is current; a `cclom:title` beside it can be a leftover.
+ * For a record it is the other way round, which is why there are two chains
+ * and not one.
+ */
+export function collectionTitleFromProperties(properties: Properties): string {
+  const p = properties ?? {};
+  return p['cm:title']?.[0] || p['cclom:title']?.[0] || p['cm:name']?.[0] || '';
+}
+
+/**
+ * Match a node against a keyword query: any signal-carrying query word hits its
+ * name/title/description.
+ *
+ * A query of nothing but stopwords yields no terms, and then this matches
+ * NOTHING rather than everything — the caller asked whether this node is about
+ * the query, and "die und der" says nothing to be about. Passing every node
+ * would be the answer that looks like a result and is not.
+ */
+export function nodeMatchesText(node: WloNode, q: string): boolean {
+  const words = queryTerms(q);
+  if (words.length === 0) return false;
+  const haystack = comparable([
+    node.properties?.['cm:name']?.[0] ?? node.name ?? '',
+    node.properties?.['cclom:title']?.[0] ?? node.title ?? '',
+    node.properties?.['cm:title']?.[0] ?? '',
+    node.properties?.['cclom:general_description']?.[0] ?? '',
+  ].join(' '));
+  return words.some(w => termMatches(w, haystack));
+}
+
+/**
+ * True when the node satisfies EVERY criterion: for each, the node's property
+ * values (e.g. `ccm:taxonid` URIs) intersect the wanted values. Used to apply
+ * already-resolved vocab filters locally when results were fetched via
+ * /children instead of ngsearch.
+ */
+export function nodeMatchesCriteria(node: WloNode, criteria: SearchCriterion[]): boolean {
+  return criteria.every(c => {
+    const have = node.properties?.[c.property] ?? [];
+    return c.values.some(v => have.includes(v));
+  });
+}

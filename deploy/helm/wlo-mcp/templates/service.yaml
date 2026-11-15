@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wlo-mcp.fullname" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: public
+spec:
+  type: {{ .Values.service.public.type }}
+  selector:
+    {{- include "wlo-mcp.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.public.port }}
+      targetPort: http
+      protocol: TCP
+---
+# Probes and the metrics scraper only. Always ClusterIP; the Ingress never
+# points here — on this port /metrics answers without a token unless one is set.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wlo-mcp.internalName" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: internal
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "wlo-mcp.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: internal
+      port: {{ .Values.service.internal.port }}
+      targetPort: internal
+      protocol: TCP

@@ -1,0 +1,371 @@
+/**
+ * tools/browse.ts – Guided exploration of the collection tree:
+ * get_subject_portals (Fachportale under the WLO root) and
+ * browse_collection_tree (sub-collections with optional content counts).
+ */
+
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+
+import type { WloNode } from '../wlo-api.js';
+import {
+  WLO_ROOT_COLLECTION_ID,
+  getChildCollectionsResult,
+} from '../wlo-api.js';
+import { sortByTitle } from '../reranker.js';
+import { formatNode, nodeIdLine, oneLine, quotedTitle, registrySummaryLines } from '../formatter.js';
+import { cachedRegistriesFor } from '../services/skill-registry-cache.js';
+import type { CollectionTreeNode } from '../services/collection-traversal.js';
+import { buildCollectionTree, notReadable } from '../services/collection-traversal.js';
+import { resolveVocab } from '../vocabs.js';
+import { log } from '../logger.js';
+import { mapPool } from '../concurrency.js';
+import { codedErrorResult, toolError } from './shared.js';
+import { registerWloTool } from '../apps/register.js';
+import { browseTreeSchema, subjectPortalListSchema } from '../apps/outputSchemas.js';
+import { logTerm } from '../log-privacy.js';
+import { collectionDisciplineParam, collectionNameParam, collectionOrderParam, withCollectionByName } from './collection-arg.js';
+
+/**
+ * Resolve a subject/Fachportal NAME (e.g. "Mathematik" or the abbreviation
+ * "Mathe") to its portal node, so callers can drill down by name without a
+ * separate get_subject_portals round-trip. Tiered match — exact → prefix →
+ * substring, shortest title wins on ties — tolerates paraphrased input.
+ * Wrapper words agents copy from the user's phrasing ("das Fachportal Deutsch",
+ * "Mathematik-Portal") are dropped first; a name made only of them matches
+ * nothing. Returns null when nothing matches. Pure (no I/O): the caller
+ * supplies the portal list.
+ */
+const SUBJECT_WRAPPER_WORDS = new Set([
+  'fachportal', 'portal', 'fach', 'schulfach', 'themenbaum', 'themen', 'thema',
+  'das', 'der', 'die', 'den', 'dem', 'für', 'fuer', 'zu', 'zum', 'zur', 'von', 'im',
+]);
+
+function subjectNeedle(name: string): string {
+  return name.toLowerCase().replace(/[-_/]+/g, ' ').split(/\s+/)
+    .filter(word => word && !SUBJECT_WRAPPER_WORDS.has(word))
+    .join(' ');
+}
+
+export function matchSubjectPortal(portals: WloNode[], name: string): WloNode | null {
+  const needle = subjectNeedle(name);
+  if (!needle) return null;
+  const title = (n: WloNode) => (formatNode(n).title || '').toLowerCase();
+  const byShortestTitle = (a: WloNode, b: WloNode) => title(a).length - title(b).length;
+
+  for (const tier of [
+    (t: string) => t === needle,
+    (t: string) => t.startsWith(needle),
+    (t: string) => t.includes(needle),
+  ]) {
+    const hits = portals.filter(p => tier(title(p)));
+    if (hits.length) return hits.sort(byShortestTitle)[0];
+  }
+  return null;
+}
+
+/**
+ * @param browseWidgetUri – the W2 (interactive browse) `ui://` resource, when
+ *   built; attached to both browse tools so an Apps-SDK host renders the
+ *   drill-down explorer.
+ */
+export function registerBrowseTools(server: McpServer, browseWidgetUri?: string): void {
+  registerWloTool(server, {
+    name: 'get_subject_portals',
+    title: 'WLO Fachportale',
+    widgetUri: browseWidgetUri,
+    description: `Zeige, WELCHE Fächer/Themen es auf WirLernenOnline gibt — die WLO-Fachportale (Mathematik, Informatik, Deutsch, …), die obersten Fach-Hubs des Inhaltsbaums. Nutze dies für Anfragen wie "welche Fächer gibt es?" oder als Einstieg für geführtes Stöbern ("zeig mir Mathe" → Portal → Unter-Sammlungen → Inhalte).
+Liefert deterministische alphabetische Reihenfolge, je Portal nodeId, Name, Beschreibung, optional Themenseiten-URL und die zugeordneten Fächer/Bildungsstufen.`,
+    inputSchema: {
+      educationalContext: z.string().optional().describe(
+        'Filter by educational level (e.g. "Sekundarstufe I"). Most portals span multiple levels — '+
+        'the filter only excludes portals where the level is explicitly different.'
+      ),
+      includeContentCounts: z.boolean().optional().default(false).describe(
+        'When true, also fetch the number of direct sub-collections per portal (extra round-trip).'
+      ),
+      outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
+    },
+    outputSchema: subjectPortalListSchema,
+    annotations: { readOnlyHint: true },
+    handler: async (params) => {
+      try {
+        const listing = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, 100);
+        // "No portals" is a statement about WLO; an unread listing is a
+        // statement about the server. Fail loudly rather than answering
+        // "WLO Fachportale: 0" — that reads as a fact and is acted on as one.
+        if (listing.refused) throw new Error(notReadable(WLO_ROOT_COLLECTION_ID, listing.refused));
+        if (!listing.reachable) throw new Error('Die Fachportal-Liste ist derzeit nicht abrufbar.');
+        const portals = listing.nodes;
+
+        // Optional educational-context filter
+        let filtered = portals;
+        if (params.educationalContext) {
+          const wantedUri = resolveVocab(params.educationalContext, 'educationalContext');
+          if (wantedUri) {
+            filtered = portals.filter(p => {
+              const ec = p.properties?.['ccm:educationalcontext'] ?? [];
+              // Keep portals that don't specify a context (apply to all) OR match.
+              return ec.length === 0 || ec.includes(wantedUri);
+            });
+          }
+        }
+
+        // Deterministic alphabetical sort
+        const sorted = sortByTitle(filtered);
+
+        // Optional content-count enrichment — bounded concurrency (not raw
+        // Promise.allSettled) so up to ~100 portals don't fan out at once.
+        const counts: Record<string, number> = {};
+        if (params.includeContentCounts) {
+          await mapPool(sorted, 5, async (p) => {
+            const id = p.ref?.id;
+            if (!id) return null;
+            const subs = await getChildCollectionsResult(id, 100);
+            // Only record a count we actually learned: a 0 that came from a
+            // failed listing would read as "this portal is empty".
+            if (subs.reachable) counts[id] = subs.nodes.length;
+            return null;
+          });
+        }
+
+        const formatted = sorted.map(p => {
+          const f = formatNode(p);
+          return {
+            ...f,
+            subCollectionCount: params.includeContentCounts ? counts[f.nodeId] : undefined,
+          };
+        });
+
+        // ATTACHED to the node, and before the format branches — a catalogue
+        // that only a Markdown caller sees is the "switching output format
+        // silently dropped it" defect `get_node_details` already carries a
+        // comment about. `formattedNodeSchema` declares the field, so it
+        // survives zod on the way into structuredContent.
+        //
+        // Cache only: this listing covers every portal, and a children call per
+        // portal on first contact is the crawl the cache design exists to avoid.
+        // What it does not know is queued and appears on the next call.
+        const registries = cachedRegistriesFor(formatted.map(p => p.nodeId));
+        for (const p of formatted) {
+          const registry = registries.get(p.nodeId);
+          if (registry) p.skillRegistry = registry;
+        }
+
+        if (params.outputFormat === 'json') {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({ total: formatted.length, results: formatted }),
+            }],
+            structuredContent: { total: formatted.length, results: formatted },
+          };
+        }
+
+        const lines: string[] = [`WLO Fachportale: ${formatted.length}\n`];
+        for (const p of formatted) {
+          const parts: string[] = [];
+          parts.push(`## ${p.title}`);
+          parts.push(nodeIdLine(p.nodeId, p.originalId));
+          if (p.description) parts.push(`Beschreibung: ${p.description.slice(0, 300)}${p.description.length > 300 ? '…' : ''}`);
+          if (p.disciplines.length) parts.push(`Fach: ${p.disciplines.join(', ')}`);
+          if (p.educationalContexts.length) parts.push(`Bildungsstufe: ${p.educationalContexts.join(', ')}`);
+          if (p.topicPageUrl) parts.push(`Themenseite: ${p.topicPageUrl}`);
+          if (p.subCollectionCount !== undefined) parts.push(`Sub-Sammlungen: ${p.subCollectionCount}`);
+          // Head line only — a portal listing is a chooser, and the catalogue of
+          // thirty portals would bury it. The line names the count and the
+          // nodeId, so nothing is asserted that is not shown.
+          if (p.skillRegistry) parts.push(...registrySummaryLines(p.skillRegistry, { entries: false }));
+          // Same record format and same reason as renderToText: every part is
+          // one logical line, and a repository title carrying a newline would
+          // otherwise open a second portal entry with a nodeId of its choosing.
+          lines.push(parts.map(oneLine).join('\n'));
+          lines.push('');
+        }
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n').trim() }],
+          structuredContent: { total: formatted.length, results: formatted },
+        };
+      } catch (err) {
+        return toolError('Fehler beim Abruf der Fachportale', err);
+      }
+    },
+  });
+
+  registerWloTool(server, {
+    name: 'browse_collection_tree',
+    title: 'WLO Sammlungsbaum',
+    widgetUri: browseWidgetUri,
+    // The browse widget calls this tool from inside the iframe for drill-down.
+    widgetAccessible: true,
+    description: `Navigiere durch die Unterthemen einer WLO-Sammlung oder eines Fachportals — für geführtes Stöbern wie "zeig mir die Unterthemen von Mathematik" oder "was steckt in dieser Sammlung". Gib ENTWEDER eine \`nodeId\` (beliebige Sammlung) ODER einen \`subject\`-Namen (Fachportal wie "Mathematik"/"Mathe") — Letzterer wird server-seitig aufgelöst, kein get_subject_portals nötig. Statt der nodeId geht auch der Titel einer Sammlung als \`collection\` (gleichnamige: \`discipline\`); mehrdeutig → Kandidaten statt Ergebnis.
+Liefert die direkten Unter-Sammlungen (depth=1, Default), zwei Ebenen (depth=2) oder drei (depth=3, höchstens 300 Knoten insgesamt), optional mit Datei-Anzahl je Knoten. Alphabetisch oder nach \`order\` ("stored", "position").
+Die Übersicht ist bewusst in Tiefe und Breite je Knoten gedeckelt. Zweige mit \`hasMoreChildren\` enthalten mehr, als hier steht — sag der Nutzerin/dem Nutzer das und öffne einen Zweig gezielt mit einem erneuten Aufruf (\`nodeId\` des Zweigs), statt die Auswahl als vollständig darzustellen.`,
+    inputSchema: {
+      nodeId: z.string().optional().describe('Parent collection nodeId (any collection). Optional if `subject` is given.'),
+      subject: z.string().optional().describe('Subject NAME only, e.g. "Deutsch", "Mathematik" or "Mathe" — not "Fachportal Deutsch"; resolved to its portal nodeId server-side. Alternative to nodeId. Together with `collection` it only narrows that lookup (like `discipline`).'),
+      collection: collectionNameParam,
+      discipline: collectionDisciplineParam('discipline'),
+      depth: z.number().int().min(1).max(3).optional().default(1).describe(
+        '1 = direct sub-collections only (fast); 2 = also grand-children; 3 = three levels, at most 300 '
+        + 'nodes in total (more API calls — with includeContentCounts one per node).'
+      ),
+      includeContentCounts: z.boolean().optional().default(false).describe(
+        'When true, fetch the number of files (Inhalte) inside each sub-collection (extra round-trip per node).'
+      ),
+      includeContentPreview: z.number().int().min(1).max(5).optional().describe(
+        'When set (1–5), attach the first N content items (Inhalte) of each sub-collection as ' +
+        'a "contentPreview" array — a peek at what is inside without a second call. Bounded extra fetches.'
+      ),
+      maxResults: z.number().int().min(1).max(100).optional().default(50),
+      order: collectionOrderParam,
+      outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
+    },
+    outputSchema: browseTreeSchema,
+    annotations: { readOnlyHint: true },
+    // `collection` is a collection ANYWHERE in the tree, `subject` a Fachportal.
+    // Given both, the collection is what is browsed and the subject only tells
+    // namesakes apart — the same job `discipline` has, which wins if set.
+    handler: withCollectionByName({
+      idParam: 'nodeId', disciplineParam: 'discipline', disciplineFallback: params => params.subject,
+    }, async (params) => {
+      const depth = params.depth ?? 1;
+
+      try {
+        // Resolve the parent node: an explicit nodeId wins; otherwise resolve a
+        // subject NAME to its Fachportal (saves a get_subject_portals round-trip).
+        let parentId = params.nodeId;
+        if (!parentId && params.subject) {
+          const listing = await getChildCollectionsResult(WLO_ROOT_COLLECTION_ID, 100);
+          // Without the portal list there is no "not found" to report — only an
+          // unanswered question. Saying "Verfügbar: ." would invent an answer.
+          if (listing.refused) throw new Error(notReadable(WLO_ROOT_COLLECTION_ID, listing.refused));
+          if (!listing.reachable) throw new Error('Die Fachportal-Liste ist derzeit nicht abrufbar.');
+          const portals = listing.nodes;
+          const hit = matchSubjectPortal(portals, params.subject);
+          if (!hit?.ref?.id) {
+            const available = sortByTitle(portals)
+              .map(p => oneLine(formatNode(p).title))
+              .filter(Boolean)
+              .join(', ');
+            log.warn('no subject portal matched', { subject: logTerm(params.subject) });
+            return codedErrorResult('not_found',
+              `Kein Fachportal für "${oneLine(params.subject)}" gefunden. Verfügbar: ${available}.`);
+          }
+          parentId = hit.ref.id;
+        }
+        if (!parentId) {
+          log.warn('browse_collection_tree called without nodeId or subject');
+          return codedErrorResult('invalid_input', 'Bitte nodeId oder subject angeben.');
+        }
+
+        // The bounded, cycle-guarded walk itself lives in services/ — a tool
+        // module holds its schema and its rendering, never an algorithm.
+        // `truncated` is disclosed below so the caller can offer a targeted
+        // drill-down rather than presenting a slice as the whole tree.
+        const { nodes: tree, truncated, truncatedAt, childrenPositioned } = await buildCollectionTree({
+          parentId,
+          depth,
+          maxResults: params.maxResults ?? 50,
+          includeContentCounts: params.includeContentCounts ?? false,
+          contentPreview: params.includeContentPreview,
+          order: params.order,
+        });
+        // Before the format branches, and attached to the nodes — see
+        // `get_subject_portals` above for both reasons. `CollectionTreeNode` is
+        // a `FormattedNode`, so the field and its schema entry already exist.
+        const flat: CollectionTreeNode[] = [];
+        const collect = (nodes: CollectionTreeNode[]) => {
+          for (const n of nodes) {
+            flat.push(n);
+            if (n.children?.length) collect(n.children);
+          }
+        };
+        collect(tree);
+        const registries = cachedRegistriesFor(flat.map(n => n.nodeId));
+        for (const n of flat) {
+          const registry = registries.get(n.nodeId);
+          if (registry) n.skillRegistry = registry;
+        }
+
+        const payload = {
+          parent: parentId, depth, total: tree.length, results: tree, truncated, ...(truncatedAt ? { truncatedAt } : {}),
+          // Present with `order: "position"` and `"stored"` — the default answer is the one it always was.
+          ...(childrenPositioned !== undefined ? { childrenPositioned } : {}),
+        };
+
+        if (params.outputFormat === 'json') {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+            structuredContent: payload,
+          };
+        }
+
+        // Which of the two cases held, said where a one-block client reads it.
+        // `stored` sorts nothing, so it never says "nach Titel": only whether positions decide.
+        // The flag is absent where the first level was cut with no two different
+        // positions in sight (or holds fewer than two): then the rule is named
+        // and nothing is said about which case held — "nach Titel" over a cut
+        // listing was a statement about children nobody saw.
+        const firstLevel = childrenPositioned === undefined ? ''
+          : childrenPositioned ? 'erste Ebene in gesetzter Reihenfolge'
+            : params.order === 'position' ? 'erste Ebene nach Titel' : 'erste Ebene ohne unterscheidende Positionen';
+        const orderNote = params.order === 'position'
+          ? ` — Reihenfolge: gesetzte Position, sonst Titel${firstLevel ? `; ${firstLevel}` : ''}`
+          : firstLevel ? ` — ${firstLevel}` : '';
+        const lines: string[] = [`Sub-Sammlungen unter ${parentId}: ${tree.length} (Tiefe ${depth})${orderNote}\n`];
+        const renderTree = (nodes: CollectionTreeNode[], indent: number) => {
+          for (const n of nodes) {
+            const pad = '  '.repeat(indent);
+            const cnt = n.fileCount !== undefined ? ` [${n.fileCount} Inhalte]` : '';
+            // oneLine per rendered value: this listing is line-oriented, so a
+            // title carrying a newline would add a branch with a nodeId that
+            // exists nowhere in the tree (same rule as renderToText).
+            // The id first, the title last and quoted: ahead of the id a title could spell out one.
+            const positioned = n.childrenPositioned ? ' [Unterthemen in gesetzter Reihenfolge]' : '';
+            lines.push(oneLine(`${pad}- ${nodeIdLine(n.nodeId, n.originalId)}${cnt}${positioned} — ${quotedTitle(n.title)}`));
+            for (const line of n.skillRegistry
+              ? registrySummaryLines(n.skillRegistry, { entries: false }) : []) {
+              lines.push(oneLine(`${pad}    ${line}`));
+            }
+            for (const p of n.contentPreview ?? []) {
+              lines.push(oneLine(`${pad}    · ${p.title}`));
+            }
+            if (n.children?.length) renderTree(n.children, indent + 1);
+            if (n.childrenUnread) {
+              lines.push(`${pad}  … die Unterthemen ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt. Später erneut: browse_collection_tree mit nodeId=${n.nodeId}`);
+            }
+            if (n.contentsRefused) {
+              lines.push(oneLine(`${pad}  … die Inhalte von ${quotedTitle(n.title)} sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
+            } else if (n.contentsUnread) {
+              lines.push(oneLine(`${pad}  … die Inhalte von ${quotedTitle(n.title)} ließen sich gerade nicht lesen — das heißt NICHT, dass es keine gibt.`));
+            }
+            if (n.childrenRefused) {
+              // The title is repository-supplied: one line, like every other value here.
+              lines.push(oneLine(`${pad}  … die Unterthemen von ${quotedTitle(n.title)} sind mit dieser Anmeldung nicht lesbar — ob es welche gibt, ist offen. Ein erneuter Aufruf ändert daran nichts.`));
+            }
+            if (n.hasMoreChildren) {
+              lines.push(`${pad}  … weitere Unterthemen vorhanden — zum Öffnen: browse_collection_tree mit nodeId=${n.nodeId}`);
+            }
+          }
+        };
+        renderTree(tree, 0);
+        // The root's own listing was cut: no branch line can say it, so say it here.
+        if (truncatedAt === parentId) {
+          lines.push(`… auf der ersten Ebene gibt es mehr als ${params.maxResults ?? 50} Unterthemen — `
+            + 'mit höherem maxResults (bis 100) erneut aufrufen.');
+        }
+        if (truncated) {
+          lines.push('');
+          lines.push(`Hinweis: Diese Übersicht zeigt ${depth} Ebene${depth === 1 ? '' : 'n'} in begrenzter Breite. Zweige mit dem Hinweis oben lassen sich gezielt einzeln öffnen.`);
+        }
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n').trim() }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return toolError('Fehler beim Sub-Sammlungs-Abruf', err);
+      }
+    }),
+  });
+}

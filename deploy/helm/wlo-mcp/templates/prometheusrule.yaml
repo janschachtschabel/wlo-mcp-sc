@@ -1,0 +1,190 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $sel := include "wlo-mcp.promSelector" . -}}
+{{- $t := .Values.monitoring.prometheusRule.thresholds -}}
+# Every expression uses only series the server exports itself (src/metrics.ts,
+# src/rest/metrics-route.ts) plus Prometheus' own `up`. Thresholds, windows and
+# severities are PROPOSALS — there is no operating history behind them yet.
+#
+# A COUNTER SERIES EXISTS ONLY FROM ITS FIRST EVENT ON, and it is born with the
+# value 1. `increase()` and `rate()` need two samples of a series, so they read
+# the first event after every restart as "no change" — and for a rare event
+# (a thrown tool, a shed call, an own 5xx) the first one is the one that
+# matters. The alerts on such counters therefore have two arms:
+#
+#   (increase(x[W]) > 0)  or  (x unless x offset W)
+#
+# W is the window the alert had as a plain rate, so an alert with a `for:` still
+# asks for events that keep coming; only the blind first W after a restart is closed.
+# The second arm is true while a series is younger than the window W, i.e. for
+# the event that created it. The ratio alerts (WloMcpRepositoryFailing,
+# WloMcpToolErrors) are left as plain rates on purpose: they ask for a SHARE
+# held over minutes, which one uncounted first event does not decide.
+#
+# Not expressible from these series, and therefore not here: "the repository is
+# unreachable" as /ready reports it (no gauge for it — the error-ratio alert is
+# the nearest thing), "the pod is gone" seen from outside (point an external
+# check at /health), and a CRASH LOOP: a recreated pod is a new series, so
+# nothing here can count restarts across pods. Take restarts from
+# kube_pod_container_status_restarts_total and memory from
+# container_memory_working_set_bytes where kube-state-metrics / cAdvisor are
+# scraped; WloMcpRecentlyStarted below only says that a start happened.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "wlo-mcp.fullname" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: wlo-mcp.availability
+      rules:
+        - alert: WloMcpDown
+          expr: up{ {{- $sel -}} } == 0 or absent(up{ {{- $sel -}} })
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: wlo-mcp is not being scraped — the one instance is down or unreachable.
+        - alert: WloMcpRecentlyStarted
+          # Honest about what it can see: ONE fact, "this process is young".
+          # `changes(process_start_time_seconds[…])` would look like a restart
+          # counter and is not one — a recreated pod is a new series, and a new
+          # series has no change. A start drops every approval, plan and upload
+          # in hand, which is why it is worth a line; whether it is a crash loop
+          # is a question for kube-state-metrics.
+          expr: time() - process_start_time_seconds{ {{- $sel -}} } < {{ $t.recentStartSeconds }}
+          labels:
+            severity: info
+          annotations:
+            summary: wlo-mcp started less than {{ $t.recentStartSeconds }} s ago — approvals, plans and uploads in hand before that are gone.
+    - name: wlo-mcp.repository
+      rules:
+        - alert: WloMcpRepositoryFailing
+          # outcome: 2xx/3xx/4xx/5xx, error (no answer), cancelled (our caller
+          # hung up), shed (not sent). Shed calls never reached the repository
+          # and are kept out of both sides.
+          expr: |
+            sum(rate(wlo_upstream_requests_total{ {{- $sel -}} ,outcome=~"5xx|error"}[5m]))
+              /
+            sum(rate(wlo_upstream_requests_total{ {{- $sel -}} ,outcome!="shed"}[5m]))
+              > {{ $t.upstreamErrorRatio }}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: The repository answers 5xx or not at all for a large share of calls.
+            description: This is the alert that replaces a /ready probe — the pod is healthy, its repository is not.
+        - alert: WloMcpSheddingRepositoryCalls
+          # Two arms — see the note on first events at the top of this file.
+          expr: |
+            (sum(increase(wlo_upstream_requests_total{ {{- $sel -}} ,outcome="shed"}[5m])) > 0)
+              or
+            (sum(wlo_upstream_requests_total{ {{- $sel -}} ,outcome="shed"}
+              unless wlo_upstream_requests_total{ {{- $sel -}} ,outcome="shed"} offset 5m) > 0)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Calls are refused by the server's own bound on open repository calls (WLO_UPSTREAM_CONCURRENCY).
+        - alert: WloMcpRepositoryQueue
+          expr: min_over_time(wlo_upstream_waiting{ {{- $sel -}} }[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Repository calls have been waiting for a slot continuously — the repository is slow or the load exceeds the bound.
+    - name: wlo-mcp.requests
+      rules:
+        - alert: WloMcpToolErrors
+          # outcome: ok, error (answered with isError — includes deliberate
+          # refusals such as a write without a login), thrown.
+          expr: |
+            sum(rate(wlo_tool_calls_total{ {{- $sel -}} ,outcome=~"error|thrown"}[10m]))
+              /
+            sum(rate(wlo_tool_calls_total{ {{- $sel -}} }[10m]))
+              > {{ $t.toolErrorRatio }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: A large share of tool calls ends in an error.
+        - alert: WloMcpToolThrows
+          # Two arms — see the note on first events at the top of this file. A
+          # tool that throws once after a restart is exactly the first event.
+          expr: |
+            (sum by (tool) (increase(wlo_tool_calls_total{ {{- $sel -}} ,outcome="thrown"}[15m])) > 0)
+              or
+            (sum by (tool) (wlo_tool_calls_total{ {{- $sel -}} ,outcome="thrown"}
+              unless wlo_tool_calls_total{ {{- $sel -}} ,outcome="thrown"} offset 15m) > 0)
+          labels:
+            severity: warning
+          annotations:
+            summary: A tool handler threw instead of answering — a defect, not a refusal.
+        - alert: WloMcpServerErrors
+          # Only 5xx that are the SERVER's own fault. Left out, each for a reason
+          # read from the code (route labels: `routeClass` in src/http-app.ts):
+          #   route="ready"  503 means the REPOSITORY is unreachable — its purpose.
+          #   route="api"    a repository call that fails inside a REST handler is
+          #                  answered 500 (src/rest/routes.ts), and /api/wikipedia
+          #                  and /api/uploads answer 503 for their upstream.
+          #   status="503"   on auth and oauth: the repository did not answer a
+          #                  login check (upstream_unreachable).
+          # All three are the repository's state — WloMcpRepositoryFailing. The
+          # price: a defect in an /api handler is not seen HERE (it is logged as
+          # "rest handler error"). What remains is a 500 from /mcp, the sign-in
+          # and OAuth endpoints and the static pages.
+          # Two arms — see the note on first events at the top of this file.
+          expr: |
+            (sum(increase(wlo_http_requests_total{ {{- $sel -}} ,route!~"ready|api",status=~"5..",status!="503"}[5m])) > 0)
+              or
+            (sum(wlo_http_requests_total{ {{- $sel -}} ,route!~"ready|api",status=~"5..",status!="503"}
+              unless wlo_http_requests_total{ {{- $sel -}} ,route!~"ready|api",status=~"5..",status!="503"} offset 5m) > 0)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: wlo-mcp keeps answering 5xx of its own making (not /ready, not /api, not 503).
+        - alert: WloMcpSlowRequests
+          # The /mcp response is held until the tool call is answered, so a write
+          # that sets a source URL (up to 60 s) legitimately sits in the top buckets.
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(wlo_http_request_duration_seconds_bucket{ {{- $sel -}} ,route="mcp"}[10m]))
+            ) > {{ $t.httpP95Seconds }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: p95 of /mcp requests is above the proposed threshold.
+        - alert: WloMcpSlowTool
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, tool) (rate(wlo_tool_duration_seconds_bucket{ {{- $sel -}} }[10m]))
+            ) > {{ $t.toolP95Seconds }}
+          for: 10m
+          labels:
+            severity: info
+          annotations:
+            summary: p95 of one tool is above the proposed threshold.
+    - name: wlo-mcp.process
+      rules:
+        - alert: WloMcpMemoryNearLimit
+          # Being killed for memory in the middle of a write is the outcome the
+          # server's other rules work to avoid.
+          expr: process_resident_memory_bytes{ {{- $sel -}} } > {{ $t.memoryBytes }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Resident memory is close to the container limit.
+        - alert: WloMcpEventLoopLag
+          expr: nodejs_eventloop_lag_seconds{ {{- $sel -}} } > {{ $t.eventLoopLagSeconds }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: The event loop is delayed — something blocks the single thread.
+{{- end }}

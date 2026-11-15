@@ -1,0 +1,287 @@
+# docker-compose for the self-hosted WLO MCP server (vServer deployment).
+# Full walkthrough — build, .env, TLS reverse proxy, verification — in
+# docs/DEPLOYMENT.md.
+#
+#   cp .env.example .env               # optional: override any setting below
+#   docker compose up -d --build       # build + run detached
+#   docker compose logs -f             # follow logs
+#   curl localhost:3000/health         # -> {"status":"ok",...}
+#
+# Endpoints once up: POST /mcp (MCP, SSE), GET /health, GET /api/* (public REST),
+# GET /launcher.html (prompt launcher), GET /api/skills[/<id>] (skill Markdown).
+#
+# Every setting below is overridable WITHOUT editing this file: put it in a `.env`
+# next to this compose file (auto-loaded) or export it in the shell. Defaults keep
+# `docker compose up` working out of the box.
+#
+# The converse is the trap: compose reads `.env` for `${...}` INTERPOLATION only,
+# so a variable this file never names does NOT reach the container — it is set,
+# ignored, and nothing is logged. Every setting `.env.example` documents is
+# therefore listed below (`tests/deploy-env-passthrough.test.ts` enforces it);
+# add the pass-through line here whenever a new one is introduced.
+#
+# REVERSE PROXY (nginx / Traefik / Caddy) terminating TLS in front: the image
+# serves real SSE (MCP_SSE=1), which breaks if the proxy buffers the `/mcp`
+# response. See docs/DEPLOYMENT.md for the required nginx config
+# (`proxy_buffering off;`, long read timeout) — without it, ChatGPT never receives
+# the stream.
+
+services:
+  wlo-mcp:
+    build: .
+    image: wlo-mcp:latest
+    restart: unless-stopped
+    ports:
+      # Loopback by default — the plaintext server sits BEHIND the TLS-terminating
+      # reverse proxy. For direct exposure without a proxy, set BIND_ADDR=0.0.0.0
+      # AND TRUST_PROXY=0 (otherwise a client can spoof X-Forwarded-For to defeat
+      # the per-IP rate limits). HOST_PORT = host side; the container listens on 3000.
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+    # ── DO NOT EDIT THIS BLOCK TO CONFIGURE THE SERVER ───────────────────────
+    #
+    # Every line below is a PASS-THROUGH, not a setting: `${VAR:-default}` takes
+    # the value from the `.env` next to this file. Put your values THERE — this
+    # file is what a `git pull` overwrites, and a value edited in here is also a
+    # value that ends up in the repository.
+    #
+    # The sections mirror `.env.example`, which explains what each one is for and
+    # — more usefully — which ones you can ignore. The short version: for an
+    # anonymous read-only deployment you set NOTHING, and for personal logins you
+    # set exactly one thing (§2).
+    #
+    # Empty defaults (`${VAR:-}`) are deliberate: they let `src/wlo-config.ts`
+    # own every number, next to the measurement that justifies it.
+    environment:
+
+      # ── 1 — which repository ────────────────────────────────────────────────
+      # Empty pass-through like every other line here, and since 2026-08-06 for a
+      # demonstrated reason: this line used to repeat a default (production) that
+      # `src/wlo-config.ts` also defines. Two copies of one decision, and the one
+      # that decided was not the one anybody read — a deployment whose `.env`
+      # lacked the variable wrote into the LIVE catalogue while everything around
+      # it said staging. The code owns the default; it is staging.
+      WLO_REPOSITORY_URL: "${WLO_REPOSITORY_URL:-}"
+      # Only needed on an edu-sharing that is neither WLO instance — node ids are
+      # repository-bound, and the two known hosts get a per-host default.
+      WLO_ROOT_COLLECTION_ID: "${WLO_ROOT_COLLECTION_ID:-}"
+
+      # ── 2 — personal logins (the recommended way for people) ────────────────
+      # Unset = feature off: the /auth/… endpoints answer 404, the pages say so,
+      # and a Bearer header is refused, exactly as before. Setting the key is all
+      # it takes; the other two lines here are the rotation window and a path that
+      # already matches the volume below.
+      #
+      # The private key decrypts EVERY issued block back into a live WLO password,
+      # so keep it in the .env on the server — never in the image, never in the
+      # repository.
+      WLO_AUTH_PRIVATE_KEY: "${WLO_AUTH_PRIVATE_KEY:-}"
+      WLO_AUTH_PRIVATE_KEY_PREVIOUS: "${WLO_AUTH_PRIVATE_KEY_PREVIOUS:-}"
+      # Must point INTO the volume below; anywhere else is read-only and the
+      # feature would stay off with the registry error in the log.
+      WLO_AUTH_REGISTRY_PATH: "${WLO_AUTH_REGISTRY_PATH:-/data/access-registry.json}"
+
+      # ── 3 — shared service account (one identity for everybody) ─────────────
+      # Both unset → the server reads fully anonymously, which is the default and
+      # needs no configuration. Redundant once §2 is in use.
+      #
+      # Set them in the .env NEXT TO THIS FILE, and QUOTE the password:
+      #     WLO_SERVICE_PASSWORD='geheim#mit!zeichen'
+      # An unquoted '#' starts an inline comment and the value is silently
+      # TRUNCATED. A wrong password is NOT a downgrade to public content: WLO
+      # answers 401 and every query fails, so the server returns nothing at all.
+      # The startup log says which case you are in ("repository credential
+      # verified" vs. "configured but NOT accepted").
+      #
+      # The account applies to the MCP endpoint only — GET /api/* and the
+      # launcher stay anonymous by design, since they are reachable without any
+      # login and would otherwise expose whatever the account can see.
+      WLO_SERVICE_USER: "${WLO_SERVICE_USER:-}"
+      WLO_SERVICE_PASSWORD: "${WLO_SERVICE_PASSWORD:-}"
+      # Only for the SERVICE account: with a personal login, writing is always on.
+      #   WLO_ALLOW_SERVICE_WRITES – lets the shared account write. Without it the
+      #     curation tools are still LISTED (deliberately, since 2026-08-05: a
+      #     model that never sees a write tool never asks the host to sign anyone
+      #     in) but every call is refused in service mode.
+      #   WLO_ALLOW_PREPARED_WRITES – lets a signed-in caller PREPARE a write for
+      #     an embedding to execute, instead of executing it. Grants no rights of
+      #     its own; off unless something is embedded.
+      #   WLO_INBOX_ID             – where service-account creates are filed;
+      #     required before that account can create anything.
+      WLO_ALLOW_SERVICE_WRITES: "${WLO_ALLOW_SERVICE_WRITES:-}"
+      WLO_BATCH_UPLOAD_ENABLED: "${WLO_BATCH_UPLOAD_ENABLED:-}"
+      UPLOAD_MAX_BYTES: "${UPLOAD_MAX_BYTES:-}"
+      UPLOAD_MAX_TOTAL_BYTES: "${UPLOAD_MAX_TOTAL_BYTES:-}"
+      UPLOAD_REQUEST_TIMEOUT_MS: "${UPLOAD_REQUEST_TIMEOUT_MS:-}"
+      WLO_ALLOW_PREPARED_WRITES: "${WLO_ALLOW_PREPARED_WRITES:-}"
+      WLO_INBOX_ID: "${WLO_INBOX_ID:-}"
+
+      # ── 4 — which tools exist ───────────────────────────────────────────────
+      # These decide which tools EXIST, not just how they behave, so leaving one
+      # out of this list silently removes a feature. Unset is the safe default
+      # (the code reads each as `(raw ?? '').trim()`, so empty = not configured).
+      #
+      # Tools that declare themselves UNSAFE (see .env.example for what that
+      # means and which one it currently is). Defaulted to "all" — the opposite
+      # of the code's own default — because a deployment is exactly where the
+      # unclosable risk matters: `get_url_text` reads an arbitrary caller-chosen
+      # URL through the extraction service, and a redirect from that URL into an
+      # internal address happens in Playwright's process, where we cannot see it.
+      # Set to an empty value to switch such tools on. Note the missing colon:
+      # `${VAR-all}` falls back only when the variable is UNSET, while
+      # `${VAR:-all}` would also override an explicitly EMPTY value — and then
+      # the documented way to switch the tools on would silently not work.
+      WLO_DISABLE_UNSAFE_TOOLS: "${WLO_DISABLE_UNSAFE_TOOLS-all}"
+      # Narrows the skill search to one collection subtree (unset → the whole
+      # repository, filtered by the `ai_skill` content type) and gives
+      # GET /api/collection its default collection.
+      WLO_SKILLS_COLLECTION_ID: "${WLO_SKILLS_COLLECTION_ID:-}"
+      # two-tool (default: search_skill + get_skill) | one-tool (get_skill_for_task).
+      WLO_SKILL_TOOL_MODE: "${WLO_SKILL_TOOL_MODE:-}"
+      # Set → search_skill (the repository-wide skill search) is not registered;
+      # skills are reached through the collection that approves them.
+      # get_skill and get_skill_registry are unaffected.
+      WLO_DISABLE_SKILL_SEARCH: "${WLO_DISABLE_SKILL_SEARCH:-}"
+      # Set → every search result carries its collection's skill registry.
+      # The skill-registry cache. ON by default: it keeps each collection's
+      # catalogue warm in the background (source: the collection's children
+      # listing, refreshed every 5 min) so a result carries it for free. Without
+      # it the same answer cost ~1.0-1.4 s per collection, in the request path.
+      WLO_SKILL_CACHE: "${WLO_SKILL_CACHE:-}"
+      WLO_SKILL_CACHE_REFRESH_MS: "${WLO_SKILL_CACHE_REFRESH_MS:-}"
+      WLO_SKILL_CACHE_TTL_MS: "${WLO_SKILL_CACHE_TTL_MS:-}"
+      # lean (default: the ChatGPT convention's {id,title,url}) | rich (adds the
+      # search_wlo_all buckets + widget to `search`). See .env.example for the
+      # unmeasured risk that comes with rich.
+      WLO_SEARCH_OUTPUT_MODE: "${WLO_SEARCH_OUTPUT_MODE:-}"
+      # Text extraction (optional external service). Unset → full text comes from
+      # the repository's own /textContent only; the server logs that at startup.
+      WLO_TEXT_EXTRACTION_URL: "${WLO_TEXT_EXTRACTION_URL:-}"
+      # Only when the extraction service is reached through the B-API proxy (X-API-KEY).
+      WLO_TEXT_EXTRACTION_API_KEY: "${WLO_TEXT_EXTRACTION_API_KEY:-}"
+
+      # ── 5 — network and operation ───────────────────────────────────────────
+      # Both already correct for the setup this file describes (behind a
+      # TLS-terminating proxy). Touch them only when running without one.
+      #
+      # Real SSE streaming (image default) for ChatGPT developer mode. Set 0 for
+      # single-JSON responses (curl / simple clients).
+      MCP_SSE: "${MCP_SSE:-1}"
+      # Derive the client IP from X-Forwarded-For (rightmost, proxy-appended hop)
+      # for per-client rate limiting behind a proxy. Set 0 if directly exposed.
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
+      # The public address of this deployment, exactly as a client types it.
+      # Required for the OAuth login flow: without it the OAuth paths answer 404,
+      # unless TRUST_PROXY=1 lets the address be derived from the request's Host
+      # header — which the caller chooses. Set it; it costs one line.
+      WLO_PUBLIC_BASE_URL: "${WLO_PUBLIC_BASE_URL:-}"
+      # PORT is deliberately absent: the port mapping above hardcodes the
+      # container side as 3000, so overriding it would leave the server
+      # listening where nothing is published. Change the HOST side with HOST_PORT.
+
+      # ── 6 — limits and timings (leave alone unless you have a reason) ───────
+      # Every default here is EMPTY on purpose, so the number lives in exactly one
+      # place — `src/wlo-config.ts`, next to the measurement that justifies it.
+      # Restating one here silently wins over the code: this file pinned
+      # WLO_FETCH_TIMEOUT_MS at 10000 long after the code moved to 20000, so every
+      # container ran the timeout that was measured too short and cut a 4.2–8.0 s
+      # create off mid-flight. `tests/deploy-env-passthrough.test.ts` enforces it.
+      RATE_LIMIT_RPM: "${RATE_LIMIT_RPM:-}"
+      # Trusted clients with their own budget (`name:rpm:key`, see .env.example).
+      TRUSTED_CLIENT_KEYS: "${TRUSTED_CLIENT_KEYS:-}"
+      # Readiness probe interval in ms (GET /ready, warm-up); 0 = only on demand.
+      WLO_READY_PROBE_MS: "${WLO_READY_PROBE_MS:-}"
+      API_RATE_LIMIT_RPM: "${API_RATE_LIMIT_RPM:-}"
+      # How many DISTINCT logins one client address may present per 10 minutes
+      # (a personal login is forwarded upstream, so this caps using the server to
+      # guess WLO logins). 0 disables; empty = the code's default of 10.
+      AUTH_CREDENTIAL_LIMIT: "${AUTH_CREDENTIAL_LIMIT:-}"
+      # The same cap for /auth/ticket, on its own budget: a ticket is
+      # machine-issued and unguessable while its address is routinely shared (an
+      # embedded widget puts a school behind one NAT). 0 disables; empty = the
+      # code's default of 200.
+      TICKET_CREDENTIAL_LIMIT: "${TICKET_CREDENTIAL_LIMIT:-}"
+      # Browser origins allowed to exchange a ticket (comma-separated); empty =
+      # every origin. Requests without Origin (servers) are never refused.
+      TICKET_ALLOWED_ORIGINS: "${TICKET_ALLOWED_ORIGINS:-}"
+      WLO_SESSION_EXCHANGE: "${WLO_SESSION_EXCHANGE:-}"
+      WLO_SESSION_ALLOWED_ORIGINS: "${WLO_SESSION_ALLOWED_ORIGINS:-}"
+      WLO_SESSION_MOUNT_PATH: "${WLO_SESSION_MOUNT_PATH:-}"
+      # OAuth logins redirecting to these origins (an embedded widget) expire
+      # after 12 h; empty = no OAuth block expires.
+      WIDGET_OAUTH_ORIGINS: "${WIDGET_OAUTH_ORIGINS:-}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-}"
+      WLO_FETCH_TIMEOUT_MS: "${WLO_FETCH_TIMEOUT_MS:-}"
+      WLO_UPSTREAM_CONCURRENCY: "${WLO_UPSTREAM_CONCURRENCY:-}"
+      METRICS_TOKEN: "${METRICS_TOKEN:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-}"
+      LOG_PERSONAL_DATA: "${LOG_PERSONAL_DATA:-}"
+      # /health, /ready, /metrics on a port of their own. NOT in `ports:` — it is
+      # for the container network (a scraper, a probe), never for the host.
+      INTERNAL_PORT: "${INTERNAL_PORT:-}"
+      # The interface it listens on; empty = every interface of the container.
+      INTERNAL_BIND_ADDR: "${INTERNAL_BIND_ADDR:-}"
+      WLO_TEXT_TIMEOUT_MS: "${WLO_TEXT_TIMEOUT_MS:-}"
+      WLO_POOL_SIZE: "${WLO_POOL_SIZE:-}"
+      WLO_TOPIC_POOL: "${WLO_TOPIC_POOL:-}"
+      WLO_COMPENDIUM_SECTION_MAX: "${WLO_COMPENDIUM_SECTION_MAX:-}"
+
+      # ── 7 — widgets / ChatGPT submission (special case) ─────────────────────
+      # WLO_WIDGET_DOMAIN must stay unset for Claude and every non-ChatGPT host —
+      # see the README env table.
+      WLO_WIDGET_DOMAIN: "${WLO_WIDGET_DOMAIN:-}"
+      WLO_WIDGET_MIME: "${WLO_WIDGET_MIME:-}"
+      # Extra CSP image hosts. Empty here means "keep the built-in default" —
+      # `none` is the word that switches them off (see .env.example).
+      WLO_WIDGET_IMAGE_DOMAINS: "${WLO_WIDGET_IMAGE_DOMAINS:-}"
+    # Stopping: on SIGTERM the server lets the work in hand finish and then exits
+    # (src/shutdown.ts) — at once when nothing runs, after at most 70 s when a
+    # long write does. The grace period must be LONGER than that, or Docker kills
+    # the process while it is still waiting; the default of 10 s would. `init`
+    # puts a minimal init process at PID 1: it forwards signals and reaps
+    # zombies, so the stop does not depend on Node being PID 1.
+    init: true
+    stop_grace_period: 75s
+    # The log is bounded. Docker's json-file driver keeps everything by default,
+    # and this server writes a line per request — on a small host that is how
+    # the disk fills up months later (audit 2026-11-12, B-5). 5 × 10 MB is
+    # several days at ordinary load; ship the log elsewhere to keep more.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # Resource + privilege hardening. The server is a DoS/amplification surface,
+    # so cap memory/CPU (a spike can't OOM the host, only the container), drop all
+    # Linux capabilities (it binds port 3000 > 1024, needs none), forbid privilege
+    # escalation, and run a read-only root filesystem (the app writes only the access registry on the /data volume; a
+    # small tmpfs covers /tmp).
+    # MEM_LIMIT: 512m fits a server without the batch upload; with
+    # WLO_BATCH_UPLOAD_ENABLED set, give it 768m (measured: docs/DEPLOYMENT.md §5.0.2).
+    mem_limit: ${MEM_LIMIT:-512m}
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp
+    # The ONE writable place, and only because the access-block allow-list has
+    # to survive a restart. `read_only: true` above still covers everything
+    # else — a named volume mounted at /data is not a relaxation of it.
+    #
+    # It holds access IDs, user names and issue times; never a credential
+    # (pinned by tests/access-registry.test.ts). Back it up: the list is a
+    # POSITIVE list, so losing it invalidates every issued block and everyone
+    # has to fetch a new one.
+    volumes:
+      - wlo-access-registry:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Liveness is defined by the image (Dockerfile HEALTHCHECK → wget /health);
+    # compose inherits it, so it is intentionally not duplicated here.
+
+# Named volume for the access-block allow-list. Declared here because compose
+# refuses to start a service referencing an undeclared named volume. Its contents
+# survive `docker compose down`, but NOT `down -v` — and losing it invalidates
+# every issued access block (the list is a positive list, by design).
+volumes:
+  wlo-access-registry:

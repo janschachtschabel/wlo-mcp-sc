@@ -1,0 +1,259 @@
+/**
+ * tools/node-relations.ts – Navigate from a node to nodes around it:
+ * get_related_content (other material sharing its subject/level) and
+ * get_node_breadcrumb (its ancestor path to the root of the collection tree).
+ */
+
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+
+import { readNodeBreadcrumb } from '../wlo-api.js';
+import { getRelatedContent } from '../services/related.js';
+import { getNodeCollections } from '../services/node-collections.js';
+import { oneLine, renderToText } from '../formatter.js';
+import { ensureRegistries } from '../services/skill-registry-cache.js';
+import { sanitizeText } from '../text-sanitize.js';
+import { nodeLookupMiss, subjectRegistryText, toolError } from './shared.js';
+import { codeOfStatus } from '../services/node-details.js';
+import { registerWloTool, registerReadTool } from '../apps/register.js';
+import { nodeListSchema } from '../apps/outputSchemas.js';
+
+/** „mit dieser Anmeldung nicht lesbar" is the phrase a client recognises a refusal by — no retry is offered. */
+const SIBLINGS_REFUSED = 'Die Inhalte der Sammlung sind mit dieser Anmeldung nicht lesbar — ob sie weitere Inhalte hält, sagt das nicht.';
+const SIBLINGS_UNREAD = 'Die Inhalte der Sammlung konnten gerade nicht gelesen werden — das sagt nichts darüber, ob es weitere gibt. Später erneut versuchen.';
+
+export function registerNodeRelationTools(server: McpServer, searchResultsWidgetUri?: string): void {
+  registerWloTool(server, {
+    name: 'get_related_content',
+    title: 'WLO Ähnliche Inhalte',
+    widgetUri: searchResultsWidgetUri,
+    description: `Finde ähnliche WLO-Materialien zu einem Inhalt — "mehr wie dieses" / "was passt noch dazu" nach einer Suche oder Detailansicht. Andere Materialien mit gleichem Fach und gleicher Bildungsstufe. Der Widget-Knopf „Ähnliche Inhalte" führt hierher.
+Gib die nodeId eines Inhalts oder einer Sammlung; das Tool liest deren Fächer/Stufen und sucht Material mit gleichem Profil (der Ausgangsknoten wird ausgeschlossen). Optional \`includeSiblings\` — die weiteren Inhalte der Eltern-Sammlung.`,
+    inputSchema: {
+      skillContext: z.string().max(120).optional().describe(
+        'Arbeitszusammenhang, zu dem die für diese Sammlung freigegebenen Skills gezeigt werden '
+        + 'sollen (Kontextname aus dem Registry-Dokument, z. B. „Redaktionsumgebung"). Liefert '
+        + 'zusätzlich die Anleitung der Redaktion dazu und spart den Aufruf von get_skill_registry. '
+        + 'Kostet 2 Abrufe, rund 1,0–1,4 Sekunden. Passt der Name nicht, kommt trotzdem der '
+        + 'vollständige Katalog samt Liste der vorhandenen Kontexte — nie ein Fehler.'
+      ),
+      nodeId: z.string().describe('Seed node ID (content item or collection) to find related material for.'),
+      maxResults: z.number().int().min(1).max(30).optional().default(8).describe(
+        'Maximum number of related items (1–30, default 8).'
+      ),
+      includeSiblings: z.boolean().optional().default(false).describe(
+        'Also return the other contents of the seed\'s primary parent collection as "siblings".'
+      ),
+      outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
+    },
+    outputSchema: nodeListSchema.extend({
+      /** The seed could not be read, and why — the shape `get_node_details` uses. */
+      missing: z.array(z.object({ part: z.string(), code: z.string() })).optional(),
+      /** `includeSiblings`: the parent's contents were refused resp. did not answer — not "none". */
+      siblingsRefused: z.literal(true).optional(),
+      siblingsUnread: z.literal(true).optional(),
+    }),
+    annotations: { readOnlyHint: true },
+    handler: async (params) => {
+      try {
+        const related = await getRelatedContent({
+          nodeId: params.nodeId,
+          maxResults: params.maxResults ?? 8,
+          includeSiblings: params.includeSiblings ?? false,
+        });
+        if ('seedStatus' in related) {
+          // A miss still satisfies the schema: the widget renders its empty
+          // state instead of the host failing on a missing structuredContent.
+          // The sentence follows the STATUS: "nicht gefunden" stood here for a
+          // 403 and a 503 too, which told a teacher that a record this login
+          // may not see, or one behind an outage, does not exist.
+          return {
+            content: [{ type: 'text' as const, text: nodeLookupMiss(params.nodeId, related.seedStatus) }],
+            structuredContent: {
+              total: 0, count: 0, results: [],
+              missing: [{ part: params.nodeId, code: codeOfStatus(related.seedStatus) }],
+            },
+          };
+        }
+        // Siblings are extra context for the model; the widget shows the
+        // related items, which is what "Ähnliche Inhalte" promised.
+        const structuredContent = {
+          total: related.results.length,
+          count: related.results.length,
+          results: related.results,
+          ...(related.siblingsRefused ? { siblingsRefused: true as const } : {}),
+          ...(related.siblingsUnread ? { siblingsUnread: true as const } : {}),
+        };
+
+        // The one collection this tool touches — the seed itself when that is a
+        // collection, otherwise the parent the siblings came from. It never
+        // appears in either result list; both come from `FILES` queries. Its own
+        // content block, in both formats, for the same reason the sibling tools
+        // use one: in json mode the first block IS the payload.
+        const registryText = await subjectRegistryText(related.registryCollectionId ?? '', params.skillContext);
+        const registryBlock = registryText ? [{ type: 'text' as const, text: registryText }] : [];
+
+        if ((params.outputFormat ?? 'markdown') === 'json') {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(related) }, ...registryBlock],
+            structuredContent,
+          };
+        }
+
+        // `oneLine` on the heading for the same reason `renderToText` flattens
+        // its own fields: this heading sits directly in front of a record list,
+        // so a newline in the seed title forges an extra entry inside it.
+        const lines: string[] = [
+          oneLine(`# Verwandte Inhalte zu „${related.seedTitle || params.nodeId}“`),
+        ];
+        const basis = [
+          related.disciplines.length ? `Fach: ${related.disciplines.join(', ')}` : '',
+          related.educationalContexts.length ? `Bildungsstufe: ${related.educationalContexts.join(', ')}` : '',
+        ].filter(Boolean).join(' · ');
+        if (basis) lines.push(`_Basis: ${basis}_`);
+        lines.push('');
+        // Two lists, one answer — so `renderToText`'s per-list registry pointer
+        // is suppressed (same rule as search_wlo_all). It is not re-emitted once
+        // over the union either, as it was until 2026-08-15: both lists come
+        // from `FILES` queries and can hold no collection, so that line was
+        // unreachable. The block above answers for the one collection there is.
+        const noHint = { registryHint: false };
+        lines.push(renderToText(related.results, undefined, noHint) || 'Keine verwandten Inhalte gefunden.');
+        if (related.siblings) {
+          lines.push('');
+          // "None" is a statement about the collection, and only an answered
+          // listing supports it — a refused or failed one gets its own sentence
+          // and no count.
+          const unlisted = related.siblingsRefused ? SIBLINGS_REFUSED : related.siblingsUnread ? SIBLINGS_UNREAD : '';
+          lines.push(unlisted ? '## Aus derselben Sammlung' : `## Aus derselben Sammlung (${related.siblings.length})`);
+          lines.push(unlisted || renderToText(related.siblings, undefined, noHint) || 'Keine weiteren Inhalte in der Sammlung.');
+        }
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }, ...registryBlock],
+          structuredContent,
+        };
+      } catch (err) {
+        return toolError('Fehler beim Abruf verwandter Inhalte', err);
+      }
+    },
+  });
+
+  registerReadTool(server,
+    'get_node_breadcrumb',
+    `Zeige, WO eine WLO-Sammlung im Themenbaum sitzt — der Pfad von der WLO-Wurzel bis zum Knoten (Breadcrumb). Nutze dies zur Orientierung nach einem tiefen Drilldown.
+Gilt für Sammlungs-Knoten; Datei-/Inhalts-Knoten (ccm:io) haben hier keinen Breadcrumb und liefern einen leeren Pfad.`,
+    {
+      nodeId: z.string().describe('Collection node ID to build the breadcrumb for.'),
+      outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
+    },
+    { readOnlyHint: true },
+    async (params) => {
+      try {
+        // The reachability-carrying form: here the breadcrumb IS the answer, so
+        // an empty chain may not be explained away as "probably a file node" —
+        // a refused or failed read says nothing about the kind of node.
+        const { ok, chain: crumb, status } = await readNodeBreadcrumb(params.nodeId);
+
+        if ((params.outputFormat ?? 'markdown') === 'json') {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({
+              nodeId: params.nodeId,
+              breadcrumb: crumb,
+              ...(ok ? {} : { error: `Der Pfad konnte nicht gelesen werden (HTTP ${status}).` }),
+            }) }],
+          };
+        }
+
+        if (!ok) {
+          return { content: [{ type: 'text' as const, text:
+            `Der Pfad für ${sanitizeText(params.nodeId)} ist nicht abrufbar (HTTP ${status}) — `
+            + 'der Abruf ist fehlgeschlagen, über den Knoten sagt das nichts.' }] };
+        }
+        if (crumb.length === 0) {
+          return { content: [{ type: 'text' as const, text:
+            `Kein Pfad für ${sanitizeText(params.nodeId)} verfügbar (evtl. ein Datei-Knoten oder die Wurzel).` }] };
+        }
+        // One path, one line: a newline in a segment title would otherwise read
+        // as a second breadcrumb.
+        const path = oneLine(crumb.map(c => c.title).join(' › '));
+        return { content: [{ type: 'text' as const, text: path }] };
+      } catch (err) {
+        return toolError('Fehler beim Abruf des Breadcrumb-Pfads', err);
+      }
+    },
+  );
+
+  registerWloTool(server, {
+    name: 'get_node_collections',
+    title: 'WLO Sammlungen eines Materials',
+    description:
+      'Zeigt, in WELCHEN WLO-Sammlungen ein Material geführt wird — die Antwort auf "wo ist das ' +
+      'eingeordnet?" und "wo finde ich mehr davon?". Führt vom einzelnen Fundstück zurück zur kuratierten ' +
+      'Sammlung, die es enthält. Gilt für Material-/Inhalts-Knoten; für die Einordnung einer SAMMLUNG im ' +
+      'Themenbaum ist get_node_breadcrumb zuständig. Ein Material kann in mehreren Sammlungen liegen; in ' +
+      'keiner ist ebenfalls ein normales Ergebnis und wird als solches benannt. Die nodeId aus einem ' +
+      'Sammlungs-Listing funktioniert genauso wie die aus einer Suche. Jede gefundene Sammlung nennt ' +
+      'ihren Katalog freigegebener Skills gleich mit — der Weg vom Material zur passenden Anleitung ' +
+      '(get_skill), ohne get_skill_registry eigens aufzurufen.',
+    inputSchema: {
+      nodeId: z.string().describe(
+        'nodeId des Materials. Die ID aus einem Sammlungs-Listing funktioniert genauso wie die aus einer ' +
+        'Suche — der Server löst intern auf.',
+      ),
+      outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
+    },
+    annotations: { readOnlyHint: true },
+    handler: async (params) => {
+      try {
+        const result = await getNodeCollections(params.nodeId);
+
+        if (!result) {
+          // Named, not just empty: "there is no such record" and "this record is
+          // in no collection" lead to different answers for the person asking.
+          const payload = { nodeId: params.nodeId, count: 0, collections: [], reason: 'node_not_found' };
+          const message = `Kein Knoten mit der ID ${sanitizeText(params.nodeId)} gefunden (reason: node_not_found).`;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: (params.outputFormat ?? 'markdown') === 'json' ? JSON.stringify(payload) : message,
+            }],
+            isError: true,
+            structuredContent: { error: { code: 'not_found', message } },
+          };
+        }
+
+        // Before EITHER format renders: the attachment sat after the JSON
+        // early-return until 2026-08-20, so markdown carried each collection's
+        // skill catalogue while JSON silently did not — the same defect the
+        // browse tools had on 2026-08-15, and this is the tool the chain
+        // "material → collection → its approved skills" runs through.
+        await ensureRegistries(result.collections);
+
+        if ((params.outputFormat ?? 'markdown') === 'json') {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                nodeId: result.nodeId,
+                requestedNodeId: result.requestedNodeId,
+                wasReference: result.wasReference,
+                count: result.collections.length,
+                collections: result.collections,
+                ...(result.reason ? { reason: result.reason } : {}),
+              }),
+            }],
+          };
+        }
+
+        const heading = oneLine(`# ${result.title || result.nodeId}`);
+        if (result.collections.length === 0) {
+          return { content: [{ type: 'text' as const, text:
+            `${heading}\n\nDieses Material liegt in keiner Sammlung.` }] };
+        }
+        return { content: [{ type: 'text' as const, text: `${heading}\n\n${renderToText(result.collections)}` }] };
+      } catch (err) {
+        return toolError('Die Sammlungen zu diesem Material konnten nicht ermittelt werden', err);
+      }
+    },
+  });
+}

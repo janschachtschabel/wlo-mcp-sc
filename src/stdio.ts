@@ -7,15 +7,30 @@
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createMcpServer } from './server.js';
+import { verifyConfiguredCredential } from './auth/identity.js';
+import { startSkillRegistryCache } from './services/skill-registry-cache.js';
+import { log } from './logger.js';
+import { exitOnUnusableRepositoryUrl, warnOnDefaultRepository, warnOnUnknownLogLevel } from './startup-check.js';
+
+warnOnUnknownLogLevel();
+exitOnUnusableRepositoryUrl();
+warnOnDefaultRepository();
 
 async function main(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Same one-off credential check as the HTTP entry point. Logs go to stderr
+  // (see logger.ts), so this cannot corrupt the stdout JSON-RPC framing.
+  void verifyConfiguredCredential();
+  // Keeps each collection's skill catalogue warm in the background. Returns at
+  // once and its timer is unref'd, so this neither delays the first request nor
+  // keeps the process alive after stdin closes.
+  startSkillRegistryCache();
   // Server runs until stdin closes
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err);
+  log.error('fatal error', { error: err instanceof Error ? err.message : String(err) });
   process.exit(1);
 });

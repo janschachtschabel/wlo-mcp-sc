@@ -1,0 +1,5 @@
+# WLO MCP server — public read-only surface (prompt launcher + GET /api/*).
+# Everything served here is public OER metadata and is meant to be fetched,
+# including by AI assistants and their fetch tools.
+User-agent: *
+Disallow:

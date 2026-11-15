@@ -1,0 +1,69 @@
+# WirLernenOnline (WLO) — public read-only REST API
+
+Open educational resources (OER) from WirLernenOnline. All responses are JSON,
+no authentication, GET only. Base URL: this host.
+
+## Search (start here)
+
+GET /api/search/<term>        ← preferred for AI tools: the term rides in the
+                                PATH, so it survives fetch layers that strip
+                                query strings from model-built URLs.
+GET /api/search?q=<term>      ← equivalent alias.
+
+Optional query parameters (graceful when missing): discipline, educationalContext,
+learningResourceType, userRole, publisher, maxContent (1-25), maxCollections,
+includeWikipedia=true, includeCompendium=true, fields=<comma list>.
+
+Response fields: query, content, collections, topicPages, optional wikipedia.
+Self-check: the response field "query" must echo your term. An empty "query"
+plus a "warnings" array means the query string was stripped in transit — switch
+to the path form or ask the user to paste the full URL into the chat.
+
+Add format=html to render the SAME search as a readable HTML page — use it when
+your tooling can only consume web pages (reader pipelines), not raw JSON.
+
+Examples: /api/search/Bruchrechnung?discipline=Mathematik
+          /api/search/Bruchrechnung?format=html
+
+## More endpoints
+
+GET /api/topic-page?collectionId=<id>   Curated topic page (swimlanes of items)
+GET /api/compendium?ids=<id1,id2>       Editorial background texts per collection
+GET /api/wikipedia?q=<term>             Wikipedia summary (lang=de default)
+GET /api/collection?nodeId=<id>         List/search one collection's contents
+GET /api/skills                         Ready-made AI instructions (list)
+GET /api/skills/<id>                    One skill as raw Markdown
+
+Per hit: title, description (may contain scraping noise — paraphrase, do not
+quote), url (human page), license (empty = licence unclear, not CC).
+
+## MCP
+
+The same server speaks the Model Context Protocol at POST /mcp
+(Streamable HTTP/SSE). Call tools/list for the current set (search_wlo_all is
+the one to start with) — prefer MCP over REST when your client supports
+connectors.
+
+**No credential is needed to read.** A request with no Authorization header
+answers normally and lists every tool. Searching, reading records, topic pages,
+Wikipedia and compendium texts all work that way.
+
+**Creating or editing WLO content needs a WLO account.** Those tools are listed
+for everyone — a tool nobody can see is a tool nobody asks to unlock — but they
+refuse the call without a login and answer with an OAuth challenge, so a client
+that supports it can start the sign-in itself. Two ways in:
+
+- OAuth 2.1: discovery at /.well-known/oauth-authorization-server. Nothing to
+  register by hand; the flow ends on a WLO sign-in page.
+- A pasted key: a person fetches one at /auth and enters it as
+  `Authorization: Bearer …`. Revoke at /auth-revoke.html — by key, or by WLO
+  sign-in when the key went to the client and was never seen.
+
+Where an operator configured a service account, an anonymous request carries
+that account's rights; otherwise it is public content only.
+
+## Pages for people
+
+/                    Start page: ready-made prompts, the MCP address, all links
+/auth                Fetch an access key
+/auth-revoke.html    Revoke one key, or every key of a WLO account

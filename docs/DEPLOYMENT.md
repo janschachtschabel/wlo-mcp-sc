@@ -1,0 +1,483 @@
+# Deployment — self-hosted vServer (Docker)
+
+How to run the WLO MCP server on your own server so an AI host (ChatGPT developer
+mode, Claude, an MCP client) can reach it over HTTPS. The image is self-contained:
+it bundles the built widgets (`dist-widgets/`) and the public launcher + skills
+(`public/`), runs as a non-root user, and exposes MCP, a health check, the public
+REST API, and the prompt launcher.
+
+This is the **self-hosted / ChatGPT-developer-mode** path — the only deployment
+target. It needs real SSE, which is why a correctly configured reverse proxy
+matters.
+
+## 1. Prerequisites
+
+- Docker + the Compose plugin (`docker compose version`).
+- For ChatGPT developer mode: a public domain with TLS, terminated by a reverse
+  proxy (nginx / Traefik / Caddy) in front of the container.
+- Outbound network access to the WLO repository (`repository.staging.openeduhub.net`
+  by default, `redaktion.openeduhub.net` for production) and, when the Wikipedia
+  tool is used, to `*.wikipedia.org`.
+
+## 2. Quick start
+
+```bash
+git clone https://github.com/janschachtschabel/wlo-mcp-sc.git && cd wlo-mcp-sc
+cp .env.example .env          # optional — defaults work without it
+
+# Optional: let people sign in with their own WLO account (see §3).
+# Without this the server reads anonymously and /auth says it issues no access.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out authkey.pem
+# The `tail -c1` guard is not decoration: an .env whose last line has no newline
+# would otherwise get the key glued onto it, and compose fails to parse the file
+# at all (hit in the field, 2026-08-05).
+[ -n "$(tail -c1 .env)" ] && echo >> .env
+printf 'WLO_AUTH_PRIVATE_KEY="%s"\n' "$(cat authkey.pem)" >> .env
+chmod 600 authkey.pem .env    # this key decrypts every issued block
+docker compose config > /dev/null && echo "env OK"   # parses the .env like `up` does
+
+docker compose up -d --build
+curl localhost:3000/health    # -> {"status":"ok",...,"widgets":{"browse":"<hash>",...}}
+```
+
+`widgets` is the **deploy fingerprint**: a build hash per widget. Note the hash
+covers the widget HTML *and* its `_meta`, and that meta carries the configured
+edu-sharing origin — so two servers running identical code but different
+`WLO_REPOSITORY_URL` values have different hashes **by design**. Compare it
+against **the same server before the deploy**, not against a local build
+pointing somewhere else; a mismatch across differently-configured servers proves
+nothing either way (measured 2026-08-05).
+
+The container listens on port 3000 inside; compose publishes it on
+`127.0.0.1:3000` by default (loopback — meant to sit behind the reverse proxy).
+
+## 3. Configuration
+
+Every setting is an environment variable. Put overrides in a `.env` next to
+`docker-compose.yml` (auto-loaded) or export them in the shell — never edit the
+tracked compose file. The full list with defaults is in
+[`.env.example`](../.env.example); the deployment-relevant ones:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WLO_REPOSITORY_URL` | `https://repository.staging.openeduhub.net/edu-sharing` | Upstream edu-sharing repository. **Defaults to STAGING** — set `https://redaktion.openeduhub.net/edu-sharing` explicitly to write to production. An address no request can be sent to (unparseable, credentials or a query in it, a mistyped scheme) **stops the start** with exit code 1 — under `restart: unless-stopped` a restart loop with one error line per start. |
+| `MCP_SSE` | `1` | `1` = real SSE streaming (needed by ChatGPT). `0` = single-JSON responses. |
+| `TRUST_PROXY` | `1` | Take the client IP from the rightmost (proxy-appended) `X-Forwarded-For` hop for per-client rate limiting behind a proxy. Set `0` if directly exposed. |
+| `RATE_LIMIT_RPM` | `120` | Tool calls per minute on `/mcp`, per client address. Only `tools/call` counts; all POSTs together may use 3× this (`initialize`/notifications never reach edu-sharing). A 429 carries the rest of the window as `Retry-After` and a JSON-RPC error with `data.code: "rate_limited"`. `0` disables both. |
+| `WLO_READY_PROBE_MS` | `30000` | How often the readiness probe asks the repository (one one-hit search). The first probe runs at start and warms the search path; `GET /ready` answers from the latest one. Every tick probes fresh, so an interval under 30 s does take effect. `0` probes only on demand. |
+| `WIDGET_OAUTH_ORIGINS` | _(unset)_ | Origins of an embedded widget's OAuth redirect targets, comma-separated. A login whose **verified** `redirect_uri` lies there gets a block that expires after **12 h** (the allow-list entry carries `exp`; an expired block answers 401 like a revoked one). Unset = no OAuth block expires, so AI hosts (ChatGPT, Claude) are never affected. Keyed on the redirect target, not `client_name`, because registration is open. Ticket blocks expire after 12 h regardless; after it expires, the next exchange of the same still-valid ticket lists it again for 12 h (before that it is not extended, so a session longer than 12 h meets one 401 and re-exchanges). A list with no usable entry is logged as an ERROR and expires nothing. |
+| `TICKET_ALLOWED_ORIGINS` | _(unset)_ | Browser origins allowed to exchange an edu-sharing ticket at `POST /auth/ticket`, comma-separated. Another browser origin gets `403 origin_not_allowed` and no CORS header (its preflight already fails); a request without `Origin` — a server such as the chatbot backend — is never refused. Unset = every origin, as before. **A list whose every entry is unusable (e.g. `chatbot.example.org` without a scheme) admits NO browser origin** and logs an error — a typo must not switch the restriction off. Set it to the pages that embed the widget — in practice the chatbot's own `CORS_ORIGINS`. `Origin` does not stop a non-browser client; what the list closes is a foreign page exchanging a visitor's ticket in the visitor's browser. |
+| `WLO_SESSION_EXCHANGE` | _(off)_ | `1` adds `POST /auth/session`: the repository session of a signed-in person is exchanged for an access block. Only useful where that path is reachable on the repository's host below `/edu-sharing` (a browser sends the session cookie nowhere else): mounted there, or owned there by a trusted backend that forwards the exchange server to server with its `TRUSTED_CLIENT_KEYS` key (then the budget follows the key, see that row; for the `X-Forwarded-For` form the forwarder must reach this server through the proxy chain `TRUST_PROXY` describes — or directly, with `TRUST_PROXY` off — because that decides which hop is its own; `X-WLO-Client-Address` does not depend on it). Mounted, the ingress forwards the mount path unchanged (named in `WLO_SESSION_MOUNT_PATH`) or rewrites it to `/auth/session`, and passes `Cookie` and `Origin`. Needs `WLO_AUTH_PRIVATE_KEY`. See AUTH.md §5d. |
+| `WLO_SESSION_ALLOWED_ORIGINS` | _(the repository's origin)_ | With `WLO_SESSION_EXCHANGE` only: further origins under which the same mounted path is reached (a second host name of the repository), comma-separated. Not for foreign pages: the path sends no CORS headers. Separate from `TICKET_ALLOWED_ORIGINS` on purpose. A list without the switch is named at startup. `TRUST_PROXY` must fit the repository's ingress chain, since these requests arrive through it. |
+| `WLO_SESSION_MOUNT_PATH` | _(unset)_ | With `WLO_SESSION_EXCHANGE` only: the path at which the repository host's ingress forwards the request UNCHANGED, e.g. `/edu-sharing/services/wlo-mcp/auth/session`. Exactly that path is answered as `/auth/session`, nothing else below it. Must end in `/auth/session`. Lets the ingress do without a rewrite — on ingress-nginx a rewrite turns on regex matching for every path of the host. The chart sets it from `sessionIngress.path`. |
+| `TRUSTED_CLIENT_KEYS` | _(unset)_ | Trusted clients with their **own** budget, counted by key instead of address: comma-separated `name:rpm:key`, sent as `X-WLO-Client-Key`. For a chatbot backend, which is one address for all its users — give it more than it uses itself (BOERDi limits itself to 300/min, so `360`). Generate a key with `openssl rand -hex 32` (≥ 32 characters, else the entry is ignored with a warning naming it). Held only as a SHA-256 hash; never logged. On `/mcp` a key lifts only the request budget, never the login-guessing guard. On `/auth/session` the guard counts per address the client names for the person (`X-WLO-Client-Address`, else the `X-Forwarded-For` hop it added — a proxy that does not trust the client, Traefik by default, drops that one) instead of per its one address, so the key holder's total of distinct sessions is bounded only by its protocol budget; `/auth/session` and `/auth/revoke` spend that budget (3 × its rate) — the same pot as its all-POST bound on `/mcp` and `/auth/status`, so size `rpm` for both. A second entry with the same name is refused; an entry without any colon is logged by position only (it may be a pasted key). **Server-to-server only:** a key in a browser is public to every script on the page — the CORS preflight deliberately does not allow the header, so a widget cannot send it. |
+| `API_RATE_LIMIT_RPM` | `30` | Per-IP requests/min on the public `/api/*` surface. |
+| `WLO_COMPENDIUM_SECTION_MAX` | `2000` | Characters one main section of a compendium text may contribute when `get_compendium_text` is called without a `query`; with one it caps a single passage. Raise it if a deployment wants the untruncated prose back — at the default one of the eleven texts on staging is affected (65 250 → 20 802 delivered). The REST route `/api/compendium` is unaffected either way. |
+| `WLO_FETCH_TIMEOUT_MS` | `20000` | Per-upstream-request timeout. Sized from measurement (creating a record takes 4.2–8.0 s); the compose file deliberately forwards it with an **empty** default so this number lives only in `src/wlo-config.ts`. |
+| `WLO_DISABLE_UNSAFE_TOOLS` | `all` (set by compose) | Switches off tools declared unsafe. Compose ships `all`, so `get_url_text` is **absent in a default deployment** — which is the recommendation, see the README section "Tools declared unsafe". Set the variable to an empty value in `.env` to switch them on; the server then logs `registering a tool declared UNSAFE` at startup, which is how you confirm the switch took effect either way. |
+| `WLO_SERVICE_USER` / `WLO_SERVICE_PASSWORD` | _(unset)_ | One shared WLO identity for every call on `POST /mcp` — the mode a chatbot or portal deployment uses. Unset = anonymous, public content only. **A decision, not a detail:** with the account set, a `/mcp` request that carries NO `Authorization` header reads with this account — so whatever the account may read beyond public material is readable by anyone who reaches `/mcp`. Give it the rights you would give any visitor, or restrict who reaches `/mcp`. (A header that cannot be used falls back to anonymous, never to this account.) It applies to the MCP endpoint **alone**: the public `/api/*` surface and the launcher stay anonymous by design and never inherit these rights. Wrong credentials do not degrade to public — edu-sharing answers `401` and the server can then answer nothing at all; the startup log names that case. |
+| `WLO_ALLOW_SERVICE_WRITES` | _(unset)_ | Lets the service account use the 26 curation (write) tools. Off by default: a change under a shared account is attributable to nobody — the history records the account, not the person who asked. A caller with their own WLO login may always write and needs nothing here. Accepted: `1`, `true`, `yes`, `on`; anything else (including `false`) leaves it off. |
+| `WLO_ALLOW_PREPARED_WRITES` | _(unset)_ | For the **embedded** deployment: the chatbot runs inside a repository page where the visitor is already signed in, so a confirmed curation step comes back as a *described* request that the page performs with **their** session — this server writes nothing and needs no write rights. Off by default; anonymous callers never reach it, since building the preview reads the record under the service identity. Not a substitute for `WLO_ALLOW_SERVICE_WRITES` and not implied by it: that one lets the shared account change data, this one lets it change nothing. Currently the route exists for `wlo_add_to_collection`, `wlo_remove_from_collection` and `wlo_suggest_metadata` — the curation steps whose write is a single request; every other curation tool keeps refusing as before, because a create or a rename lands through two calls and half of that is not something to hand a browser. The proposal descriptor carries a body (the drafts) and the provenance query `type=AI`; the executing page cannot drop it, so nothing filed this way can claim a human wrote it. Deciding on a proposal (`wlo_decide_suggestion`) stays here: accepting writes the value into the record, which is a different act from proposing. Accepted: `1`, `true`, `yes`, `on`. |
+| `WLO_INBOX_ID` | _(unset)_ | nodeId of the shared inbox new records are filed in under the service account; editing existing records does not need it. No default on purpose — node ids are repository-bound, so a hardcoded one points at a different collection on staging than on production. Unset ⇒ service-account creation is refused with a message naming this variable. |
+| `WLO_AUTH_PRIVATE_KEY` | _(unset)_ | Switches on **personal access blocks**: a user fetches an encrypted block at `https://<host>/auth`, pastes it once into their AI host's `Authorization` field, and revokes it at `/auth-revoke.html`. Unset = off; the `/auth/…` endpoints answer 404 and the pages say the server is not issuing access. Generate with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048`. **It decrypts every issued block into a live WLO password** — `.env` on the server only, never the image. Multi-line value: a `.env` file is **not** a shell, so `"$(cat key.pem)"` there is stored as that literal text and the key is rejected at startup (measured). Write the PEM itself, in double quotes — `printf 'WLO_AUTH_PRIVATE_KEY="%s"\n' "$(cat authkey.pem)" >> .env` does it in one step. |
+| `WLO_AUTH_PRIVATE_KEY_PREVIOUS` | _(unset)_ | The previous key during a rotation, so a key change does not invalidate every user's configuration at once. Remove it after the overlap window. An unusable value switches the feature off rather than silently dropping the window. |
+| `WLO_AUTH_REGISTRY_PATH` | `/data/access-registry.json` | The allow-list of issued access ids — ids, user names and issue times, never a credential. Must point into the `wlo-access-registry` volume; anywhere else is read-only and the feature stays off with an error in the log. |
+| `WLO_PUBLIC_BASE_URL` | _(unset)_ | The public origin clients type in (`https://<host>`, no path). The OAuth discovery documents name it as their own endpoints. Unset = the `/.well-known/oauth-*` paths answer 404, unless `TRUST_PROXY=1` lets the origin be derived from the caller-supplied `Host` header. Set it explicitly; behind Caddy that is the same host the site block serves. |
+| `BIND_ADDR` | `127.0.0.1` | Host interface compose publishes on. Set `0.0.0.0` **only** with `TRUST_PROXY=0` for direct exposure. |
+| `HOST_PORT` | `3000` | Host-side port of the published mapping. |
+| `WLO_BATCH_UPLOAD_ENABLED` | _(unset)_ | Switches on **batch filing** into a person's own area: four curation tools (`wlo_prepare_file_batch`, `wlo_store_batch_file`, `wlo_store_batch_manifest`, `wlo_list_my_batches`) and the route `POST /api/uploads`. Off: neither exists and `tools/list` is unchanged. Personal login only — the service account is refused even with `WLO_ALLOW_SERVICE_WRITES`. Upload bytes, approvals and plans live **in memory**: run one instance, and a restart drops open batches. |
+| `MEM_LIMIT` | `512m` | The container's memory limit in `docker-compose.yml` — read by compose, not by the server. The default fits a server without the batch upload; set `768m` when `WLO_BATCH_UPLOAD_ENABLED` is on (§5.0.2 has the measurement). |
+| `UPLOAD_MAX_BYTES` | `52428800` (50 MB, at most 100 MB) | Largest single file one upload slot takes. Your reverse proxy must allow at least this much on `/api/uploads` (§4). |
+| `UPLOAD_MAX_TOTAL_BYTES` | `134217728` (128 MB) | All open upload slots together — the memory the batch path may hold at once (also 20 slots per identity, and one login holds at most half of the bytes, never less than one file of `UPLOAD_MAX_BYTES`). |
+| `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` (at most 28000) | How long one upload body may take. Kept below the server-wide 30 s request timeout so the route answers 408 itself. |
+| `AUTH_CREDENTIAL_LIMIT` | `10` | Distinct secrets per identity before the guessing guard refuses: per address for `Basic`, per access id for a `wlo2.` block — on `/mcp` and on `/api/uploads` alike. A chatbot backend is one address for all its users, so with `Basic` this has to fit the number of people; with blocks it does not. |
+| `TICKET_CREDENTIAL_LIMIT` | `200` | The same guard for `POST /auth/ticket`, in its own buckets: distinct tickets per address in ten minutes. A backstop — `API_RATE_LIMIT_RPM` bounds the address first. `0` disables it. |
+| `INTERNAL_PORT` / `INTERNAL_BIND_ADDR` | _(unset)_ / _(unset = every interface)_ | A second listener for `/health`, `/ready` and `/metrics` only, and the interface it binds (§5.0.1). `127.0.0.1` keeps it on the machine itself; a scraper in another container needs the default. Without a loopback address and without `METRICS_TOKEN` the start logs a warning, because `/metrics` then answers without a token to whoever reaches the port. |
+| `LOG_PERSONAL_DATA` | _(unset)_ | Unset: a client address, an account name and a search term are logged as pseudonyms (`~` + 12 hex characters, stable for one process run). `plain` writes them in clear. The log only — limiters and the allow-list use the real values in memory. |
+| `PORT` | `3000` | The port the server listens on inside the container. Compose maps `HOST_PORT` to it; leave it alone there. |
+| _the rest_ | see [`.env.example`](../.env.example) | Not deployment decisions, each documented with its default in `.env.example` and in [MCP-REFERENZ.md §3 and §7](MCP-REFERENZ.md#7-konfiguration): `WLO_ROOT_COLLECTION_ID`, the skill switches (`WLO_SKILLS_COLLECTION_ID`, `WLO_SKILL_TOOL_MODE`, `WLO_DISABLE_SKILL_SEARCH`, `WLO_SKILL_CACHE`, `WLO_SKILL_CACHE_REFRESH_MS`, `WLO_SKILL_CACHE_TTL_MS`), `WLO_SEARCH_OUTPUT_MODE`, the extraction service (`WLO_TEXT_EXTRACTION_URL`, `WLO_TEXT_EXTRACTION_API_KEY`, `WLO_TEXT_TIMEOUT_MS`), tuning (`WLO_POOL_SIZE`, `WLO_TOPIC_POOL`) and the widget metadata (`WLO_WIDGET_DOMAIN`, `WLO_WIDGET_MIME`, `WLO_WIDGET_IMAGE_DOMAINS`). |
+
+### 3.1 The one thing to back up
+
+If personal access blocks are switched on, compose creates a named volume
+`wlo-access-registry` mounted at `/data`. It is the **only** writable path — the
+read-only root filesystem still covers everything else — and it holds the
+allow-list of issued access ids.
+
+That list is a POSITIVE list, which is deliberate: lose it and every issued block
+stops working, so people fetch a new one. The alternative — a deny-list — would
+mean that losing the file silently makes every *revoked* block valid again.
+Inconvenient beats unsafe, but it does mean the volume belongs in your backup:
+
+```bash
+docker run --rm -v wlo-access-registry:/data -v "$PWD:/backup" alpine \
+  cp /data/access-registry.json /backup/access-registry.json
+```
+
+`docker compose down` keeps the volume; `docker compose down -v` deletes it.
+
+The file is bounded on its own: each WLO account keeps its ten most recent
+entries **per kind**, so a lost block ages out once that person has fetched ten
+more. The two kinds are blocks someone fetched and pasted, and entries an
+embedded widget filed by exchanging a ticket — counted apart since 2026-08-13,
+because a widget files roughly one per session and would otherwise retire the
+blocks that person had deliberately pasted into their AI hosts. So budget for up
+to twenty entries per active account, not ten. Deleting a line by hand revokes
+that block immediately — the list is read into memory at startup, so an edit
+needs a restart to take effect.
+
+**Rotating the key.** Move the current value to `WLO_AUTH_PRIVATE_KEY_PREVIOUS`,
+put the new one in `WLO_AUTH_PRIVATE_KEY`, restart. Blocks issued under either
+key work during the window; new ones use the new key. Remove the previous entry
+once everyone has re-fetched. Skipping the window invalidates every user's
+configuration at the same moment.
+
+## 4. Reverse proxy for SSE (required for ChatGPT)
+
+The image serves `POST /mcp` as a **Server-Sent-Events stream** (`MCP_SSE=1`). SSE
+breaks the moment a proxy buffers the response, so the `/mcp` location **must**
+disable buffering and use a long read timeout. Without this the client connects
+but never receives the stream.
+
+Sample nginx server block (adapt the domain and TLS paths):
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name mcp.example.org;
+
+    ssl_certificate     /etc/letsencrypt/live/mcp.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.example.org/privkey.pem;
+
+    # MCP endpoint — real SSE. Buffering MUST be off.
+    location /mcp {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        '';
+        proxy_buffering            off;        # <- required for SSE
+        proxy_cache                off;
+        proxy_read_timeout         3600s;
+        chunked_transfer_encoding  off;
+    }
+
+    # Health, public REST, launcher — normal buffered proxying is fine.
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**Request size.** nginx refuses bodies over 1 MB by default (`413` before the
+request reaches the container). The server itself accepts 4 MiB on `/mcp`
+(`MAX_BODY_BYTES`) and, with batch filing on, `UPLOAD_MAX_BYTES` on
+`/api/uploads`. Raise the proxy limit to match, and do not buffer upload bodies:
+
+```nginx
+    # In the server block: the MCP body limit (MAX_BODY_BYTES, 4 MiB).
+    client_max_body_size 5m;
+
+    # Batch filing only: at least UPLOAD_MAX_BYTES.
+    location /api/uploads {
+        client_max_body_size    100m;
+        proxy_request_buffering off;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+```
+
+Notes for other proxies:
+- **Caddy** does not buffer by default, so a plain `reverse_proxy 127.0.0.1:3000`
+  works; keep `flush_interval -1` for the `/mcp` path to be explicit.
+- **Traefik** — disable response buffering on the router/service for `/mcp` (no
+  `buffering` middleware, or set `maxResponseBodyBytes: 0`).
+
+Because `TRUST_PROXY=1`, keep `BIND_ADDR=127.0.0.1` (the default) so only the
+proxy can reach the container — otherwise a direct client could spoof
+`X-Forwarded-For` and evade the rate limiter.
+
+## 5. Verify the deployment
+
+Before a deploy, the image can be proven locally the way CI does it —
+`npm run smoke:image` builds it, starts it under the compose file's
+restrictions and checks `/health`, `tools/list`, a clean `docker stop` and that
+an unusable `WLO_REPOSITORY_URL` stops the start. At run time nothing leaves the machine.
+
+```bash
+# Local (on the host):
+curl localhost:3000/health
+curl -s -X POST localhost:3000/mcp -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 80
+# -> "event: message\ndata: {..."   (SSE framing confirms MCP_SSE is on)
+
+# Is the repository reachable? 200 ready / 503 unreachable|slow:
+curl localhost:3000/ready
+
+# Through the proxy (public):
+curl https://mcp.example.org/health
+curl https://mcp.example.org/launcher.html -I    # 200 text/html
+curl https://mcp.example.org/api/skills          # 200 JSON skill list
+```
+
+A `resources/list` MCP call should return four `ui://widget/...` resources
+(`search-results`, `topic-page`, `browse`, `reading`) — that confirms the bundled
+widgets shipped.
+
+`GET /health` also carries the **deploy fingerprint**: the content hash of each
+built widget. It changes with every widget or widget-metadata change, so
+comparing it before and after answers "is the new build actually live?" without
+diffing bytes:
+
+```bash
+curl -s https://mcp.example.org/health | grep -o '"widgets":{[^}]*}'
+```
+
+### 5.0 Stopping and redeploying
+
+On `SIGTERM` (`docker stop`, `docker compose up -d` replacing the container) the
+server stops accepting connections, lets the work in hand finish and exits `0`.
+Measured on the image: `docker stop` returns in 1.0–1.4 s with nothing in flight — also with a connection open that never sent a request.
+A stop takes as long as the longest call that is running — there is no
+long-lived stream here; the SSE stream of a call ends with its answer. Work
+still running after 70 s is cut and the exit code is `1`; in practice only a
+write that sets a source URL (up to 60 s) or one slice of a batch plan (about
+40 s) comes near that, and those are the calls the wait is sized for.
+`stop_grace_period: 75s` in the compose file is deliberately longer — with
+Docker's default of 10 s the process would be killed while still waiting. A
+second signal ends the wait at once.
+
+**While it drains, new connections are refused.** Behind the reverse proxy that
+is a `502` from the moment of the signal until the new container listens: the
+length of the longest running call plus the start. A client that treats `502`
+as "try again shortly" is right.
+
+**A call that IS cut** reaches its caller as a broken connection, and for a
+confirmed write its outcome is open. The new process does not know the old
+one's confirmation keys, stored results or plans — they lived in its memory —
+so re-presenting the key answers `confirm_unknown` with `outcomeOpen: true`:
+that call wrote nothing, and it says itself that an earlier one under the same
+key may have. Look in the repository first (`find_content_by_url`, the
+collection's listing), then start from a new preview.
+
+### 5.0.1 Watching it: request ids, metrics, log size
+
+- **Request id.** Every response carries `X-Request-Id`, and every log line the
+  request caused carries the same value as `req` — the upstream calls and the
+  write it started included. A caller may send its own `X-Request-Id` (8–64
+  characters of `A–Z a–z 0–9 . _ -`); anything else is replaced. "It failed at
+  14:02" becomes `grep '"req":"<id>"'`.
+- **Metrics.** Set `METRICS_TOKEN` (16+ characters) and scrape
+  `GET /metrics` with `Authorization: Bearer <token>`; without the variable the
+  path answers 404. `wlo_http_requests_total{route,status}`,
+  `wlo_tool_calls_total{tool,outcome}`,
+  `wlo_tool_errors_total{tool,code}` (the error code of an `isError` answer; a
+  code outside the known set counts as `other`, an error without one as `uncoded`),
+  `wlo_upstream_requests_total{outcome}` (`shed` = not sent, our own limit),
+  `wlo_rate_limited_total{limiter}` (our own 429s),
+  four duration **histograms** on one bucket layout (0.05 s … 60 s) —
+  `wlo_tool_duration_seconds{tool}`, `wlo_upstream_duration_seconds{outcome}`,
+  `wlo_http_request_duration_seconds{route}`,
+  `wlo_upstream_gate_wait_seconds{outcome}` (only calls that had to queue at our
+  own limit; `granted` or `shed`) — plus gauges for the bounded
+  in-memory stores, read at the moment of the scrape
+  (`wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`,
+  `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes`), for the upstream
+  queue (`wlo_upstream_in_flight`, `wlo_upstream_waiting`, `wlo_upstream_limit`),
+  `wlo_build_info{version}` and the usual process metrics (`process_*`,
+  `nodejs_heap_*`, `nodejs_external_memory_bytes`,
+  `nodejs_eventloop_lag_seconds`). Counters start at zero with the process.
+  Labels never carry a caller, a path or a query.
+- **A port for probes and the scraper.** `INTERNAL_PORT` opens a second
+  listener that serves only `GET /health`, `GET /ready` and `GET /metrics`.
+  The three paths stay on the public port too. On the internal port `/metrics`
+  asks for no token unless `METRICS_TOKEN` is set — so keep it off the host
+  and off the proxy (the compose file passes the variable and publishes
+  nothing). The internal port keeps answering while the public listener
+  drains after a stop signal — right for a LIVENESS probe, wrong for a
+  readiness probe, which would keep traffic coming to a port that no longer
+  accepts it: point readiness at `/health` on the PUBLIC port. For either
+  probe use `/health`, not `/ready`: `/ready` answers
+  503 while the REPOSITORY is unreachable, and a probe on it would take every
+  instance out of service for a fault that is not theirs. Alert on it instead.
+- **The log.** One JSON object per line on **stdout** — `timestamp`, `level`,
+  `service`, `message`, `req`, and `trace_id`/`span_id` (the caller's B3 trace, or one started for the request when it sent none); formerly only when the caller sent B3
+  headers. `LOG_LEVEL` (`info` by default) sets the threshold. Under stdio the
+  log is on stderr, because stdout is the protocol there.
+- **An outside check.** Nothing in the container can report that the container
+  is gone. Point an external monitor at `GET /ready` (503 while the repository
+  is unreachable) or `GET /health` (the process itself) and alert from there.
+- **Log size.** `docker-compose.yml` bounds the container log to 5 × 10 MB. If
+  you start the image another way, pass `--log-opt max-size=10m --log-opt
+  max-file=5` yourself — Docker's default keeps everything.
+
+### 5.0.2 Sizing: what it needs, and why it is ONE instance
+
+Measured on 2026-11-13 with `npm run measure:resources` (a built server, anonymous, reads against
+staging; the two stores filled to their bounds in a process of their own). The script reports and
+writes nothing — run it again before trusting these numbers on other hardware or another Node.
+
+| State | Resident memory |
+|---|---|
+| Idle, 10 s after start | 72 MB |
+| After one round of read tools | 100 MB |
+| Peak during 3 × 10 concurrent `search_wlo_all` | 172 MB |
+| Upload slots at their bound (128 MB of files held) | + 156 MB (up to + 178 MB, see below) |
+| Full texts of unfinished plans at their bound (64 MiB), Latin-1 text | + 67 MB |
+| The same, each text holding one character beyond Latin-1 (`„`, `–`, `€`) | + 131 MB |
+
+- **CPU:** 0.3 of a core during the search burst; the work is waiting for the repository. One core is ample.
+- **The upload store costs its content plus one more file.** Measured in three fillings: the external
+  memory is the bytes held PLUS the size of the file stored last (50 + 50 + 28 MB held → + 156 MB;
+  50 + 50 → + 150 MB; 28 → + 56 MB). Where that copy is kept was not traced; it is bounded by one file
+  (`UPLOAD_MAX_BYTES`, 50 MB), so plan for 178 MB.
+- **A full text costs up to twice its size.** The bound counts UTF-8 bytes; the server holds JavaScript
+  strings, which take two bytes per character as soon as ONE character is outside Latin-1 — and German
+  quotation marks and dashes are. Size by the last row, not the one above it.
+- **Worst case together: about 480 MB** — 172 MB search peak + 178 MB upload store + 131 MB full texts
+  (the script prints the same sum, by the same rule) — before the request
+  bodies in flight (a tool call up to `MAX_BODY_BYTES`, an upload up to `UPLOAD_MAX_BYTES`). The
+  compose file's default of 512 MB (`mem_limit: ${MEM_LIMIT:-512m}`) therefore fits a server WITHOUT the
+  batch upload (`WLO_BATCH_UPLOAD_ENABLED` unset) with a wide margin, and one WITH it only just. With the
+  batch upload on, give it **768 MB** — `MEM_LIMIT=768m` in `.env`: being killed for memory in the middle
+  of a write is the outcome every other rule here works to avoid. The variable is read by compose alone,
+  not by the server; the Helm chart sets its own `resources`.
+
+The same two runs timed one call of each read tool (anonymous, staging, in this order, so the first
+is the coldest — a single call each, not a distribution):
+
+| Tool | First run | Second run |
+|---|---|---|
+| `search_wlo_all` | 15.5 s | 2.4 s |
+| `search_wlo_content` (with `license: OER`) | 2.4 s | 1.5 s |
+| `search_wlo_collections` | 4.0 s | 1.2 s |
+| `get_subject_portals` | 0.55 s | 0.58 s |
+| `search_wlo_topic_pages` (with `query`) | 3.5 s | 1.6 s |
+| `lookup_wlo_vocabulary` | 0.02 s | 0.03 s |
+| `get_wikipedia_summary` | 0.20 s | 0.18 s |
+| `search_skill` | 0.30 s | 0.15 s |
+
+**What lives in memory** — and is therefore gone after a restart, and not shared between processes:
+
+| What | Lifetime | Lost on restart means |
+|---|---|---|
+| Confirmation keys of previews | 10 min | the preview has to be asked for again; nothing was written |
+| Tombstones of expired confirmation keys and of ended plans (bare ids, at most 2000 each) | 60 min | such a key no longer answers `confirm_expired` / `plan_expired` but `confirm_unknown` — look before repeating |
+| Results of redeemed keys (replay) | 30 min | a re-presented key is unknown — look before repeating |
+| Plans under way (trees, filing, metadata, full texts) | 30 min | the remaining items are not done; the answer names which were |
+| Batches under way and their upload slots | 30 min / until filed | files not yet stored have to be uploaded again |
+| OAuth authorization codes | 60 s | a login in progress starts over |
+| Rate and credential limiters, login-status cache | 1–10 min windows | budgets start fresh |
+| Upload logins the repository confirmed (`/api/uploads`) | 10 min | the next upload proves its login at the repository again |
+| Upload logins the repository refused | 60 s | a refused login is checked at the repository again at once instead of being refused from memory |
+| Readiness answer (`/ready`) | 30 s (`READY_CACHE_MS`) | the first `/ready` after the start probes the repository itself |
+| Metrics counters and histograms (`/metrics`) | the process | every counter starts at zero, and a series exists only from its first event on — an alert built on `increase()`/`rate()` alone misses the first event after a restart (the chart's rules account for it) |
+| Skill registry cache, short caches | minutes | the first calls are slower |
+
+On disk there is exactly one thing: the access registry (`/data/access-registry.json`, §3.1).
+
+**Run one instance.** Every row above is per process. With two, a preview issued by one is unknown to
+the other, a plan continues on the instance that does not hold it, an upload lands where the batch
+tool does not look, and each instance grants the full rate budget on its own. Nothing here is slow
+enough to need a second instance — the time goes to the repository, and the bound on calls open
+there (`WLO_UPSTREAM_CONCURRENCY`) is per process too. For availability rely on a fast restart
+(72 MB, ready in seconds) rather than on replicas; a deployment template has to say `replicas: 1`
+and must not roll with two pods alive at once for longer than the stop grace period.
+
+### 5.1 Rolling back
+
+The image is the unit of rollback; there is no migration (confirmation tokens and
+rate-limit counters live in memory and are meant to be lost on restart). The one
+file on disk, the access registry, is kept readable in both directions: a field
+a build does not know is carried along, and a new kind of block is filed under
+a kind the older build knows (session blocks as ticket entries). After a
+rollback past a feature, the blocks of that feature answer 401; every other
+access keeps working.
+
+```bash
+# Tag every deploy so there is something to go back TO.
+docker build -t wlo-mcp:$(git rev-parse --short HEAD) .
+docker tag wlo-mcp:$(git rev-parse --short HEAD) wlo-mcp:current
+
+# Roll back: point the tag at the previous build and restart.
+docker tag wlo-mcp:<previous-sha> wlo-mcp:current
+docker compose up -d
+curl -s https://mcp.example.org/health   # fingerprint should show the old hashes
+```
+
+Two things do **not** roll back with the image and have to be undone
+deliberately:
+
+- **Configuration.** `.env` is not part of the image. If the bad deploy also
+  changed a variable, change it back — a rolled-back image with the new `.env` is
+  a combination that was never tested.
+- **Anything the curation tools wrote.** Those changes live in the repository,
+  not here. Rolling the server back does not revert them; use the repository's
+  own version history.
+
+## 6. ChatGPT developer mode (the one manual gate)
+
+Point ChatGPT developer mode at `https://mcp.example.org/mcp` and run the golden
+prompts from [`apps-sdk-submission-checklist.md`](apps-sdk-submission-checklist.md).
+Confirm each widget renders and the `search` / `fetch` tools resolve. This is the
+only check that cannot be automated offline (see the P3.6 note in the plan).
+
+**Two things that look like server faults and are not** (both measured
+2026-08-05):
+
+- **ChatGPT asks a second time, inside the conversation.** A connector linked in
+  the settings is not yet active in a chat: ChatGPT shows a card — "wlo
+  verbinden · ChatGPT benötigt Zugriff auf wlo" — and it only appears once a
+  request calls for it. Until it is confirmed, the model has no tools, and a
+  model with no tools answers as if it had searched: fluently, and entirely made
+  up. Tell users to ask about WLO once and confirm the card.
+- **Read the server log before anything else.** Every MCP request builds a
+  server and logs at least one line. An empty log means the client never called,
+  which rules out this server in one step. Both of the above cost an afternoon
+  of searching in the right place for the wrong thing.
+
+With `WLO_AUTH_PRIVATE_KEY` set, choose **OAuth** as the authentication method;
+the connector registers itself and sends the user to `/oauth/authorize` to log
+in with their own WLO account. Without a key, choose "no authentication" — the
+34 read tools work anonymously.
+
+The curation tools are listed either way. Without a usable login they refuse and
+answer with the challenge that asks the client to start the OAuth flow, so a
+connector set up as "no authentication" can still be told to sign in. If
+`WLO_AUTH_PRIVATE_KEY` is unset there is nothing to sign in to, and the refusal
+is simply final.
+
+## 7. Stdio variant (local MCP clients)
+
+For a desktop MCP client that speaks stdio instead of HTTP, override the image
+command:
+
+```bash
+docker run --rm -i --init -e WLO_REPOSITORY_URL=https://redaktion.openeduhub.net/edu-sharing \
+  wlo-mcp:latest node dist/stdio.js
+```
+
+`--init` matters here: the stdio entry point installs no signal handler (it ends
+when its input closes), and Node as PID 1 ignores `SIGTERM` without one — a
+`docker stop` would wait ten seconds and kill it.
+
+## 8. Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| Client connects to `/mcp` but never gets a response | Proxy is buffering SSE — set `proxy_buffering off;` and a long `proxy_read_timeout` on the `/mcp` location (§4). |
+| Widgets don't render in the host | `dist-widgets/` missing from the image — rebuild (`docker compose build --no-cache`); `resources/list` should list 4 `ui://` widgets. |
+| `/launcher.html` or `/api/skills` returns 500 | `public/` missing from the image — rebuild. |
+| Frequent `429` | Lower traffic, raise `RATE_LIMIT_RPM` / `API_RATE_LIMIT_RPM`, or give a known backend its own budget with `TRUSTED_CLIENT_KEYS`; confirm `TRUST_PROXY=1` so limits key on the real client IP, not the proxy. The log line `rate limit reached` names the bucket kind (`client`/`address`). |
+| Rate limits keyed on one IP (the proxy) | `TRUST_PROXY` is `0` behind a proxy — set it to `1`. |
+
+## 9. Privacy & submission
+
+Before exposing publicly, complete [`PRIVACY.md`](PRIVACY.md) (add the operator
+contact) and walk the [`apps-sdk-submission-checklist.md`](apps-sdk-submission-checklist.md).

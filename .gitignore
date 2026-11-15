@@ -1,5 +1,16 @@
 node_modules/
 dist/
+dist-widgets/
 .env
-.vercel/
+# Credentials for scripts/session-cookie-probe.mjs — filled in by hand, plain
+# text, and never committed. The template `probe.env.example` is tracked.
+scripts/probe.env
 *.log
+# Agent tooling scratch (Claude Code sessions, worktrees) — never part of the repo.
+.claude/
+# Operator deployment notes (server IPs, ad-hoc procedures) — kept beside the
+# repo for convenience, never in it: a stray `git add -A` must not publish them.
+serverupdate.txt
+
+# Archify work folders (candidates, receipts); the delivered page is copied to docs/
+.archify/

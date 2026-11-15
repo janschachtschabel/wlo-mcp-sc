@@ -1,0 +1,199 @@
+/**
+ * tools/curation-compendium.ts – writing a collection's editorial prose.
+ *
+ * `ccm:oeh_collection_compendium_text` is not in the metadata set. Measured:
+ * `PUT …/metadata` answers 200 for it and stores nothing. The property endpoint
+ * is the only route that works, and `updateNodeMetadata` already routes it
+ * there via the field allow-list — so this tool adds the conversation, not a
+ * second write path.
+ *
+ * Removing the text is its own parameter rather than "pass an empty string":
+ * an empty string is a value, `null` is the absence of one, and only the second
+ * actually clears the property.
+ */
+
+import { collectionTitleFromProperties } from '../node-match.js';
+import { createHash } from 'node:crypto';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+
+import { requireWrite } from '../services/write/credential-gate.js';
+import { buildChangeSet } from '../services/write/change-set.js';
+import {
+  updateNodeMetadata,
+  deleteProperty,
+  readWriteBaseline,
+  type WriteTarget,
+} from '../services/write/nodes.js';
+import { verifyWrite } from '../services/write/verify.js';
+import { validateField } from '../services/write/fields.js';
+import { getNodeMetadata, readNodeMetadata } from '../wlo-node.js';
+import { sanitizeText } from '../text-sanitize.js';
+import { CONFIRM_TOKEN } from './curation-fields.js';
+import { failedWriteReply } from './curation-report.js';
+import {
+  registerCurationTool,
+  type WriteAuthChallenge,
+  previewReply,
+  confirmOrExplain,
+  reportOutcome,
+  unverifiedReply,
+  desiredFromChangeSet,
+  errorText,
+  codedError,
+  wrongKind,
+  wrongKindReply,
+  timeoutOrError,
+  isPreviewCall,
+} from './curation-shared.js';
+
+const PROPERTY = 'ccm:oeh_collection_compendium_text';
+
+export function registerCurationCompendiumTool(server: McpServer, challenge: WriteAuthChallenge): void {
+  registerCurationTool(server, challenge, {
+    name: 'wlo_update_compendium',
+    title: 'WLO Kompendialtext bearbeiten',
+    description:
+      'Schreibe oder ersetze den redaktionellen Kompendialtext einer WLO-Sammlung (Markdown) — die ' +
+      'Übersichts-Prosa, die auf der Themenseite steht. Mit remove=true wird der Text entfernt; die ' +
+      'Sammlung und ihre Inhalte bleiben dabei unangetastet. ZWEISTUFIG: ohne confirmToken nur Vorschau, ' +
+      'es wird nichts geschrieben. Danach wird zurückgelesen und berichtet, ob der Text wirklich ankam. ' +
+      'Gilt nur für Sammlungen, nicht für einzelne Materialien. Erfordert eine Anmeldung.',
+    inputSchema: {
+      nodeId: z.string().describe('nodeId der Sammlung.'),
+      text: z.string().optional().describe('Der neue Kompendialtext als Markdown.'),
+      remove: z.boolean().optional().describe('true entfernt den vorhandenen Text.'),
+      confirmToken: CONFIRM_TOKEN,
+    },
+    // The same text again is an empty change set; removing twice finds nothing to remove.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    handler: async (params: Record<string, unknown>) => {
+      try {
+        requireWrite();
+
+        const nodeId = String(params['nodeId'] ?? '');
+        const remove = params['remove'] === true;
+        const text = typeof params['text'] === 'string' ? params['text'] : undefined;
+        if (!remove && text === undefined) {
+          return errorText('Bitte entweder einen Text angeben oder mit remove=true den vorhandenen entfernen.');
+        }
+
+        const node = await getNodeMetadata(nodeId);
+        if (!node) {
+          return codedError('not_found', `Die Sammlung „${sanitizeText(nodeId)}“ wurde nicht gefunden oder ist nicht lesbar.`);
+        }
+        // A collection can itself be filed into another collection, so the id
+        // reaching this tool can be a reference like any other. When it is not —
+        // the ordinary case — this resolves to the id as given and reads nothing
+        // extra, which is why it is applied rather than reasoned about.
+        //
+        // `before` must come from the node that will be WRITTEN: an overridden
+        // reference shows its own text, and diffing against that would compare
+        // one record while changing another.
+        const baseline = await readWriteBaseline(node, nodeId);
+        if (!baseline.ok) return errorText(baseline.reason);
+        // A compendium text belongs to a collection, and the property endpoint
+        // stores it on anything it is handed (measured 2026-08-09: it accepted a
+        // property on a `ccm:io`) — so this is the one place that can refuse
+        // (audit 2026-11-12, K-11). Asked of the node that will be WRITTEN: the
+        // id's own kind says nothing once a redirection is in play.
+        const wrong = wrongKind(baseline.written, 'collection');
+        if (wrong) return wrongKindReply(baseline.target.targetId, wrong);
+        const { target, before } = baseline;
+        const title = sanitizeText(collectionTitleFromProperties(before) || nodeId);
+
+        if (remove) return await handleRemoval(target, title, before, params);
+
+        const validated = validateField(PROPERTY, text as string);
+        if (!validated.ok) return errorText(validated.reason);
+
+        const cs = buildChangeSet(target.targetId, 'compendium', before, { [PROPERTY]: validated.values }, {
+          // The preview opens with WHICH collection, as `wlo_update_content`'s
+          // does. The title is the one the change set held before (so the
+          // fingerprint, which covers title and id, is what it was).
+          subject: { collection: true, title: collectionTitleFromProperties(before) },
+          ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
+        });
+        const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
+        if (!token) return previewReply(cs, 'Zum Übernehmen bitte bestätigen.');
+
+        const refusal = confirmOrExplain(token, cs);
+        if (refusal) return refusal;
+
+        const { statuses } = await updateNodeMetadata(cs.nodeId, desiredFromChangeSet(cs), { commit: false });
+        try {
+          return reportOutcome(cs, statuses, await verifyWrite(cs));
+        } catch (err) {
+          return unverifiedReply(err);
+        }
+      } catch (err) {
+        return timeoutOrError('Der Kompendialtext konnte nicht bearbeitet werden', err,
+          `Ob der Text an „${sanitizeText(String(params['nodeId'] ?? ''))}“ gespeichert wurde, ist offen`, { preview: isPreviewCall(params) });
+      }
+    },
+  });
+}
+
+/**
+ * Removal is a separate path because it cannot be expressed as a field change:
+ * the change set carries values, and what clears the property is their absence.
+ * The intent therefore travels as an `action`, which is also what the
+ * confirmation token binds to.
+ */
+async function handleRemoval(
+  target: WriteTarget,
+  title: string,
+  before: Record<string, string[]>,
+  params: Record<string, unknown>,
+) {
+  if (!before[PROPERTY]?.length) {
+    return errorText(`Die Sammlung „${title}“ hat keinen Kompendialtext, der entfernt werden könnte.`);
+  }
+
+  const current = before[PROPERTY]!.join('\n');
+  // The id in the sentence is the one that will be changed, not the one that was
+  // typed — the redirection line above it names both.
+  const cs = buildChangeSet(target.targetId, 'compendium', before, {}, {
+    // WHICH text: its length and checksum are in the sentence, so they are in
+    // the fingerprint. Without them the key approved "remove whatever is there
+    // when I come back" — a text somebody rewrote in between went with it (K-14).
+    action: `Entfernt den Kompendialtext von „${title}“ (${target.targetId}) — `
+      + `${current.length} Zeichen, SHA-256 ${createHash('sha256').update(current, 'utf8').digest('hex')}. `
+      + 'Die Sammlung selbst bleibt mit allen Inhalten bestehen.',
+    ...(target.redirected ? { redirectedFrom: target.requestedId } : {}),
+  });
+
+  const token = typeof params['confirmToken'] === 'string' ? params['confirmToken'] : '';
+  if (!token) return previewReply(cs, 'Zum Entfernen bitte bestätigen.');
+
+  const refusal = confirmOrExplain(token, cs);
+  if (refusal) return refusal;
+
+  const failure = await deleteProperty(cs.nodeId, PROPERTY);
+  // One reading of a failed write (`failedWriteReply`): the repository's own
+  // "no" removed nothing and says which no; a 5xx or 429 is no verdict. As a
+  // plain `errorText` a 403 after the spent key read "open — look first" over
+  // a removal that provably did not happen (second review 2026-11-14).
+  if (failure) return failedWriteReply(failure.httpStatus, `Der Kompendialtext konnte nicht entfernt werden: ${failure.detail}`);
+
+  // The status is read, not inferred from a null node: `getNodeMetadata` folds
+  // every non-OK response into null, and "we could not look" would otherwise be
+  // indistinguishable from "the property is gone" — and reported as success.
+  const { node: after, status } = await readNodeMetadata(cs.nodeId);
+  // The codes `reportMutation` gives the same two outcomes of every other
+  // mutation — `refused` named neither.
+  if (!after) {
+    return codedError('unverified',
+      `Das Entfernen wurde abgeschickt, ließ sich danach aber nicht überprüfen ` +
+        `(HTTP ${status || 'keine verwertbare Antwort'}). Ob der Kompendialtext weg ist, ist damit offen — ` +
+        'bitte die Sammlung direkt ansehen.',
+    );
+  }
+  if (after.properties?.[PROPERTY]?.length) {
+    return codedError('not_visible',
+      'Das Entfernen wurde mit Erfolg beantwortet, der Text steht aber weiterhin im Datensatz. ' +
+        'Er wurde also NICHT entfernt — bitte die Rechte an dieser Sammlung prüfen.',
+    );
+  }
+  return { content: [{ type: 'text' as const, text: `Kompendialtext von „${title}“ entfernt.` }] };
+}

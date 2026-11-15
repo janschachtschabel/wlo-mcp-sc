@@ -1,0 +1,176 @@
+/**
+ * tools/curation-fields.ts – the write surface a conversation can reach.
+ *
+ * Extracted from `curation-content.ts` when the suggestion tools needed the same
+ * thirteen fields. A second copy is precisely how a field gets added to one tool
+ * and forgotten in the other, and the two would then disagree about what may be
+ * written — with no test able to notice, because each would pass on its own.
+ *
+ * This module maps tool parameters to repository properties. What those
+ * properties ACCEPT is decided in `services/write/fields.ts`; nothing here
+ * validates.
+ */
+
+import { z } from 'zod';
+
+import type { ParamMap } from './curation-shared.js';
+
+/**
+ * Tool parameter → repository property. The map is the whole write surface: a
+ * property that is not named here cannot be reached from a conversation,
+ * whatever the model asks for.
+ */
+export const CONTENT_FIELDS: ParamMap = {
+  title: 'cclom:title',
+  description: 'cclom:general_description',
+  keywords: 'cclom:general_keyword',
+  url: 'ccm:wwwurl',
+  language: 'cclom:general_language',
+  author: 'ccm:lifecyclecontributer_author',
+  publisher: 'ccm:oeh_publisher_combined',
+  licenseKey: 'ccm:commonlicense_key',
+  licenseVersion: 'ccm:commonlicense_cc_version',
+  contentType: 'ccm:oeh_lrt',
+  educationalContext: 'ccm:educationalcontext',
+  discipline: 'ccm:taxonid',
+  userRole: 'ccm:educationalintendedenduserrole',
+  // The five quality FINDINGS fields (2026-08-18). They take a MACHINE verdict
+  // only; `services/write/fields.ts` refuses the human one and says why.
+  qualityCorrectness: 'ccm:oeh_quality_correctness',
+  qualityCopyrightLaw: 'ccm:oeh_quality_copyright_law',
+  qualityCriminalLaw: 'ccm:oeh_quality_criminal_law',
+  qualityPersonalLaw: 'ccm:oeh_quality_personal_law',
+  qualityProtectionOfMinors: 'ccm:oeh_quality_protection_of_minors',
+  // The seven 0–5 scales (2026-08-19). `login` and `relevancy_for_education`
+  // are absent: they declare 0–1 and are yes/no questions, not scales.
+  qualityDidactics: 'ccm:oeh_quality_didactics',
+  qualityLanguage: 'ccm:oeh_quality_language',
+  qualityMedial: 'ccm:oeh_quality_medial',
+  qualityNeutralness: 'ccm:oeh_quality_neutralness',
+  qualityTransparentness: 'ccm:oeh_quality_transparentness',
+  qualityDataPrivacy: 'ccm:oeh_quality_data_privacy',
+  qualityCurrentness: 'ccm:oeh_quality_currentness',
+  // Binary, not 0–5: both declare exactly 0 and 1.
+  qualityLogin: 'ccm:oeh_quality_login',
+  qualityRelevance: 'ccm:oeh_quality_relevancy_for_education',
+};
+
+/**
+ * One sentence for all seven scales. The digit is what a model will reach for;
+ * the caption is accepted too, so a value just read back can be written again.
+ */
+const SCALE = ' Stufe 0–5 als Ziffer (0 = schlechteste, 5 = beste) oder als '
+  + 'Beschriftung der Stufe. Welche Stufe wie heißt, nennt lookup_wlo_vocabulary '
+  + 'mit vocabulary="qualityScale".';
+
+/**
+ * One sentence, five times — the verdict vocabulary is the same for every
+ * findings field, and repeating it per parameter is what a model reads when it
+ * picks a value.
+ */
+const VERDICT = ' Erlaubt: "keine Auffälligkeiten gefunden (Maschine)" · '
+  + '"Auffälligkeiten gefunden (Maschine)" · "ungeprüft". Ein Ergebnis, das ein MENSCH '
+  + 'geprüft hat, wird abgelehnt — das trägt die Redaktion selbst ein.';
+
+/**
+ * Upper bound on keywords per call. Every caller-supplied array is bounded in
+ * its schema (zod GHSA-mrhx-c7xc-m3w5: validating an oversized constrained
+ * collection can exhaust memory); no real record carries anywhere near this.
+ */
+export const MAX_KEYWORDS = 100;
+
+/** The 27 metadata parameters, shared by the update and the create tool. */
+/**
+ * One label or several (chatbot feedback 2026-11-13, B1). These four fields
+ * REPLACE what the record carries — only keywords are merged — so a record
+ * tagged Physik and Chemie could not gain Mathematik: the schema took one
+ * string, and one string replaced both. The validation always took a list.
+ */
+const MAX_LABELS = 20;
+const oneOrMany = z.union([z.string(), z.array(z.string()).min(1).max(MAX_LABELS)]).optional();
+const REPLACES = ' ERSETZT die bisherigen Werte des Feldes; für mehrere eine Liste angeben (die bleibenden mitnennen).';
+const replacesOrAdd = (add: string) => `${REPLACES} Zum Hinzufügen stattdessen: ${add}.`;
+const adds = (what: string, sibling: string) => `${what} als Label oder Liste — FÜGT hinzu, die bisherigen Werte bleiben `
+  + `(ersetzen: ${sibling}; nicht beides zusammen).`;
+// The schema is shared, the routing is not: the batch tool never writes this field (`field-routing.ts`).
+const PROPOSED_IN_BATCH = ' In wlo_update_contents wird die Zielgruppe nicht geschrieben, sondern als Vorschlag hinterlegt.';
+
+/**
+ * Adding parameter → the property it adds to (B1, user decision 2026-11-13).
+ * Replacing stays the default; adding is its own parameter, so a call always
+ * says which of the two it asked for. Only on tools that change an EXISTING
+ * record — a new one has nothing to add to, and a proposal already is one value
+ * that is added on accept. The content type stays replace-only.
+ */
+export const ADD_FIELDS: ParamMap = {
+  addDiscipline: 'ccm:taxonid',
+  addEducationalContext: 'ccm:educationalcontext',
+  addUserRole: 'ccm:educationalintendedenduserrole',
+};
+
+export const ADD_SCHEMA = {
+  addDiscipline: oneOrMany.describe(adds('Fach', 'discipline')),
+  addEducationalContext: oneOrMany.describe(adds('Bildungsstufe', 'educationalContext')),
+  addUserRole: oneOrMany.describe(adds('Zielgruppe', 'userRole') + PROPOSED_IN_BATCH),
+};
+
+export const FIELD_SCHEMA = {
+  title: z.string().optional().describe('Titel (cclom:title), max. 255 Zeichen.'),
+  description: z.string().optional().describe('Beschreibung (cclom:general_description).'),
+  keywords: z.array(z.string()).max(MAX_KEYWORDS).optional()
+    .describe('Schlagwörter. Werden zu den vorhandenen HINZUGEFÜGT, nicht ersetzt.'),
+  url: z.string().optional().describe('Quell-URL (ccm:wwwurl); nur http/https.'),
+  language: z.string().optional().describe('Sprachcode nach ISO 639-1, z. B. "de".'),
+  author: z.string().optional().describe('Autor als Klartextname, z. B. "Maria Schmidt".'),
+  publisher: z.string().optional().describe('Herausgeber.'),
+  licenseKey: z.string().optional()
+    .describe('Lizenzschlüssel, z. B. CC_BY, CC_BY_SA, CC_0, PDM. Erfundene Werte werden abgelehnt.'),
+  licenseVersion: z.string().optional().describe('Lizenzversion, z. B. "4.0". Bei CC-BY-Lizenzen sonst automatisch 4.0.'),
+  contentType: oneOrMany.describe('Inhaltstyp als Label, z. B. "Arbeitsblatt" oder "Audio" — der genaue Name aus '
+    + 'lookup_wlo_vocabulary("contentType"); eine Ablehnung nennt Kandidaten.' + REPLACES),
+  educationalContext: oneOrMany.describe('Bildungsstufe als Label, z. B. "Grundschule".' + replacesOrAdd('addEducationalContext')),
+  discipline: oneOrMany.describe('Fach als Label, z. B. "Mathematik".' + replacesOrAdd('addDiscipline')),
+  userRole: oneOrMany.describe('Zielgruppe als Label, z. B. "Lehrer" oder "Lernende".' + replacesOrAdd('addUserRole') + PROPOSED_IN_BATCH),
+
+  qualityCorrectness: z.string().optional().describe(
+    'Prüfergebnis Sachrichtigkeit (ccm:oeh_quality_correctness) aus einer MASCHINELLEN Prüfung.'
+    + VERDICT),
+  qualityCopyrightLaw: z.string().optional().describe(
+    'Prüfergebnis Urheberrecht (ccm:oeh_quality_copyright_law) aus einer MASCHINELLEN Prüfung.'
+    + VERDICT),
+  qualityCriminalLaw: z.string().optional().describe(
+    'Prüfergebnis Strafrecht (ccm:oeh_quality_criminal_law) aus einer MASCHINELLEN Prüfung.'
+    + VERDICT),
+  qualityPersonalLaw: z.string().optional().describe(
+    'Prüfergebnis Persönlichkeitsrecht (ccm:oeh_quality_personal_law) aus einer MASCHINELLEN Prüfung.'
+    + VERDICT),
+  qualityProtectionOfMinors: z.string().optional().describe(
+    'Prüfergebnis Jugendschutz (ccm:oeh_quality_protection_of_minors) aus einer MASCHINELLEN Prüfung.'
+    + VERDICT),
+  qualityDidactics: z.string().optional().describe(
+    'Bewertung der Didaktik/Methodik (ccm:oeh_quality_didactics).' + SCALE),
+  qualityLanguage: z.string().optional().describe(
+    'Bewertung der Sprache/Verständlichkeit (ccm:oeh_quality_language).' + SCALE),
+  qualityMedial: z.string().optional().describe(
+    'Bewertung der medialen Aufbereitung (ccm:oeh_quality_medial).' + SCALE),
+  qualityNeutralness: z.string().optional().describe(
+    'Bewertung der Neutralität (ccm:oeh_quality_neutralness).' + SCALE),
+  qualityTransparentness: z.string().optional().describe(
+    'Bewertung der Anbieter-Transparenz (ccm:oeh_quality_transparentness).' + SCALE),
+  qualityDataPrivacy: z.string().optional().describe(
+    'Bewertung des Datenschutzes (ccm:oeh_quality_data_privacy).' + SCALE),
+  qualityCurrentness: z.string().optional().describe(
+    'Bewertung der Aktualität (ccm:oeh_quality_currentness).' + SCALE),
+  qualityLogin: z.string().optional().describe(
+    'Ist der Inhalt ohne Anmeldung zugänglich (ccm:oeh_quality_login)? "1" = ohne Login '
+    + 'zugänglich, "0" = Zugang nur mit Login — oder die Beschriftung. Achtung: '
+    + 'ccm:conditionsOfAccess sagt dasselbe dreiwertig und auf deutlich mehr Datensätzen; '
+    + 'beide zu setzen kann sich widersprechen.'),
+  qualityRelevance: z.string().optional().describe(
+    'Ist der Inhalt für Bildung geeignet (ccm:oeh_quality_relevancy_for_education)? '
+    + '"1" = Ja - geeignet, "0" = Nein - ungeeignet — oder die Beschriftung.'),
+};
+
+/** The confirmation key every two-step curation tool takes. */
+export const CONFIRM_TOKEN = z.string().optional()
+  .describe('Bestätigungsschlüssel aus der Vorschau. Ohne ihn wird ausschließlich die Vorschau erzeugt.');

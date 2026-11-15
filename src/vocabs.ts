@@ -2,99 +2,191 @@
  * vocabs.ts – WLO Vocabulary mappings
  *
  * Resolves human-readable labels (German) ↔ full URIs for
- * Bildungsstufe, Zielgruppe, Schulfach, Lernressourcentyp (aggregiert),
- * Lizenzen und Themenseiten-Zielgruppen.
+ * educational level, target audience, school subject, learning resource type
+ * (aggregated), licenses, and topic-page target audiences.
  *
- * **Authoritative sources (offizielle SKOS-Vokabulare):**
- *   - Schulfächer (this file's `discipline` map):
+ * **Authoritative sources (official SKOS vocabularies):**
+ *   - School subjects (this file's `discipline` map):
  *     https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/discipline/index.json
- *   - Bildungsstufen:
+ *   - Educational levels:
  *     https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/educationalContext/index.json
- *   - Zielgruppen (intendedEndUserRole):
+ *   - Target audiences (intendedEndUserRole):
  *     https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/intendedEndUserRole/index.json
- *   - Lernressourcentypen (aggregiert):
+ *   - Learning resource types (aggregated):
  *     https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/new_lrt_aggregated/index.json
  *
- * **Bewusst NICHT enthalten:** Hochschulfächersystematik
+ * **Deliberately NOT included:** university subject taxonomy (Hochschulfächersystematik)
  *     https://vocabs.openeduhub.de/w3id.org/openeduhub/vocabs/hochschulfaechersystematik/index.json
  *
- * Begründung: Das Vokabular hat ~100+ Konzepte mit Top-Level-Bereichen
- * wie "Mathematik, Naturwissenschaften" (n4) — Begriffe kollidieren mit
- * dem Schulfächer-Vokabular (z.B. "Mathematik" → discipline/380 vs.
- * Hochschul-n4 = breiter Cluster). Lokale Resolution wäre für die
- * *Eingabe-Seite* (User-Filter) ambig und könnte ungewollt zu breit
- * filtern.
+ * Rationale: The vocabulary has ~100+ concepts with top-level areas
+ * like "Mathematik, Naturwissenschaften" (n4) — terms collide with
+ * the school-subjects vocabulary (e.g. "Mathematik" → discipline/380 vs.
+ * university n4 = broad cluster). Local resolution would be ambiguous for
+ * the *input side* (user filter) and could unintentionally filter too
+ * broadly.
  *
- * Anzeige (URI → Label) wird stattdessen über das server-seitige
- * `<property>_DISPLAYNAME`-Feld der edu-sharing-API in `formatter.ts`
- * abgewickelt — das deckt beide Vokabulare automatisch ab, ohne lokale
- * Hochschul-Mappings zu pflegen.
+ * Display (URI → label) is instead handled via the server-side
+ * `<property>_DISPLAYNAME` field of the edu-sharing API in `formatter.ts`
+ * — that covers both vocabularies automatically, without maintaining local
+ * university mappings.
  */
 
-export type VocabKey = 'educationalContext' | 'discipline' | 'userRole' | 'lrt' | 'license' | 'targetGroup';
+import { universitySubjectLabel } from './vocabs-hochschule.js';
+
+export type VocabKey = 'educationalContext' | 'discipline' | 'userRole' | 'lrt' | 'license'
+  | 'targetGroup' | 'qualityFinding';
 
 interface VocabEntry {
-  id: string;     // full URI
-  labels: string[]; // prefLabel + altLabel (lowercase for matching)
+  id: string;
+  /**
+   * `labels[0]` is the DISPLAY form — the concept's official German prefLabel —
+   * and every entry after it is a matching alias only.
+   *
+   * The two jobs share one array, which is why the display form used to be
+   * wrong: the table was written all-lowercase for the matching half, and
+   * `labelFromUri` only upper-cases the first character, so it rendered
+   * "Sekundarstufe i", "Deutsch als zweitsprache" and "Mint" for MINT. 23 of 152
+   * concepts across the six tables were affected (checked against the SKOS
+   * sources of record on 2026-08-11).
+   *
+   * WHERE that shows: `formatNode` prefers the server's `<property>_DISPLAYNAME`
+   * and only falls back here (`resolveLabels`), so a normal hit list usually
+   * carries the repository's label, not ours. What has no DISPLAYNAME to fall
+   * back on — and is therefore rendered from this table alone — is the facet
+   * breakdown, the licence, `lookup_wlo_vocabulary`, and the topic-page fields
+   * that come from raw URIs, `variantPreset.educationLevelLabels` among them.
+   *
+   * A test now fails any label whose continuation is lowercase, so this cannot
+   * come back through a new entry; the concepts whose official prefLabel is not
+   * simply the capitalised alias are pinned individually. Both in
+   * `tests/vocabs.test.ts`.
+   *
+   * Casing costs the matching nothing: `resolveVocab` and `labelFromUri`
+   * lowercase both sides. A display form that differs by more than casing —
+   * "Umweltgefährdung, Umweltschutz" gained a comma — must KEEP the previous
+   * spelling as an alias, or the exact-match path loses it.
+   *
+   * The AGGREGATED LRT table is the one that does not simply mirror its source:
+   * 9 of its 48 display forms are shortened on purpose ("Tests" for "Tests /
+   * Fragebögen"), and every dropped part exists as an alias. Only the casing was
+   * fixed there. `vocabs-lrt.ts` is the opposite — 220 of 220 verbatim.
+   */
+  labels: string[];
 }
 
-// ── Bildungsstufe ────────────────────────────────────────────────────────────
+// ── Educational level ────────────────────────────────────────────────────────
 const EC_BASE = 'http://w3id.org/openeduhub/vocabs/educationalContext/';
 
+/**
+ * Grade-number aliases ("Klasse 5", "5. Klasse") for a Stufe — models often
+ * carry the user's grade verbatim, which previously resolved to nothing and
+ * produced no fuzzy suggestion either (numbers are unbridgeable by edit
+ * distance). Grades 1–4 → Grundschule, 5–10 → Sek I, 11–13 → Sek II.
+ */
+function gradeAliases(from: number, to: number): string[] {
+  const out: string[] = [];
+  for (let g = from; g <= to; g++) {
+    out.push(`klasse ${g}`, `${g}. klasse`, `klassenstufe ${g}`, `jahrgangsstufe ${g}`, `jahrgang ${g}`);
+  }
+  return out;
+}
+
+// Adding an alias (review 2026-11-13): only a spelling that names ONE entry — a
+// write takes an alias as that entry. And none that contains, or is contained
+// in, a term of ANOTHER entry (four characters or more on both sides): the
+// search's substring step would guess with it. That is why "foerderschule",
+// "sonderschule" and "vorschule" are absent — each contains "schule". The
+// I/II pairs ("sek. i" / "sek. ii") and the grade numbers ("jahrgang 1" /
+// "jahrgang 10") contain each other by nature; both sides are listed, so the
+// exact match decides before any guess.
 const EDUCATIONAL_CONTEXT: VocabEntry[] = [
-  { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'elementary school', 'kita', 'kindergarten'] },
+  // "elementary school" belongs to Grundschule below, not here: in English it is
+  // primary school, and as an alias on both entries the first-wins exact match
+  // silently sent an English filter to the pre-school concept.
+  { id: EC_BASE + 'elementarbereich',  labels: ['elementarbereich', 'elementarstufe', 'elementary level', 'kita', 'kindergarten', 'frühkindliche bildung'] },
   { id: EC_BASE + 'schule',            labels: ['schule', 'school'] },
-  { id: EC_BASE + 'grundschule',       labels: ['primarstufe', 'grundschule', 'primary school', 'elementary school', 'primär'] },
-  { id: EC_BASE + 'sekundarstufe_1',   labels: ['sekundarstufe i', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1'] },
-  { id: EC_BASE + 'sekundarstufe_2',   labels: ['sekundarstufe ii', 'sekundarstufe 2', 'secondary ii', 'upper secondary school', 'sek ii', 'sek2', 'gymnasium', 'oberstufe'] },
-  { id: EC_BASE + 'hochschule',        labels: ['hochschule', 'higher education', 'universität', 'uni', 'studium', 'hochschulbildung'] },
-  { id: EC_BASE + 'berufliche_bildung',labels: ['berufliche bildung', 'vocational education', 'berufsausbildung', 'berufsschule', 'ausbildung'] },
-  { id: EC_BASE + 'fortbildung',       labels: ['fortbildung', 'further education', 'weiterbildung', 'fortbildungen'] },
-  { id: EC_BASE + 'erwachsenenbildung',labels: ['erwachsenenbildung', 'continuing education', 'erwachsene'] },
+  { id: EC_BASE + 'grundschule',       labels: ['primarstufe', 'grundschule', 'primary school', 'elementary school', 'primär', 'primarbereich', ...gradeAliases(1, 4)] },
+  { id: EC_BASE + 'sekundarstufe_1',   labels: ['Sekundarstufe I', 'sekundarstufe 1', 'secondary i', 'lower secondary school', 'sek i', 'sek1', 'sekundarstufe1',
+    'sek 1', 'sek. i', 'sek-i', 'seki', 'sekundarstufe-i', 'sekundarbereich i', 'lower secondary', ...gradeAliases(5, 10)] },
+  { id: EC_BASE + 'sekundarstufe_2',   labels: ['Sekundarstufe II', 'sekundarstufe 2', 'secondary ii', 'upper secondary school', 'sek ii', 'sek2', 'gymnasium', 'oberstufe',
+    'sek 2', 'sek. ii', 'sek-ii', 'sekii', 'sekundarstufe-ii', 'sekundarbereich ii', 'upper secondary', 'gymnasiale oberstufe', ...gradeAliases(11, 13)] },
+  { id: EC_BASE + 'hochschule',        labels: ['hochschule', 'higher education', 'universität', 'uni', 'studium', 'hochschulbildung', 'university'] },
+  { id: EC_BASE + 'berufliche_bildung',labels: ['Berufliche Bildung', 'vocational education', 'berufsausbildung', 'berufsschule', 'ausbildung', 'berufsbildung'] },
+  { id: EC_BASE + 'fortbildung',       labels: ['fortbildung', 'further education', 'weiterbildung', 'fortbildungen', 'lehrerfortbildung'] },
+  { id: EC_BASE + 'erwachsenenbildung',labels: ['erwachsenenbildung', 'continuing education', 'erwachsene', 'adult education'] },
   { id: EC_BASE + 'foerderschule',     labels: ['förderschule', 'special education', 'sonderpädagogische förderung', 'förderung'] },
   { id: EC_BASE + 'fernunterricht',    labels: ['fernunterricht', 'distance learning', 'fernstudium', 'e-learning'] },
-  { id: EC_BASE + 'informelles_lernen',labels: ['informelles lernen', 'informal learning'] },
+  { id: EC_BASE + 'informelles_lernen',labels: ['Informelles Lernen', 'informal learning'] },
 ];
 
-// ── Zielgruppe ───────────────────────────────────────────────────────────────
+// ── Target audience ──────────────────────────────────────────────────────────
 const UR_BASE = 'http://w3id.org/openeduhub/vocabs/intendedEndUserRole/';
 
+/**
+ * The verdict of a quality check, shared by the five `ccm:oeh_quality_*` FINDINGS
+ * fields (correctness, copyright_law, criminal_law, personal_law,
+ * protection_of_minors).
+ *
+ * This is one of the two families the metadata set puts under `oeh_quality`, and
+ * the only writable one. It says WHO checked and WHETHER anything was found —
+ * which is exactly the shape an automatic check needs. The other family is the
+ * star ratings (didactics, language, medial, …), and those stay closed: they are
+ * an editorial judgement, and the corpus stores a bare digit where the widget
+ * declares a URI.
+ *
+ * Labels are the repository's own captions, measured from `mds_oeh` on
+ * 2026-08-18; the aliases are ours, so a model does not have to quote a caption
+ * verbatim. `human_findings`/`no_human_findings` are listed because they ARE the
+ * vocabulary — `lookup_wlo_vocabulary` must not misreport it — while the write
+ * path refuses them separately (`services/write/fields.ts`).
+ */
+const QF_BASE = 'http://w3id.org/openeduhub/vocabs/quality/';
+const QUALITY_FINDING: VocabEntry[] = [
+  { id: QF_BASE + 'auto_findings',    labels: ['Auffälligkeiten gefunden (Maschine)', 'auto_findings', 'befund', 'auffälligkeiten', 'auffaelligkeiten', 'maschinell auffällig'] },
+  { id: QF_BASE + 'no_auto_findings', labels: ['keine Auffälligkeiten gefunden (Maschine)', 'no_auto_findings', 'kein befund', 'keine auffälligkeiten', 'keine auffaelligkeiten', 'maschinell unauffällig'] },
+  { id: QF_BASE + 'human_findings',    labels: ['Auffälligkeiten gefunden (Mensch)', 'human_findings'] },
+  { id: QF_BASE + 'no_human_findings', labels: ['keine Auffälligkeiten gefunden (Mensch)', 'no_human_findings'] },
+  { id: QF_BASE + 'unchecked',        labels: ['Ungeprüft', 'unchecked', 'ungeprüft', 'ungeprueft', 'nicht geprüft'] },
+];
+
 const USER_ROLE: VocabEntry[] = [
-  { id: UR_BASE + 'author',      labels: ['autor/in', 'autor', 'autorin', 'author'] },
+  { id: UR_BASE + 'author',      labels: ['autor/in', 'autor', 'autorin', 'author', 'autoren'] },
   { id: UR_BASE + 'counsellor',  labels: ['berater/in', 'berater', 'beraterin', 'counsellor', 'ratgeber/in'] },
-  { id: UR_BASE + 'learner',     labels: ['lerner/in', 'lernende', 'lernender', 'schüler', 'schülerin', 'learner', 'students'] },
+  { id: UR_BASE + 'learner',     labels: ['lerner/in', 'lernende', 'lernender', 'schüler', 'schülerin', 'learner', 'students',
+    'schueler', 'schüler/innen', 'schüler*innen', 'schülerinnen und schüler', 'sus', 'lerner', 'learners', 'student'] },
   { id: UR_BASE + 'manager',     labels: ['verwaltung', 'manager', 'schulleitung', 'leitung'] },
-  { id: UR_BASE + 'parent',      labels: ['eltern', 'parent', 'elter', 'elternteil', 'erziehungsberechtigter', 'sorgeberechtigter'] },
-  { id: UR_BASE + 'teacher',     labels: ['lehrer/in', 'lehrer', 'lehrerin', 'lehrende', 'lehrender', 'teacher', 'lehrkraft', 'pädagoge', 'pädagogin'] },
+  { id: UR_BASE + 'parent',      labels: ['eltern', 'parent', 'parents', 'elter', 'elternteil', 'erziehungsberechtigter', 'sorgeberechtigter'] },
+  { id: UR_BASE + 'teacher',     labels: ['lehrer/in', 'lehrer', 'lehrerin', 'lehrende', 'lehrender', 'teacher', 'lehrkraft', 'pädagoge', 'pädagogin',
+    'lehrkräfte', 'lehrkraefte', 'lehrer/innen', 'lehrer*innen', 'lehrerinnen und lehrer', 'lehrpersonen', 'teachers'] },
   { id: UR_BASE + 'other',       labels: ['andere', 'other', 'sonstige'] },
 ];
 
-// ── Schulfächer ──────────────────────────────────────────────────────────────
+// ── School subjects ──────────────────────────────────────────────────────────
 const DISC_BASE = 'http://w3id.org/openeduhub/vocabs/discipline/';
 
 const DISCIPLINE: VocabEntry[] = [
-  { id: DISC_BASE + '720',    labels: ['allgemein', 'interdisciplinary media', 'sonstiges', 'fächerübergreifend'] },
-  { id: DISC_BASE + '20003',  labels: ['alt-griechisch', 'ancient greek', 'griechisch'] },
+  { id: DISC_BASE + '720',    labels: ['allgemein', 'interdisciplinary media', 'fächerübergreifend'] },
+  { id: DISC_BASE + '20003',  labels: ['Alt-Griechisch', 'ancient greek', 'griechisch', 'altgriechisch'] },
   { id: DISC_BASE + '04001',  labels: ['agrarwirtschaft', 'agricultural economics', 'landwirtschaft'] },
-  { id: DISC_BASE + 'oeh01',  labels: ['arbeit, ernährung, soziales'] },
+  { id: DISC_BASE + 'oeh01',  labels: ['Arbeit, Ernährung, Soziales'] },
   { id: DISC_BASE + '020',    labels: ['arbeitslehre', 'career education', 'arbeit wirtschaft technik', 'awt', 'polytechnik'] },
   { id: DISC_BASE + '04014',  labels: ['arbeitssicherheit', 'work safety'] },
   { id: DISC_BASE + '46014',  labels: ['astronomie', 'astronomy'] },
   { id: DISC_BASE + '04002',  labels: ['bautechnik', 'construction engineering'] },
-  { id: DISC_BASE + '040',    labels: ['berufliche bildung', 'vocational education', 'berufsausbildung'] },
+  { id: DISC_BASE + '040',    labels: ['Berufliche Bildung', 'vocational education', 'berufsausbildung'] },
   { id: DISC_BASE + '080',    labels: ['biologie', 'biology', 'bio'] },
   { id: DISC_BASE + '100',    labels: ['chemie', 'chemistry'] },
   { id: DISC_BASE + '20041',  labels: ['chinesisch', 'chinese'] },
-  { id: DISC_BASE + '12002',  labels: ['darstellendes spiel', 'performing game', 'theater', 'theaterpädagogik'] },
+  { id: DISC_BASE + '12002',  labels: ['Darstellendes Spiel', 'performing game', 'theater', 'theaterpädagogik'] },
   { id: DISC_BASE + '120',    labels: ['deutsch', 'german as mother tongue', 'muttersprache', 'german'] },
-  { id: DISC_BASE + '28002',  labels: ['deutsch als zweitsprache', 'german as second language', 'daz', 'daf', 'deutsch als fremdsprache'] },
+  { id: DISC_BASE + '28002',  labels: ['Deutsch als Zweitsprache', 'german as second language', 'daz', 'daf', 'deutsch als fremdsprache'] },
   { id: DISC_BASE + '04005',  labels: ['elektrotechnik', 'electrical engineering'] },
-  { id: DISC_BASE + '04006',  labels: ['ernährung und hauswirtschaft', 'nutrition and home economics'] },
+  { id: DISC_BASE + '04006',  labels: ['Ernährung und Hauswirtschaft', 'nutrition and home economics'] },
   { id: DISC_BASE + '20001',  labels: ['englisch', 'english'] },
-  { id: DISC_BASE + '440',    labels: ['pädagogik', 'pedagogy', 'erziehungswissenschaften', 'erziehungswissenschaft'] },
+  { id: DISC_BASE + '440',    labels: ['pädagogik', 'pedagogy', 'erziehungswissenschaften', 'erziehungswissenschaft', 'paedagogik'] },
   { id: DISC_BASE + '20090',  labels: ['esperanto'] },
   { id: DISC_BASE + '160',    labels: ['ethik', 'ethics', 'werte und normen'] },
-  { id: DISC_BASE + '04007',  labels: ['farbtechnik und raumgestaltung', 'color technology and interior design', 'raumgestaltung'] },
+  { id: DISC_BASE + '04007',  labels: ['Farbtechnik und Raumgestaltung', 'color technology and interior design', 'raumgestaltung'] },
   { id: DISC_BASE + '20002',  labels: ['französisch', 'french', 'franzoesisch'] },
   { id: DISC_BASE + '220',    labels: ['geografie', 'geography', 'erdkunde', 'geographie', 'geo'] },
   { id: DISC_BASE + '240',    labels: ['geschichte', 'history'] },
@@ -103,56 +195,56 @@ const DISCIPLINE: VocabEntry[] = [
   { id: DISC_BASE + '50001',  labels: ['hauswirtschaft', 'home economics', 'verbraucherbildung'] },
   { id: DISC_BASE + '04009',  labels: ['holztechnik', 'wood engineering'] },
   { id: DISC_BASE + '320',    labels: ['informatik', 'ict', 'computer science', 'informationstechnologie', 'it', 'info'] },
-  { id: DISC_BASE + '340',    labels: ['interkulturelle bildung', 'intercultural education'] },
+  { id: DISC_BASE + '340',    labels: ['Interkulturelle Bildung', 'intercultural education'] },
   { id: DISC_BASE + '20004',  labels: ['italienisch', 'italian'] },
-  { id: DISC_BASE + '060',    labels: ['kunst', 'art education', 'kunsterziehung', 'art'] },
+  { id: DISC_BASE + '060',    labels: ['kunst', 'art education', 'kunsterziehung', 'art', 'bildende kunst'] },
   { id: DISC_BASE + '04010',  labels: ['körperpflege', 'body care'] },
   { id: DISC_BASE + '20005',  labels: ['latein', 'latin'] },
-  { id: DISC_BASE + '380',    labels: ['mathematik', 'mathematics', 'mathe', 'math'] },
+  { id: DISC_BASE + '380',    labels: ['mathematik', 'mathematics', 'mathe', 'math', 'maths'] },
   { id: DISC_BASE + 'oeh04010', labels: ['mechatronik'] },
   { id: DISC_BASE + '900',    labels: ['medienbildung', 'media education'] },
-  { id: DISC_BASE + '400',    labels: ['mediendidaktik', 'media education', 'medienerziehung'] },
+  { id: DISC_BASE + '400',    labels: ['mediendidaktik', 'medienerziehung'] },
   { id: DISC_BASE + '04011',  labels: ['metalltechnik', 'metal engineering'] },
-  { id: DISC_BASE + '04003',  labels: ['mint', 'chemie physik biologie', 'naturwissenschaften', 'natural sciences', 'stem'] },
+  { id: DISC_BASE + '04003',  labels: ['MINT', 'chemie physik biologie', 'naturwissenschaften', 'natural sciences', 'stem'] },
   { id: DISC_BASE + '420',    labels: ['musik', 'music'] },
   { id: DISC_BASE + '64018',  labels: ['nachhaltigkeit', 'sustainability', 'bne', 'bildung für nachhaltige entwicklung'] },
   { id: DISC_BASE + 'niederdeutsch', labels: ['niederdeutsch', 'platt german', 'platt'] },
-  { id: DISC_BASE + '44099',  labels: ['open educational resources', 'oer'] },
+  { id: DISC_BASE + '44099',  labels: ['Open Educational Resources', 'oer'] },
   { id: DISC_BASE + '450',    labels: ['philosophie', 'philosophy'] },
   { id: DISC_BASE + '460',    labels: ['physik', 'physics'] },
-  { id: DISC_BASE + '480',    labels: ['politik', 'politics', 'politische bildung', 'sozialkunde'] },
+  { id: DISC_BASE + '480',    labels: ['politik', 'politics', 'politische bildung', 'sozialkunde', 'gemeinschaftskunde'] },
   { id: DISC_BASE + '510',    labels: ['psychologie', 'psychology'] },
-  { id: DISC_BASE + '520',    labels: ['religion', 'religious education', 'religionsunterricht', 'reli'] },
+  { id: DISC_BASE + '520',    labels: ['religion', 'religious education', 'religionsunterricht', 'reli', 'religionslehre', 'evangelische religion', 'katholische religion'] },
   { id: DISC_BASE + '20006',  labels: ['russisch', 'russian'] },
-  { id: DISC_BASE + '28010',  labels: ['sachunterricht', 'homeland lessons', 'heimatunterricht', 'sachkunde'] },
-  { id: DISC_BASE + '560',    labels: ['sexualerziehung', 'sex education'] },
+  { id: DISC_BASE + '28010',  labels: ['sachunterricht', 'homeland lessons', 'heimatunterricht', 'sachkunde', 'heimat- und sachunterricht', 'hsu'] },
+  { id: DISC_BASE + '560',    labels: ['sexualerziehung', 'sex education', 'sexualkunde'] },
   { id: DISC_BASE + '44006',  labels: ['sonderpädagogik', 'special needs education'] },
   { id: DISC_BASE + '20009',  labels: ['sorbisch', 'sorbian'] },
   { id: DISC_BASE + '44007',  labels: ['sozialpädagogik', 'social education'] },
   { id: DISC_BASE + '20007',  labels: ['spanisch', 'spanish'] },
   { id: DISC_BASE + '600',    labels: ['sport', 'physical education', 'sportunterricht'] },
-  { id: DISC_BASE + '04012',  labels: ['textiltechnik und bekleidung', 'textile technology and clothing'] },
-  { id: DISC_BASE + '20008',  labels: ['türkisch', 'turkish'] },
-  { id: DISC_BASE + '04013',  labels: ['wirtschaft und verwaltung', 'business and administration'] },
-  { id: DISC_BASE + '700',    labels: ['wirtschaftskunde', 'economics', 'wirtschaftswissenschaften', 'economy', 'vwl', 'bwl'] },
-  { id: DISC_BASE + '640',    labels: ['umweltgefährdung umweltschutz', 'environmental education', 'umwelterziehung', 'umwelt'] },
+  { id: DISC_BASE + '04012',  labels: ['Textiltechnik und Bekleidung', 'textile technology and clothing'] },
+  { id: DISC_BASE + '20008',  labels: ['türkisch', 'turkish', 'tuerkisch'] },
+  { id: DISC_BASE + '04013',  labels: ['Wirtschaft und Verwaltung', 'business and administration'] },
+  { id: DISC_BASE + '700',    labels: ['wirtschaftskunde', 'economics', 'wirtschaftswissenschaften', 'economy', 'vwl', 'bwl', 'wirtschaftslehre'] },
+  { id: DISC_BASE + '640',    labels: ['Umweltgefährdung, Umweltschutz', 'umweltgefährdung umweltschutz', 'environmental education', 'umwelterziehung', 'umwelt'] },
   { id: DISC_BASE + '660',    labels: ['verkehrserziehung', 'road safety education'] },
   { id: DISC_BASE + '680',    labels: ['weiterbildung', 'further education'] },
   { id: DISC_BASE + '50005',  labels: ['werken', 'handicraft', 'textiles werken'] },
-  { id: DISC_BASE + '72001',  labels: ['zeitgemäße bildung', 'modern education', 'digitale bildung'] },
+  { id: DISC_BASE + '72001',  labels: ['Zeitgemäße Bildung', 'modern education', 'digitale bildung'] },
   { id: DISC_BASE + '72002',  labels: ['projektmanagement', 'project management'] },
-  { id: DISC_BASE + '72003',  labels: ['evidenzbasierte medizin', 'evidence-based medicine'] },
+  { id: DISC_BASE + '72003',  labels: ['Evidenzbasierte Medizin', 'evidence-based medicine'] },
   { id: DISC_BASE + '999',    labels: ['sonstiges', 'other'] },
 ];
 
-// ── Lernressourcentyp (aggregiert) ──────────────────────────────────────────
+// ── Learning resource type (aggregated) ──────────────────────────────────────
 const LRT_BASE = 'http://w3id.org/openeduhub/vocabs/new_lrt_aggregated/';
 
 const LRT: VocabEntry[] = [
   { id: LRT_BASE + 'b8fb5fb2-d8bf-4bbe-ab68-358b65a26bed', labels: ['bild', 'image'] },
   { id: LRT_BASE + '38774279-af36-4ec2-8e70-811d5a51a6a1', labels: ['video'] },
   { id: LRT_BASE + '39197d6f-dfb1-4e82-92e5-79f906e9d2a9', labels: ['audio', 'podcast'] },
-  { id: LRT_BASE + '05aa0f49-7e1b-498b-a7d5-c5fc8e73b2e2', labels: ['interaktives medium', 'interactive media', 'interaktiv', 'simulation'] },
+  { id: LRT_BASE + '05aa0f49-7e1b-498b-a7d5-c5fc8e73b2e2', labels: ['Interaktives Medium', 'interactive media', 'interaktiv', 'simulation'] },
   { id: LRT_BASE + '11f438d7-cb11-49c2-8e67-2dd7df677092', labels: ['unterrichtsidee', 'lesson idea'] },
   { id: LRT_BASE + '8526273b-2b21-46f2-ac8d-bbf362c8a690', labels: ['unterrichtsplan', 'lesson plan'] },
   { id: LRT_BASE + 'f1341358-3f91-449b-b6eb-f58636f756a0', labels: ['unterrichtsbaustein', 'unterrichtsreihe', 'lesson unit'] },
@@ -166,9 +258,9 @@ const LRT: VocabEntry[] = [
   { id: LRT_BASE + '0b2d7dec-8eb1-4a28-9cf2-4f3a4f5a511b', labels: ['übungsmaterial', 'exercise material', 'übung'] },
   { id: LRT_BASE + '90a082d8-ee5f-4b33-bd5c-f1738262c47d', labels: ['recherche', 'lernauftrag', 'research task'] },
   { id: LRT_BASE + 'ffe4d8e8-3cfd-4e9a-b025-83f129eb5c9d', labels: ['experiment'] },
-  { id: LRT_BASE + '71c71f72-fc8d-4263-902f-abf1366a73ca', labels: ['projekt-material', 'project material', 'projekt'] },
-  { id: LRT_BASE + '57bfc743-4c94-4bdd-bdfa-c638a062d151', labels: ['kreative aktivität', 'kreativ', 'creative activity'] },
-  { id: LRT_BASE + 'ec402e87-c623-47e2-8d2e-1c4ea6923409', labels: ['entdeckendes lernen', 'discovery learning'] },
+  { id: LRT_BASE + '71c71f72-fc8d-4263-902f-abf1366a73ca', labels: ['Projekt-Material', 'project material', 'projekt'] },
+  { id: LRT_BASE + '57bfc743-4c94-4bdd-bdfa-c638a062d151', labels: ['Kreative Aktivität', 'kreativ', 'creative activity'] },
+  { id: LRT_BASE + 'ec402e87-c623-47e2-8d2e-1c4ea6923409', labels: ['Entdeckendes Lernen', 'discovery learning'] },
   { id: LRT_BASE + 'd0c115e4-848d-4aea-8e31-23869e9add3e', labels: ['rollenspiel', 'role play'] },
   { id: LRT_BASE + '41eaccae-899b-4209-8a54-c793a3cdf538', labels: ['fallstudie', 'case study'] },
   { id: LRT_BASE + 'c77df53a-2611-4029-9712-f9c0eeb032a3', labels: ['artikel', 'article'] },
@@ -189,32 +281,82 @@ const LRT: VocabEntry[] = [
   { id: LRT_BASE + 'b06c5816-60c7-4f1b-bcd7-95d70aaa4740', labels: ['event', 'wettbewerb', 'competition'] },
   { id: LRT_BASE + '9bbb50a2-10c5-4a8b-9e0e-6a5fc86c40fe', labels: ['news', 'nachricht'] },
   { id: LRT_BASE + '2e678af3-1026-4171-b88e-3b3a915d1673', labels: ['quelle', 'source'] },
+  // The eight concepts below complete the vocabulary (48 in total). They carry no
+  // entry in the media-type-oriented part above, but the repository derives them
+  // from `new_lrt` all the same (see `AGGREGATION` in vocabs-lrt.ts), so they do
+  // appear as facet values — and a facet value has no server-side _DISPLAYNAME to
+  // fall back on, which rendered them as bare UUID URIs. Labels are the official
+  // prefLabels, including the vocabulary's own spelling of "Regelungsintrumente".
+  { id: LRT_BASE + '2c151a4e-556e-42db-9e44-3a581deb5834', labels: ['textbausteine', 'textbaustein'] },
+  { id: LRT_BASE + 'b1e25325-d403-44f0-814a-ff2f5d866931', labels: ['persönlichkeit', 'bekannte persönlichkeit'] },
+  { id: LRT_BASE + '620a3fee-ac87-40e6-8408-20b48b430eca', labels: ['daten'] },
+  { id: LRT_BASE + 'a0b83e5a-eaa4-4df8-9eec-3678abd60c25', labels: ['tabellen'] },
+  { id: LRT_BASE + 'c2fc554c-a7ae-4af7-a785-d727c5a8d0db', labels: ['formel'] },
+  { id: LRT_BASE + '25957b6b-338e-4379-ba4f-67fc7654ef34', labels: ['Modell / 3D', 'modell', '3d-druck'] },
+  { id: LRT_BASE + '0d1f8d25-7a81-44d5-b250-1c42bb71c167', labels: ['regelungsintrumente', 'regelungsinstrumente'] },
+  { id: LRT_BASE + '9c2acd39-7207-4e28-87a5-06e60d59c9e1', labels: ['orientierungsinstrumente'] },
 ];
 
-// ── Lizenzen ─────────────────────────────────────────────────────────────────
+// ── Licenses ─────────────────────────────────────────────────────────────────
 // edu-sharing stores license keys (ccm:commonlicense_key) like "CC_BY_SA".
 // We map them to human-readable labels here for consistent output.
 
 // NOTE: For licenses we store the *display form* as the primary label
-// (e.g. "CC BY-SA 4.0" instead of "cc by-sa 4.0"). Capitalize-logic in
+// (e.g. "CC BY-SA" instead of "cc by-sa"). Capitalize-logic in
 // labelFromUri only kicks in for fully-lowercase primary labels — otherwise
-// "cc by-sa 4.0" would render as the unhelpful "Cc by-sa 4.0".
+// "cc by-sa" would render as the unhelpful "Cc by-sa".
+//
+// The display forms come from the REPOSITORY's own UI strings —
+// `GET /config/v1/language/defaults` → `LICENSE.NAMES`, 15 keys, read
+// 2026-08-12 — 14 licences plus `MULTI`, which is not one (see below). The mds `values` endpoint is deliberately NOT the source here:
+// asked for `ccm:commonlicense_key` it returns the bare key as its own
+// `displayString` for all 16 values in every locale, i.e. the set of values the
+// index holds rather than a captioned vocabulary. (For every other vocabulary we
+// mirror it DOES carry captions, which is why `scripts/sync-vocabs.mjs` uses it
+// for those and this resource for licences.)
+//
+// Where the repository's wording is merely different and ours is at least as
+// clear — `PDM` ("Public Domain Mark" vs the official "PDM"), `CUSTOM`, `NONE`,
+// `CC_0` — ours stays. A rename with no defect behind it is taste.
+//
+// No primary label carries a version. Measured 2026-08-12:
+// `ccm:commonlicense_version` is absent on 90 of 90 sampled CC records, is not
+// in DISPLAY_PROPS and is not facetable, so the former "CC BY 4.0" asserted a
+// fact nothing in the data supports — on 62 093 CC_BY records alone. The
+// versioned spellings are kept as ALIASES so prompts and tool descriptions that
+// already use them keep resolving.
 const LICENSE: VocabEntry[] = [
-  { id: 'CC_0',         labels: ['CC 0', 'cc0', 'public domain dedication'] },
+  { id: 'CC_0',         labels: ['CC 0', 'cc0', 'cc-0', 'public domain dedication'] },
   { id: 'PDM',          labels: ['Public Domain Mark', 'gemeinfrei'] },
-  { id: 'CC_BY',        labels: ['CC BY 4.0', 'creative commons by'] },
-  { id: 'CC_BY_SA',     labels: ['CC BY-SA 4.0', 'creative commons by-sa'] },
-  { id: 'CC_BY_ND',     labels: ['CC BY-ND 4.0', 'creative commons by-nd'] },
-  { id: 'CC_BY_NC',     labels: ['CC BY-NC 4.0', 'creative commons by-nc'] },
-  { id: 'CC_BY_NC_SA',  labels: ['CC BY-NC-SA 4.0', 'creative commons by-nc-sa'] },
-  { id: 'CC_BY_NC_ND',  labels: ['CC BY-NC-ND 4.0', 'creative commons by-nc-nd'] },
-  { id: 'COPYRIGHT_FREE', labels: ['urheberrechtsfrei', 'copyright free'] },
-  { id: 'CUSTOM',       labels: ['Individuelle Lizenz', 'custom'] },
+  { id: 'CC_BY',        labels: ['CC BY', 'CC BY 4.0', 'creative commons by'] },
+  { id: 'CC_BY_SA',     labels: ['CC BY-SA', 'CC BY-SA 4.0', 'creative commons by-sa'] },
+  { id: 'CC_BY_ND',     labels: ['CC BY-ND', 'CC BY-ND 4.0', 'creative commons by-nd'] },
+  { id: 'CC_BY_NC',     labels: ['CC BY-NC', 'CC BY-NC 4.0', 'creative commons by-nc'] },
+  // `CC_BY_SA_NC` is a legacy spelling of the same three terms carried by 497
+  // records. As an alias rather than an entry of its own, those records get a
+  // readable label and are not dropped by `filterByExactLicense` when a caller
+  // asks for CC BY-NC-SA — two keys for one licence must not read as two.
+  { id: 'CC_BY_NC_SA',  labels: ['CC BY-NC-SA', 'CC BY-NC-SA 4.0', 'creative commons by-nc-sa', 'cc_by_sa_nc'] },
+  { id: 'CC_BY_NC_ND',  labels: ['CC BY-NC-ND', 'CC BY-NC-ND 4.0', 'creative commons by-nc-nd'] },
+  // NOT "urheberrechtsfrei", which claims the opposite. The repository's own
+  // description: "Das Werk ist kostenfrei zugänglich. Nutzung und Quellenangabe
+  // gemäß den allgemeingültigen gesetzlichen Regelungen (UrhG)" — copyrighted,
+  // merely free to access. Third most common licence in the corpus (12 445
+  // records), so the wrong word was on a lot of screens. The alias is gone with
+  // it: someone typing "urheberrechtsfrei" is asking for material free OF
+  // copyright, and `gemeinfrei` → PDM is the answer to that question.
+  { id: 'COPYRIGHT_FREE', labels: ['Copyright, freier Zugang', 'copyright free'] },
+  { id: 'COPYRIGHT_LICENSE', labels: ['Copyright, lizenzpflichtig', 'copyright license'] },
+  { id: 'UNTERRICHTS_UND_LEHRMEDIEN', labels: ['§60b Unterrichts- und Lehrmedien', 'unterrichts- und lehrmedien'] },
+  { id: 'CUSTOM',       labels: ['Individuelle Lizenz', 'custom', 'andere lizenz'] },
   { id: 'NONE',         labels: ['Keine Angabe', 'no license info'] },
-  { id: 'SCHULFUNK',    labels: ['Schulfunk §47 UrhG', 'schulfunk'] },
+  // Kept although the staging index holds zero records with it: the repository
+  // lists it as a current licence, so a record carrying it must still get a
+  // label rather than the raw key.
+  { id: 'SCHULFUNK',    labels: ['Schulfunk (§47 UrhG)', 'schulfunk'] },
 ];
 
-// ── Themenseiten-Zielgruppe ──────────────────────────────────────────────────
+// ── Topic-page target audience ───────────────────────────────────────────────
 // `ccm:page_variant_profiling_target_group` is sometimes a slug,
 // sometimes a URI. Map both to readable German labels.
 
@@ -233,22 +375,65 @@ const VOCAB_MAP: Record<VocabKey, VocabEntry[]> = {
   lrt: LRT,
   license: LICENSE,
   targetGroup: TARGET_GROUP,
+  qualityFinding: QUALITY_FINDING,
 };
+
+/** How a value resolved — the caller decides what an uncertain match may do. */
+export type VocabMatchKind = 'exact' | 'alias' | 'fuzzy';
 
 /** Resolve a label or URI to a full URI. Returns null if nothing matches. */
 export function resolveVocab(input: string, vocab: VocabKey): string | null {
+  return resolveVocabMatch(input, vocab)?.value ?? null;
+}
+
+/**
+ * The same resolution, saying HOW it matched: `exact` (a URI, the repository's
+ * own key, or the main label), `alias` (another listed spelling) or `fuzzy`
+ * (substring guess). One function, so a search, a write and
+ * `resolve_wlo_filters` can never disagree about what a value means.
+ *
+ * Licences never resolve fuzzily (BOERDi wishlist 12c, 2026-11-06): the
+ * substring rule turned "CC BY NC" into `CC_BY` — the FREER licence, which is
+ * the surplus direction `filter-criteria.ts` calls harmful. A licence the table
+ * does not spell is unresolved and gets a suggestion instead.
+ */
+export function resolveVocabMatch(
+  input: string,
+  vocab: VocabKey,
+): { value: string; match: VocabMatchKind } | null {
   if (!input?.trim()) return null;
   const trimmed = input.trim();
 
-  // Already a URI
-  if (trimmed.startsWith('http')) return trimmed;
+  // Already a URI. The scheme is required: a plain word merely starting with
+  // "http" is a typo, and passing it through as a filter value produced a
+  // guaranteed empty result with no "did you mean" hint — a non-null return
+  // means "resolved" to every caller.
+  //
+  // Not for licences: WLO stores them as bare keys (`CC_BY_NC`), so a licence
+  // URI passed through as "exact" filtered on a value that matches nothing.
+  if (/^https?:\/\//i.test(trimmed)) return vocab === 'license' ? null : { value: trimmed, match: 'exact' };
 
   const lower = trimmed.toLowerCase();
   const entries = VOCAB_MAP[vocab];
-  // 1) Exact label/alias match wins — precise and order-independent.
+  // 0) Already the repository's own value. For most vocabularies the id IS a
+  //    URI and the branch above caught it; licences are the exception, where
+  //    edu-sharing stores bare keys (`CC_BY`). Without this, "label or the raw
+  //    repository value" — what every filter description promises — would hold
+  //    for every vocabulary except that one.
   for (const entry of entries) {
-    if (entry.labels.some(l => l.toLowerCase() === lower)) return entry.id;
+    if (entry.id.toLowerCase() === lower) return { value: entry.id, match: 'exact' };
   }
+  // 1) Exact label/alias match wins — precise and order-independent. As
+  //    written first, then without what merely surrounds a name ("Mathematik.",
+  //    „Mathematik“, a double space): that is the name, not a guess at one.
+  //    Labels only — a URI or a repository key above is compared as given.
+  for (const spelling of new Set([lower, bareName(lower)])) {
+    for (const entry of entries) {
+      const i = entry.labels.findIndex(l => l.toLowerCase() === spelling);
+      if (i >= 0) return { value: entry.id, match: i === 0 ? 'exact' : 'alias' };
+    }
+  }
+  if (vocab === 'license') return null;
   // 2) Fuzzy fallback, but ONLY between tokens of length >= 4 on both sides.
   //    The old unbounded bidirectional `includes` mis-resolved short inputs
   //    (e.g. "it" → "arbeit", "uni" → "kommunikation") and was order-
@@ -260,10 +445,17 @@ export function resolveVocab(input: string, vocab: VocabKey): string | null {
       if (ll.length < 4 || lower.length < 4) return false;
       return ll.includes(lower) || lower.includes(ll);
     })) {
-      return entry.id;
+      return { value: entry.id, match: 'fuzzy' };
     }
   }
   return null;
+}
+
+/** A name without surrounding quotation marks or sentence punctuation, runs of whitespace as one space. */
+function bareName(s: string): string {
+  return s.replace(/\s+/g, ' ')
+    .replace(/^[\s"'„“”‚‘’«»‹›]+/, '')
+    .replace(/[\s"'„“”‚‘’«»‹›.,;:!?]+$/, '');
 }
 
 /** Extract the trailing slug from a URI: ".../teacher" → "teacher" */
@@ -299,21 +491,45 @@ export function labelFromUri(uri: string, vocab: VocabKey): string {
     entry = entries.find(e => e.labels.some(l => l.toLowerCase() === lower));
   }
 
-  if (!entry) return uri;
-  const first = entry.labels[0];
-  // If the primary label has any uppercase already (e.g. "CC BY-SA 4.0"),
-  // assume the vocab author chose the display form deliberately — don't
-  // mangle it. Otherwise capitalize the first character so plain-lowercase
-  // labels like "mathematik" become "Mathematik".
-  if (/[A-ZÄÖÜ]/.test(first)) return first;
-  return first.charAt(0).toUpperCase() + first.slice(1);
+  // University subjects are display-only: a discipline URI from the
+  // Hochschulfächersystematik is absent from the local (school) table, but a
+  // facet or result can surface it. Resolve it to a readable label here — for
+  // DISPLAY only. It is deliberately NOT in resolveVocab (input), so a filter
+  // like discipline="Mathematik" is never ambiguous between the two vocabularies.
+  if (!entry) {
+    if (vocab === 'discipline') {
+      const uni = universitySubjectLabel(uri);
+      if (uni) return uni;
+    }
+    return uri;
+  }
+  return displayLabel(entry.labels[0]);
+}
+
+/**
+ * `labels[0]` as it should be shown.
+ *
+ * If it carries any uppercase already ("CC BY-SA 4.0", "MINT", "Sekundarstufe
+ * I"), the table author chose the display form deliberately — leave it alone.
+ * Otherwise upper-case the first character, which is all a one-word lowercase
+ * entry like "mathematik" needs.
+ *
+ * One function rather than two: `labelFromUri` had the uppercase guard and
+ * `listVocab` did not, so the two could disagree on any label that STARTS
+ * lowercase and contains capitals ("eLearning" → "eLearning" vs "ELearning").
+ * No such entry exists today (measured 2026-08-11), which is exactly why the
+ * divergence would have gone unnoticed until one was added.
+ */
+function displayLabel(raw: string): string {
+  if (/[A-ZÄÖÜ]/.test(raw)) return raw;
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 /** Return all entries of a vocabulary (for lookup tool). */
 export function listVocab(vocab: VocabKey): Array<{ uri: string; label: string; aliases: string[] }> {
   return VOCAB_MAP[vocab].map(e => ({
     uri: e.id,
-    label: e.labels[0].charAt(0).toUpperCase() + e.labels[0].slice(1),
+    label: displayLabel(e.labels[0]),
     aliases: e.labels.slice(1),
   }));
 }

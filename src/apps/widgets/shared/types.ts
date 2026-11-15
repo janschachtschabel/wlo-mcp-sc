@@ -1,0 +1,121 @@
+/**
+ * types.ts – Structural shapes the widgets render.
+ *
+ * These deliberately mirror the server's `FormattedNode` / envelope types
+ * (formatter.ts, services/*, apps/outputSchemas.ts) as plain interfaces so the
+ * widget bundle stays free of the server's `zod` runtime and edu-sharing
+ * imports. The zod `outputSchema`s remain the authoritative wire contract; if a
+ * field is added there, mirror it here. DOM-free.
+ */
+
+/** The `FormattedNode` fields the widgets read. */
+export interface WidgetNode {
+  nodeId: string;
+  title: string;
+  description: string;
+  disciplines: string[];
+  educationalContexts: string[];
+  learningResourceTypes: string[];
+  url: string;
+  contentUrl: string;
+  previewUrl: string;
+  previewIsIcon: boolean;
+  /** Present exactly when the record is NOT publicly readable: an anonymous
+   *  <img> would fetch the repository's permission shield, so the card must
+   *  not attempt the image at all (see tile.ts). */
+  isPublic?: false;
+  license: string;
+  publisher: string;
+  nodeType: 'collection' | 'content';
+  topicPageUrl: string;
+  /** How many materials a collection holds — present only when the search DTO
+   *  carried it; absence is "unknown", never zero. */
+  contentsCount?: number;
+  /** The cached skill catalogue of a collection (structural subset of the
+   *  server's `skillRegistry` field): the card shows the COUNT — the declared
+   *  total when the entry list is capped, else the entries. */
+  skillRegistry?: {
+    entries: Array<{ nodeId: string; title: string }>;
+    truncated?: { referenced: number };
+  };
+}
+
+export interface NodeList {
+  total: number;
+  count: number;
+  results: WidgetNode[];
+  /**
+   * Present only on the `content` bucket, and only when a licence was filtered
+   * AND that search actually ran. `total` counts records with exactly the
+   * licence; `count` is post-cap — neither can say that a pass removed
+   * candidates, which is what turns an empty grid from "nothing exists" into
+   * "nothing under this licence".
+   */
+  licenseFilter?: { checked: number; kept: number };
+  /** The page came back short although the catalogue holds more. */
+  more?: { nextSkipCount: number };
+  /** A source of this bucket did not answer. */
+  incomplete?: true;
+  /** A walk met a branch the repository refused to open: missing here, and no retry changes that. */
+  restricted?: true;
+}
+
+export interface WikiSummary {
+  title: string;
+  extract: string;
+  url: string;
+  thumbnail?: string;
+  lang: string;
+  /** `exact` = title/redirect as asked, `fuzzy` = resolved by search. */
+  match?: 'exact' | 'fuzzy';
+}
+
+/** `search_wlo_all` structuredContent (SearchAllEnvelope). */
+export interface SearchAllPayload {
+  query: string;
+  content: NodeList;
+  collections: NodeList;
+  topicPages: NodeList;
+  wikipedia?: WikiSummary;
+}
+
+export interface Swimlane {
+  heading: string;
+  type: string;
+  items: WidgetNode[];
+  hasMore: boolean;
+}
+
+/** `get_topic_page_content` structuredContent (SwimlanePayload). */
+export interface SwimlanePayload {
+  variantId: string;
+  collectionId: string | null;
+  variantTitle: string;
+  collectionTitle?: string;
+  description?: string;
+  topicPageUrl: string | null;
+  swimlaneCount: number;
+  swimlanesTotal: number;
+  swimlanes: Swimlane[];
+}
+
+/** A browse-tree node (`browse_collection_tree` / `get_subject_portals`). */
+export interface BrowseNode extends WidgetNode {
+  fileCount?: number;
+  subCollectionCount?: number;
+  contentPreview?: WidgetNode[];
+  children?: BrowseNode[];
+  /**
+   * The server capped this branch's children — there are more than are shown.
+   * Set by `browse_collection_tree`, which bounds depth and per-node width so a
+   * wide tree cannot cost dozens of upstream calls. The tree MUST surface this:
+   * a capped branch that looks complete misrepresents the catalogue.
+   */
+  hasMoreChildren?: boolean;
+  /** The repository refused this branch's sub-topics / its contents: unknown, not empty. */
+  childrenRefused?: boolean;
+  contentsRefused?: boolean;
+  /** They did not answer this time. */
+  childrenUnread?: boolean;
+  contentsUnread?: boolean;
+}

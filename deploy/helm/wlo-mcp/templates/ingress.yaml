@@ -1,0 +1,36 @@
+{{- if .Values.ingress.enabled }}
+# Public port only. /health, /ready and /metrics also exist on that port (the
+# server keeps them there; /metrics only with METRICS_TOKEN) — block them at the
+# controller if the platform wants them internal-only.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "wlo-mcp.fullname" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required when the Ingress is enabled" .Values.ingress.host | quote }}
+      secretName: {{ required "ingress.tls.secretName is required when ingress.tls.enabled" .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required when the Ingress is enabled" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "wlo-mcp.fullname" . }}
+                port:
+                  name: http
+{{- end }}

@@ -1,0 +1,234 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { connectedClient, installFetchMock, makeNode, toolText } from './fetchMock.js';
+
+/**
+ * `get_wlo_content_text` delivers the material's own text so a worksheet can
+ * actually be worked with, rather than only described. Metadata tools already
+ * exist; this one is about the content itself.
+ */
+
+const LONG = 'Grundwert, Prozentwert und Prozentsatz berechnen. '.repeat(20);
+
+function installMock(repoText: string, wwwurl?: string) {
+  return installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { content: repoText } };
+    if (url.includes('/metadata')) {
+      return { json: { node: makeNode('n1', 'Arbeitsblatt', {
+        'cclom:title': ['Arbeitsblatt Prozentrechnung'],
+        ...(wwwurl ? { 'ccm:wwwurl': [wwwurl] } : {}),
+      }) } };
+    }
+    if (url.includes('text-extraction')) return { json: { text: LONG, status: 200 } };
+    return { json: {} };
+  });
+}
+
+test('get_wlo_content_text: returns the material text as structured content', async () => {
+  const mock = installMock(LONG);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1', outputFormat: 'json' },
+    });
+    const sc = res.structuredContent as { text: string; source: string; title: string; truncated: boolean };
+    assert.equal(sc.source, 'repository');
+    assert.equal(sc.title, 'Arbeitsblatt Prozentrechnung');
+    assert.ok(sc.text.includes('Prozentsatz'));
+    assert.equal(sc.truncated, false);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_wlo_content_text: markdown output carries the text and names its source', async () => {
+  const mock = installMock(LONG);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1' },
+    });
+    const text = toolText(res);
+    assert.match(text, /Arbeitsblatt Prozentrechnung/);
+    assert.match(text, /Prozentsatz/, 'the material text itself');
+    assert.match(text, /Quelle:/i, 'provenance is stated, not implied');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_wlo_content_text: the markdown no-text answer is a sentence with the rule, not a slug', async () => {
+  // Live 2026-08-22: the model read `_Kein Volltext verfügbar (no_text_no_url)._`
+  // and answered with the collection's COMPENDIUM instead of relaying the
+  // negative. The sentence the model acts on is the RESULT, so the result now
+  // carries the reason in words and the no-substitution rule.
+  const mock = installMock('');
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({ name: 'get_wlo_content_text', arguments: { nodeId: 'n1' } });
+    const text = (res.content as Array<{ text: string }>)[0]!.text;
+    assert.match(text, /keinen hinterlegten Volltext/i, 'a sentence a model can relay');
+    assert.doesNotMatch(text, /no_text_no_url/, 'not a reason slug in parentheses');
+    assert.match(text, /keinen Ersatztext/i, 'the no-substitution rule rides with the answer');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_wlo_content_text: no text anywhere is a stated reason, not an error', async () => {
+  const mock = installMock('');
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1', outputFormat: 'json' },
+    });
+    assert.notEqual(res.isError, true);
+    const sc = res.structuredContent as { source: string; reason?: string };
+    assert.equal(sc.source, 'none');
+    assert.equal(sc.reason, 'no_text_no_url');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_wlo_content_text: maxChars is honoured', async () => {
+  const mock = installMock(LONG);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      // 500 is the schema minimum — below that a "full text" is not one.
+      arguments: { nodeId: 'n1', maxChars: 500, outputFormat: 'json' },
+    });
+    const sc = res.structuredContent as { truncated: boolean; charCount: number; text: string };
+    assert.equal(sc.truncated, true);
+    assert.ok(sc.charCount > 500, 'the full length is still reported');
+    assert.ok(sc.text.length < sc.charCount, 'and the delivered text is shorter');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('get_wlo_content_text is registered and describes what it is for', async () => {
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    const tool = tools.find(x => x.name === 'get_wlo_content_text');
+    assert.ok(tool, 'tool is registered');
+    const head = (tool.description ?? '').slice(0, 256).toLowerCase();
+    // The opening words, not `volltext|inhalt|text` — "text" alone is in the
+    // description of nearly every tool this server has.
+    assert.match(head, /^der inhalt eines wlo-materials/, 'names what it returns up front');
+    assert.match(head, /nicht seine metadaten/, 'and what it is not');
+    assert.equal(tool.annotations?.readOnlyHint, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test('the description tells the model WHEN to reach for the full text', async () => {
+  // Live 2026-08-05: "hole den Volltext" triggered the tool, "zeig mir den
+  // Inhalt des Arbeitsblatts" did not — the description named the capability
+  // but not the phrasings a teacher actually uses. A model picks a tool from
+  // its description; the trigger words have to be IN it.
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    const text = tools.find(x => x.name === 'get_wlo_content_text')!;
+    const details = tools.find(x => x.name === 'get_node_details')!;
+    const d = (text.description ?? '').toLowerCase();
+
+    for (const phrase of ['inhalt', 'ganzen text', 'zusammenfass', 'steht']) {
+      assert.ok(d.includes(phrase), `the description never mentions "${phrase}"`);
+    }
+    // The two are confused with each other, so each has to name the other.
+    assert.ok(d.includes('get_node_details'),
+      'it must say which tool NOT to use for the content');
+    assert.ok((details.description ?? '').includes('get_wlo_content_text'),
+      'and the metadata tool must point here for the content');
+
+    // Function descriptions are commonly capped at 1024 characters; a cap that
+    // truncates mid-sentence would cut exactly the guidance above.
+    assert.ok((text.description ?? '').length <= 1024,
+      `description is ${(text.description ?? '').length} characters, over the 1024 cap`);
+
+    // The model must not fill a missing text with invention — the one failure
+    // mode that looks like success.
+    assert.ok(d.includes('erfind'), 'it must say what to do when there is no text');
+  } finally {
+    await client.close();
+  }
+});
+
+// ── the widened ceiling (2026-08-20, user decision) ──────────────────────────
+// Full-text retrieval was schema-capped at 50 000 chars, so a long document
+// could not be fetched whole no matter what the caller asked for. The ceiling
+// is now 200 000; the DEFAULT stays 8 000, so no existing answer grows.
+
+test('get_wlo_content_text: maxChars 200000 is accepted and delivers the text uncut', async () => {
+  const big = 'Wort '.repeat(30_000) + 'LETZTES WORT DES DOKUMENTS';
+  const mock = installMock(big);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1', maxChars: 200_000, outputFormat: 'json' },
+    });
+    assert.notEqual(res.isError, true, 'the ceiling must admit 200000');
+    const sc = res.structuredContent as { text: string; truncated: boolean };
+    assert.equal(sc.truncated, false);
+    assert.ok(sc.text.endsWith('LETZTES WORT DES DOKUMENTS'), 'the tail must arrive');
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+// ── the DEFAULT is the ceiling (2026-08-20, user decision, same day) ─────────
+// First the ceiling went to 200 000 with the default left at 8 000; the user
+// then decided the default itself is 200 000 — a call that names no maxChars
+// gets the whole text.
+
+test('get_wlo_content_text: a call WITHOUT maxChars delivers a long text uncut', async () => {
+  const big = 'Wort '.repeat(30_000) + 'LETZTES WORT DES DOKUMENTS';
+  const mock = installMock(big);
+  const client = await connectedClient();
+  try {
+    const res = await client.callTool({
+      name: 'get_wlo_content_text',
+      arguments: { nodeId: 'n1', outputFormat: 'json' },
+    });
+    const sc = res.structuredContent as { text: string; truncated: boolean };
+    assert.equal(sc.truncated, false, 'the default must not cut a 150k text');
+    assert.ok(sc.text.endsWith('LETZTES WORT DES DOKUMENTS'));
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});
+
+test('not_extracted is said in words, never as the slug (review P2, finding 5)', async () => {
+  const mock = installFetchMock((url) => {
+    if (url.includes('/textContent')) return { json: { content: '' } };
+    if (url.includes('/metadata')) return { json: { node: { ...makeNode('f9', 'Gliederung'), size: '2048' } } };
+    return { json: {} };
+  });
+  const client = await connectedClient();
+  try {
+    const r = await client.callTool({ name: 'get_wlo_content_text', arguments: { nodeId: 'f9' } });
+    assert.match(toolText(r), /Datei ist vorhanden/);
+    assert.doesNotMatch(toolText(r), /not_extracted/);
+  } finally {
+    await client.close();
+    mock.restore();
+  }
+});

@@ -1,0 +1,24 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+# The access registry: an allow-list of issued access ids (ids, user names,
+# issue times — never a credential). Losing it invalidates every issued block,
+# so it belongs in the backup.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "wlo-mcp.claimName" . }}
+  labels:
+    {{- include "wlo-mcp.labels" . | nindent 4 }}
+  {{- if .Values.persistence.keep }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

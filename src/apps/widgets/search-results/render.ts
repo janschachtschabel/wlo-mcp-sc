@@ -1,0 +1,240 @@
+/**
+ * search-results/render.ts – W1 body: the combined search-results view.
+ *
+ * Pure `(SearchAllPayload, locale, state) → HTML string`, modelled on the
+ * edu-sharing search page: Themenseiten/Sammlungen as colored collection-tile
+ * rows, Inhalte as a card grid — and an IN-WIDGET detail view (Einzelansicht)
+ * that replaces the grid when a card's "Details" button was clicked. All data
+ * for the detail view is already in the structuredContent, so opening it costs
+ * no tool call. Empty sections are dropped; an all-empty payload renders a
+ * localized empty state. DOM-free and unit-tested; interactivity (clicks,
+ * focus, state) lives in `main.ts`.
+ */
+
+import { escapeHtml } from '../shared/escape.js';
+import { renderTile } from '../shared/tile.js';
+import { renderDetail } from '../shared/detail.js';
+import { t, type Locale, type StringKey } from '../shared/strings.js';
+import type { SearchAllPayload, WidgetNode } from '../shared/types.js';
+
+/** Ephemeral UI state owned by main.ts (see the Apps-SDK state guide). */
+export interface SearchResultsState {
+  selectedId?: string | null;
+  /** nodeIds ticked for "use these" — only meaningful when `canSelect`. */
+  selectedIds?: string[];
+  /** Host can inject a follow-up message; without it selection is pointless. */
+  canSelect?: boolean;
+  /** Server-inlined previews for restricted records (result `_meta`). */
+  previewData?: Record<string, string>;
+}
+
+interface SectionOptions {
+  coll?: boolean;
+  detail?: boolean;
+  selectable?: boolean;
+  selectedIds?: string[];
+  followUp?: boolean;
+  previewData?: Record<string, string>;
+}
+
+function section(titleKey: StringKey, nodes: WidgetNode[], locale: Locale, opts: SectionOptions = {}): string {
+  if (nodes.length === 0) return '';
+  // Collection/topic-page sections are grouped in a separated band (see below),
+  // so the section itself carries no extra emphasis; only its grid differs.
+  const cls = 'wlo-section';
+  const gridCls = opts.coll ? 'wlo-grid wlo-grid--coll' : 'wlo-grid';
+  const picked = new Set(opts.selectedIds ?? []);
+  const tiles = nodes.map(n => renderTile(n, {
+    locale,
+    detailButton: opts.detail,
+    selectable: opts.selectable,
+    selected: picked.has(n.nodeId),
+    followUp: opts.followUp,
+    previewData: opts.previewData,
+  })).join('');
+  return (
+    `<section class="${cls}">` +
+    `<h2 class="wlo-section__title">${escapeHtml(t(locale, titleKey))}</h2>` +
+    `<ul class="${gridCls}" role="list">${tiles}</ul>` +
+    `</section>`
+  );
+}
+
+function allNodes(payload: SearchAllPayload | undefined): WidgetNode[] {
+  return [
+    ...(payload?.content?.results ?? []),
+    ...(payload?.collections?.results ?? []),
+    ...(payload?.topicPages?.results ?? []),
+  ];
+}
+
+/**
+ * A flat `{total,count,results}` node list, as returned by every list tool that
+ * is not `search_wlo_all` (`search_wlo_content`, `get_collection_contents`,
+ * `get_related_content`).
+ */
+type FlatNodeList = {
+  query?: string; total: number; count: number; results: WidgetNode[];
+  /** search_wlo_content: the page came back short although the catalogue holds more. */
+  more?: { nextSkipCount: number };
+  /** search_wlo_collections: a collection index did not answer. */
+  incomplete?: true;
+  /** A walk met a branch the repository refused to open. */
+  restricted?: true;
+} & { [K in BoundKey]?: true };
+
+/**
+ * What a flat list says about a read that covered only a PART: a capped tree
+ * scan, a capped walk, a sample of a collection, an offset past the limit. Each
+ * is also the key of its sentence in the strings table.
+ */
+const BOUND_KEYS = ['scanCapped', 'walkCapped', 'contentsCut', 'truncated', 'skipLimitReached'] as const;
+type BoundKey = typeof BOUND_KEYS[number];
+
+/**
+ * The bounds a payload reports. Read off the flat list itself rather than
+ * carried through the envelope: they describe the answer as a whole, and
+ * `search_wlo_all` — the envelope's own shape — has none of them.
+ */
+function boundsOf(payload: SearchAllPayload | FlatNodeList | undefined): BoundKey[] {
+  if (!payload || 'content' in payload) return [];
+  return BOUND_KEYS.filter(key => payload[key] === true);
+}
+
+/**
+ * Accept both payload shapes so ONE widget serves every list tool. Which tool
+ * the model happens to pick must not decide whether the user sees a rendered
+ * result or a wall of text (live report 2026-07-30: the same request rendered
+ * differently depending on whether `search_wlo_all` or `search_wlo_content` was
+ * chosen).
+ *
+ * A flat list is split by `nodeType`: collection nodes belong in the band with
+ * their "open its contents" action, material nodes in the grid. Dropping them
+ * all into the content bucket would turn a sub-collection into a dead-end tile.
+ */
+function toEnvelope(payload: SearchAllPayload | FlatNodeList | undefined): SearchAllPayload | undefined {
+  if (!payload) return undefined;
+  if ('content' in payload) return payload;
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  const colls = results.filter(n => n.nodeType === 'collection');
+  const items = results.filter(n => n.nodeType !== 'collection');
+  const bucket = (nodes: WidgetNode[]) => ({ total: nodes.length, count: nodes.length, results: nodes });
+  return {
+    query: payload.query ?? '',
+    // `total` describes the whole upstream list; it belongs to whichever bucket
+    // actually holds the results, so paging counts stay truthful.
+    content: {
+      ...(items.length ? { ...bucket(items), total: colls.length ? items.length : payload.total ?? items.length } : bucket([])),
+      // What the flat list says about itself goes to the bucket it describes —
+      // dropped here, an exhausted page or an unreachable index rendered as "no results".
+      ...(payload.more ? { more: payload.more } : {}),
+    },
+    collections: {
+      ...(colls.length ? { ...bucket(colls), total: items.length ? colls.length : payload.total ?? colls.length } : bucket([])),
+      ...(payload.incomplete ? { incomplete: true as const } : {}),
+      // Dropped here, an empty restricted list rendered as "no results".
+      ...(payload.restricted ? { restricted: true as const } : {}),
+    },
+    topicPages: bucket([]),
+  };
+}
+
+export function renderSearchResults(
+  input: SearchAllPayload | FlatNodeList | undefined,
+  locale: Locale = 'de',
+  state: SearchResultsState = {},
+): string {
+  const payload = toEnvelope(input);
+  const bounds = boundsOf(input);
+  // Detail view first: a selected node replaces the grid entirely. An id the
+  // current payload no longer contains falls through to the grid — the widget
+  // must never go blank after a data refresh.
+  if (state.selectedId) {
+    const node = allNodes(payload).find(n => n.nodeId === state.selectedId);
+    if (node) return `<div class="wlo-results">${renderDetail(node, locale, !!state.canSelect, state.previewData)}</div>`;
+  }
+
+  const topicPages = payload?.topicPages?.results ?? [];
+  const collections = payload?.collections?.results ?? [];
+  const content = payload?.content?.results ?? [];
+
+  // A source that did not answer — whichever bucket says it.
+  const unreachable = payload?.collections?.incomplete || payload?.topicPages?.incomplete || payload?.content?.incomplete;
+
+  if (topicPages.length + collections.length + content.length === 0) {
+    // A licence pass that removed everything is a different statement from "no
+    // such material exists", and the grid cannot tell them apart on its own.
+    // Only the emptied case is explained here: when results ARE shown, the user
+    // sees material and the tool's text block carries the exact counts.
+    const lf = payload?.content?.licenseFilter;
+    const reason = lf && lf.kept === 0 && lf.checked > 0
+      ? `<p class="wlo-empty__reason">${escapeHtml(t(locale, 'noResultsLicense'))} ` +
+        `${lf.checked} ${escapeHtml(t(locale, 'licenseCandidatesChecked'))}. ` +
+        `${escapeHtml(t(locale, 'licenseFamilyHint'))}</p>`
+      : '';
+    // "No results" is a statement about the catalogue. Not made over a page that
+    // is merely exhausted, nor over a source that did not answer.
+    // Nor over a read that covered a part: dropped, a capped scan or a sampled
+    // collection with no match rendered as "Keine Treffer gefunden.".
+    const headline: StringKey = payload?.content?.more ? 'noResultsMore' : unreachable ? 'sourceUnreachable'
+      : payload?.collections?.restricted ? 'restricted' : bounds[0] ?? 'noResults';
+    return `<div class="wlo-results"><p class="wlo-empty">${escapeHtml(t(locale, headline))}</p>${reason}</div>`;
+  }
+
+  const query = escapeHtml(payload?.query ?? '');
+  // Quote marks come from the locale table: German „…“ vs English “…”.
+  const heading = query
+    ? `<h1 class="wlo-results__query">${escapeHtml(t(locale, 'resultsFor'))} ${t(locale, 'quoteOpen')}${query}${t(locale, 'quoteClose')}</h1>`
+    : '';
+
+  // edu-sharing look: the topic-page + collection tiles sit in one lightly
+  // separated band ABOVE the material grid. The band (and its divider) is
+  // dropped entirely when both are empty, so content-only results show no
+  // stray separator.
+  // Collection and topic-page tiles were dead ends: a link out to edu-sharing
+  // and nothing that continued the conversation. Each now carries the one
+  // action that does (open its contents / open its Themenseite).
+  const topicPagesHtml = section('sectionTopicPages', topicPages, locale, { coll: true, followUp: state.canSelect });
+  const collectionsHtml = section('sectionCollections', collections, locale, { coll: true, followUp: state.canSelect });
+  const band = topicPagesHtml || collectionsHtml
+    ? `<div class="wlo-results__coll-band">${topicPagesHtml}${collectionsHtml}</div>`
+    : '';
+
+  // The bar only exists once something is ticked: an always-present "0 selected"
+  // strip is noise. `aria-live="polite"` announces the changing count without
+  // interrupting, since the number updates as boxes are ticked.
+  const picked = (state.selectedIds ?? []).filter(id => content.some(n => n.nodeId === id));
+  const selectionBar = state.canSelect && picked.length > 0
+    ? `<div class="wlo-selection" aria-live="polite">` +
+      `<span class="wlo-selection__count">${picked.length} ${escapeHtml(t(locale, 'selectionCount'))}</span>` +
+      `<button type="button" class="wlo-selection__use" data-action="use-selection">${escapeHtml(t(locale, 'selectionUse'))}</button>` +
+      `<button type="button" class="wlo-selection__clear" data-action="clear-selection">${escapeHtml(t(locale, 'selectionClear'))}</button>` +
+      `</div>`
+    : '';
+
+  // Above the hits: a list a source left short, one with a closed branch, or
+  // one a bound cut, is not the whole list. `incomplete` had a sentence only
+  // for the EMPTY state — with hits shown, a search that lost a source looked
+  // like the complete answer.
+  const notes: StringKey[] = [
+    ...(unreachable ? ['sourceIncomplete' as const] : []),
+    ...(payload?.collections?.restricted ? ['restricted' as const] : []),
+    ...bounds,
+  ];
+  const restrictedNote = notes
+    .map(key => `<p class="wlo-empty__reason">${escapeHtml(t(locale, key))}</p>`)
+    .join('');
+
+  // The bar precedes the grid: without a scrollport sticky cannot hold it in
+  // view, so placing it after the results hid it behind the whole list.
+  return (
+    `<div class="wlo-results">${heading}${restrictedNote}${band}${selectionBar}` +
+    section('sectionContent', content, locale, {
+      detail: true,
+      selectable: state.canSelect,
+      selectedIds: state.selectedIds,
+      previewData: state.previewData,
+    }) +
+    `</div>`
+  );
+}

@@ -1,0 +1,129 @@
+/**
+ * rest/search-page.ts – Readable HTML view of the /api/search envelope
+ * (`?format=html`).
+ *
+ * Some AI browsing pipelines can open a user-pasted URL but only consume
+ * READER content — raw JSON is dropped (live-observed with ChatGPT,
+ * 2026-07-17: it retrieved the API URL but reported "no WLO JSON response").
+ * This renders the same envelope as a minimal, self-contained HTML page
+ * (inline CSS, no external assets), which doubles as the human-friendly share
+ * target. Pure function; every interpolated field is escaped (backend data)
+ * and links are scheme-guarded.
+ */
+
+import { escapeHtml } from '../apps/widgets/shared/escape.js';
+
+interface PageBucket {
+  total?: number;
+  count?: number;
+  results?: Record<string, unknown>[];
+  /** A source of this bucket did not answer / the page is merely exhausted — an empty page is then no finding. */
+  incomplete?: boolean;
+  more?: unknown;
+}
+
+export interface SearchPageData {
+  query?: string;
+  content?: PageBucket;
+  collections?: PageBucket;
+  topicPages?: PageBucket;
+  warnings?: string[];
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+
+/** Only plain http(s) URLs become links (backend metadata is untrusted). */
+function safeHttpHref(v: unknown): string {
+  const s = str(v).trim();
+  return /^https?:\/\//i.test(s) ? s : '';
+}
+
+/**
+ * The skills a collection declares approved, when the envelope carries them.
+ *
+ * The envelope carries it whenever the background cache knows the collection,
+ * so this page gets it without asking — and used to drop the result on the
+ * floor. An envelope field is not a disclosure if the renderer discards it.
+ */
+function registry(node: Record<string, unknown>): string {
+  const r = node['skillRegistry'] as {
+    title?: unknown; nodeId?: unknown;
+    entries?: { title?: unknown }[];
+    contexts?: { path?: unknown }[];
+  } | undefined;
+  if (!r || typeof r !== 'object') return '';
+  const name = escapeHtml(str(r.title) || str(r.nodeId) || 'Skill-Registry');
+  const total = Array.isArray(r.entries) ? r.entries.length : 0;
+  // Where the registry has an outline, the CONTEXT names are the useful short
+  // form: they say what kinds of work are covered and are what a reader would
+  // ask for next. Four skill titles out of twenty-eight said neither.
+  const contexts = (Array.isArray(r.contexts) ? r.contexts : [])
+    .map(c => str(c?.path)).filter(Boolean);
+  const detail = contexts.length
+    ? `, ${total} Skills in: ${escapeHtml(contexts.join(' · '))}`
+    : (() => {
+      const skills = (Array.isArray(r.entries) ? r.entries : [])
+        .map(e => str(e?.title)).filter(Boolean).slice(0, 4);
+      return skills.length
+        ? `: ${escapeHtml(skills.join(', '))}${total > skills.length ? ` … (${total})` : ''}`
+        : '';
+    })();
+  return `<br /><small>Skills der Sammlung (${name})${detail}</small>`;
+}
+
+function item(node: Record<string, unknown>): string {
+  const title = escapeHtml(str(node['title']) || '(ohne Titel)');
+  const href = safeHttpHref(node['url']) || safeHttpHref(node['contentUrl']) || safeHttpHref(node['topicPageUrl']);
+  const head = href ? `<a href="${escapeHtml(href)}" rel="noopener noreferrer">${title}</a>` : title;
+  const desc = str(node['description']).slice(0, 220);
+  const facts = [str(node['publisher']), str(node['license']) || 'Lizenz unklar'].filter(Boolean).join(' · ');
+  return `<li>${head}${desc ? ` — ${escapeHtml(desc)}` : ''}<br /><small>${escapeHtml(facts)}</small>`
+    + `${registry(node)}</li>`;
+}
+
+function section(heading: string, bucket: PageBucket | undefined): string {
+  const results = bucket?.results ?? [];
+  if (results.length === 0) return '';
+  return (
+    `<section><h2>${escapeHtml(heading)} (${bucket?.total ?? results.length})</h2>` +
+    `<ol>${results.map(item).join('')}</ol></section>`
+  );
+}
+
+export function renderSearchPage(data: SearchPageData): string {
+  const q = str(data.query);
+  const warnings = (data.warnings ?? []).map(w => `<p class="warn">${escapeHtml(str(w))}</p>`).join('');
+  const jsonHref = q ? `/api/search/${encodeURIComponent(q)}` : '/api/search/';
+  const body =
+    section('Inhalte', data.content) +
+    section('Sammlungen', data.collections) +
+    section('Themenseiten', data.topicPages);
+  // "Keine Treffer." is a statement about the catalogue: not beside a warning
+  // that a source did not answer or that the page is merely exhausted.
+  const notAFinding = Boolean(data.collections?.incomplete || data.topicPages?.incomplete || data.content?.more || data.content?.incomplete);
+  const empty = body || notAFinding
+    ? ''
+    : `<p>Keine Treffer.${q ? '' : ' Suchbegriff in den Pfad setzen: /api/search/&lt;Begriff&gt;?format=html'}</p>`;
+  return (
+    '<!doctype html>\n<html lang="de"><head><meta charset="utf-8" />' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1" />' +
+    `<title>WLO-Suche${q ? `: ${escapeHtml(q)}` : ''}</title>` +
+    // The palette below is a LIGHT one. It must say so: without an explicit
+    // background a browser in dark mode paints its own dark canvas under the
+    // near-black text (measured 2026-08-03: ~1.1:1, unreadable). `color-scheme`
+    // makes the UA agree — canvas, scrollbars and form controls alike.
+    '<style>:root{color-scheme:light}' +
+    'body{font:16px/1.55 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;' +
+    'color:#1a1a1a;background:#ffffff}' +
+    'h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:1.6rem}ol{padding-inline-start:1.2rem}li{margin:0 0 .7rem}' +
+    'small{color:#565656}.warn{background:#fff4d6;padding:.5rem .8rem;border-radius:6px}a{color:#14539a}</style>' +
+    `</head><body><h1>WLO-Suchergebnisse${q ? `: „${escapeHtml(q)}“` : ''}</h1>` +
+    warnings +
+    body +
+    empty +
+    `<p><small><a href="${escapeHtml(jsonHref)}">JSON-Ansicht</a> · Öffentliche, nur lesende WirLernenOnline-API</small></p>` +
+    '</body></html>\n'
+  );
+}
