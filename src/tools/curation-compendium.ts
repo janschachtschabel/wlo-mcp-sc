@@ -65,7 +65,8 @@ export function registerCurationCompendiumTool(server: McpServer, challenge: Wri
       remove: z.boolean().optional().describe('true entfernt den vorhandenen Text.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // The same text again is an empty change set; removing twice finds nothing to remove.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

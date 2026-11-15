@@ -65,7 +65,18 @@ import {
   candidatesField,
 } from './curation-shared.js';
 
-const WRITE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+/**
+ * `idempotentHint` per tool, not per file: it says what a second, identical run
+ * (fresh preview, fresh confirmation) does. Creating makes a second collection;
+ * renaming to the title it has, filing what is filed and removing what is gone
+ * leave the repository as it is — mostly answered without a key; where a key is
+ * still issued (a proposal for a collection the login cannot write, a listing
+ * too long to check) the confirmation changes nothing: the repository answers
+ * the repeated proposal 409 (measured 2026-11-14). One constant said `false`
+ * for all four until 2026-11-15, while the batch siblings said `true`.
+ */
+const CREATE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+const SETTLED_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: true };
 
 /**
  * A collection's own title and description. Both are written by these tools, so
@@ -119,7 +130,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       parentId: z.string().optional().describe('nodeId der übergeordneten Sammlung; weglassen für oberste Ebene.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: CREATE_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -207,7 +218,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       description: z.string().optional().describe('Neue Beschreibung.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: SETTLED_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();
@@ -274,7 +285,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       nodeId: z.string().describe('nodeId des Materials.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: SETTLED_ANNOTATIONS,
     handler: (params) => referenceHandler(params, {
       verb: 'Aufnehmen',
       action: (material, collection, ids) =>
@@ -305,7 +316,7 @@ export function registerCurationCollectionTools(server: McpServer, challenge: Wr
       nodeId: z.string().describe('nodeId des Materials.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: WRITE_ANNOTATIONS,
+    annotations: SETTLED_ANNOTATIONS,
     handler: (params) => referenceHandler(params, {
       verb: 'Herausnehmen',
       action: (material, collection, ids) =>

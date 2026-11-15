@@ -61,7 +61,8 @@ export function registerCurationDeleteTools(server: McpServer, challenge: WriteA
       'Vorschau sagt, welcher der beiden Fälle vorliegt. Nur für einzelne Datensätze: eine Sammlung oder ein ' +
       'Ordner wird abgelehnt. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    // Deleting what is gone answers `not_found` and sends nothing.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     handler: (params) => runDeletion(params, {
       kind: 'content',
       whatItMeans:
@@ -91,7 +92,8 @@ export function registerCurationDeleteTools(server: McpServer, challenge: WriteA
       'Nur für Sammlungen: ein Datensatz oder Ordner wird abgelehnt. ZWEISTUFIG: ohne confirmToken wird nur ' +
       'gezeigt, was gelöscht würde. Erfordert eine Anmeldung.',
     inputSchema: deleteSchema,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    // Deleting what is gone answers `not_found` and sends nothing.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     handler: (params) => runDeletion(params, {
       kind: 'collection',
       // Measured 2026-08-09 (skill wlo-collections-references): a record that

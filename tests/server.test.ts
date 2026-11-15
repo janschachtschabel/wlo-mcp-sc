@@ -126,6 +126,29 @@ test('openWorldHint is true exactly for the tools that leave the repository', as
   } finally { await client.close(); }
 });
 
+test('idempotentHint says what a second, identical run does', async () => {
+  // The hint is true when running the same operation again — a fresh preview
+  // and a fresh confirmation with the same arguments — leaves the repository
+  // as it is, in EVERY mode of the tool. Read per tool on 2026-11-15: the
+  // value had been set by copy, so of two siblings that both answer "already"
+  // one said true and one false (`wlo_submit_contents` / `wlo_submit_content`,
+  // `wlo_delete_collections` / `wlo_delete_collection`).
+  // The five that stay false do something again: a second record or collection,
+  // a re-sent upload, a second set of proposals.
+  const again = ['wlo_create_collection', 'wlo_create_content', 'wlo_suggest_metadata', 'wlo_update_content', 'wlo_update_contents'];
+  const client = await connectedClient();
+  try {
+    const { tools } = await client.listTools();
+    const writes = tools.filter(t => t.annotations?.readOnlyHint === false);
+    assert.equal(writes.length, 24);
+    assert.deepEqual(writes.filter(t => t.annotations?.idempotentHint !== true).map(t => t.name).sort(), again);
+    for (const t of writes) assert.equal(typeof t.annotations?.idempotentHint, 'boolean', `${t.name} declares idempotentHint`);
+    // On a read-only tool the hint means nothing (MCP: "meaningful only when readOnlyHint == false").
+    const reads = tools.filter(t => t.annotations?.readOnlyHint !== false);
+    assert.deepEqual(reads.filter(t => t.annotations?.idempotentHint !== undefined).map(t => t.name), []);
+  } finally { await client.close(); }
+});
+
 test('every tool declares the required destructiveHint + openWorldHint annotations', async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();

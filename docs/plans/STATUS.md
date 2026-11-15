@@ -50,6 +50,9 @@ diese Datei über rund 100 Zeilen wächst.
   das Repository verlassen; alle übrigen Dokumente gegen den Code gelesen;
   `docs/STECKBRIEF-UEBERGABE.md` nach der Übergabe-Vorlage. Antwort ans Team:
   `2026-11-15-antwort-sammlungsstrukturen-3.md`.
+- **2026-11-15 — `idempotentHint` angeglichen.** Je Schreibwerkzeug gelesen, was ein zweiter gleicher Durchlauf
+  sendet; `true` bei 19, `false` bei den fünf, die erneut etwas anlegen oder senden. Lesewerkzeuge tragen das
+  Merkmal nicht mehr. Technischer Owner im Übergabe-Steckbrief: T4.
 - **Zur Entscheidung des Nutzers:** `tools/list` misst 231 306 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

@@ -466,3 +466,18 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   and `wlo_create_collection` refuses a parent the caller may not write before any key.
   (7) `TypeError: terminated` (the connection broke while the body was read) is an open outcome
   (`isConnectionLost`), and no accident (`src/accident.ts`).
+
+- **`idempotentHint` is a statement about the second run (2026-11-15).** It is `true` only when the same operation
+  run again — a fresh preview and a fresh confirmation with the same arguments, not the spent key — leaves the
+  repository as it is in EVERY mode of the tool; one mode that writes again (a file upload in `wlo_update_content`, the
+  proposal route in `wlo_update_contents`) makes the tool `false`. It was set by copy before, so siblings disagreed.
+  The list of tools that stay `false` is pinned in `tests/server.test.ts`; a new write tool is decided there on
+  purpose. Not measured, read from code: whether the repository stores a new version for a byte-identical upload, and
+  whether a stored value that differs from the sent one (normalised text) makes a change set that never empties.
+  Three places where `true` rests on more than our own check: a PROPOSAL for a collection the login cannot write
+  is sent again on every run and changes nothing only because the repository answers 409 (measured 2026-11-14); a
+  material that lies TWICE in one collection (an older state — a second filing answers 409 today) loses one
+  reference per removal by its original id; `wlo_order_collection` answers `no_change` only when the listing
+  returns a position for every child, otherwise it sends the same order again. The batch store tools stay `false`:
+  they answer `already` for the spent approval only, and a fresh one files again.
+  Read-only tools carry no `idempotentHint`.

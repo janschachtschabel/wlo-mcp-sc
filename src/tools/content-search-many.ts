@@ -122,7 +122,7 @@ NICHT: kein Blättern, keine Gesamtzahl, kein Volltext — "more" sagt nur, dass
       outputFormat: z.enum(['markdown', 'json']).optional().default('markdown'),
     },
     outputSchema: searchManySchema,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true },
     handler: async (params) => {
       const shared = {
         educationalContext: params.educationalContext, discipline: params.discipline, userRole: params.userRole,

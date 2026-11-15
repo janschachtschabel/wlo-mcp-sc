@@ -108,7 +108,7 @@ Nicht für die thematische Suche — dafür search_wlo_content.`,
       includeCollections: z.boolean().optional().default(false).describe('Je Treffer die Zahl der Sammlungen mitliefern.'),
     },
     outputSchema: urlLookupSchema,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true },
     handler: async (params) => {
       const urls = params.urls as string[];
       const results = (await mapPool(urls, URL_POOL, url => lookUp(url, params.includeCollections === true)))

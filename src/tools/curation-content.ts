@@ -534,7 +534,8 @@ export function registerCurationContentTools(server: McpServer, challenge: Write
       'versehentlich in der Redaktions-Warteschlange landet. ZWEISTUFIG: ohne confirmToken nur Vorschau. ' +
       'Erfordert eine Anmeldung.',
     inputSchema: submitSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // A second submission answers `already_submitted` before any key.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

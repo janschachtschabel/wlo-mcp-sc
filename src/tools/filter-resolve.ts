@@ -57,7 +57,7 @@ Nicht für die Liste ALLER Werte eines Vokabulars — dafür lookup_wlo_vocabula
       }).describe(`Je Vokabular höchstens ${MAX_VALUES} Werte.`),
     },
     outputSchema: filterResolutionSchema,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true },
     handler: async (params) => {
       const resolution = resolveFilters(params.filters ?? {});
       const lines: string[] = [];

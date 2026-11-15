@@ -65,7 +65,8 @@ export function registerCurationDecisionTool(server: McpServer, challenge: Write
       decision: z.enum(['accept', 'decline']).describe('accept übernimmt den Wert, decline lehnt ihn ab.'),
       confirmToken: CONFIRM_TOKEN,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // Only a pending suggestion is decidable: the same decision again answers `already_decided`.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params: Record<string, unknown>) => {
       try {
         requireWrite();

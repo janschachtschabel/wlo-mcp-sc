@@ -14,7 +14,7 @@ Legende: **vorhanden** · **nicht vorhanden** · **geprüft** (Antwort in Klamme
 | **Service** | `wlo-mcp` (WLO MCP Server). Derselbe Name für Paket, Image, Compose-Dienst, Chart und Log-Feld `service`. |
 | **Funktionalität** | Macht die Inhalte von WirLernenOnline für KI-Assistenten über das Model Context Protocol nutzbar: 34 Lese-Werkzeuge (Suche, Sammlungen, Themenseiten, Details, Volltexte, Skills) und 26 Kuratier-Werkzeuge für angemeldete Personen (anlegen, bearbeiten, einsortieren, einreichen). Dazu eine kleine REST-Fläche und vier Widgets. |
 | **Stabile Version** | **In Klärung** — `package.json` trägt `1.1.0`; die Versionsnummer für die Übergabe und ihr Tag stehen aus. |
-| **Technischer Owner** | **In Klärung** — Repository-Eigentümer ist `janschachtschabel`; Ansprechperson und Vertretung für den Betrieb sind nicht festgelegt. |
+| **Technischer Owner** | **vorhanden** — T4 (festgelegt 2026-11-15). Eine Vertretung ist nicht benannt. Repository-Eigentümer auf GitHub ist `janschachtschabel`. |
 | **Jira** | **nicht vorhanden** |
 | **Repository** | **vorhanden** ([github.com/janschachtschabel/wlo-mcp-sc](https://github.com/janschachtschabel/wlo-mcp-sc) — dorthin wird der aktuelle Stand veröffentlicht, dort läuft die Pipeline). Ein Umzug in die GitLab-Gruppe der Metadienste ist nicht erfolgt. |
 | **OpenAPI Spec** | **vorhanden** als Datei ([`docs/openapi.yaml`](openapi.yaml), OpenAPI 3.1, von einem Test gegen den Code geprüft). **Kein Endpunkt** — der Dienst liefert die Spezifikation nicht selbst aus. Sie beschreibt die HTTP-Fläche außerhalb von MCP; die Werkzeuge beschreibt `tools/list`. |
@@ -79,7 +79,7 @@ Legende: **vorhanden** · **nicht vorhanden** · **geprüft** (Antwort in Klamme
 Aus STECKBRIEF.md §14, soweit für die Übergabe nötig:
 
 - Versionsnummer und Tag für die Übergabe.
-- Ansprechperson und Vertretung; Jira-Projekt.
+- Vertretung für den technischen Owner (T4); Jira-Projekt.
 - Ziel-Repository in GitLab und Image-Registry (wer baut, welche Marke, öffentlich oder intern).
 - Abstimmung der zwei Abweichungen vom Service-Leitfaden (nicht hinter der B-API; eine Instanz).
 - Plattform-Angaben für den Chart: Namespaces für die NetworkPolicy, Ingress-Controller und ob er die

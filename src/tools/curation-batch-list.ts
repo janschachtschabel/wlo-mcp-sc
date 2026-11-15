@@ -70,7 +70,7 @@ Grundlage ist der Vorgang (vorgang.json) bzw. seine Kennzahlen am Datensatz; ein
       nodeId: z.string().max(200).optional().describe('manifestNodeId einer eigenen Ablage — dann mit allen Einträgen.'),
     },
     outputSchema: myBatchesSchema,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true },
     handler: async (params) => {
       const refusal = personalRefusal();
       if (refusal) {

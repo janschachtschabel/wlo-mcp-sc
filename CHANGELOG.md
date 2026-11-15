@@ -6,6 +6,19 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — `idempotentHint` says what a second run does (2026-11-15)
+
+- The hint was set by copy: of two siblings that both answer "already", one said `true` and one `false`. Read per
+  tool what a second, identical run (fresh preview, fresh confirmation) sends. `true` now for every write tool whose
+  second run leaves the repository as it is in every mode — newly `wlo_submit_content`, `wlo_attach_fulltexts`,
+  `wlo_rename_collection`, `wlo_add_to_collection`, `wlo_remove_from_collection`, `wlo_create_collection_tree`,
+  `wlo_update_compendium`, `wlo_decide_suggestion`, `wlo_delete_content`, `wlo_delete_collection`. `false` stays on
+  the five that do something again: `wlo_create_content`, `wlo_create_collection` (a second record), `wlo_update_content`
+  (a file is sent again), `wlo_update_contents`, `wlo_suggest_metadata` (the same proposals again).
+- Read-only tools no longer carry the hint (five did); the protocol gives it no meaning there.
+- No name, parameter or answer changed. Pinned by a test in `tests/server.test.ts`.
+- Hand-over sheet: technical owner is T4.
+
 ### Added — the tree in an order that always fits, counts faster, and where it could not read (wishes S11–S13, 2026-11-15)
 
 Measured anonymously against staging before it was built (`npm run measure:tree`); one review, 0 critical, 1 major,

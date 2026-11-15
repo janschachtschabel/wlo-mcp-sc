@@ -326,7 +326,7 @@ Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit
 
 - [ ] **Image-Registry und Sichtbarkeit:** wohin das Image veröffentlicht wird, öffentlich oder
       intern, und wer es mit welcher Marke (Version = `package.json`) baut.
-- [ ] **Ansprechperson und Vertretung** für den Dienst.
+- [ ] **Vertretung** für den Dienst. Technischer Owner ist T4 (festgelegt 2026-11-15).
 - [x] **Service-ID:** `wlo-mcp`, entschieden 2026-11-13 — Paket, Image, Compose-Dienst, Log-Feld `service` und Chart tragen denselben Namen.
 - [x] **Vorgabe für `WLO_REPOSITORY_URL` im Code:** bleibt (entschieden 2026-11-13). Ohne B-API hat der
       Dienst keine andere Quelle für die Adresse, und Installationen ohne jede Variable würden nicht mehr

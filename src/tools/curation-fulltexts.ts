@@ -66,7 +66,8 @@ Ohne Schlüssel: Vorschau mit counts {new, replaced, unchanged, refused}, refuse
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // The same texts again are all `unchanged`, answered without a key (as `wlo_attach_fulltext`).
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
       const raw = params['items'] as Array<Record<string, unknown>>;

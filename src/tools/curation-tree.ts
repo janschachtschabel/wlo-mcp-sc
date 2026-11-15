@@ -114,7 +114,8 @@ Grenzen: höchstens ${MAX_CHILDREN} Kinder je Knoten, Tiefe 4, 250 Knoten. Antwo
       confirmToken: z.string().max(200).optional(),
       continuationToken: z.string().max(200).optional(),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    // The same tree again finds every collection `existing` (merge) or is refused (fail): nothing is created.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
       const parentId = String(params['parentCollectionId']).trim();

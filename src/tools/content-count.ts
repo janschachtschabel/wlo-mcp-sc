@@ -54,7 +54,7 @@ Zählt über ganz WLO, nicht in einer Sammlung (für Teilbäume: browse_collecti
         .describe(`Treffer je Anfrage (0–${MAX_TOP}, Vorgabe 2).`),
     },
     outputSchema: countMatchesSchema,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true },
     handler: async (params) => {
       try {
         const answer = await countMatches(params.queries, params.top ?? 2);

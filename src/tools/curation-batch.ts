@@ -243,6 +243,7 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       index: z.number().int().min(0).max(MAX_ENTRIES - 1),
       ref: z.string().regex(/^[A-Za-z0-9_-]{20,64}$/),
     },
+    // `already` only under the SAME batch token; a fresh approval files the same file again.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params) => {
       const wer = personal(challenge);
@@ -315,6 +316,7 @@ export function registerCurationBatchTools(server: McpServer, challenge: WriteAu
       `Lege vorgang.json (${MANIFEST_FORMAT}, mit der Rolle jeder Datei) zum freigegebenen Stapel in denselben Ordner — vom Server aus ` +
       'der Freigabe und den Ergebnissen gebaut, einmal je Stapel. Für das Upload-Modul des Chatbots.',
     inputSchema: { batchToken: z.string().min(10).max(200) },
+    // `already` only under the SAME batch token; a fresh approval writes a second manifest.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     handler: async (params) => {
       const wer = personal(challenge);
