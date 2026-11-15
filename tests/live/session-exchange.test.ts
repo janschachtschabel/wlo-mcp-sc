@@ -24,6 +24,7 @@ import { loadAuthKeys } from '../../src/auth/access-token.js';
 import { openRegistry } from '../../src/auth/access-registry.js';
 import { credentialFromHeader, runWithCredential, setAccessSupport } from '../../src/auth/credential.js';
 import { checkIdentity } from '../../src/auth/identity.js';
+import { readAuthStatus } from '../../src/auth/auth-status.js';
 import { createDistinctValueLimiter } from '../../src/rate-limit.js';
 import { IDENTITY_URL, WLO_REPOSITORY_URL } from '../../src/wlo-config.js';
 import { wloFetch } from '../../src/wlo-fetch.js';
@@ -98,4 +99,8 @@ test('a real session becomes a block, reads as its person, and is refused out lo
     assert.notEqual(id.authority, 'esguest', 'and it is not answered as the guest either');
     assert.equal((await ask()).status, 401, 'a search is refused, not answered with the public results');
   });
+  // What the chatbot team reads (their 1c): an answer, not an outage — and the block's own end.
+  const status = await readAuthStatus(after);
+  assert.deepEqual([status.authenticated, status.upstream, status.authority, status.credential], [false, 'ok', null, 'session']);
+  assert.ok(status.expiresAt, 'expiresAt is named for a session block');
 });

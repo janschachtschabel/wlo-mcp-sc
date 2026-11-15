@@ -61,6 +61,9 @@ diese Datei über rund 100 Zeilen wächst.
   Vorher gemessen (`scripts/session-disableguest-probe.mjs`), Live-Test mit echter Sitzung grün. Plan fürs
   Chatbot-Team: `2026-11-15-chatbot-anmeldung-aus-der-sitzung.md`. B-API-Betrieb bleibt Entwurf: dort läuft
   bisher nur das Lesen von Metadaten.
+- **2026-11-15 — Rückmeldung des Chatbot-Teams zum Sitzungs-Tausch:** Sitzungs-Block an seine Eintragung
+  gebunden (Widerruf und Ablauf bleiben bestehen), Helm-Regel `sessionIngress`. Antwort:
+  `2026-11-15-antwort-chatbot-sitzung.md`. Offen beim Nutzer/T6: ob der MCP im Cluster des Repositorys läuft.
 - **2026-11-15 — zweites Review des Sitzungs-Tauschs** (1 groß: Rollback-Sicherheit der Registry; 5 klein,
   9 Randnotizen), alles behoben. Dazu `docs/WERKZEUGE.md` (alle 64 Werkzeuge, eine Zeile je Werkzeug) und
   `docs/architektur-grafik.html` (Archify).

@@ -74,8 +74,10 @@ wlo2.<b64u(wrappedKey)>.<b64u(iv)>.<b64u(ciphertext||gcmTag)>
   wraps that key. Hybrid rather than plain RSA because OAEP caps the plaintext at
   190 bytes — a long password plus the id can exceed it, and the failure would
   hit only some users and only in production.
-- The payload is `{ v: 2, jti, u, secret, iat }`: the access id, the WLO user
-  name, the password, and the issuing browser's clock.
+- The payload is `{ v: 2, jti, u, secret, iat }` (plus `k` for a ticket or
+  session block): the access id, the WLO user name, the password, and the
+  issuing browser's clock — for a session block the server's listing instant
+  instead, compared exactly (§5d).
 - **Everything is inside the AEAD, especially the `jti`.** Revocation acts on
   that id, so an id sitting *outside* the authenticated payload could be swapped
   — a holder of a revoked block would splice in one that is still listed and
@@ -111,7 +113,7 @@ everything and people fetch a new one. Inconvenient beats unsafe, so *every*
 failure here closes the door: only an **absent** file counts as "first start". A
 present-but-unreadable or malformed one disables the feature and logs why.
 
-**It holds ids, never credentials** — `{ jti, label, iat }` plus the optional kind `k`, expiry `exp` and confirmed account name `acct`, and nothing else,
+**It holds ids, never credentials** — `{ jti, label, iat }` plus the optional kind `k`, session marker `sess`, expiry `exp` and confirmed account name `acct`, and nothing else,
 asserted by test. It is also the only module in this project that writes to disk
 at runtime, which is why the container mounts exactly one writable volume and
 keeps everything else read-only. `tests/shared-rule-discipline.test.ts` enforces
@@ -462,7 +464,8 @@ browser), so the embedding page must template it server-side.
 For the same widget as §5c when the page has **no ticket to hand over**. Off
 unless `WLO_SESSION_EXCHANGE` is set, because it only works in one deployment
 shape: this path is reachable **on the repository's host below `/edu-sharing`**
-(an ingress rule that rewrites, say, `/edu-sharing/services/wlo-mcp/auth/session`
+(an ingress rule that forwards, say, `/edu-sharing/services/wlo-mcp/auth/session` unchanged, named in
+`WLO_SESSION_MOUNT_PATH` — no rewrite, which on ingress-nginx would switch the whole host to regex paths; or one that rewrites it
 to `/auth/session`). The session cookie reaches the server only there:
 `JSESSIONID` is `HttpOnly` with `Path=/edu-sharing`, so no script can read it and
 hand it over (measured 2026-08-12). It carries no `SameSite` attribute, so what a
@@ -533,12 +536,25 @@ session lives. It is no new right (that script can already act with the session
 inside the browser), it ends with the session (401, measured), and it is why the
 path is off by default.
 
-Two limits worth knowing. **Revoking a session block (or a ticket block) lasts
-until the next exchange**: the access id is derived from the session, so the
-next page load lists the same id again and an old copy of the block works again.
-Only ending the repository session is final. And **the twelve hours are not
-extended by exchanging again**: the entry keeps its first expiry; after it, the
-next exchange of a still-living session lists it anew.
+**A session block belongs to one listing of its id** (chatbot team, 2026-11-15).
+The id is derived from the session, so after a revocation or after the twelve
+hours the next exchange of a still-living session lists the SAME id again.
+Without a second binding every block of the earlier listing would have worked
+again with it — one taken in the first hour, or the one a person had just
+revoked in another tab. The block therefore carries the listing's `iat` (seconds
+with a millisecond fraction, never rounded) and the decoder compares it with the entry: a revoked or expired
+listing stays dead, while a reload during a listing gets a block of that same
+listing — decided inside the registry's serialised write, so two tabs
+exchanging at once share one listing. What the next exchange still does is sign the person in again — they
+ARE signed in to the repository; only ending that session ends access for good.
+
+**The twelve hours are not extended by exchanging again**: the entry keeps its
+first expiry; after it, the next exchange of a still-living session lists it
+anew, and the blocks of the old listing do not come back.
+
+Ticket blocks keep the behaviour of §5c (logging out lasts until the next
+exchange of the same ticket, R2, decided 2026-11-07); the binding above is for
+session blocks only.
 
 Not measured: whether the repository keeps a session id across a change of
 login (the exchange replaces the entry if it does), whether every endpoint

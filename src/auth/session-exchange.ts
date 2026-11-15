@@ -71,27 +71,32 @@ export async function exchangeSession(
   if (!identity.authority) return { ok: false, status: 400, error: REFUSED };
 
   const jti = sessionJti(session.sessionId);
-  const iat = Math.floor(now / 1000);
+  // A block belongs to ONE listing of its id (chatbot team, 2026-11-15). The id
+  // is derived from the session, so after a revocation or after the twelve
+  // hours the next exchange lists the SAME id again — and every block of the
+  // earlier listing would have worked again with it: one taken in the first
+  // hour, or the one a person just revoked in another tab. The block therefore
+  // carries the listing's `iat`, and the decoder compares it
+  // (`credentialFromAccessBlock`). While the id stays listed, a reload gets a
+  // block of the same listing; a new listing gets a new instant, to the
+  // millisecond, so a revocation and a re-exchange in the same second differ.
+  //
+  // The same session id under ANOTHER person (not measured whether the
+  // repository keeps a session id across a change of login) is a new listing too.
+  //
+  // Decided inside the registry's serialised write (`listUnlessListed`): two
+  // tabs exchanging at once must not both start a listing, or the first one's
+  // block is dead on arrival. Listed with the twelve-hour end of every block
+  // that appeared because somebody opened a page (see `ticket-exchange.ts`).
+  const iatNow = now / 1000;
+  const listed = await deps.support.registry.listUnlessListed({
+    jti, label: identity.authority, iat: iatNow, exp: iatNow + SESSION_BLOCK_TTL_S, k: 'ticket', sess: true,
+    ...(identity.account ? { acct: identity.account } : {}),
+  }, now);
   const block = encodeAccessToken(
-    { v: 2, jti, u: identity.authority, secret: session.cookie, iat, k: 'session' },
+    { v: 2, jti, u: identity.authority, secret: session.cookie, iat: listed.iat, k: 'session' },
     deps.support.keys.publicKeyPem,
   );
-  // Listed once per session, with the twelve-hour end of every block that
-  // appeared because somebody opened a page (see `ticket-exchange.ts`).
-  //
-  // The same session id under ANOTHER person: whether the repository keeps a
-  // session id across a change of login is not measured, so both answers are
-  // handled — the entry is replaced. Left in place, the new person got a block
-  // the label check refuses, and the earlier person's block would act upstream
-  // as the new one while being counted as the old.
-  // `add` replaces an entry under the same id in one write.
-  const listedFor = deps.support.registry.has(jti, now) ? deps.support.registry.labelOf(jti) : undefined;
-  if (listedFor !== identity.authority) {
-    await deps.support.registry.add({
-      jti, label: identity.authority, iat, exp: iat + SESSION_BLOCK_TTL_S, k: 'ticket', sess: true,
-      ...(identity.account ? { acct: identity.account } : {}),
-    });
-  }
   log.info('session exchanged for an access block', { label: logAccount(identity.authority) });
   return {
     ok: true, block, authority: identity.authority,

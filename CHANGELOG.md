@@ -6,6 +6,22 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — after the chatbot team's answer on the session exchange (2026-11-15)
+
+- **A session block belongs to one listing.** It carries the listing's `iat` and is refused once that listing is
+  gone: a revoked block, or one from before the twelve-hour end, no longer comes back when the same session is
+  exchanged again (in another tab, or by the widget's silent renewal). Ticket blocks are unchanged (R2).
+- **Helm: `sessionIngress`** — an optional second Ingress on the repository's host for exactly
+  `<path>/auth/session` (below `/edu-sharing/`), forwarded unchanged. Enabling it sets `WLO_SESSION_EXCHANGE` and
+  the new **`WLO_SESSION_MOUNT_PATH`**, at which the server answers the exchange itself — no rewrite annotation,
+  which on ingress-nginx would switch every path of the repository's host to regex matching.
+  `createIngress: false` switches the exchange on without the object; `controllerNamespace` widens the
+  NetworkPolicy for the repository host's controller. `config.WLO_SESSION_EXCHANGE` and
+  `config.WLO_SESSION_MOUNT_PATH` are refused; a path of anything but plain segments fails the render.
+- Two tabs exchanging the same session at once share one listing (decided inside the registry's write).
+- Review of this package: 1 major (the rewrite), 5 minor, 8 nits, all worked; a second review of the fixes:
+  5 minor, 4 nits, all worked.
+
 ### Added — the session of a repository page becomes a login (`POST /auth/session`, optional, 2026-11-15)
 
 Off unless `WLO_SESSION_EXCHANGE=1`; without it nothing changes and the server reads no cookie anywhere.

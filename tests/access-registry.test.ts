@@ -548,3 +548,29 @@ test('noteAccount adds the confirmed account to a legacy entry and keeps everyth
   await registry.noteAccount('unbekannt', 'x');
   assert.equal(registry.known('unbekannt'), false);
 });
+
+test('listUnlessListed: a failed write lists nothing, keeps the order and rejects', async (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, 'registry.json');
+  const registry = await opened(path);
+  await registry.add(entry('first'));
+  await registry.add(entry('second'));
+  mkdirSync(`${path}.tmp`);
+  await assert.rejects(registry.listUnlessListed(entry('lost'), Date.now()));
+  assert.equal(registry.has('lost'), false);
+  rmSync(`${path}.tmp`, { recursive: true });
+  await registry.add(entry('third'));
+  const onDisk = JSON.parse(readFileSync(path, 'utf8')) as { entries: { jti: string }[] };
+  assert.deepEqual(onDisk.entries.map((e) => e.jti), ['first', 'second', 'third'], 'order unchanged by the failed call');
+});
+
+test('listUnlessListed: a listing that has expired by the time the write runs is not reused', async (t) => {
+  // The caller's clock is read before the login proof and the wait in the write
+  // queue; a reload right at the end must not get a block of a listing that is
+  // over by the time it is decided.
+  const registry = await opened(join(tempDir(t), 'registry.json'));
+  const nowS = Date.now() / 1000;
+  await registry.add({ ...entry('s'), iat: nowS - 100, exp: nowS - 1 });
+  const listed = await registry.listUnlessListed({ ...entry('s'), iat: nowS, exp: nowS + 100 }, (nowS - 10) * 1000);
+  assert.equal(listed.iat, nowS, 'a new listing, though the caller\'s clock still said "listed"');
+});

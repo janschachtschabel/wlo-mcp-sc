@@ -15,12 +15,17 @@ data:
   PORT: {{ .Values.service.public.port | quote }}
   INTERNAL_PORT: {{ .Values.service.internal.port | quote }}
   WLO_AUTH_REGISTRY_PATH: "/data/access-registry.json"
+  {{- if .Values.sessionIngress.enabled }}
+  # The session exchange exists exactly when its path is routed (ingress-session.yaml).
+  WLO_SESSION_EXCHANGE: "1"
+  WLO_SESSION_MOUNT_PATH: {{ include "wlo-mcp.sessionMountPath" . | quote }}
+  {{- end }}
   {{- range $name, $value := .Values.config }}
   {{- if has $name $secret }}
   {{- fail (printf "config.%s: this is a credential — put it into the Secret named by existingSecret, never into values" $name) }}
   {{- end }}
   {{- if has $name $fixed }}
-  {{- fail (printf "config.%s is set by the chart itself (repositoryUrl, service.*.port, the /data mount)" $name) }}
+  {{- fail (printf "config.%s is set by the chart itself (repositoryUrl, service.*.port, the /data mount, sessionIngress)" $name) }}
   {{- end }}
   {{- if not (kindIs "string" $value) }}
   {{- fail (printf "config.%s must be a string — quote it (or use --set-string); a bare number can render in scientific notation" $name) }}

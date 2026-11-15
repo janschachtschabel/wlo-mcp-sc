@@ -108,7 +108,8 @@ dabei **nicht** hinter der B-API; ihr ruft ihn direkt.
   Sitzung im Repository endet (Abmelden, Zeitablauf). Ein weiterer Tausch vor Ablauf verlängert **nicht**;
   nach Ablauf antwortet `POST /mcp` mit 401, und ein neuer Tausch derselben, noch lebenden Sitzung gilt
   wieder 12 Stunden.
-- **Woran ihr das Ende erkennt:** `POST /mcp` antwortet 401 (Block abgelaufen oder widerrufen), oder
+- **Woran ihr das Ende erkennt:** `POST /mcp` antwortet 401 (Block abgelaufen, widerrufen oder aus einer
+  früheren Eintragung derselben Sitzung), oder
   ein Werkzeug meldet einen Fehler mit `forbidden` bzw. die Anmeldung als abgelehnt (Sitzung beendet).
   In beiden Fällen: Block verwerfen, im Frontend einmal neu tauschen, bei 400 anonym weiter.
 - **Status in einem Aufruf:** `GET {MCP}/auth/status` mit dem Block, oder das Werkzeug
@@ -118,8 +119,9 @@ dabei **nicht** hinter der B-API; ihr ruft ihn direkt.
   Fehler am Werkzeug). **401** heißt: der Block ist abgelaufen oder widerrufen — neu tauschen. **429**
   heißt: zu viele Abfragen — nach `retryAfter` erneut.
 - **Abmelden im Chatbot:** `POST {MCP}/auth/revoke` mit `Authorization: Bearer <block>`; danach gilt
-  der Block nicht mehr — **bis zum nächsten Tausch derselben Sitzung**, der dieselbe Kennung wieder
-  einträgt. Endgültig ist nur das Abmelden im Repository; das gehört der Redaktionsumgebung.
+  der Block nicht mehr, auch nicht nach einem späteren Tausch derselben Sitzung (seit 15.11., siehe
+  Antwort 2026-11-15-antwort-chatbot-sitzung). Ein neuer Tausch meldet die Person wieder an, mit einem
+  neuen Block — sie ist im Repository ja angemeldet. Endgültig ist nur das Abmelden im Repository.
 - **Eine beendete Sitzung liest nicht still als Gast.** Jeder Aufruf mit einem Sitzungs-Block wird
   vom Repository abgelehnt, sobald die Sitzung endet (gemessen am 15.11.2026). „Nichts gefunden“
   bleibt also „nichts gefunden“.
@@ -127,10 +129,13 @@ dabei **nicht** hinter der B-API; ihr ruft ihn direkt.
 ## 5. Was der Betrieb dafür einstellt (nur für Weg B)
 
 1. Am MCP: `WLO_AUTH_PRIVATE_KEY` (wie für Weg A) und **`WLO_SESSION_EXCHANGE=1`**.
-2. Am Ingress des Repository-Hosts: ein Pfad unterhalb von `/edu-sharing`, der auf
-   `POST /auth/session` des MCP zeigt und den Pfad dabei umschreibt, etwa
-   `/edu-sharing/services/wlo-mcp/auth/session` → `/auth/session`. Mehr als dieser eine Pfad muss
-   dort nicht liegen. Die Kopfzeilen `Cookie` und `Origin` müssen durchkommen.
+2. Am Ingress des Repository-Hosts: ein Pfad unterhalb von `/edu-sharing`, der auf den MCP zeigt, etwa
+   `/edu-sharing/services/wlo-mcp/auth/session`. Am besten unverändert weitergereicht und am MCP in
+   `WLO_SESSION_MOUNT_PATH` genannt; eine Umschreibung auf `/auth/session` geht auch, schaltet bei
+   ingress-nginx aber Regex-Pfade für den ganzen Host ein. Mehr als dieser eine Pfad muss
+   dort nicht liegen. Die Kopfzeilen `Cookie` und `Origin` müssen durchkommen. Im Helm-Chart
+   erledigen 1 und 2 zusammen `sessionIngress.enabled`, `sessionIngress.host` (der Repository-Host)
+   und `sessionIngress.path`; das setzt voraus, dass der MCP im Cluster des Repositorys läuft.
 3. Die aufrufende Seite muss die Herkunft des Repositorys haben, so wie der MCP es kennt
    (`WLO_REPOSITORY_URL`). Weicht die Adresse im Browser davon ab, kommt sie in
    `WLO_SESSION_ALLOWED_ORIGINS` (eine eigene Liste, nicht die für Tickets).

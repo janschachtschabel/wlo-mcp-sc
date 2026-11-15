@@ -173,3 +173,16 @@ test('the session exchange: off by default, its own origin list, closed when eve
   assert.ok(stray.notices.some(n => /WLO_SESSION_ALLOWED_ORIGINS/.test(n.message) && /WLO_SESSION_EXCHANGE/.test(n.message)),
     'a list without the switch is said, not silently ignored');
 });
+
+test('WLO_SESSION_MOUNT_PATH: taken only with the exchange, only ending in /auth/session', () => {
+  const ok = buildHttpOptions({ WLO_SESSION_EXCHANGE: '1', WLO_SESSION_MOUNT_PATH: '/edu-sharing/services/wlo-mcp/auth/session' });
+  assert.equal(ok.options.sessionMountPath, '/edu-sharing/services/wlo-mcp/auth/session');
+  for (const bad of ['/edu-sharing/services/wlo-mcp', 'edu-sharing/x/auth/session', '/a/../auth/session', '/a b/auth/session',
+    '//auth/session', '/x/./auth/session', '/a//b/auth/session', '/a%2Fb/auth/session', '/Ä/auth/session']) {
+    const r = buildHttpOptions({ WLO_SESSION_EXCHANGE: '1', WLO_SESSION_MOUNT_PATH: bad });
+    assert.equal(r.options.sessionMountPath, undefined, bad);
+    assert.ok(r.notices.some(n => n.level === 'error' && /WLO_SESSION_MOUNT_PATH/.test(n.message)), bad);
+  }
+  const off = buildHttpOptions({ WLO_SESSION_MOUNT_PATH: '/edu-sharing/services/wlo-mcp/auth/session' });
+  assert.equal(off.options.sessionMountPath, undefined, 'not without the switch');
+});

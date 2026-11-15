@@ -27,7 +27,11 @@ export interface RegistryEntry {
   jti: string;
   /** WLO user name, so the operator can tell whose access an entry is. */
   label: string;
-  /** Issued-at, seconds. */
+  /**
+   * Issued-at, seconds. For a session entry it is the LISTING instant with a
+   * millisecond fraction, and its blocks must carry it exactly
+   * (`credentialFromAccessBlock`) — never round or recompute it.
+   */
   iat: number;
   /**
    * How this entry came to be, mirroring `AccessPayload.k` in name, values and
@@ -117,11 +121,20 @@ export interface AccessRegistry {
    * presenting the id under ANOTHER name is not that access (audit S-1).
    */
   labelOf(jti: string): string | undefined;
+  /** When the id was listed (`iat` of the entry), or undefined when it is not. */
+  listedAt(jti: string): number | undefined;
   /** The kind of block the id was listed for (`undefined`: a password block, or not listed). */
   kindOf(jti: string): 'ticket' | 'session' | undefined;
   /** The account the repository CONFIRMED for the id's login (`acct`), or undefined where none was recorded. */
   accountOf(jti: string): string | undefined;
   add(entry: RegistryEntry): Promise<void>;
+  /**
+   * List `entry` unless its id is already listed (not expired at `nowMs`) for
+   * the same label — decided INSIDE the serialised write, so two concurrent
+   * callers cannot both start a listing. Resolves to the entry that is listed
+   * afterwards: the existing one, or `entry`.
+   */
+  listUnlessListed(entry: RegistryEntry, nowMs: number): Promise<RegistryEntry>;
   remove(jti: string): Promise<boolean>;
   /**
    * Drop every entry of one account and report how many went.
@@ -396,7 +409,7 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
    * `MAX_BLOCKS_PER_LABEL`. Only the class of the entry just added can have
    * grown, so pruning that one is both sufficient and the whole job.
    *
-   * Only ever called from `add`, so a file that already exceeds the cap (an
+   * Only ever called when an entry is listed (`add`, `listUnlessListed`), so a file that already exceeds the cap (an
    * operator's edit, a lowered constant) is left alone until that account
    * fetches its next block. Pruning at load would mean opening the registry
    * could write, and `openRegistry` is also the read path.
@@ -420,6 +433,24 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     for (const e of excess > 0 ? mine.slice(0, excess) : []) entries.delete(e.jti);
   }
 
+  /**
+   * List one entry as the newest and prune its class; returns the undo. Undo
+   * restores the WHOLE map in its old order: re-inserting evicted entries one by
+   * one would file them as the newest, and the next eviction after a failed write
+   * would then retire the wrong blocks. Delete first, so a re-added (renewed) id
+   * counts as the newest — `set` on an existing key keeps its old position.
+   */
+  function listFresh(entry: RegistryEntry): () => void {
+    const before = [...entries.entries()];
+    entries.delete(entry.jti);
+    entries.set(entry.jti, entry);
+    evictOldest(accountOf(entry), entry.k, Date.now());
+    return () => {
+      entries.clear();
+      for (const [jti, e] of before) entries.set(jti, e);
+    };
+  }
+
   return {
     has: (jti, nowMs = Date.now()) => {
       const e = entries.get(jti);
@@ -428,24 +459,26 @@ export async function openRegistry(path: string): Promise<AccessRegistry | null>
     known: (jti) => entries.has(jti),
     expiresAt: (jti) => entries.get(jti)?.exp,
     labelOf: (jti) => entries.get(jti)?.label,
+    listedAt: (jti) => entries.get(jti)?.iat,
     kindOf: (jti) => { const e = entries.get(jti); return e?.sess ? 'session' : e?.k; },
     accountOf: (jti) => entries.get(jti)?.acct,
-    async add(entry) {
+    async listUnlessListed(entry, nowMs) {
+      let listed = entry;
       await commit(() => {
-        // Undo restores the WHOLE map in its old order: re-inserting evicted
-        // entries one by one would file them as the newest, and the next
-        // eviction after a failed write would then retire the wrong blocks.
-        const before = [...entries.entries()];
-        // Delete first, so a re-added (renewed) id counts as the newest — `set`
-        // on an existing key keeps its old position.
-        entries.delete(entry.jti);
-        entries.set(entry.jti, entry);
-        evictOldest(accountOf(entry), entry.k, Date.now());
-        return () => {
-          entries.clear();
-          for (const [jti, e] of before) entries.set(jti, e);
-        };
+        const e = entries.get(entry.jti);
+        // The caller's clock was read before the login proof and the wait in
+        // this queue: a listing that is over by NOW is not reused.
+        const at = Math.max(nowMs, Date.now());
+        if (e && e.label === entry.label && (e.exp === undefined || at < e.exp * 1000)) {
+          listed = e;
+          return null;
+        }
+        return listFresh(entry);
       });
+      return listed;
+    },
+    async add(entry) {
+      await commit(() => listFresh(entry));
     },
     async remove(jti) {
       let removed = false;

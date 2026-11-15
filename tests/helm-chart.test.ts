@@ -334,3 +334,32 @@ test('the memory alert is 85 % of the memory limit', () => {
   const threshold = values.match(/^ {6}memoryBytes: "(\d+)"$/m)?.[1];
   assert.equal(Number(threshold), Math.floor(Number(limit) * 1024 * 1024 * 0.85));
 });
+
+test('the session path is its own Ingress: off by default, one exact path, below /edu-sharing, and it switches the exchange on', () => {
+  // The chatbot team's request (2026-11-15, 1a), modelled on the md-editor's
+  // chart: the browser sends the repository's session cookie only below
+  // /edu-sharing on the repository's host, so the exchange needs a rule THERE —
+  // for one path, not for the whole server.
+  const t = tpl('ingress-session.yaml');
+  assert.match(t, /^\{\{- if and \.Values\.sessionIngress\.enabled \.Values\.sessionIngress\.createIngress \}\}/m, 'off unless enabled');
+  assert.match(values, /^sessionIngress:\n\s+enabled: false$/m);
+  assert.match(t, /pathType: Exact/);
+  assert.match(t, /include "wlo-mcp\.sessionMountPath"/, 'only <path>/auth/session');
+  // No rewrite: on ingress-nginx `rewrite-target` turns on regex matching for
+  // EVERY path of the host — the repository's own Ingress included (review
+  // 2026-11-15). The server answers the mounted path itself instead.
+  assert.doesNotMatch(t, /rewrite-target|use-regex/);
+  assert.match(chart('templates/_helpers.tpl'), /hasPrefix "\/edu-sharing\/"/, 'refused unless below /edu-sharing/');
+  assert.match(chart('templates/_helpers.tpl'), /regexMatch/, 'and only plain segments, the rule the server applies');
+  const cm = tpl('configmap.yaml');
+  assert.match(cm, /WLO_SESSION_EXCHANGE: "1"/, 'the exchange is switched on with the rule');
+  assert.match(cm, /WLO_SESSION_MOUNT_PATH: \{\{ include "wlo-mcp\.sessionMountPath"/, 'and told which path it is mounted at');
+  for (const k of ['WLO_SESSION_EXCHANGE', 'WLO_SESSION_MOUNT_PATH']) {
+    assert.ok(helperList('wlo-mcp.fixedKeys').includes(k), `${k} cannot be set apart from it`);
+  }
+  // Routing managed elsewhere (another controller, the repository's own Ingress): switch on without the object.
+  assert.match(t, /\.Values\.sessionIngress\.createIngress/);
+  assert.match(values, /^\s+createIngress: true$/m);
+  // The controller of the repository's host may live in another namespace.
+  assert.match(tpl('networkpolicy.yaml'), /sessionIngress\.controllerNamespace/);
+});

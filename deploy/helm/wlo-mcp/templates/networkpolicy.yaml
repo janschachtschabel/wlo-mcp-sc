@@ -18,6 +18,12 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $ingressNs | quote }}
+        {{- if and .Values.sessionIngress.enabled .Values.sessionIngress.controllerNamespace }}
+        # The controller that serves the repository's host, for the session path.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.sessionIngress.controllerNamespace | quote }}
+        {{- end }}
       ports:
         - port: http
           protocol: TCP

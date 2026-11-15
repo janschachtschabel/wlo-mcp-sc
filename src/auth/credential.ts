@@ -244,6 +244,10 @@ function credentialFromAccessBlock(raw: string): WloCredential | null {
   if (payload.k === 'session') {
     const session = sessionCookiesFrom(payload.secret);
     if (!session || session.cookie !== payload.secret || sessionJti(session.sessionId) !== payload.jti) return null;
+    // …and the block belongs to the CURRENT listing of that id: a revoked or
+    // expired listing does not come back with the next exchange (see
+    // `session-exchange.ts`).
+    if (payload.iat !== accessSupport.registry.listedAt(payload.jti)) return null;
   }
   const header = payload.k === 'ticket'
     ? `EDU-TICKET ${payload.secret}`

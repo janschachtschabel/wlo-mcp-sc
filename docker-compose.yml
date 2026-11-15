@@ -205,6 +205,7 @@ services:
       TICKET_ALLOWED_ORIGINS: "${TICKET_ALLOWED_ORIGINS:-}"
       WLO_SESSION_EXCHANGE: "${WLO_SESSION_EXCHANGE:-}"
       WLO_SESSION_ALLOWED_ORIGINS: "${WLO_SESSION_ALLOWED_ORIGINS:-}"
+      WLO_SESSION_MOUNT_PATH: "${WLO_SESSION_MOUNT_PATH:-}"
       # OAuth logins redirecting to these origins (an embedded widget) expire
       # after 12 h; empty = no OAuth block expires.
       WIDGET_OAUTH_ORIGINS: "${WIDGET_OAUTH_ORIGINS:-}"

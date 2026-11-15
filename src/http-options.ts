@@ -140,11 +140,26 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
         fields: { entries: sessionOrigins.rejected },
       });
     }
-  } else if (sessionOrigins.origins || sessionOrigins.rejected.length) {
+  }
+  // Where the repository's ingress forwards the path unchanged. Only with the
+  // switch, and only plain segments ending in /auth/session: no empty, `.` or
+  // `..` segment and nothing encoded — the URL parser normalises those, so such a
+  // mount could never match. The chart applies the same rule (`_helpers.tpl`).
+  const rawMount = (env['WLO_SESSION_MOUNT_PATH'] ?? '').trim();
+  const mountUsable = /^(?:\/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)+\/auth\/session$/.test(rawMount);
+  if (sessionExchange && rawMount && !mountUsable) {
+    notices.push({
+      level: 'error',
+      message: 'WLO_SESSION_MOUNT_PATH ignored: it must be an absolute path ending in /auth/session, without .. — '
+        + 'the session exchange is reachable at /auth/session only',
+    });
+  }
+  const sessionMountPath = sessionExchange && mountUsable ? rawMount : undefined;
+  if (!sessionExchange && (sessionOrigins.origins || sessionOrigins.rejected.length || rawMount)) {
     notices.push({
       level: 'warn',
-      message: 'WLO_SESSION_ALLOWED_ORIGINS is set but WLO_SESSION_EXCHANGE is not — POST /auth/session does not exist '
-        + 'and the list has no effect',
+      message: 'WLO_SESSION_ALLOWED_ORIGINS or WLO_SESSION_MOUNT_PATH is set but WLO_SESSION_EXCHANGE is not — '
+        + 'POST /auth/session does not exist and these have no effect',
     });
   }
 
@@ -209,6 +224,7 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
     ...(ticketOrigins.origins ? { ticketAllowedOrigins: ticketOrigins.origins } : {}),
     ...(sessionExchange ? { sessionExchange } : {}),
     ...(sessionExchange && sessionOrigins.origins ? { sessionAllowedOrigins: sessionOrigins.origins } : {}),
+    ...(sessionMountPath ? { sessionMountPath } : {}),
     widgetOAuthOrigins: widgetOrigins.origins,
     maxBodyBytes,
     trustProxy,

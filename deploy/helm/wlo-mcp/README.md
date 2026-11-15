@@ -90,7 +90,8 @@ client chooses its own bucket by sending the header.
   `TRUSTED_CLIENT_KEYS`. Putting one of them under `config` fails the render.
 - **Set by the chart itself**, each tied to another object: `WLO_REPOSITORY_URL`
   (`repositoryUrl`), `PORT` (`service.public.port`), `INTERNAL_PORT`
-  (`service.internal.port`), `WLO_AUTH_REGISTRY_PATH` (the `/data` mount).
+  (`service.internal.port`), `WLO_AUTH_REGISTRY_PATH` (the `/data` mount),
+  `WLO_SESSION_EXCHANGE` and `WLO_SESSION_MOUNT_PATH` (`sessionIngress.enabled`, `sessionIngress.path`).
 
 A changed ConfigMap restarts the pod. A changed Secret does **not** — the chart
 does not own it; run `kubectl rollout restart deployment/wlo-mcp` after rotating
@@ -106,6 +107,7 @@ a key (rotation window: `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, DEPLOYMENT.md §3.1).
 | ConfigMap | from `config` and the fixed values |
 | PersistentVolumeClaim `wlo-mcp-data` | ReadWriteOnce, 100Mi, kept on uninstall — the access registry |
 | NetworkPolicy, Ingress, ServiceMonitor, PrometheusRule | optional, off by default; the NetworkPolicy needs both namespaces (see the limits below) |
+| Ingress `wlo-mcp-session` | optional (`sessionIngress`), off by default: on the REPOSITORY's host, exactly `<path>/auth/session` (`<path>` below `/edu-sharing/`), forwarded unchanged — the server answers that path (`WLO_SESSION_MOUNT_PATH`); no rewrite, which on ingress-nginx would switch every path of the host to regex matching. Switches `WLO_SESSION_EXCHANGE` on; `createIngress: false` does that without rendering the object. Only where this release runs in the cluster that serves the repository's host; the controller must pass `Cookie` and `Origin`, `config.TRUST_PROXY` must fit its proxy chain, and with the NetworkPolicy a controller in another namespace goes into `sessionIngress.controllerNamespace`. |
 
 ## Deliberately not in the chart
 

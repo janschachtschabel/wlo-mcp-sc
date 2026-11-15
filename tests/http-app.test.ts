@@ -932,3 +932,40 @@ test('/auth/session through the handler: absent unless switched on, never offere
     assert.equal(r.headers.get('cache-control'), 'no-store');
   } finally { await close(on.server); }
 });
+
+test('/auth/session at its mount path: answered as /auth/session, still without CORS; the bare mount stays unknown', async (t) => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setAccessSupport } = await import('../src/auth/credential.js');
+  const { loadAuthKeys } = await import('../src/auth/access-token.js');
+  const { openRegistry } = await import('../src/auth/access-registry.js');
+  const dir = mkdtempSync(join(tmpdir(), 'wlo-session-mount-'));
+  const registry = await openRegistry(join(dir, 'registry.json'));
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keys = loadAuthKeys({ current: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+  assert.ok(registry && keys);
+  setAccessSupport({ keys, registry });
+  t.after(() => { setAccessSupport(null); rmSync(dir, { recursive: true, force: true }); });
+  const mount = '/edu-sharing/services/wlo-mcp/auth/session';
+  const { server, base } = await startServer({ sessionExchange: true, sessionMountPath: mount });
+  try {
+    const r = await fetch(`${base}${mount}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{}' });
+    assert.equal(r.status, 403, 'reached the exchange');
+    assert.equal(r.headers.get('access-control-allow-origin'), null);
+    const pre = await fetch(`${base}${mount}`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } });
+    assert.equal(pre.headers.get('access-control-allow-origin'), null);
+    // Only the exact path: a trailing slash, an encoded way out, a sibling are unknown.
+    for (const near of [`${mount}/`, `${mount}%2F..%2F..%2Fmcp`, '/edu-sharing/services/wlo-mcp/auth/sessionx']) {
+      const r2 = await fetch(`${base}${near}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{}' });
+      assert.equal(r2.status, 404, near);
+    }
+  } finally { await close(server); }
+  // Without the switch the mount path is unknown too, even when it is configured.
+  const off = await startServer({ sessionMountPath: mount });
+  try {
+    const r = await fetch(`${off.base}${mount}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(r.status, 404);
+  } finally { await close(off.server); }
+});

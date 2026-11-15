@@ -83,6 +83,15 @@ export interface HttpAppOptions {
   sessionExchange?: boolean;
   /** `WLO_SESSION_ALLOWED_ORIGINS`. Absent: only the repository's own origin may ask. */
   sessionAllowedOrigins?: ReadonlySet<string>;
+  /**
+   * `WLO_SESSION_MOUNT_PATH`: the path the repository's ingress forwards to this
+   * server unchanged (e.g. `/edu-sharing/services/wlo-mcp/auth/session`). Exactly
+   * that path is answered as `/auth/session`, before anything else looks at the
+   * request — so CORS, metrics and the endpoint see the one path they know. An
+   * ingress that had to REWRITE instead turns on regex matching for the whole
+   * host on ingress-nginx (review 2026-11-15).
+   */
+  sessionMountPath?: string;
   /** `METRICS_TOKEN`. Present: `GET /metrics` answers to this Bearer token. Absent: the path does not exist. */
   metricsToken?: string;
   /** `WIDGET_OAUTH_ORIGINS` (R1): OAuth logins redirecting there expire after 12 h — see `OAuthEndpointDeps`. */
@@ -181,7 +190,7 @@ export function createHttpRequestHandler(
   opts: HttpAppOptions,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const {
-    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter, ticketAllowedOrigins, sessionExchange, sessionAllowedOrigins, widgetOAuthOrigins,
+    rateLimiter, apiRateLimiter, authAbuseLimiter, ticketAbuseLimiter, ticketAllowedOrigins, sessionExchange, sessionAllowedOrigins, sessionMountPath, widgetOAuthOrigins,
     maxBodyBytes, trustProxy, streamOptions, publicBaseUrl, protocolLimiter, clientBudgets, metricsToken,
   } = opts;
 
@@ -197,6 +206,12 @@ export function createHttpRequestHandler(
   // defect was in the default, not in the branch that forgot to opt out. With
   // this wrapper a surface added later is safe without anyone remembering.
   return async (req, res) => {
+    // The session exchange at its mount path (see the option). Exact match on the
+    // parsed path only; the query string is kept, nothing else is mapped.
+    if (sessionMountPath && sessionExchange) {
+      const at = parseRequestUrl(req.url);
+      if (at?.pathname === sessionMountPath) req.url = `/auth/session${at.search}`;
+    }
     // One id per request: answered as a header and carried by every log line
     // the request causes — the write it starts included (`request-id.ts`).
     const id = requestIdFrom(req.headers['x-request-id']);

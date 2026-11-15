@@ -391,3 +391,75 @@ test('exchanging again does not extend the twelve hours; after them, the next ex
   assert.equal(s.registry.has(jti, later), true, 'listed again');
   assert.ok((s.registry.expiresAt(jti) ?? 0) > exp0!, 'with a fresh end');
 });
+
+// ── a block from an earlier listing does not come back (chatbot team, 2026-11-15, 1b) ──
+
+test('after a revocation, the next exchange of the same session does not revive the old block', async (t) => {
+  // The id is derived from the session, so a re-exchange lists the SAME id again.
+  // Without a second binding, a block taken in the first hour — or the one a
+  // person just revoked in another tab — worked again from that moment on.
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const now = 1_800_000_000_000;
+  const first = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), now);
+  assert.ok(first.ok);
+  if (!first.ok) return;
+  // While listed, a reload gets a block that works side by side with the first.
+  const reload = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), now + 1000);
+  assert.ok(reload.ok && credentialFromHeader(`Bearer ${reload.block}`));
+  assert.ok(credentialFromHeader(`Bearer ${first.block}`));
+
+  await s.registry.remove(decodeAccessToken(first.block, s.keys)!.jti);
+  // Within the same SECOND as the first listing: the listing instant has milliseconds.
+  const again = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), now + 500);
+  assert.ok(again.ok);
+  if (!again.ok) return;
+  assert.ok(credentialFromHeader(`Bearer ${again.block}`), 'the new block works');
+  assert.equal(credentialFromHeader(`Bearer ${first.block}`), null, 'the revoked one stays revoked');
+  assert.equal(credentialFromHeader(`Bearer ${reload.block}`), null, '…and so does every block of that listing');
+});
+
+test('after the twelve hours, the next exchange does not revive the old block either', async (t) => {
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const t0 = Date.now() - (SESSION_BLOCK_TTL_S + 60) * 1000;
+  const old = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), t0);
+  assert.ok(old.ok);
+  if (!old.ok) return;
+  const fresh = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), Date.now());
+  assert.ok(fresh.ok && credentialFromHeader(`Bearer ${fresh.block}`));
+  assert.equal(credentialFromHeader(`Bearer ${old.block}`), null);
+});
+
+test('two exchanges of the same session at once get blocks of ONE listing', async (t) => {
+  // Two tabs loading together: deciding "listed or not" outside the registry's
+  // serialised write let both start a listing, and the first tab's block was
+  // dead on arrival.
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const now = Date.now();
+  const [a, b] = await Promise.all([
+    exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), now),
+    exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), now + 7),
+  ]);
+  assert.ok(a.ok && b.ok);
+  if (!a.ok || !b.ok) return;
+  assert.ok(credentialFromHeader(`Bearer ${a.block}`), 'the first tab keeps working');
+  assert.ok(credentialFromHeader(`Bearer ${b.block}`));
+});
+
+test('a session block survives a restart: the listing instant reads back exactly', async (t) => {
+  const s = await support(t);
+  const up = upstream('lehrerin');
+  t.after(up.restore);
+  const out = await exchangeSession({ sessionId: SID, cookie: `JSESSIONID=${SID}` }, deps(s), Date.now() + 123);
+  assert.ok(out.ok);
+  if (!out.ok) return;
+  const reopened = await openRegistry(s.path);
+  assert.ok(reopened);
+  setAccessSupport({ keys: s.keys, registry: reopened });
+  assert.ok(credentialFromHeader(`Bearer ${out.block}`));
+});

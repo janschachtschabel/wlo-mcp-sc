@@ -41,10 +41,30 @@ WLO_SERVICE_USER WLO_SERVICE_PASSWORD WLO_AUTH_PRIVATE_KEY WLO_AUTH_PRIVATE_KEY_
 
 {{/* Variables the chart sets itself in configmap.yaml; `config` may not override them. */}}
 {{- define "wlo-mcp.fixedKeys" -}}
-PORT INTERNAL_PORT WLO_REPOSITORY_URL WLO_AUTH_REGISTRY_PATH
+PORT INTERNAL_PORT WLO_REPOSITORY_URL WLO_AUTH_REGISTRY_PATH WLO_SESSION_EXCHANGE WLO_SESSION_MOUNT_PATH
 {{- end -}}
 
 {{/* PromQL matcher for this service's series as the ServiceMonitor labels them. */}}
 {{- define "wlo-mcp.promSelector" -}}
 namespace="{{ .Release.Namespace }}",job="{{ include "wlo-mcp.internalName" . }}"
+{{- end -}}
+
+{{/*
+The exact path of the session exchange on the repository's host:
+<sessionIngress.path>/auth/session. Checked here, once, for the Ingress and the
+ConfigMap alike: below /edu-sharing/ (where the session cookie is sent), no
+trailing slash.
+*/}}
+{{- define "wlo-mcp.sessionMountPath" -}}
+{{- $path := required "sessionIngress.path is required when the session exchange is enabled" .Values.sessionIngress.path -}}
+{{- if not (hasPrefix "/edu-sharing/" $path) -}}
+{{- fail "sessionIngress.path must lie below /edu-sharing/ — the browser sends the repository's session cookie only there" -}}
+{{- end -}}
+{{- if hasSuffix "/" $path -}}
+{{- fail "sessionIngress.path must not end with a slash" -}}
+{{- end -}}
+{{- if not (regexMatch "^(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)+$" $path) -}}
+{{- fail "sessionIngress.path must consist of plain segments (letters, digits, . _ ~ -; no empty, . or .. segment, nothing encoded) — the server refuses anything else in WLO_SESSION_MOUNT_PATH" -}}
+{{- end -}}
+{{- printf "%s/auth/session" $path -}}
 {{- end -}}

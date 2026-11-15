@@ -58,7 +58,9 @@ export interface AccessPayload {
    */
   k?: 'ticket' | 'session';
   /**
-   * Issued-at, seconds, as claimed by the BROWSER that built the block. Inside
+   * Issued-at, seconds. For a SESSION block it is the server's listing instant
+   * (with a millisecond fraction) and is compared exactly with the registry
+   * entry; never round it. Otherwise: as claimed by the BROWSER that built the block. Inside
    * the AEAD, so nobody else can change it — but the issuer chose it, so it is
    * not a fact about when we registered anything. `/auth/issue` records its own
    * clock in the registry. No expiry is enforced either way; revocation is the

@@ -89,9 +89,8 @@ config:
   AUTH_CREDENTIAL_LIMIT: ""
   TICKET_CREDENTIAL_LIMIT: ""
   TICKET_ALLOWED_ORIGINS: ""
-  # "1": POST /auth/session takes over a repository session. Only with an ingress
-  # rule on the REPOSITORY's host below /edu-sharing that points at this path.
-  WLO_SESSION_EXCHANGE: ""
+  # Further origins under which the session path (sessionIngress) is reached —
+  # a second host name of the repository. Not for foreign pages: no CORS.
   WLO_SESSION_ALLOWED_ORIGINS: ""
   WIDGET_OAUTH_ORIGINS: ""
   MAX_BODY_BYTES: ""
@@ -187,6 +186,40 @@ podLabels: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# The session exchange (POST /auth/session, docs/AUTH.md §5d), modelled on the
+# md-editor's chart: a widget inside a repository page takes over the person's
+# repository session. The browser sends that session cookie ONLY below
+# /edu-sharing on the repository's host, so this is a second Ingress ON THAT
+# HOST, for one exact path: <path>/auth/session, forwarded unchanged — the
+# server answers that path itself (WLO_SESSION_MOUNT_PATH). No rewrite: on
+# ingress-nginx a rewrite turns on regex matching for every path of the host.
+# Nothing else of this server is reachable there. Enabling it sets
+# WLO_SESSION_EXCHANGE=1 and WLO_SESSION_MOUNT_PATH.
+#
+# It must run in the cluster that serves the repository's host (the Ingress
+# routes to this release's Service). The controller must pass `Cookie` and
+# `Origin` unchanged, and config.TRUST_PROXY must fit its proxy chain.
+sessionIngress:
+  enabled: false
+  # false: switch the exchange on and set the mount path, but render no Ingress —
+  # for routing managed elsewhere (another controller, the repository's own Ingress).
+  createIngress: true
+  className: ""
+  # The repository's host, e.g. repository.staging.openeduhub.net. REQUIRED when created.
+  host: ""
+  # Below /edu-sharing/ — where the session cookie is sent. No trailing slash.
+  path: "/edu-sharing/services/wlo-mcp"
+  # Usually off: where the repository's Ingress already terminates TLS for this
+  # host, ingress-nginx serves both under its certificate. When on, the Secret
+  # must exist in THIS release's namespace.
+  tls:
+    enabled: false
+    secretName: ""
+  annotations: {}
+  # With networkPolicy.enabled: the namespace of the controller that serves the
+  # repository's host, when it is not networkPolicy.ingressNamespace.
+  controllerNamespace: ""
 
 # OFF by default: the policy admits traffic by NAMESPACE, and this chart does
 # not know the cluster's. A guessed name cuts the traffic silently (the ingress

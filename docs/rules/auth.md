@@ -245,5 +245,12 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   bound to the entry (`registry.kindOf`): a session-listed id decodes only as a session block. (9) The same session
   id under another person REPLACES the entry (not measured whether the repository reuses a session id across a
   change of login). (10) Accepted and written down in `docs/AUTH.md` §5d: the exchange turns an `HttpOnly` session
-  into a block a script on the repository's origin can hold; and revoking a session or ticket block lasts until
-  the next exchange, because the id is derived.
+  into a block a script on the repository's origin can hold. (11) A session block belongs to ONE listing: it carries
+  the entry's `iat` (seconds with a millisecond fraction — never round it) and is refused when that differs; the
+  "same listing?" decision runs inside the registry's serialised write (`listUnlessListed`) — so a revocation or the twelve-hour end is not
+  undone by the next exchange of the same session (chatbot team, 2026-11-15). Ticket blocks keep R2. (12) The chart
+  routes the path with its own Ingress on the repository's host (`sessionIngress`), one `Exact` path below
+  `/edu-sharing/`, forwarded UNCHANGED and answered by the server at that path (`WLO_SESSION_MOUNT_PATH`) — no
+  rewrite annotation, which on ingress-nginx switches every path of the host to regex matching (review
+  2026-11-15). That switch is the only way the chart sets `WLO_SESSION_EXCHANGE`; `createIngress: false` sets it
+  without the object.
