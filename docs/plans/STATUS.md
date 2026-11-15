@@ -55,6 +55,8 @@ diese Datei über rund 100 Zeilen wächst.
 - **2026-11-15 — Version 1.2.0.** Tag `v1.2.0` baut Image und Chart (`release.yml`, ghcr.io); `GET /openapi.yaml`;
   eigener B3-Trace, wenn keiner ankommt; Chart-Version = Dienst-Version; CI rendert den Chart. Abgleich mit dem
   Leitfaden in `docs/STECKBRIEF-UEBERGABE.md`.
+- **2026-11-15 — Betrieb hinter der B-API: gemessen und entworfen, nichts gebaut.**
+  `2026-11-15-b-api-betrieb.md`. Offen: Proxy-Eintrag `wlo-mcp` auf Staging, Name der zusätzlichen Kopfzeile.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das
