@@ -79,9 +79,10 @@ diese Datei über rund 100 Zeilen wächst.
   `X-Forwarded-For` von nicht vertrauten Absendern; ein vertrauter Client nennt die Adresse der Person deshalb
   in einer eigenen Kopfzeile (nur mit Schlüssel). Jeder Tausch loggt die gezählte Adresse als Pseudonym, ein
   Client ohne Adresse wird gewarnt. Antwort: `2026-11-15-antwort-chatbot-sitzung-3.md` (Vorschlag `rpm` 500).
-- **2026-11-15 — Version 1.4.0.** Tag `v1.4.0`: `X-WLO-Client-Address` und die Behebung der Zonen-Kennung. Der
-  Stand liegt auch im ursprünglichen Repo `wlo-mcp-server` (Merge-Commit, Vercel vorher getrennt); beide Repos
-  teilen dieselbe `main`.
+- **2026-11-15 — Version 1.4.0.** Tag `v1.4.0`: `X-WLO-Client-Address` und die Behebung der Zonen-Kennung. Das
+  ursprüngliche Repo `wlo-mcp-server` bleibt auf seinem Stand vom 01.06.2026 (`2d0080b`): Ein Merge dorthin wurde
+  am selben Tag auf Wunsch des Nutzers zurückgenommen. Weiterentwickelt und veröffentlicht wird nur hier, in
+  `wlo-mcp-sc`; der Merge-Commit `b577e06` bleibt in dieser Historie.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das
