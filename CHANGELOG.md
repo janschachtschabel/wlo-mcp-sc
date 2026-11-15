@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Base image `node:22-alpine` pinned to Node 22.23.5 (digest from Dependabot, 2026-11-12).
+
 ## [1.4.0] - 2026-11-15
 
 No tool, no top-level parameter and no error code was renamed or removed since 1.3.0. Added: the optional header
