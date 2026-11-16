@@ -23,6 +23,22 @@ Mit einem gewöhnlichen Schlüssel (kein Admin-Recht), ohne einen Modellaufruf, 
 | Mit einer selbst gesetzten `X-Edu-User-Id` | **`403 {"error":"EDU_USER_NOT_VERIFIED"}`** — eine Personenkennung wird geprüft, nicht geglaubt |
 | Ein Pfad, den die B-API nicht anbietet (`node/…/children`) | 404 |
 
+Nachtrag 2026-11-16 — die Gruppen der B-API, gelesen aus der öffentlichen Beschreibung
+(`/v3/api-docs/swagger-config`, ohne Schlüssel lesbar; Pfade gezählt, nicht einzeln ausprobiert):
+
+| Gruppe | Pfade | Inhalt |
+|---|---|---|
+| `openai`, `academiccloud` | je 245 | die vollständige OpenAI-Schnittstelle je Anbieter (Chat, Responses, Embeddings, Bilder, Audio, Assistants, Agents …) |
+| `router` | 15 | dieselben Funktionen über Routennamen, dazu `routes` (verwalten) und `models` |
+| `edu-sharing` | 18 | zehn Repository-Pfade (siehe oben) und sieben KI-Funktionen des Repositorys: `chat/completion`, `responses`, `images/generations` je auch als `…/limited`, `qas`, `suggestions` |
+| `jobs` | 5 | Kestra: Jobs auflisten, abfragen, löschen, Ergebnisdateien; ein freigegebener Flow `edusharing.chatbot/node-metadata-write` |
+| Proxy-Dienste | | `text-extraction` (2), `kidra` (9), `topic-tree` (2), `compendious-text-generator` (9), `metadata-agent-canvas` (16), `badboerdichat` (77), `photon_geocoding` (2) |
+| `administration`, `loggers` | — / 2 | Verwaltung (Beschreibung nicht öffentlich lesbar); `/actuator/loggers` in der Beschreibung sichtbar, Absicherung nicht geprüft |
+
+Aufgefallen: Die Beschreibung eines Proxy-Dienstes wird öffentliche B-API-Dokumentation. `badboerdichat` zeigt dort
+auch Konfiguration (Sicherung, Wiederherstellung, Datenschutz, MCP-Server), Auswertung und einen Debug-Pfad.
+
+
 Aus der Beschreibung gelesen, nicht ausprobiert (braucht Admin-Recht):
 
 - **Ein Proxy-Eintrag** (`ServiceConfiguration`) hat: `name`, `baseUrl`, `openApiPath`,
