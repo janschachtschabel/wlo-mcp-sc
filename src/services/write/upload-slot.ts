@@ -33,7 +33,7 @@ import { proveLogin } from '../../auth/access-verify.js';
 import { abuseBucketKey, type WloCredential } from '../../auth/credential.js';
 import type { DistinctValueLimiter } from '../../rate-limit.js';
 import { resolvePositiveInt } from '../../wlo-config.js';
-import { isEnabledFlag } from './credential-gate.js';
+import { isEnabledFlag } from '../../env-flags.js';
 import { accountBudget, accountOf } from './confirm.js';
 import { detectUploadType, type UploadType } from './file-types.js';
 import { zipEntryNames } from './zip-entries.js';

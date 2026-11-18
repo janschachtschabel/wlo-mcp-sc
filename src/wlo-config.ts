@@ -14,6 +14,7 @@
  */
 
 import { log } from './logger.js';
+import { isDisabledFlag, isEnabledFlag } from './env-flags.js';
 
 /**
  * Sanitize a repository URL input. Forgives common user-typo cases:
@@ -224,8 +225,7 @@ export const WLO_SKILLS_COLLECTION_ID: string = (process.env['WLO_SKILLS_COLLECT
  * nodeIds and `get_skill` is what they are for. Only an explicit truthy value
  * switches it off — the string "false" must not read as "yes".
  */
-export const WLO_DISABLE_SKILL_SEARCH: boolean =
-  /^(1|true|yes|on)$/i.test((process.env['WLO_DISABLE_SKILL_SEARCH'] ?? '').trim());
+export const WLO_DISABLE_SKILL_SEARCH: boolean = isEnabledFlag(process.env['WLO_DISABLE_SKILL_SEARCH']);
 
 /** Bounded numeric env value; anything unparseable falls back to the default. */
 function envMs(name: string, fallback: number, min: number, max: number): number {
@@ -244,16 +244,6 @@ function envMs(name: string, fallback: number, min: number, max: number): number
  * cache pays that cost once, off the request path, and remembers the answer.
  */
 export const WLO_SKILL_CACHE: boolean = !isDisabledFlag(process.env['WLO_SKILL_CACHE']);
-
-/**
- * The explicit off spellings, for a switch that is ON (or decided otherwise)
- * unless switched off. Empty is neither on nor off. The on spellings are
- * `isEnabledFlag` (`services/write/credential-gate.ts`).
- */
-export function isDisabledFlag(raw: string | undefined): boolean {
-  const v = (raw ?? '').trim().toLowerCase();
-  return v === '0' || v === 'false' || v === 'no' || v === 'off';
-}
 
 /** How often the background tick drains the queue and renews stale entries. */
 export const WLO_SKILL_CACHE_REFRESH_MS: number =

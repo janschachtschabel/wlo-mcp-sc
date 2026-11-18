@@ -2,41 +2,29 @@
  * bapi-proxy-switch.test.ts – whether the b-api flow tools are on (2026-11-18).
  *
  * `WLO_BAPI_VIA_REPOSITORY` is the operator's word: `1` on, `0` off. Unset (or
- * `auto`) the server asks the repository once at start whether its b-api proxy
+ * `auto`) the HTTP server asks the repository at start — and again until it gets a
+ * verdict — whether its b-api proxy
  * answers. The shapes pinned here were measured on staging on 2026-11-18,
  * anonymously: the proxy's flow list answers `200 []`, a path the repository
- * does not serve answers `404` with a JSON error body.
+ * does not serve answers `404` with a JSON object (`{error, message}`).
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { setServiceCredentialForTest, type WloCredential } from '../src/auth/credential.js';
-import { allowedFlows, probeBapiProxy } from '../src/services/bapi/jobs.js';
+import { allowedFlows, droppedFlowNames, probeBapiProxy } from '../src/services/bapi/jobs.js';
+import { isDisabledFlag, isEnabledFlag } from '../src/env-flags.js';
 import { NODE_METADATA_WRITE } from '../src/services/bapi/node-metadata-write.js';
 import {
   bapiProxyDetection, bapiSwitch, bapiViaRepositoryEnabled, resetBapiProxyDetectionForTest, retryDelayMs,
-  startBapiProxyDetection, warnOnUnrecognisedBapiSwitch,
+  startBapiProxyDetection, warnOnBapiSettings,
 } from '../src/services/bapi/proxy-switch.js';
 import { connectedClient, installFetchMock, type MockResult } from './fetchMock.js';
+import { env } from './env.js';
 
 const SERVICE: WloCredential = { header: 'Basic c2VydmljZTpwdw==', label: 'dienst', source: 'service' };
 const FLOW_TOOLS = ['wlo_cancel_flow', 'wlo_flow_status', 'wlo_list_flows', 'wlo_start_flow'];
-
-/** Per test, the values the environment had BEFORE its first change — restored once, after the test. */
-const originals = new WeakMap<object, Map<string, string | undefined>>();
-
-function env(t: { after: (fn: () => void) => void }, values: Record<string, string | undefined>): void {
-  let saved = originals.get(t);
-  if (!saved) {
-    const fresh = new Map<string, string | undefined>();
-    originals.set(t, fresh);
-    t.after(() => { for (const [k, v] of fresh) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
-    saved = fresh;
-  }
-  for (const k of Object.keys(values)) if (!saved.has(k)) saved.set(k, process.env[k]);
-  for (const [k, v] of Object.entries(values)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-}
 
 function fresh(t: { after: (fn: () => void) => void }): void {
   resetBapiProxyDetectionForTest();
@@ -111,6 +99,9 @@ test('the probe: 200 with a list = present; only the measured 404 = absent; ever
     ['404 JSON (measured: no such path)', () => ({ status: 404, json: { error: '404', message: 'Not Found' } }), 'absent'],
     // A webapp still deploying answers a 404 PAGE — that is no word on the proxy.
     ['404 HTML', () => ({ status: 404, text: '<html>Not Found</html>', headers: { 'content-type': 'text/html' } }), 'unknown'],
+    ['404 with a bare JSON string', () => ({ status: 404, json: 'Not Found' }), 'unknown'],
+    ['404 with JSON null', () => ({ status: 404, json: null }), 'unknown'],
+    ['404 with a JSON list', () => ({ status: 404, json: [] }), 'unknown'],
     ['200 but not a list', () => ({ json: { status: 'ok' } }), 'unknown'],
     ['200 HTML', () => ({ text: '<html></html>', headers: { 'content-type': 'text/html' } }), 'unknown'],
     // A repository whose guest is refused may still have the proxy.
@@ -210,19 +201,69 @@ test('a probe of an earlier generation writes nothing (test isolation)', async (
   assert.equal(bapiProxyDetection(), 'absent', 'the reset state stands');
 });
 
+test('detection: present is final — nothing is asked again', async (t) => {
+  fresh(t);
+  env(t, { WLO_BAPI_VIA_REPOSITORY: undefined });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const mock = installFetchMock(() => { calls++; return { json: [] }; });
+  t.after(() => mock.restore());
+  assert.equal(await startBapiProxyDetection(), 'present');
+  t.mock.timers.tick(60 * 60_000);
+  for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
+  assert.equal(calls, 1);
+  assert.equal(bapiProxyDetection(), 'present');
+});
+
+test('detection: no verdict, then the measured 404 — ends absent and asks no more', async (t) => {
+  fresh(t);
+  env(t, { WLO_BAPI_VIA_REPOSITORY: undefined });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const mock = installFetchMock(() => {
+    calls++;
+    return calls === 1 ? { status: 503 } : { status: 404, json: { error: '404', message: 'Not Found' } };
+  });
+  t.after(() => mock.restore());
+  assert.equal(await startBapiProxyDetection(), 'unknown');
+  t.mock.timers.tick(retryDelayMs(0));
+  for (let i = 0; i < 10 && bapiProxyDetection() !== 'absent'; i++) await new Promise(r => setImmediate(r));
+  assert.equal(bapiProxyDetection(), 'absent');
+  t.mock.timers.tick(60 * 60_000);
+  for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
+  assert.equal(calls, 2);
+  assert.equal(bapiViaRepositoryEnabled(), false);
+});
+
 test('the retry waits grow and are capped', () => {
   assert.equal(retryDelayMs(0), 30_000);
   assert.equal(retryDelayMs(1), 60_000);
   assert.equal(retryDelayMs(10), 10 * 60_000);
 });
 
-test('an unrecognised switch is reported — also where nobody asks the repository (stdio)', (t) => {
-  env(t, { WLO_BAPI_VIA_REPOSITORY: 'kaputt' });
-  assert.equal(warnOnUnrecognisedBapiSwitch(), true);
-  env(t, { WLO_BAPI_VIA_REPOSITORY: '1' });
-  assert.equal(warnOnUnrecognisedBapiSwitch(), false);
-  env(t, { WLO_BAPI_VIA_REPOSITORY: undefined });
-  assert.equal(warnOnUnrecognisedBapiSwitch(), false);
+test('a wrong setting is reported at start — also where nobody asks the repository (stdio)', (t) => {
+  env(t, { WLO_BAPI_VIA_REPOSITORY: 'kaputt', WLO_BAPI_FLOWS: undefined });
+  assert.deepEqual(warnOnBapiSettings(), ['switch']);
+  env(t, { WLO_BAPI_VIA_REPOSITORY: '1', WLO_BAPI_FLOWS: `${NODE_METADATA_WRITE}, ns:id, a/b/c` });
+  assert.equal(droppedFlowNames(), 2);
+  assert.deepEqual(warnOnBapiSettings(), ['flows']);
+  env(t, { WLO_BAPI_FLOWS: ' , ' });
+  assert.equal(allowedFlows().size, 0);
+  assert.deepEqual(warnOnBapiSettings(), ['flows'], 'a list that holds nothing is said, not a silent none');
+  env(t, { WLO_BAPI_VIA_REPOSITORY: undefined, WLO_BAPI_FLOWS: 'none' });
+  assert.deepEqual(warnOnBapiSettings(), []);
+  env(t, { WLO_BAPI_FLOWS: undefined });
+  assert.deepEqual(warnOnBapiSettings(), [], 'the default list is valid');
+});
+
+test('the on and the off spellings never overlap; empty is neither', () => {
+  for (const raw of ['1', '0', 'true', 'false', 'yes', 'no', 'on', 'off', 'TRUE', ' Off ', '', 'auto', 'ja', '2', undefined, null]) {
+    assert.ok(!(isEnabledFlag(raw) && isDisabledFlag(raw)), String(raw));
+  }
+  for (const raw of ['', '  ', undefined, null, 'auto']) {
+    assert.equal(isEnabledFlag(raw), false, String(raw));
+    assert.equal(isDisabledFlag(raw), false, String(raw));
+  }
 });
 
 test('an operator who decided is not overruled: on or off asks the repository nothing', async (t) => {

@@ -10,7 +10,8 @@ diese Datei über rund 100 Zeilen wächst.
 
 ## Was es gibt
 
-- 34 Lese-Werkzeuge, 26 Kuratier-Werkzeuge (60; mit `WLO_BATCH_UPLOAD_ENABLED` 64), REST unter `/api`,
+- 34 Lese-Werkzeuge, 26 Kuratier-Werkzeuge (60; mit `WLO_BATCH_UPLOAD_ENABLED` 64; dazu vier b-api-Auftrags-Werkzeuge,
+  wo das Repository den b-api-Proxy hat — Staging: ja), REST unter `/api`,
   `/auth`, `/oauth`; Widgets für Suche, Baum, Themenseite, Detail.
 - Abgeschlossene Pläne (Entwurf und Aufgaben je in `docs/plans/`): Apps-SDK-Umbau (P0–P8), Schreiben und
   Kuratieren, `get_url_text`, Zugangsblock, OAuth 2.1, Skill-Abruf, Lizenzfilter, Skill-Registry mit Cache
@@ -84,7 +85,7 @@ diese Datei über rund 100 Zeilen wächst.
   am selben Tag auf Wunsch des Nutzers zurückgenommen. Weiterentwickelt und veröffentlicht wird nur hier, in
   `wlo-mcp-sc`; der Merge-Commit `b577e06` bleibt in dieser Historie.
 - **2026-11-18 — Aufträge der b-api (Kestra) über den Repository-Proxy**, an, wo das Repository den b-api-Proxy hat
-  (beim Start einmal anonym gefragt; `WLO_BAPI_VIA_REPOSITORY=1`/`0` übersteuert), Vorgabe-Flow `node-metadata-write`:
+  (beim Start anonym gefragt, ohne Urteil erneut; `WLO_BAPI_VIA_REPOSITORY=1`/`0` übersteuert), Vorgabe-Flow `node-metadata-write`:
   `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Live gemessen: Start mit Sitzungs-Block,
   der Flow schreibt als Person; jede Person sieht über den Proxy jeden Job — darum bindet der Server Jobs an die
   Person. Plan: `2026-11-17-kestra-flows-ueber-repository-proxy.md`.

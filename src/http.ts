@@ -146,7 +146,8 @@ httpServer.listen(PORT, () => {
   // feed GET /ready. One small search per interval; WLO_READY_PROBE_MS=0 = off.
   startReadinessProbe(READY_PROBE_MS);
   // The b-api flow tools: unless the operator decided (WLO_BAPI_VIA_REPOSITORY),
-  // one anonymous question to the repository whether its b-api proxy answers.
+  // an anonymous question to the repository whether its b-api proxy answers —
+  // at start, and again until it gets a verdict.
   // The tool list is built per request: requests before the answer list no flow tools; later ones do.
   void startBapiProxyDetection();
 });

@@ -8,8 +8,8 @@ to [Semantic Versioning](https://semver.org/).
 
 ### Added — b-api flows (Kestra) through the repository's proxy, as the signed-in person (chatbot team, 2026-11-17/18)
 
-On where the repository serves the b-api proxy: unless `WLO_BAPI_VIA_REPOSITORY` says `1` or `0`, the server asks
-the repository once at start, anonymously, whether its proxy answers (staging does — measured 2026-11-18); where
+On where the repository serves the b-api proxy: unless `WLO_BAPI_VIA_REPOSITORY` says `1` or `0`, the HTTP server asks
+the repository at start, anonymously, whether its proxy answers, and again until it gets a verdict (staging does — measured 2026-11-18); where
 it does not, nothing changes. The startable flow is `edusharing.chatbot/node-metadata-write` unless `WLO_BAPI_FLOWS`
 names others (`none` = none). Only `200` with a list (the proxy) and the measured `404` (no such path) decide; any
 other answer keeps the tools off and the server asks again. stdio never asks — it has no personal login, which the
@@ -19,7 +19,18 @@ tools need; there only `1` registers them.
   use; the binding rule did not name the anonymous probe; tool counts left out the flow tools; tests and guard
   gaps), 4 nits; all worked. A second review: 4 minor (test isolation of the env helper, integrator documents
   without the flow tools, the no-verdict warning named no way out, the window after a restart in which a kept
-  tool list meets an unknown tool), 7 nits; all worked.
+  tool list meets an unknown tool), 7 nits; all worked. A third review of the whole package: 1 major (the letter
+  asked the b-api team to refuse the guest on job paths — the flow list is exactly what the detection reads; the
+  proposal now names only the read and cancel paths), 3 minor (a 404 with a bare JSON value read as "no proxy";
+  MCP-REFERENZ and STATUS without the flow tools; the on and off spellings in two layers — both now in
+  the import-free `env-flags.ts`, used by every former copy, `unsafe-tools.ts` and `rest/validate.ts` included), 3 nits; and three older points: `WLO_BAPI_FLOWS` names that are no flow
+  name are dropped with a warning now, not silently; `rest/validate.ts` and `unsafe-tools.ts` no longer keep their
+  own copy of the on spellings; and the `CLAUDE.md` tool count, left to the maintainer. All worked. A control review of those fixes: 4 minor (the
+  flag spellings pulled the whole configuration into a pure module — now a leaf of their own; the letter's narrowed
+  proposal left out the start path — now "every job path but the flow list"; "404 with a JSON body" where the code
+  requires an object; the top-level-call guard missed `const x = detect(…)`), 6 nits; all worked. A last check:
+  2 minor (that guard, by lines, still missed a call in a top-level block — it reads the syntax tree now; the
+  import-free leaf had no guard — it has), 5 nits; all worked.
 
 - **Four tools:** `wlo_start_flow` (preview and confirmation, flows from `WLO_BAPI_FLOWS` only), `wlo_flow_status`
   (state, `progress`, iteration counts, outputs up to 1 MB, files without their link), `wlo_cancel_flow`,

@@ -29,18 +29,9 @@
  */
 
 import { currentCredential, type WloCredential } from '../../auth/credential.js';
+import { isEnabledFlag } from '../../env-flags.js';
 
 export type WriteMode = 'user' | 'service' | 'none';
-
-/**
- * Read an env flag as a boolean. Only affirmative spellings count — a flag that
- * gates writes must not be switched on by the string `"false"`, which is what a
- * loose truthiness check on a non-empty string would do.
- */
-export function isEnabledFlag(raw: string | undefined): boolean {
-  const v = (raw ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
 
 /**
  * The write mode for a given identity. Pure, so the whole matrix is testable

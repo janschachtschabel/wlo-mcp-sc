@@ -25,25 +25,11 @@ import { checkNodes, parseInputs } from '../src/services/bapi/node-metadata-writ
 import { clearJobOwnersForTest, ownsJob, recordJobOwner } from '../src/services/bapi/job-owners.js';
 import { registerBapiFlowTools } from '../src/tools/bapi-flows.js';
 import { connectedClient, installFetchMock, toolText, type MockResult } from './fetchMock.js';
+import { env } from './env.js';
 
 const USER: WloCredential = { header: 'Basic dXNlcjpwdw==', label: 'maria', source: 'user' };
 const SERVICE: WloCredential = { header: 'Basic c2VydmljZTpwdw==', label: 'dienst', source: 'service' };
 const FLOW = 'edusharing.chatbot/node-metadata-write';
-
-/** Per test, the values the environment had BEFORE its first change — restored once, after the test. */
-const originals = new WeakMap<object, Map<string, string | undefined>>();
-
-function env(t: { after: (fn: () => void) => void }, values: Record<string, string | undefined>): void {
-  let saved = originals.get(t);
-  if (!saved) {
-    const fresh = new Map<string, string | undefined>();
-    originals.set(t, fresh);
-    t.after(() => { for (const [k, v] of fresh) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
-    saved = fresh;
-  }
-  for (const k of Object.keys(values)) if (!saved.has(k)) saved.set(k, process.env[k]);
-  for (const [k, v] of Object.entries(values)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-}
 
 const headersOf = (init?: RequestInit) => new Headers(init?.headers);
 

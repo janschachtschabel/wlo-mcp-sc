@@ -484,8 +484,8 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
 
 - **b-api flows through the repository's proxy (2026-11-17/18; plan `2026-11-17-kestra-flows-ueber-repository-proxy.md`).**
   On where the repository serves the b-api proxy (`services/bapi/proxy-switch.ts`, 2026-11-18: unless the operator
-  sets `WLO_BAPI_VIA_REPOSITORY` to `1`/`0`, one ANONYMOUS probe of the flow list at start — `200` with a list is
-  the proxy, `404` with a JSON body none, both measured; any other answer decides nothing (a 404 page, 3xx, 401/403
+  sets `WLO_BAPI_VIA_REPOSITORY` to `1`/`0`, an ANONYMOUS probe of the flow list at start, repeated until a
+  verdict — `200` with a list is the proxy, `404` with a JSON object (`{error, message}`) none, both measured; any other answer decides nothing (a 404 page, 3xx, 401/403
   are no proof of absence), keeps the tools off and asks again; an unknown value is off; started only from
   `http.ts`, guarded — stdio has no personal login and never asks). Startable flows are `WLO_BAPI_FLOWS`, unset =
   `node-metadata-write`, `none` = none. Rules. (1) `{repository}/rest/bapi` is
@@ -495,7 +495,8 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   which would read as "nothing released". Every call carries `DisableGuest: true`. The ONE exception is the
   start-up probe (`probeBapiProxy`, `jobs.ts`): `GET …/jobs/flows` only, anonymous and WITHOUT `DisableGuest` on
   purpose — with it the anonymous call is refused 401 and every repository would read as "no proxy". It never
-  carries a login and is called only by `proxy-switch.ts` (guarded). (2) Starting is a write: preview, then a key
+  carries a login and is called only by `proxy-switch.ts` (guarded). It rests on the proxy answering the GUEST on
+  the flow list (`200 []`); if the proxy stops doing that (401/403), no verdict comes and the operator sets `1`. (2) Starting is a write: preview, then a key
   bound to the flow and its exact inputs (for `node-metadata-write` the checked ids and the language; for another
   flow the inputs' hash). Whether a refusal started nothing is `wroteNothing` (`upstream-error.ts`), the one
   reading for every write: a 4xx but 429 did; a 429, a 5xx, an accepted answer without a `jobId` or no answer at

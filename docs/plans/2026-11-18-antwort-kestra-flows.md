@@ -36,8 +36,8 @@ eine Repository-Sitzung, gegen einen Zugangsblock getauscht, und jeder Aufruf ü
 
 Jede Ablehnung trägt `error.code` (bei diesen Werkzeugen gleich `reason`). Wer schon vor dem Werkzeug abgewiesen wird (ohne Anmeldung, oder das Dienstkonto), bekommt nur `error.code: login_required` mit der Anmelde-Aufforderung, ohne `status` und `reason`.
 
-Die vier Werkzeuge gibt es, wo das Repository den b-api-Proxy hat: Der MCP fragt das beim Start einmal anonym ab
-(der Betrieb kann es mit `WLO_BAPI_VIA_REPOSITORY=1`/`0` festlegen). Startbar ist `node-metadata-write`, solange der
+Die vier Werkzeuge gibt es, wo das Repository den b-api-Proxy hat: Der MCP fragt das beim Start anonym ab und fragt
+ohne klares Ja oder Nein erneut (der Betrieb kann es mit `WLO_BAPI_VIA_REPOSITORY=1`/`0` festlegen). Startbar ist `node-metadata-write`, solange der
 Betrieb mit `WLO_BAPI_FLOWS` nichts anderes festlegt. Alle vier nur mit der eigenen Anmeldung der Person, nie mit
 dem Dienstkonto. Wer `tools/list` abruft, bevor das Repository geantwortet hat (nach einem Neustart meist Sekunden,
 antwortet es beim Start nicht, auch Minuten), sieht die vier Werkzeuge noch nicht — ein neuer Abruf zeigt sie. Wer in
@@ -102,10 +102,14 @@ Ergebnisse stehen dann an den Datensätzen.
 - Die Grenze von 20 unfertigen Jobs je Schlüssel teilen sich damit alle Personen eines Repositorys.
 - **Ohne Anmeldung liest der Gast des Repository-Proxys jeden Job samt Bericht**, wenn die Anfrage kein
   `DisableGuest: true` trägt (gemessen 18.11.: 200; mit `DisableGuest` 401). Ein Browser schickt den Header nicht.
-  Vorschlag: Job-Pfade über `/bapi/**` nie als Gast beantworten.
+  Vorschlag: alle Job-Pfade über `/bapi/**` nie als Gast beantworten (Lesen, Abbrechen, Starten und alles Weitere) —
+  außer der Flow-Liste (`GET /api/v1/jobs/flows`), die bitte weiterhin auch dem Gast antwortet, gern leer: An ihr
+  erkennt der MCP beim Start, dass das Repository den Proxy hat (siehe 5).
 
 ## 5. Bereitstellung auf Staging
 
 Auf Staging ist nichts zu setzen: Das Repository hat den Proxy, der MCP erkennt ihn beim Start (so gemessen am
-18.11.), und `node-metadata-write` ist der vorgegebene Flow. Der Betrieb stellt den aktuellen Stand bereit. Wir melden uns mit Commit und Werkzeugschemas, sobald es läuft; danach baut ihr
-Paket K.
+18.11.: die Flow-Liste antwortet dem Gast `200 []`), und `node-metadata-write` ist der vorgegebene Flow. Der Betrieb
+stellt den aktuellen Stand bereit. Beantwortet der Proxy die Flow-Liste einmal nicht mehr dem Gast (401/403), fehlt
+dem MCP das Urteil, und die vier Werkzeuge bleiben aus — dann setzt der Betrieb `WLO_BAPI_VIA_REPOSITORY=1`. Wir
+melden uns mit Commit und Werkzeugschemas, sobald es läuft; danach baut ihr Paket K.

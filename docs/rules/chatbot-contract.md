@@ -113,9 +113,10 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   evict the block pasted into an AI host; never a new `k` for this, because an
   unknown `k` fails an old build closed.
 
-- **The b-api flow tools can be missing for a while after a restart (2026-11-18).** Unless
-  `WLO_BAPI_VIA_REPOSITORY` is `1`, they are registered only once the repository has answered the start-up
-  probe (`services/bapi/proxy-switch.ts`) — seconds, or minutes without an answer. In that window a `tools/call`
+- **The b-api flow tools can be missing for a while after a restart (2026-11-18).** Where
+  `WLO_BAPI_VIA_REPOSITORY` is unset, empty or `auto`, they are registered only once the start-up probe gets a verdict
+  (`services/bapi/proxy-switch.ts`: a `200` list, or the measured `404`) — seconds, or minutes without one; a proxy
+  that refuses the guest gives none, and then the operator sets `WLO_BAPI_VIA_REPOSITORY=1`. In that window a `tools/call`
   from a client that kept its tool list is answered with the SDK's unknown-tool protocol error, not a tool
   result with `error.code`; the client lists the tools again. Told to the chatbot team in
   `plans/2026-11-18-antwort-kestra-flows.md`.

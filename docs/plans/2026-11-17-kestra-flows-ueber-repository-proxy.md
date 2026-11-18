@@ -46,8 +46,8 @@ teilen sich alle Personen des Repositorys. Beides geht als Hinweis an das b-api-
 ## 2. Entscheidungen
 
 - **Ein Schalter:** `WLO_BAPI_VIA_REPOSITORY`. ~~aus ohne Wert~~ — seit Paket E (18.11., Wunsch des Nutzers): ohne
-  Wert oder `auto` fragt der Server beim Start einmal anonym die Flow-Liste des Proxys ab und registriert die
-  Werkzeuge nur bei `200` mit einer Liste (Staging: `200 []`; ein Repository ohne den Pfad: `404`, beides gemessen
+  Wert oder `auto` fragt der HTTP-Server beim Start anonym die Flow-Liste des Proxys ab (ohne Urteil erneut) und registriert die
+  Werkzeuge nur bei `200` mit einer Liste (Staging: `200 []`; ein Repository ohne den Pfad: `404` mit JSON-Objekt, beides gemessen
   18.11.); jede andere Antwort ist kein Urteil (auch 3xx, 401/403, eine 404-Seite) = aus und später erneut fragen.
   `1` an ohne Frage, `0` aus, ein anderer Wert aus mit Warnung. stdio fragt nie (keine eigene Anmeldung), dort nur `1`. **Freigabeliste:** `WLO_BAPI_FLOWS` (kommagetrennt `namespace/id`; ~~leer = keiner~~
   leer = `edusharing.chatbot/node-metadata-write`, `none` = keiner).

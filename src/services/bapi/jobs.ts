@@ -44,9 +44,22 @@ export const DEFAULT_FLOWS = NODE_METADATA_WRITE;
  * written — names that are no flow name are dropped, nothing is added.
  */
 export function allowedFlows(): ReadonlySet<string> {
+  return new Set(flowListEntries().filter(f => FLOW_NAME.test(f)));
+}
+
+/**
+ * How many entries of `WLO_BAPI_FLOWS` are no flow name (`namespace/id`) and
+ * are dropped — an empty one (`,`) included, so a list that holds nothing is
+ * said, not read as a silent "none". For the start-up warning.
+ */
+export function droppedFlowNames(): number {
+  return flowListEntries().filter(f => !FLOW_NAME.test(f)).length;
+}
+
+function flowListEntries(): string[] {
   const raw = (process.env['WLO_BAPI_FLOWS'] ?? '').trim();
-  if (raw.toLowerCase() === 'none') return new Set();
-  return new Set((raw || DEFAULT_FLOWS).split(',').map(f => f.trim()).filter(f => FLOW_NAME.test(f)));
+  if (raw.toLowerCase() === 'none') return [];
+  return (raw || DEFAULT_FLOWS).split(',').map(f => f.trim());
 }
 
 /** The JSON of a flow's inputs may not be larger than this. */
@@ -126,7 +139,7 @@ export type ProxyProbe = 'present' | 'absent' | 'unknown';
  * 2026-11-18). Anonymous on purpose — whoever starts it, the credential chain
  * would otherwise fall back to the service account, and that account's login
  * says nothing about the proxy. ONLY the measured shape of "no such path" —
- * a 404 with a JSON body — decides `absent`. Everything else is `unknown`, not
+ * a 404 with a JSON object as body — decides `absent`. Everything else is `unknown`, not
  * a negative: a 404 page of a webapp still deploying, a redirect to a login or
  * maintenance page, a 401/403 (a repository whose guest is refused may well
  * have the proxy), a 200 that is no list, no answer, a body cut off. Never throws.
@@ -146,7 +159,8 @@ export async function probeBapiProxy(): Promise<{ result: ProxyProbe; status?: n
     try { text = await res.text(); } catch { return { result: 'unknown', status }; }
     let body: unknown;
     try { body = JSON.parse(text); } catch { return { result: 'unknown', status }; }
-    if (status === 404) return { result: 'absent', status };
+    // The measured shape is an object (`{error, message}`); a bare `"Not Found"` or `null` is no such word.
+    if (status === 404) return { result: body && typeof body === 'object' && !Array.isArray(body) ? 'absent' : 'unknown', status };
     return { result: Array.isArray(body) ? 'present' : 'unknown', status };
   } catch {
     return { result: 'unknown' };

@@ -9,7 +9,7 @@ KI-Skills — und, nach Anmeldung, das Kuratieren von Datensätzen.
 | **Endpunkt** | `https://wlo-mcp.87.106.195.152.nip.io/mcp` |
 | **Quellcode** | <https://github.com/janschachtschabel/wlo-mcp-sc> |
 | **Transport** | Streamable HTTP (`POST /mcp`), SSE optional · stdio lokal |
-| **Werkzeuge** | 34 lesend · 26 kuratierend = **60** (64 mit `WLO_BATCH_UPLOAD_ENABLED`) |
+| **Werkzeuge** | 34 lesend · 26 kuratierend = **60** (64 mit `WLO_BATCH_UPLOAD_ENABLED`); dazu vier b-api-Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat (Staging: ja) |
 | **Widgets** | 4 |
 | **Env-Schlüssel** | 40 vom Server gelesen, dazu 3 für den Container |
 
@@ -23,7 +23,8 @@ einem echten Aufruf gegen Staging (zuletzt 2026-08-20, nach dem Deploy mit
 ## 1. Anschluss
 
 Ein Client **ohne** `Authorization`-Header bekommt `200` und die **volle**
-Werkzeugliste — alle 60, die Kuratier-Werkzeuge eingeschlossen. Das ist Absicht:
+Werkzeugliste — alle 60 (dazu die vier b-api-Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat), die
+Kuratier-Werkzeuge eingeschlossen. Das ist Absicht:
 ein Modell, das ein Schreibwerkzeug nie sieht, ruft es nie auf, und dann fordert
 nichts den Host je zur Anmeldung auf. Der *Aufruf* wird zur Laufzeit abgewiesen
 und trägt die `WWW-Authenticate`-Aufforderung, die den Login startet.
@@ -182,7 +183,7 @@ anderen Schalter sind aus, solange sie nicht gesetzt werden.
 | `UPLOAD_MAX_BYTES` | 50 MB | `POST /api/uploads` | Größte Einzeldatei eines Upload-Platzes; höchstens 100 MB. Nur wirksam mit `WLO_BATCH_UPLOAD_ENABLED`. |
 | `UPLOAD_MAX_TOTAL_BYTES` | 128 MB | `POST /api/uploads` | Summe aller offenen Upload-Plätze im Arbeitsspeicher; höchstens 384 MB (der Container hat 512 MB). **Eine** Anmeldung hält davon höchstens die Hälfte (seit 2026-11-13). Die Route verbraucht außerdem das Protokoll-Budget des Aufrufers (Adresse bzw. `X-WLO-Client-Key`) — `429 rate_limited` noch vor der Anmeldeprüfung — und merkt sich eine vom Repository abgelehnte Anmeldung 60 s. |
 | `UPLOAD_REQUEST_TIMEOUT_MS` | 25 000 | `POST /api/uploads` | Frist für den Empfang eines Upload-Körpers; höchstens 28 000, damit sie vor der serverweiten Empfangsfrist greift und der Client eine Antwort bekommt. |
-| `WLO_BAPI_VIA_REPOSITORY` | **erkennen** | `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows` | Aufträge der b-api (Kestra-Flows) als die angemeldete Person, über den b-api-Proxy des Repositorys (`{Repository}/rest/bapi`); nur mit eigener Anmeldung, nie mit dem Dienstkonto. Leer oder `auto`: Der HTTP-Server fragt beim Start einmal anonym, ob der Proxy antwortet (`200` mit Liste = ja, `404` mit JSON-Körper = nein), und hat die vier Werkzeuge nur dann; jede andere Antwort ist kein Urteil — sie bleiben aus, und er fragt später erneut. stdio fragt nie (keine eigene Anmeldung), dort nur mit `1`. `1` an ohne Nachfrage, `0` aus, ein anderer Wert aus (mit Warnung). |
+| `WLO_BAPI_VIA_REPOSITORY` | **erkennen** | `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows` | Aufträge der b-api (Kestra-Flows) als die angemeldete Person, über den b-api-Proxy des Repositorys (`{Repository}/rest/bapi`); nur mit eigener Anmeldung, nie mit dem Dienstkonto. Leer oder `auto`: Der HTTP-Server fragt beim Start anonym, ob der Proxy antwortet (`200` mit Liste = ja, `404` mit JSON-Objekt (`{error, message}`) = nein), und hat die vier Werkzeuge nur dann; jede andere Antwort ist kein Urteil — sie bleiben aus, und er fragt später erneut. stdio fragt nie (keine eigene Anmeldung), dort nur mit `1`. `1` an ohne Nachfrage, `0` aus, ein anderer Wert aus (mit Warnung). |
 | `WLO_BAPI_FLOWS` | `edusharing.chatbot/node-metadata-write` | `wlo_start_flow`, `wlo_list_flows` | Die startbaren Aufträge, kommagetrennt `namespace/id`. Leer = die Vorgabe, `none` = keiner. |
 | `WLO_SEARCH_OUTPUT_MODE` | `lean` | `search` **und** `fetch` | `rich`: `search` liefert die vollen Töpfe von `search_wlo_all` samt Widget, `fetch` den vollen Datensatz samt Detailansicht. Der Schalter deckt beide, weil `search` → `fetch` ein Fluss ist — nur den ersten Schritt anzureichern ließe den zweiten nichts rendern. Die Konventionsform (ein einziger Parameter) bleibt in beiden Modi unangetastet. |
 | `WLO_SKILL_CACHE` | **AN** | den Freigabekatalog an Sammlungs-Antworten | Hält die Registry jeder Sammlung im Hintergrund warm, damit ein Sammlungstreffer seinen Katalog kostenlos tragen kann. Nur ein ausdrückliches `0`, `false`, `no` oder `off` schaltet ab. Der Schalter deckt **Zeitgeber und Anfragepfad**: ohne Tick darf auch der Live-Rückfall nicht laufen, sonst zahlt jede Anfrage die volle Kinderliste, während nichts sie je verfallen ließe. |

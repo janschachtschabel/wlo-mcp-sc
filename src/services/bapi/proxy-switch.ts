@@ -20,10 +20,9 @@
  * `tests/shared-rule-discipline.test.ts`).
  */
 
-import { isEnabledFlag } from '../write/credential-gate.js';
-import { isDisabledFlag } from '../../wlo-config.js';
+import { isDisabledFlag, isEnabledFlag } from '../../env-flags.js';
 import { log } from '../../logger.js';
-import { probeBapiProxy, type ProxyProbe } from './jobs.js';
+import { droppedFlowNames, probeBapiProxy, type ProxyProbe } from './jobs.js';
 
 export type BapiSwitch = 'on' | 'off' | 'auto';
 
@@ -85,14 +84,23 @@ async function detect(attempt: number, gen: number): Promise<BapiProxyDetection>
 }
 
 /**
- * Warn when the switch holds a value that is neither on, off nor auto. Its own
- * function because stdio, which never starts the detection, says it too.
- * Answers whether it warned.
+ * Say at start what is wrong with the two settings: a switch that is neither
+ * on, off nor auto, and flow names that are no `namespace/id` (dropped). Its
+ * own function because stdio, which never starts the detection, says it too.
+ * Answers what it warned about.
  */
-export function warnOnUnrecognisedBapiSwitch(): boolean {
-  if (!bapiSwitch().unrecognised) return false;
-  log.warn('WLO_BAPI_VIA_REPOSITORY is neither 1, 0 nor auto — the b-api flow tools stay off');
-  return true;
+export function warnOnBapiSettings(): Array<'switch' | 'flows'> {
+  const warned: Array<'switch' | 'flows'> = [];
+  if (bapiSwitch().unrecognised) {
+    log.warn('WLO_BAPI_VIA_REPOSITORY is neither 1, 0 nor auto — the b-api flow tools stay off');
+    warned.push('switch');
+  }
+  const dropped = droppedFlowNames();
+  if (dropped > 0) {
+    log.warn('WLO_BAPI_FLOWS has entries that are empty or no flow name (namespace/id) — they are dropped', { dropped });
+    warned.push('flows');
+  }
+  return warned;
 }
 
 /**
@@ -101,9 +109,10 @@ export function warnOnUnrecognisedBapiSwitch(): boolean {
  */
 export function startBapiProxyDetection(): Promise<BapiProxyDetection> {
   if (first) return first;
+  const warned = warnOnBapiSettings();
   const sw = bapiSwitch();
   if (sw.mode !== 'auto') {
-    if (!warnOnUnrecognisedBapiSwitch()) log.info('b-api flow tools set by WLO_BAPI_VIA_REPOSITORY', { mode: sw.mode });
+    if (!warned.includes('switch')) log.info('b-api flow tools set by WLO_BAPI_VIA_REPOSITORY', { mode: sw.mode });
     first = Promise.resolve(detected);
     return first;
   }

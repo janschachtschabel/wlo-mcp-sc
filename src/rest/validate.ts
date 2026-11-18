@@ -7,6 +7,8 @@
  * Pure and side-effect-free so it is unit-testable without a live server.
  */
 
+import { isEnabledFlag } from '../env-flags.js';
+
 const MAX_QUERY_LEN = 200;
 const MAX_NODE_ID_LEN = 50;
 const MAX_IDS = 25;
@@ -77,7 +79,7 @@ export function clampInt(raw: string | null, min: number, max: number, def: numb
 
 /** Truthy string flags: "1", "true", "yes", "on" (case-insensitive). */
 export function parseBool(raw: string | null): boolean {
-  return /^(1|true|yes|on)$/i.test((raw ?? '').trim());
+  return isEnabledFlag(raw);
 }
 
 /**

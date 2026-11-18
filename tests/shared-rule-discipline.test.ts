@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import ts from 'typescript';
 
 const srcDir = fileURLToPath(new URL('../src/', import.meta.url));
 
@@ -421,6 +422,40 @@ test('the skill-registry cache is started only by the transports', () => {
     `only the transports may start the cache — got ${JSON.stringify(files)}`);
 });
 
+/**
+ * Every call or `new` that runs when `file` is imported: anything in a
+ * top-level statement that is not inside a function. Function, import, type
+ * and interface declarations hold nothing that runs.
+ */
+function callsOnImport(file: string): string[] {
+  const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ES2022, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      found.push(node.getText(sf).split('\n')[0]!.slice(0, 80));
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const stmt of sf.statements) {
+    if (ts.isFunctionDeclaration(stmt) || ts.isImportDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)
+      || ts.isInterfaceDeclaration(stmt)) continue;
+    visit(stmt);
+  }
+  return found;
+}
+
+test('env-flags.ts imports nothing, and the pure modules that use it import nothing else', () => {
+  // The flag spellings once pulled the whole configuration (env reads, log lines at load) into the pure
+  // `rest/validate.ts` (review 2026-11-18). They live in an import-free leaf so that cannot happen again.
+  const importsOf = (file: string): string[] =>
+    [...readFileSync(join(srcDir, file), 'utf8').matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+['"]([^'"]+)['"]|\brequire\s*\(\s*['"]([^'"]+)['"]|^\s*import\s+['"]([^'"]+)['"]/gm)]
+      .map(m => m[1] ?? m[2] ?? m[3] ?? '');
+  assert.deepEqual(importsOf('env-flags.ts'), [], 'env-flags.ts must import nothing');
+  assert.deepEqual(importsOf('unsafe-tools.ts'), ['./env-flags.js'], 'unsafe-tools.ts is a leaf: env-flags only');
+  assert.deepEqual(importsOf('rest/validate.ts'), ['../env-flags.js'], 'rest/validate.ts is pure: env-flags only');
+});
+
 test('the b-api proxy detection is started only by the HTTP entry point, and probes only through it', () => {
   // Same reason as the skill cache: a probe on import would hit the network in
   // every test and in any process that merely imports a service. stdio has no
@@ -433,6 +468,13 @@ test('the b-api proxy detection is started only by the HTTP entry point, and pro
   const probeFiles = [...new Set(probes.map(f => f.split(':')[0]))].sort();
   assert.deepEqual(probeFiles, ['services/bapi/proxy-switch.ts'],
     `only proxy-switch.ts may call probeBapiProxy — got ${JSON.stringify(probeFiles)}`);
+  // Nor does the module start itself: nothing in it may RUN on import. Read from the syntax tree, not by
+  // lines — a call inside a top-level `if {}` block, an IIFE or through an alias runs on import just the same.
+  assert.deepEqual(callsOnImport(join(srcDir, 'services/bapi/proxy-switch.ts')), [],
+    'proxy-switch.ts must not start the detection at import');
+  // stdio never asks, but still says a wrong setting.
+  assert.match(readFileSync(join(srcDir, 'stdio.ts'), 'utf8'), /^warnOnBapiSettings\(\);/m,
+    'stdio.ts must say a wrong b-api setting at start');
 });
 
 test('the HTTP entry point wires the ticket limiter, not just the password one', () => {
