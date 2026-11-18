@@ -1,7 +1,8 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
 Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **60 MCP-Tools**
-(64 mit `WLO_BATCH_UPLOAD_ENABLED`: 34 lesende, 30 kuratierende — vier davon nur mit diesem Schalter), 4 interaktive Widgets und die öffentlichen
+(64 mit `WLO_BATCH_UPLOAD_ENABLED`: 34 lesende, 30 kuratierende — vier davon nur mit diesem Schalter; dazu vier
+Flow-Werkzeuge, wo das Repository den b-api-Proxy hat), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
@@ -21,6 +22,7 @@ Was die Liste tatsächlich verändert, sind diese Schalter:
 | **`WLO_SKILL_TOOL_MODE=one-tool`** | 60 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
 | **`WLO_DISABLE_SKILL_SEARCH=1`** | 59 Tools — ohne `search_skill` (nur der Registry-Weg) |
 | **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 64) |
+| **Repository mit b-api-Proxy** (oder `WLO_BAPI_VIA_REPOSITORY=1`; HTTP) | jeweils **plus** die vier Flow-Werkzeuge (Staging: 64, mit Stapel 68) |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -601,10 +603,10 @@ zurück.
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes vorher über `POST /api/uploads`) | — (Upload-Modul) |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel ablegen (Kennzahlen zusätzlich in `cm:description`) | — (Upload-Modul) |
 | `wlo_list_my_batches` | Die eigenen Ablagen wiederfinden, neueste zuerst; mit `nodeId` eine samt Einträgen. Nur lesend, nur eigene Anmeldung | *„Zeig mir meine letzten Ablagen“* |
-| `wlo_start_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: einen freigegebenen b-api-Auftrag (Kestra-Flow) als die angemeldete Person starten; Vorschau, dann `confirmToken`. |
-| `wlo_flow_status` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: Stand (`running`, `succeeded`, `failed`, `cancelled`, `unknown`), Fortschritt und Ergebnis eines eigenen Auftrags. Nur lesend. |
-| `wlo_cancel_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: eigenen Auftrag abbrechen. |
-| `wlo_list_flows` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: die startbaren Aufträge. Nur lesend. |
+| `wlo_start_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): einen freigegebenen b-api-Auftrag (Kestra-Flow) als die angemeldete Person starten; Vorschau, dann `confirmToken`. |
+| `wlo_flow_status` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): Stand (`running`, `succeeded`, `failed`, `cancelled`, `unknown`), Fortschritt und Ergebnis eines eigenen Auftrags. Nur lesend. |
+| `wlo_cancel_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): eigenen Auftrag abbrechen. |
+| `wlo_list_flows` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): die startbaren Aufträge. Nur lesend. |
 | `wlo_update_compendium` | Redaktionellen Kompendialtext einer Sammlung schreiben, ersetzen oder entfernen (Markdown) | *„Schreib einen Einführungstext für diese Sammlung“* |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert. Legt keine Varianten an, löscht und sortiert keine | *„Zeig auf dieser Themenseite künftig die Variante für die Oberstufe“* |
 

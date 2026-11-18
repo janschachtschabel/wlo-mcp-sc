@@ -51,7 +51,9 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   are two; see the plan entry above for the three rules that bind it.
 - `src/services/bapi/*` — b-api flows (Kestra) through `{repository}/rest/bapi` (2026-11-18): `jobs.ts` is the ONE
   caller of that proxy (guarded) — four calls, method and path together, a personal login only, `DisableGuest`
-  on each; `node-metadata-write.ts` checks the ids before a preview; `job-owners.ts` keeps who started which job,
+  on each — plus the one anonymous start-up probe of the flow list, without `DisableGuest`; `proxy-switch.ts`
+  decides whether the tools are on (`WLO_BAPI_VIA_REPOSITORY`, else that probe, started from `http.ts` only);
+  `node-metadata-write.ts` checks the ids before a preview; `job-owners.ts` keeps who started which job,
   because through the proxy every person shares the repository's b-api key. Rules: `write-support.md`.
 - `src/services/write/*` — the shared write pipeline (gate → fields → change-set
   → confirm → verify). No MCP SDK import; every mutation goes through it, so the

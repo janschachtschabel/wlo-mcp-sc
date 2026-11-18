@@ -23,7 +23,7 @@ Ergänzende Dokumente: [TOOLS.md](TOOLS.md) (Chat-Trigger je Werkzeug),
 | | |
 |---|---|
 | **Protokoll** | MCP über Streamable HTTP (`POST`), plus stdio für lokale Nutzung |
-| **Werkzeuge** | 60 — 34 lesend, 26 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 64 (vier für die Stapel-Ablage) |
+| **Werkzeuge** | 60 — 34 lesend, 26 kuratierend (schreibend); mit `WLO_BATCH_UPLOAD_ENABLED` 64 (vier für die Stapel-Ablage); dazu vier b-api-Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat (Staging: ja) |
 | **Ohne Anmeldung** | Voller Lesezugriff. Kein Login nötig, keine Registrierung |
 | **Mit Anmeldung** | Zusätzlich Schreiben mit den Rechten des eigenen WLO-Kontos |
 | **Zusätzlich** | Öffentliche REST-API (`/api/*`, nur lesend), 4 Widgets, Launcher-Seite |
@@ -34,6 +34,9 @@ Im Folgenden steht `<BASIS>` für diese Adresse.
 ---
 
 ## 1. Die 60 MCP-Werkzeuge
+
+(Dazu kommen die vier b-api-Auftrags-Werkzeuge `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`,
+`wlo_list_flows`, wo das Repository den b-api-Proxy hat — auf Staging ja; sie stehen in der Tabelle unten.)
 
 Alle Aufrufenden sehen **dieselbe Liste**, auch anonym. Die kuratierenden
 Werkzeuge stehen immer in `tools/list`, deklarieren `oauth2` und **verweigern
@@ -202,7 +205,7 @@ Bereich. Die Bytes kommen vorher über [`POST /api/uploads`](#26-upload-für-die
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen; jeder Index einmal, Prüfsumme und Art müssen passen |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel, vom Server aus der Freigabe gebaut — erst nach einer abgelegten Datei |
 | `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen, neueste zuerst; mit `nodeId` eine samt Einträgen und deren `role` — so findet ein neues Gespräch, ein anderes Gerät oder ein Kestra-Flow das Strukturdokument wieder |
-| `wlo_start_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: einen b-api-Auftrag als die angemeldete Person starten (Vorschau, dann `confirmToken`); `status: preview|started|failed`, `jobId`. |
+| `wlo_start_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): einen b-api-Auftrag als die angemeldete Person starten (Vorschau, dann `confirmToken`); `status: preview|started|failed`, `jobId`. |
 | `wlo_flow_status` | Nur lesend: `status`, `rawStatus`, `progress`, `iterations` (Zahlen je Stand), `outputs`, `files`; nur eigene Aufträge. |
 | `wlo_cancel_flow` | Eigenen Auftrag abbrechen: `cancelled`, `already_finished`, `unknown_job`. |
 | `wlo_list_flows` | Nur lesend: die startbaren Aufträge. |

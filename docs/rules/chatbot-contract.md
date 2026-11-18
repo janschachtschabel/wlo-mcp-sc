@@ -113,6 +113,13 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   evict the block pasted into an AI host; never a new `k` for this, because an
   unknown `k` fails an old build closed.
 
+- **The b-api flow tools can be missing for a while after a restart (2026-11-18).** Unless
+  `WLO_BAPI_VIA_REPOSITORY` is `1`, they are registered only once the repository has answered the start-up
+  probe (`services/bapi/proxy-switch.ts`) — seconds, or minutes without an answer. In that window a `tools/call`
+  from a client that kept its tool list is answered with the SDK's unknown-tool protocol error, not a tool
+  result with `error.code`; the client lists the tools again. Told to the chatbot team in
+  `plans/2026-11-18-antwort-kestra-flows.md`.
+
 - **Coded errors and output schemas (2026-11-13).** A spec-following client
   validates `structuredContent` against `outputSchema` even on `isError`. So
   every tool with an output schema publishes `anyOf: [success, { error }]`

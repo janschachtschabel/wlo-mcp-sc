@@ -36,8 +36,13 @@ eine Repository-Sitzung, gegen einen Zugangsblock getauscht, und jeder Aufruf ü
 
 Jede Ablehnung trägt `error.code` (bei diesen Werkzeugen gleich `reason`). Wer schon vor dem Werkzeug abgewiesen wird (ohne Anmeldung, oder das Dienstkonto), bekommt nur `error.code: login_required` mit der Anmelde-Aufforderung, ohne `status` und `reason`.
 
-Nur mit `WLO_BAPI_VIA_REPOSITORY`; startbar sind die Flows aus `WLO_BAPI_FLOWS`. Alle vier nur mit der eigenen
-Anmeldung der Person, nie mit dem Dienstkonto.
+Die vier Werkzeuge gibt es, wo das Repository den b-api-Proxy hat: Der MCP fragt das beim Start einmal anonym ab
+(der Betrieb kann es mit `WLO_BAPI_VIA_REPOSITORY=1`/`0` festlegen). Startbar ist `node-metadata-write`, solange der
+Betrieb mit `WLO_BAPI_FLOWS` nichts anderes festlegt. Alle vier nur mit der eigenen Anmeldung der Person, nie mit
+dem Dienstkonto. Wer `tools/list` abruft, bevor das Repository geantwortet hat (nach einem Neustart meist Sekunden,
+antwortet es beim Start nicht, auch Minuten), sieht die vier Werkzeuge noch nicht — ein neuer Abruf zeigt sie. Wer in
+diesem Fenster mit einer behaltenen Werkzeugliste `tools/call` schickt, bekommt den Protokollfehler „unbekanntes
+Werkzeug“ (kein Ergebnis mit `error.code`): dann `tools/list` neu abrufen und später erneut versuchen.
 
 - **`wlo_start_flow`** — `flow`, `inputs`, `confirmToken` (der Parameter heißt bei uns wie bei allen
   Schreibwerkzeugen `confirmToken`; die Vorschau gibt ihn unter `confirm.token` zurück). Ausgabe `status: preview`
@@ -101,6 +106,6 @@ Ergebnisse stehen dann an den Datensätzen.
 
 ## 5. Bereitstellung auf Staging
 
-Der Betrieb setzt `WLO_BAPI_VIA_REPOSITORY=1` und `WLO_BAPI_FLOWS=edusharing.chatbot/node-metadata-write` und
-stellt den aktuellen Stand bereit. Wir melden uns mit Commit und Werkzeugschemas, sobald es läuft; danach baut ihr
+Auf Staging ist nichts zu setzen: Das Repository hat den Proxy, der MCP erkennt ihn beim Start (so gemessen am
+18.11.), und `node-metadata-write` ist der vorgegebene Flow. Der Betrieb stellt den aktuellen Stand bereit. Wir melden uns mit Commit und Werkzeugschemas, sobald es läuft; danach baut ihr
 Paket K.

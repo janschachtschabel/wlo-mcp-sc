@@ -9,12 +9,16 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createMcpServer } from './server.js';
 import { verifyConfiguredCredential } from './auth/identity.js';
 import { startSkillRegistryCache } from './services/skill-registry-cache.js';
+import { warnOnUnrecognisedBapiSwitch } from './services/bapi/proxy-switch.js';
 import { log } from './logger.js';
 import { exitOnUnusableRepositoryUrl, warnOnDefaultRepository, warnOnUnknownLogLevel } from './startup-check.js';
 
 warnOnUnknownLogLevel();
 exitOnUnusableRepositoryUrl();
 warnOnDefaultRepository();
+// stdio never asks the repository about its b-api proxy (no personal login, which
+// the flow tools need) — but a typo in the switch is still said, not swallowed.
+warnOnUnrecognisedBapiSwitch();
 
 async function main(): Promise<void> {
   const server = createMcpServer();

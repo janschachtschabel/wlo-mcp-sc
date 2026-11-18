@@ -1,7 +1,7 @@
 # Kestra-Flows über den Repository-Proxy (2026-11-17)
 
 Auftrag: „Wünsche an den MCP: Kestra-Flows über den Repository-Proxy“ des Chatbot-Teams (17.11.,
-Paket M ihres Plans `2026-11-17-b-api-delegation-und-upload.md`). Stand: **gebaut, zwei Reviews** (Werkzeuge W1–W4 und W6;
+Paket M ihres Plans `2026-11-17-b-api-delegation-und-upload.md`). Stand: **gebaut, zwei Reviews; Paket E (Vorgabe-Flow, Erkennung) gebaut, zwei Reviews** (Werkzeuge W1–W4 und W6;
 W5 und W7 bewusst nicht, siehe 4); abgeglichen mit der Fassung des Teams vom 18.11.
 
 ## 1. Gemessen (W0), Staging, 17.11.2026
@@ -45,8 +45,12 @@ teilen sich alle Personen des Repositorys. Beides geht als Hinweis an das b-api-
 
 ## 2. Entscheidungen
 
-- **Ein Schalter:** `WLO_BAPI_VIA_REPOSITORY` (aus). Ohne ihn werden die Werkzeuge nicht registriert; heutiger
-  Betrieb unverändert. **Freigabeliste:** `WLO_BAPI_FLOWS` (kommagetrennt `namespace/id`, leer = keiner).
+- **Ein Schalter:** `WLO_BAPI_VIA_REPOSITORY`. ~~aus ohne Wert~~ — seit Paket E (18.11., Wunsch des Nutzers): ohne
+  Wert oder `auto` fragt der Server beim Start einmal anonym die Flow-Liste des Proxys ab und registriert die
+  Werkzeuge nur bei `200` mit einer Liste (Staging: `200 []`; ein Repository ohne den Pfad: `404`, beides gemessen
+  18.11.); jede andere Antwort ist kein Urteil (auch 3xx, 401/403, eine 404-Seite) = aus und später erneut fragen.
+  `1` an ohne Frage, `0` aus, ein anderer Wert aus mit Warnung. stdio fragt nie (keine eigene Anmeldung), dort nur `1`. **Freigabeliste:** `WLO_BAPI_FLOWS` (kommagetrennt `namespace/id`; ~~leer = keiner~~
+  leer = `edusharing.chatbot/node-metadata-write`, `none` = keiner).
 - **Nur persönliche Anmeldung** (`source: 'user'`), nie Dienstkonto, nie anonym: sonst `login_required` vor jedem
   Aufruf. Die Anmeldung geht nur an den Repository-Host (`wloFetch`, unverändert); dazu immer `DisableGuest: true`.
 - **Feste Pfade:** nur `/api/v1/jobs/flows`, `/api/v1/jobs/flows/{ns}/{id}`, `/api/v1/jobs/{jobId}` (GET, DELETE),
@@ -73,7 +77,7 @@ teilen sich alle Personen des Repositorys. Beides geht als Hinweis an das b-api-
   b-api ihn liefert; aus `iterations` nur Zahlen je Stand (`iterations: {running, succeeded, warning, failed,
   cancelled}`), keine Werte und keine Codes; ist die Liste eine Stichprobe (über 200), steht `iterationsSampled: true`.
 
-## 3. Werkzeuge (nur mit `WLO_BAPI_VIA_REPOSITORY`)
+## 3. Werkzeuge (nur mit b-api-Proxy, `WLO_BAPI_VIA_REPOSITORY`)
 
 | Name | Art | Ein | Aus (`structuredContent`) |
 |---|---|---|---|
@@ -93,7 +97,7 @@ Der Auftrag nennt `confirm` als Parameter; bei uns heißt er wie bei allen Schre
 
 ## 5. Aufgaben
 
-1. `src/services/bapi/jobs.ts`: Schalter, Freigabeliste, Pfadprüfung, `bapiFetch` (persönlich, `DisableGuest`,
+1. `src/services/bapi/jobs.ts`: ~~Schalter~~ (seit Paket E in `proxy-switch.ts`), Freigabeliste, Pfadprüfung, `bapiFetch` (persönlich, `DisableGuest`,
    30 s), Start, Stand, Abbruch, Liste, Status-Abbildung — mit Tests gegen die Drahtform (202/jobId, Mapping,
    404/409/429 + `Retry-After`, leere Liste ohne Person, Dienstkonto abgewiesen, Pfad außerhalb abgewiesen).
 2. `src/services/bapi/node-metadata-write.ts`: Prüfung der Knoten (Art, Verknüpfung, Schreibrecht, Anzahl).
@@ -104,3 +108,8 @@ Der Auftrag nennt `confirm` als Parameter; bei uns heißt er wie bei allen Schre
    Stand bis fertig → Bericht → Datensatz löschen. Dazu die W0-Aufrufe mit der Sitzung.
 6. Doku: `.env.example`, Compose, MCP-REFERENZ, DEPLOYMENT, README(s), TOOLS/WERKZEUGE, `docs/rules/write-support.md`,
    CHANGELOG, STATUS; Antwort an das Team.
+7. **Paket E (18.11., Wunsch des Nutzers):** `WLO_BAPI_FLOWS` leer = `node-metadata-write`, `none` = keiner;
+   `src/services/bapi/proxy-switch.ts` (Schalter `auto`/`1`/`0`, Zustand, Wiederholung), `probeBapiProxy` in
+   `jobs.ts` (die eine anonyme Abfrage, nur 200+Liste und 404+JSON entscheiden), Start nur aus `http.ts` (stdio
+   fragt nie); Wächter für Start und Probe; `tests/bapi-proxy-switch.test.ts`; live gemessen (Staging: `present`).
+   Zwei Reviews: 1 schwer, 5 mittel, 4 klein; dann 4 mittel, 7 klein — alle behoben.

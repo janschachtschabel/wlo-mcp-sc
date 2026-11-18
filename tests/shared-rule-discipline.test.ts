@@ -421,6 +421,20 @@ test('the skill-registry cache is started only by the transports', () => {
     `only the transports may start the cache — got ${JSON.stringify(files)}`);
 });
 
+test('the b-api proxy detection is started only by the HTTP entry point, and probes only through it', () => {
+  // Same reason as the skill cache: a probe on import would hit the network in
+  // every test and in any process that merely imports a service. stdio has no
+  // personal login, so it never asks (the tools would refuse every call there).
+  const found = offenders(/startBapiProxyDetection\s*\(/, ['services/bapi/proxy-switch.ts']);
+  const files = [...new Set(found.map(f => f.split(':')[0]))].sort();
+  assert.deepEqual(files, ['http.ts'], `only http.ts may start the detection — got ${JSON.stringify(files)}`);
+  // The anonymous probe is asked by the detection alone — never per request, never at import.
+  const probes = offenders(/\bprobeBapiProxy\s*\(/, ['services/bapi/jobs.ts']);
+  const probeFiles = [...new Set(probes.map(f => f.split(':')[0]))].sort();
+  assert.deepEqual(probeFiles, ['services/bapi/proxy-switch.ts'],
+    `only proxy-switch.ts may call probeBapiProxy — got ${JSON.stringify(probeFiles)}`);
+});
+
 test('the HTTP entry point wires the ticket limiter, not just the password one', () => {
   // `ticketAbuseLimiter` is OPTIONAL on `HttpAppOptions`, and absence falls back
   // to `authAbuseLimiter` — deliberately the tighter budget, so forgetting it

@@ -83,7 +83,8 @@ diese Datei über rund 100 Zeilen wächst.
   ursprüngliche Repo `wlo-mcp-server` bleibt auf seinem Stand vom 01.06.2026 (`2d0080b`): Ein Merge dorthin wurde
   am selben Tag auf Wunsch des Nutzers zurückgenommen. Weiterentwickelt und veröffentlicht wird nur hier, in
   `wlo-mcp-sc`; der Merge-Commit `b577e06` bleibt in dieser Historie.
-- **2026-11-18 — Aufträge der b-api (Kestra) über den Repository-Proxy**, ohne Vorgabe aus (`WLO_BAPI_VIA_REPOSITORY`):
+- **2026-11-18 — Aufträge der b-api (Kestra) über den Repository-Proxy**, an, wo das Repository den b-api-Proxy hat
+  (beim Start einmal anonym gefragt; `WLO_BAPI_VIA_REPOSITORY=1`/`0` übersteuert), Vorgabe-Flow `node-metadata-write`:
   `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Live gemessen: Start mit Sitzungs-Block,
   der Flow schreibt als Person; jede Person sieht über den Proxy jeden Job — darum bindet der Server Jobs an die
   Person. Plan: `2026-11-17-kestra-flows-ueber-repository-proxy.md`.

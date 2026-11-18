@@ -12,21 +12,18 @@
  * nobody: without a person the flow list comes back EMPTY with 200 (measured
  * 2026-11-17), which would read as "nothing released".
  *
- * Off unless `WLO_BAPI_VIA_REPOSITORY` is set; which flows may be started is
- * the operator's list `WLO_BAPI_FLOWS`. Only the four paths of the job surface
- * are ever called — a fixed shape checked here, before any request.
+ * Whether the tools are on is `proxy-switch.ts` (the operator's switch, else
+ * what the repository answers to `probeBapiProxy`, the one anonymous call); which flows may be started
+ * is the operator's list `WLO_BAPI_FLOWS`, `node-metadata-write` when unset.
+ * Only the four paths of the job surface are ever called with a login — a fixed
+ * shape checked here, before any request.
  */
 
-import { currentCredential } from '../../auth/credential.js';
-import { isEnabledFlag } from '../write/credential-gate.js';
+import { currentCredential, runAnonymous } from '../../auth/credential.js';
 import { wloFetch } from '../../wlo-fetch.js';
 import { WLO_REPOSITORY_URL } from '../../wlo-config.js';
 import { wroteNothing } from '../../upstream-error.js';
-
-/** `WLO_BAPI_VIA_REPOSITORY` — read per call so the switch is testable; the operator sets it once. */
-export function bapiViaRepositoryEnabled(): boolean {
-  return isEnabledFlag(process.env['WLO_BAPI_VIA_REPOSITORY']);
-}
+import { NODE_METADATA_WRITE } from './node-metadata-write.js';
 
 /**
  * `namespace/id` — the b-api's names: letters, digits and `_.-`, each part
@@ -38,9 +35,18 @@ export const FLOW_NAME = /^(?!.*\.\.)[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\/[A-Za-z0
 /** A job id as it may stand in a path — the same rule for one part. */
 export const JOB_ID = /^(?!.*\.\.)[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/;
 
-/** `WLO_BAPI_FLOWS`: the flows this server may start, comma-separated. Empty = none. */
+/** The flow startable when the operator names none: the one the chatbot team asked for (2026-11-18). */
+export const DEFAULT_FLOWS = NODE_METADATA_WRITE;
+
+/**
+ * `WLO_BAPI_FLOWS`: the flows this server may start, comma-separated. Unset or
+ * empty = `DEFAULT_FLOWS`; `none` = none. A list the operator wrote is taken as
+ * written — names that are no flow name are dropped, nothing is added.
+ */
 export function allowedFlows(): ReadonlySet<string> {
-  return new Set((process.env['WLO_BAPI_FLOWS'] ?? '').split(',').map(f => f.trim()).filter(f => FLOW_NAME.test(f)));
+  const raw = (process.env['WLO_BAPI_FLOWS'] ?? '').trim();
+  if (raw.toLowerCase() === 'none') return new Set();
+  return new Set((raw || DEFAULT_FLOWS).split(',').map(f => f.trim()).filter(f => FLOW_NAME.test(f)));
 }
 
 /** The JSON of a flow's inputs may not be larger than this. */
@@ -106,6 +112,45 @@ async function bapiFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body?:
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
   const ra = Number(res.headers.get('retry-after'));
   return { status: res.status, body: parsed, ...(Number.isFinite(ra) && ra > 0 ? { retryAfter: Math.ceil(ra) } : {}) };
+}
+
+const PROBE_TIMEOUT_MS = 10_000;
+
+/** What one probe of the repository's b-api proxy found; `unknown` decides nothing. */
+export type ProxyProbe = 'present' | 'absent' | 'unknown';
+
+/**
+ * Does the repository serve the b-api proxy? Asks the flow list ANONYMOUSLY and
+ * without `DisableGuest`: the guest's answer is `200 []` where the proxy is
+ * there, `404` where the repository has no such path (both measured on staging,
+ * 2026-11-18). Anonymous on purpose — whoever starts it, the credential chain
+ * would otherwise fall back to the service account, and that account's login
+ * says nothing about the proxy. ONLY the measured shape of "no such path" —
+ * a 404 with a JSON body — decides `absent`. Everything else is `unknown`, not
+ * a negative: a 404 page of a webapp still deploying, a redirect to a login or
+ * maintenance page, a 401/403 (a repository whose guest is refused may well
+ * have the proxy), a 200 that is no list, no answer, a body cut off. Never throws.
+ *
+ * The ONE call to `/rest/bapi` without a login and without `DisableGuest`, on
+ * purpose: with `DisableGuest` the anonymous call is refused 401 (measured), and
+ * that would read as no proxy everywhere.
+ */
+export async function probeBapiProxy(): Promise<{ result: ProxyProbe; status?: number }> {
+  try {
+    const res = await runAnonymous(() => wloFetch(`${WLO_REPOSITORY_URL}/rest/bapi/api/v1/jobs/flows`, {
+      method: 'GET', headers: { Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    }));
+    const status = res.status;
+    if (status !== 200 && status !== 404) { await res.body?.cancel(); return { result: 'unknown', status }; }
+    let text: string;
+    try { text = await res.text(); } catch { return { result: 'unknown', status }; }
+    let body: unknown;
+    try { body = JSON.parse(text); } catch { return { result: 'unknown', status }; }
+    if (status === 404) return { result: 'absent', status };
+    return { result: Array.isArray(body) ? 'present' : 'unknown', status };
+  } catch {
+    return { result: 'unknown' };
+  }
 }
 
 /** The b-api's own error code in either of its two shapes, cut short. */

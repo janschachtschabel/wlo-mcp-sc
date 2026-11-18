@@ -12,7 +12,8 @@ Navigation, Metadaten-Abfrage und Vokabular-Auflösung bereit — allesamt gegen
 anonyme, nur lesende öffentliche API. Ohne Anmeldung ist das die ganze
 Oberfläche: keine Authentifizierung, keine Schreibzugriffe.
 
-Dazu kommen **30 kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`; Anlegen, Bearbeiten,
+Dazu kommen **30 kuratierende Werkzeuge** (vier nur mit `WLO_BATCH_UPLOAD_ENABLED`, dazu vier b-api-Auftrags-Werkzeuge,
+wo das Repository den b-api-Proxy hat; Anlegen, Bearbeiten,
 Einreichen, Sammlungen, Kompendialtexte, Metadaten-Vorschläge, welche Variante
 eine Themenseite rendert, Löschen). Sie
 werden für alle Aufrufenden *gelistet* — nur so erfährt ein Client, dass sich
@@ -76,7 +77,8 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   `get_skill_for_task` — `get_skill` bleibt in jedem Modus. Dazu kommt
   `get_url_text` (Text einer beliebigen Web-Adresse), das als **unsicher**
   deklariert und über `WLO_DISABLE_UNSAFE_TOOLS` abschaltbar ist.
-- **30 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
+- **30 kuratierende MCP-Tools** (die vier Stapel-Werkzeuge schaltet `WLO_BATCH_UPLOAD_ENABLED` erst ein; dazu vier
+  b-api-Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat) — für ALLE sichtbar, aber nur mit Anmeldung benutzbar (sie verweigern beim Aufruf und fordern die Anmeldung an): Datensätze
   anlegen, ändern, einreichen und löschen; Sammlungen anlegen, umbenennen,
   befüllen, leeren und löschen; Kompendialtexte schreiben; Metadaten
   vorschlagen, auflisten und entscheiden. Jede Änderung läuft über eine
@@ -206,8 +208,8 @@ nur `WLO_REPOSITORY_URL` geändert; alles andere hat sinnvolle Standardwerte.
 | `UPLOAD_MAX_BYTES` | 50 MB | HTTP-Modus | Größte Einzeldatei eines Upload-Platzes (höchstens 100 MB). Nur mit `WLO_BATCH_UPLOAD_ENABLED`. |
 | `UPLOAD_MAX_TOTAL_BYTES` | 128 MB | HTTP-Modus | Alle offenen Upload-Plätze zusammen, im Arbeitsspeicher (höchstens 384 MB); eine Anmeldung hält davon höchstens die Hälfte. Nur mit `WLO_BATCH_UPLOAD_ENABLED`. |
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` | HTTP-Modus | Frist für den Empfang eines Upload-Körpers (höchstens 28 000). Nur mit `WLO_BATCH_UPLOAD_ENABLED`. |
-| `WLO_BAPI_VIA_REPOSITORY` | _(aus)_ | HTTP-Modus | `1` ergänzt vier Werkzeuge, die Aufträge der b-api (Kestra-Flows) als die angemeldete Person starten und verfolgen, über den b-api-Proxy des Repositorys (`/rest/bapi`): `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Nur mit eigener Anmeldung. |
-| `WLO_BAPI_FLOWS` | _(keiner)_ | HTTP-Modus | Mit `WLO_BAPI_VIA_REPOSITORY`: die Aufträge, die gestartet werden dürfen, kommagetrennt `namespace/id` (etwa `edusharing.chatbot/node-metadata-write`). Leer = keiner. |
+| `WLO_BAPI_VIA_REPOSITORY` | _(erkennen)_ | HTTP-Modus | Vier Werkzeuge, die Aufträge der b-api (Kestra-Flows) als die angemeldete Person starten und verfolgen, über den b-api-Proxy des Repositorys (`/rest/bapi`): `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Nur mit eigener Anmeldung. Leer oder `auto`: an, wenn das Repository auf seinem b-api-Proxy antwortet (beim Start anonym gefragt, erneut, bis es antwortet); `1` an, `0` aus. stdio fragt nie — dort nur `1`. |
+| `WLO_BAPI_FLOWS` | `edusharing.chatbot/node-metadata-write` | HTTP-Modus | Die Aufträge, die gestartet werden dürfen, kommagetrennt `namespace/id`. Leer = die Vorgabe; `none` = keiner. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | *(nicht gesetzt — nichts abgeschaltet; ausgeliefert als `all`)* | alle | Schaltet Werkzeuge ab, die sich als **unsicher** deklarieren. Namensliste (Komma oder Leerzeichen) oder `all` (auch `1`/`true`/`yes`/`on`). Nicht gesetzt heißt: unsichere Werkzeuge SIND registriert, und der Server warnt beim Start mit Name und Begründung — ein Risiko, das nur im Changelog steht, liest niemand, der ein Deployment erbt. `.env.example` und `docker-compose.yml` liefern `all` aus, in einem echten Deployment sind sie also **ab Werk aus**; auf einen leeren Wert setzen schaltet sie an. Betroffen ist derzeit genau ein Werkzeug: `get_url_text`. `get_wlo_content_text` ausdrücklich **nicht** — siehe [Als unsicher deklarierte Werkzeuge](#als-unsicher-deklarierte-werkzeuge). |
 | `WLO_TEXT_EXTRACTION_URL` | *(keiner — nicht gesetzt = aus)* | alle | Basis-URL des Text-Extraktionsdienstes, auf den `get_wlo_content_text` bei extern verlinktem Material (`ccm:wwwurl`) zurückfällt, dessen Text das Repository nicht gespeichert hat. Jede Instanz betreibt üblicherweise einen eigenen, deshalb gibt es **keinen Default**: nicht gesetzt (oder leer) schaltet den externen Weg ab und loggt den Grund, dann bleibt `/textContent` des Repositories die einzige Quelle. Ein Wert, der nicht als Basis taugt (kein Schema, kein http(s), oder mit Query/Fragment), schaltet ihn ebenfalls ab und warnt, damit ein Tippfehler keine Material-URLs an einen nicht gewählten Host schickt. Auf den Extraktionsdienst *deines* Repositories zeigen lassen — ein Default auf den Staging-Dienst hat Produktions-Material-URLs in eine andere Umgebung geschickt. |
 | `WLO_TEXT_EXTRACTION_API_KEY` | _(nicht gesetzt)_ | alle | Nur wenn der Extraktionsdienst **über den B-API-Proxy** erreicht wird: `WLO_TEXT_EXTRACTION_URL` auf die Proxy-Route setzen (`https://<b-api>/api/v1/proxy/text-extraction`; der Server hängt `/from-url` an) und hier den B-API-Schlüssel. Er geht als `X-API-KEY` mit, nur an diese Adresse, steht in keinem Log, und mit ihm wird keiner Weiterleitung gefolgt. Nicht gesetzt: der Dienst wird direkt und ohne Schlüssel gerufen. |
@@ -879,7 +881,8 @@ endet, wenn er widerrufen oder das WLO-Passwort geändert wird.
 
 **Wer nichts mitschickt, liest weiter anonym.** Eine Anfrage ohne
 `Authorization` bekommt die **vollständige** Liste — alle 60 Werkzeuge, die
-26 Kurations-Werkzeuge eingeschlossen (64 und 30 mit `WLO_BATCH_UPLOAD_ENABLED`). Die sind für jeden *sichtbar* und
+26 Kurations-Werkzeuge eingeschlossen (64 und 30 mit `WLO_BATCH_UPLOAD_ENABLED`; vier b-api-Auftrags-Werkzeuge
+mehr, wo das Repository den b-api-Proxy hat). Die sind für jeden *sichtbar* und
 verweigern erst beim Aufruf, mit einer OAuth-Aufforderung: genau daran bietet
 ein Host die Anmeldung an, denn ein Modell, das nie ein Schreibwerkzeug sieht,
 fragt auch nie danach. Der `401` entsteht nur bei einem vorgelegten, aber
@@ -983,10 +986,10 @@ bezeugen, dass eine Person hingesehen hat. |
 | `wlo_store_batch_file` | Legt eine Datei des freigegebenen Stapels ab — die Bytes kamen vorher über `POST /api/uploads`; jeder Index einmal, Prüfsumme muss passen. |
 | `wlo_store_batch_manifest` | Legt `vorgang.json` (`wlo.ablage-vorgang@2`, mit der Rolle jeder Datei: Strukturdokument oder Inhalt) zum Stapel in denselben Ordner, einmal je Stapel; die Kennzahlen stehen zusätzlich in `cm:description` des Datensatzes. |
 | `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen wiederfinden, neueste zuerst; mit `nodeId` eine samt Einträgen. |
-| `wlo_start_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: einen freigegebenen Auftrag der b-api als die angemeldete Person starten (Vorschau und Bestätigung); bei `node-metadata-write` werden die nodeIds vorher geprüft. |
-| `wlo_flow_status` | Nur mit `WLO_BAPI_VIA_REPOSITORY`, nur lesend: Stand, Fortschritt und Ergebnis eines eigenen Auftrags. |
-| `wlo_cancel_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: einen eigenen laufenden Auftrag abbrechen. |
-| `wlo_list_flows` | Nur mit `WLO_BAPI_VIA_REPOSITORY`, nur lesend: die Aufträge, die diese Anmeldung hier starten darf. |
+| `wlo_start_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): einen freigegebenen Auftrag der b-api als die angemeldete Person starten (Vorschau und Bestätigung); bei `node-metadata-write` werden die nodeIds vorher geprüft. |
+| `wlo_flow_status` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`), nur lesend: Stand, Fortschritt und Ergebnis eines eigenen Auftrags. |
+| `wlo_cancel_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): einen eigenen laufenden Auftrag abbrechen. |
+| `wlo_list_flows` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`), nur lesend: die Aufträge, die diese Anmeldung hier starten darf. |
 
 **Löschen ist hier endgültig.** `recycle=true` wird immer mitgeschickt, das Repository behält also möglicherweise eine Archivkopie — eine personenbezogene Archivabfrage fand einen gelöschten Knoten aber nur einmal und Minuten später für denselben Knoten nichts mehr. Wiederherstellbarkeit ließ sich damit nicht zeigen. Die Werkzeuge sagen deshalb, dass sich die Löschung über diesen Server nicht rückgängig machen lässt, und versprechen keine Wiederherstellung. Material aus einer Sammlung herauszunehmen (`wlo_remove_from_collection`) ist etwas anderes und lässt das Material unangetastet. Die vier Start-Skripte (`dev`, `dev:http`, `start`, `start:http`) laden eine vorhandene `.env` über Nodes `--env-file-if-exists`; `docker compose` liest sie ohnehin. `npm test` bewusst nicht — die Testsuite darf nicht von einer lokalen Datei abhängen.
 

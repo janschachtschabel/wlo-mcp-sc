@@ -2,8 +2,9 @@
  * tools/bapi-flows.ts – b-api flows (Kestra), started and watched as the
  * signed-in person through the repository's b-api proxy (plan 2026-11-17).
  *
- * Registered only with `WLO_BAPI_VIA_REPOSITORY`; which flows may be started
- * is `WLO_BAPI_FLOWS`. Four tools: start (preview and confirmation), status,
+ * Registered only when switched on (`services/bapi/proxy-switch.ts`: the
+ * operator's `WLO_BAPI_VIA_REPOSITORY`, else whether the repository serves the
+ * b-api proxy); which flows may be started is `WLO_BAPI_FLOWS`. Four tools: start (preview and confirmation), status,
  * cancel (own job only, no confirmation), list. The chatbot uses them only when
  * the first three are all listed.
  *
@@ -17,13 +18,14 @@ import { z } from 'zod';
 
 import type { WloToolResult } from '../apps/register.js';
 import {
-  allowedFlows, bapiViaRepositoryEnabled, cancelFlow, FLOW_NAME, flowStatus, JOB_ID, listFlows, MAX_INPUT_BYTES, personalLoginPresent,
+  allowedFlows, cancelFlow, FLOW_NAME, flowStatus, JOB_ID, listFlows, MAX_INPUT_BYTES, personalLoginPresent,
   startFlow, type BapiFailure, type BapiReason, type JobState,
 } from '../services/bapi/jobs.js';
 import {
   checkNodes, LANGUAGES, MAX_NODES, NODE_METADATA_WRITE, overwriteSentence, parseInputs,
 } from '../services/bapi/node-metadata-write.js';
 import { ownsJob, recordJobOwner } from '../services/bapi/job-owners.js';
+import { bapiViaRepositoryEnabled } from '../services/bapi/proxy-switch.js';
 import { buildChangeSet } from '../services/write/change-set.js';
 import { requireWrite } from '../services/write/credential-gate.js';
 import { failureFields } from '../services/failure-code.js';

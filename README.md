@@ -11,7 +11,8 @@ It exposes **34 read tools** (all unconditional; `get_url_text` is removable via
 metadata lookup, and vocabulary resolution — all against the anonymous, read-only
 public API. Without a login that is the whole surface: no authentication, no writes.
 
-On top of those 34 sit **26 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`) (creating, editing,
+On top of those 34 sit **26 curation tools** (four more with `WLO_BATCH_UPLOAD_ENABLED`, and four b-api flow tools
+where the repository serves the b-api proxy) (creating, editing,
 submitting, collections, compendium texts, metadata proposals, which variant a
 topic page renders, deleting). They
 are *listed* for every caller — that is how a client learns a login is worth
@@ -188,8 +189,8 @@ else has sensible defaults.
 | `UPLOAD_MAX_BYTES` | 50 MB | HTTP mode | Largest single file of an upload slot (at most 100 MB). Only with `WLO_BATCH_UPLOAD_ENABLED`. |
 | `UPLOAD_MAX_TOTAL_BYTES` | 128 MB | HTTP mode | All open upload slots together, in memory (at most 384 MB); one login holds at most half of it. Only with `WLO_BATCH_UPLOAD_ENABLED`. |
 | `UPLOAD_REQUEST_TIMEOUT_MS` | `25000` | HTTP mode | Deadline for receiving one upload body (at most 28 000). Only with `WLO_BATCH_UPLOAD_ENABLED`. |
-| `WLO_BAPI_VIA_REPOSITORY` | _(off)_ | HTTP mode | `1` adds four tools that start and watch b-api flows (Kestra) as the signed-in person, through the repository's b-api proxy (`/rest/bapi`): `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Personal login only. |
-| `WLO_BAPI_FLOWS` | _(none)_ | HTTP mode | With `WLO_BAPI_VIA_REPOSITORY`: the flows that may be started, comma-separated `namespace/id` (e.g. `edusharing.chatbot/node-metadata-write`). Empty = none. |
+| `WLO_BAPI_VIA_REPOSITORY` | _(detect)_ | HTTP mode | Four tools that start and watch b-api flows (Kestra) as the signed-in person, through the repository's b-api proxy (`/rest/bapi`): `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Personal login only. Unset or `auto`: on when the repository answers on its b-api proxy (asked at start, anonymously; again until it answers); `1` on, `0` off. stdio never asks — only `1` there. |
+| `WLO_BAPI_FLOWS` | `edusharing.chatbot/node-metadata-write` | HTTP mode | The flows that may be started, comma-separated `namespace/id`. Empty = the default; `none` = none. |
 | `WLO_DISABLE_UNSAFE_TOOLS` | *(unset — nothing disabled; shipped as `all`)* | all | Switches off tools that declare themselves **unsafe**. A comma/space-separated list of tool names, or `all` (also `1`/`true`/`yes`/`on`). Unset means unsafe tools ARE registered, and the server logs a warning naming each one at startup — a risk that only appears in a changelog is one nobody inheriting a deployment will read. `.env.example` and `docker-compose.yml` ship `all`, i.e. **off by default in a real deployment**; set the variable to an empty value to switch them on. Currently exactly one tool is affected: `get_url_text`. Note that `get_wlo_content_text` is **not** — see [Tools declared unsafe](#tools-declared-unsafe). |
 | `WLO_TEXT_EXTRACTION_URL` | *(none — unset disables)* | all | Base URL of the text-extraction service `get_wlo_content_text` falls back to for externally linked material (`ccm:wwwurl`) whose text the repository has not stored. Each instance normally runs its own, so there is **no default**: unset (or empty) disables the external path and logs why, and the repository's own `/textContent` remains the only source. A value that cannot serve as a base (no scheme, not http(s), or carrying a query/fragment) disables it and warns too, so a typo cannot redirect material URLs to a host you did not choose. Point it at the extraction service belonging to *your* repository — a default pointing at the staging service used to send production material URLs into another environment. |
 | `WLO_TEXT_EXTRACTION_API_KEY` | _(unset)_ | all | Only when the extraction service is reached **through the B-API proxy**: set `WLO_TEXT_EXTRACTION_URL` to the proxy route (`https://<b-api>/api/v1/proxy/text-extraction`; the server appends `/from-url`) and this to the B-API key. It is sent as `X-API-KEY`, to that address only, never logged, and no redirect is followed with it. Unset: the service is called directly, without a key. |
@@ -842,7 +843,8 @@ pasted block and the OAuth connection. No `refresh_token`, no expiry: the access
 ends when it is revoked or the WLO password changes.
 
 **A request with no credential still reads anonymously.** It gets the full list —
-all 60 tools, the 26 curation tools included (64 and 30 with `WLO_BATCH_UPLOAD_ENABLED`). Those are *listed* for
+all 60 tools, the 26 curation tools included (64 and 30 with `WLO_BATCH_UPLOAD_ENABLED`; four b-api flow tools more
+where the repository serves the b-api proxy). Those are *listed* for
 everyone and refuse at call time with an OAuth challenge, which is what makes a
 host offer the login: a model that never sees a write tool never asks for one.
 The `401` fires only for a token that was presented and cannot be used, and it
@@ -938,10 +940,10 @@ names who did the checking, and a model cannot testify that a person looked. |
 | `wlo_store_batch_file` | File one file of the approved batch — its bytes arrived beforehand via `POST /api/uploads`; each index once, the checksum must match. A refused key does not spend the upload. |
 | `wlo_store_batch_manifest` | File `vorgang.json` (`wlo.ablage-vorgang@2`, with each file's role: structure document or content) beside the batch, once per batch, built by the server; the counts also go into the record's `cm:description`. |
 | `wlo_list_my_batches` | Read-only: find your own batch filings again, newest first; with `nodeId` one of them with its entries. |
-| `wlo_start_flow` | Only with `WLO_BAPI_VIA_REPOSITORY`: start a released b-api flow as the signed-in person (preview + confirmation); for `node-metadata-write` the ids are checked first. |
-| `wlo_flow_status` | Only with `WLO_BAPI_VIA_REPOSITORY`, read-only: state, progress and results of an own flow. |
-| `wlo_cancel_flow` | Only with `WLO_BAPI_VIA_REPOSITORY`: cancel an own running flow. |
-| `wlo_list_flows` | Only with `WLO_BAPI_VIA_REPOSITORY`, read-only: the flows this login may start here. |
+| `wlo_start_flow` | Only with the b-api proxy (`WLO_BAPI_VIA_REPOSITORY`): start a released b-api flow as the signed-in person (preview + confirmation); for `node-metadata-write` the ids are checked first. |
+| `wlo_flow_status` | Only with the b-api proxy (`WLO_BAPI_VIA_REPOSITORY`), read-only: state, progress and results of an own flow. |
+| `wlo_cancel_flow` | Only with the b-api proxy (`WLO_BAPI_VIA_REPOSITORY`): cancel an own running flow. |
+| `wlo_list_flows` | Only with the b-api proxy (`WLO_BAPI_VIA_REPOSITORY`), read-only: the flows this login may start here. |
 
 **Deleting is final here.** `recycle=true` is always sent, so the repository may keep an archive copy — but a person-scoped archive query found a deleted node once and then returned nothing for the same node minutes later, so recoverability could not be demonstrated. The tools therefore say the deletion cannot be undone through this server and promise no restore. Taking material out of a collection (`wlo_remove_from_collection`) is a different act and leaves the material intact.
 

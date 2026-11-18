@@ -102,7 +102,7 @@ traversal a tool would otherwise inline belongs in `services/`
 | `src/tools/curation-shared.ts` | `registerCurationTool` — the write gate every curation tool passes |
 | `src/services/*` | search, traversal, skills, compendium, collection search, overviews, counts |
 | `src/services/write/*` | the shared write pipeline, plan runner and batch filing (§7) |
-| `src/services/bapi/*` | b-api flows (Kestra) through the repository's proxy, as the signed-in person: the job calls, the checks before `node-metadata-write`, who started which job (only with `WLO_BAPI_VIA_REPOSITORY`) |
+| `src/services/bapi/*` | b-api flows (Kestra) through the repository's proxy, as the signed-in person: the job calls, the checks before `node-metadata-write`, who started which job, whether the tools are on (`WLO_BAPI_VIA_REPOSITORY`, else an anonymous probe at start) |
 | `src/auth/*` | access blocks, OAuth 2.1, ticket exchange, identity |
 | `src/apps/*` | the Apps-SDK seam: `register.ts`, `outputSchemas.ts`, `resources.ts`, `tool-defaults.ts`, `widgets/` |
 | `src/wlo-api.ts` | barrel over the edu-sharing client |

@@ -26,6 +26,7 @@ import { resolveAccessSupport } from './auth/access-setup.js';
 import { startSkillRegistryCache } from './services/skill-registry-cache.js';
 import { installGracefulShutdown, trackRequests } from './shutdown.js';
 import { startReadinessProbe } from './services/upstream-readiness.js';
+import { startBapiProxyDetection } from './services/bapi/proxy-switch.js';
 import { setAccessSupport } from './auth/credential.js';
 
 const PORT = resolvePositiveInt(process.env['PORT'], 3000, 'PORT');
@@ -144,4 +145,8 @@ httpServer.listen(PORT, () => {
   // a start, the periodic ones keep the connection and the search path warm and
   // feed GET /ready. One small search per interval; WLO_READY_PROBE_MS=0 = off.
   startReadinessProbe(READY_PROBE_MS);
+  // The b-api flow tools: unless the operator decided (WLO_BAPI_VIA_REPOSITORY),
+  // one anonymous question to the repository whether its b-api proxy answers.
+  // The tool list is built per request: requests before the answer list no flow tools; later ones do.
+  void startBapiProxyDetection();
 });

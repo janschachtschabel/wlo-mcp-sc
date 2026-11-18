@@ -30,10 +30,19 @@ const USER: WloCredential = { header: 'Basic dXNlcjpwdw==', label: 'maria', sour
 const SERVICE: WloCredential = { header: 'Basic c2VydmljZTpwdw==', label: 'dienst', source: 'service' };
 const FLOW = 'edusharing.chatbot/node-metadata-write';
 
+/** Per test, the values the environment had BEFORE its first change — restored once, after the test. */
+const originals = new WeakMap<object, Map<string, string | undefined>>();
+
 function env(t: { after: (fn: () => void) => void }, values: Record<string, string | undefined>): void {
-  const before = Object.fromEntries(Object.keys(values).map(k => [k, process.env[k]]));
+  let saved = originals.get(t);
+  if (!saved) {
+    const fresh = new Map<string, string | undefined>();
+    originals.set(t, fresh);
+    t.after(() => { for (const [k, v] of fresh) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+    saved = fresh;
+  }
+  for (const k of Object.keys(values)) if (!saved.has(k)) saved.set(k, process.env[k]);
   for (const [k, v] of Object.entries(values)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-  t.after(() => { for (const [k, v] of Object.entries(before)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
 }
 
 const headersOf = (init?: RequestInit) => new Headers(init?.headers);
@@ -58,11 +67,9 @@ test('only the four calls of the job surface are ever made — method and path t
   }
 });
 
-test('WLO_BAPI_FLOWS: comma-separated names; anything else is ignored; empty = none', (t) => {
+test('WLO_BAPI_FLOWS: comma-separated names; anything else is ignored (default and none: bapi-proxy-switch.test.ts)', (t) => {
   env(t, { WLO_BAPI_FLOWS: ` ${FLOW} , kaputt, a/b/c, other.ns/flow-1 ` });
   assert.deepEqual([...allowedFlows()], [FLOW, 'other.ns/flow-1']);
-  env(t, { WLO_BAPI_FLOWS: undefined });
-  assert.equal(allowedFlows().size, 0);
 });
 
 test('the status words map to five states; one the b-api does not document is "unknown", never "running"', () => {
@@ -299,9 +306,9 @@ async function client(): Promise<Client> {
   return c;
 }
 
-test('the four tools exist only with WLO_BAPI_VIA_REPOSITORY — on the full server', async (t) => {
+test('the four tools exist only when switched on — on the full server', async (t) => {
   const names = ['wlo_cancel_flow', 'wlo_flow_status', 'wlo_list_flows', 'wlo_start_flow'];
-  env(t, { WLO_BAPI_VIA_REPOSITORY: undefined });
+  env(t, { WLO_BAPI_VIA_REPOSITORY: '0' });
   const off = await connectedClient();
   assert.deepEqual((await off.listTools()).tools.map(x => x.name).filter(n => names.includes(n)), []);
   await off.close();

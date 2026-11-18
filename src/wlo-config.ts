@@ -243,8 +243,17 @@ function envMs(name: string, fallback: number, min: number, max: number): number
  * ~1.0–1.4 s per collection (measured 2026-08-10) and was therefore off. The
  * cache pays that cost once, off the request path, and remembers the answer.
  */
-export const WLO_SKILL_CACHE: boolean =
-  !/^(0|false|no|off)$/i.test((process.env['WLO_SKILL_CACHE'] ?? '').trim());
+export const WLO_SKILL_CACHE: boolean = !isDisabledFlag(process.env['WLO_SKILL_CACHE']);
+
+/**
+ * The explicit off spellings, for a switch that is ON (or decided otherwise)
+ * unless switched off. Empty is neither on nor off. The on spellings are
+ * `isEnabledFlag` (`services/write/credential-gate.ts`).
+ */
+export function isDisabledFlag(raw: string | undefined): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  return v === '0' || v === 'false' || v === 'no' || v === 'off';
+}
 
 /** How often the background tick drains the queue and renews stale entries. */
 export const WLO_SKILL_CACHE_REFRESH_MS: number =

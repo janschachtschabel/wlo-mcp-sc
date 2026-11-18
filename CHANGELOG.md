@@ -8,7 +8,18 @@ to [Semantic Versioning](https://semver.org/).
 
 ### Added — b-api flows (Kestra) through the repository's proxy, as the signed-in person (chatbot team, 2026-11-17/18)
 
-Off unless `WLO_BAPI_VIA_REPOSITORY`; nothing changes without it.
+On where the repository serves the b-api proxy: unless `WLO_BAPI_VIA_REPOSITORY` says `1` or `0`, the server asks
+the repository once at start, anonymously, whether its proxy answers (staging does — measured 2026-11-18); where
+it does not, nothing changes. The startable flow is `edusharing.chatbot/node-metadata-write` unless `WLO_BAPI_FLOWS`
+names others (`none` = none). Only `200` with a list (the proxy) and the measured `404` (no such path) decide; any
+other answer keeps the tools off and the server asks again. stdio never asks — it has no personal login, which the
+tools need; there only `1` registers them.
+- Review of the detection: 1 major (any 4xx, 3xx or a 200 that was no list read as "no proxy" for good — now only
+  the measured 404 decides, and a lost body is no answer), 5 minor (stdio probed and waited for tools it can never
+  use; the binding rule did not name the anonymous probe; tool counts left out the flow tools; tests and guard
+  gaps), 4 nits; all worked. A second review: 4 minor (test isolation of the env helper, integrator documents
+  without the flow tools, the no-verdict warning named no way out, the window after a restart in which a kept
+  tool list meets an unknown tool), 7 nits; all worked.
 
 - **Four tools:** `wlo_start_flow` (preview and confirmation, flows from `WLO_BAPI_FLOWS` only), `wlo_flow_status`
   (state, `progress`, iteration counts, outputs up to 1 MB, files without their link), `wlo_cancel_flow`,

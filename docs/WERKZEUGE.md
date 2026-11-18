@@ -1,7 +1,7 @@
 # WLO MCP Server — alle Werkzeuge in einer Zeile
 
 Stand 1.2.0: 60 Werkzeuge in der Vorgabe (34 lesend, 26 kuratierend), dazu 4 Stapel-Werkzeuge nur mit
-`WLO_BATCH_UPLOAD_ENABLED`. Reihenfolge nach Thema. Parameter und Antworten:
+`WLO_BATCH_UPLOAD_ENABLED` und 4 Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat. Reihenfolge nach Thema. Parameter und Antworten:
 [`TOOLS.md`](TOOLS.md), als Tabelle: [`TOOLS-KOMPAKT.md`](TOOLS-KOMPAKT.md).
 
 ## Lesend (34)
@@ -111,7 +111,7 @@ Stand 1.2.0: 60 Werkzeuge in der Vorgabe (34 lesend, 26 kuratierend), dazu 4 Sta
 - `wlo_store_batch_manifest` — die `vorgang.json` zum Stapel ablegen.
 - `wlo_list_my_batches` — die eigenen Ablagen zeigen, neueste zuerst.
 
-## Aufträge der b-api (4, nur mit `WLO_BAPI_VIA_REPOSITORY`)
+## Aufträge der b-api (4, nur mit b-api-Proxy, `WLO_BAPI_VIA_REPOSITORY`)
 
 - `wlo_start_flow` — einen freigegebenen Auftrag (Kestra-Flow) als die angemeldete Person starten, mit Vorschau.
 - `wlo_flow_status` — Stand, Fortschritt und Ergebnis eines eigenen Auftrags.
