@@ -55,6 +55,8 @@ config:
   UPLOAD_MAX_BYTES: ""
   UPLOAD_MAX_TOTAL_BYTES: ""
   UPLOAD_REQUEST_TIMEOUT_MS: ""
+  WLO_BAPI_VIA_REPOSITORY: ""
+  WLO_BAPI_FLOWS: ""
   # ── 4 — which tools exist ──────────────────────────────────────────────────
   # "all" is the deployment default (as in docker-compose.yml), the opposite of
   # the code's: get_url_text reads a caller-chosen URL. "" switches such tools on.

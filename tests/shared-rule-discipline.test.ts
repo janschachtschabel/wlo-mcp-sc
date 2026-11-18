@@ -217,6 +217,17 @@ test('the authority check has one caller per purpose, not a copy per endpoint', 
   );
 });
 
+test('the repository\'s b-api proxy is called in ONE module, behind its path list and the personal-login check', () => {
+  // `{repository}/rest/bapi/**` acts with the person's own repository login on
+  // the b-api: a second caller would bypass `isJobPath` (four paths of the job
+  // surface) and the rule "never the shared account, never nobody"
+  // (`services/bapi/jobs.ts`, plan 2026-11-17).
+  // Any spelling of the path segment `/bapi` — `/rest/bapi`, `${BASE_URL}/bapi${p}`, `BASE_URL + '/bapi'` —
+  // but not the module folder (`services/bapi/`, `./bapi/`, `../bapi/`) nor a name like `bapi-flows`.
+  assert.deepEqual(offenders(/(?<!services|\.)\/bapi(?![-\w])/, ['services/bapi/jobs.ts']), [],
+    'call the repository\'s b-api proxy through services/bapi/jobs.ts only');
+});
+
 test('an address a CLIENT names is read only where its key was checked', () => {
   // `forwardedClientKey` reads X-Forwarded-For past the hop our own proxy wrote —
   // text anyone can send. It is safe only for a caller that proved, by its key,

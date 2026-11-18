@@ -25,7 +25,8 @@ import { labelFromUri, type VocabKey } from '../../vocabs.js';
 import { scaleLabel } from '../../vocabs-quality-scale.js';
 import { LRT_CONCEPTS } from '../../vocabs-lrt.js';
 
-export type ChangeKind = 'content' | 'collection' | 'compendium' | 'topic-page';
+/** `flow`: starting a b-api flow (`wlo_start_flow`); its `nodeId` is the flow's name. */
+export type ChangeKind = 'content' | 'collection' | 'compendium' | 'topic-page' | 'flow';
 
 export interface FieldChange {
   property: string;

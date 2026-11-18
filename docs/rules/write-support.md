@@ -481,3 +481,22 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   returns a position for every child, otherwise it sends the same order again. The batch store tools stay `false`:
   they answer `already` for the spent approval only, and a fresh one files again.
   Read-only tools carry no `idempotentHint`.
+
+- **b-api flows through the repository's proxy (2026-11-17/18; plan `2026-11-17-kestra-flows-ueber-repository-proxy.md`).**
+  Off unless `WLO_BAPI_VIA_REPOSITORY`; startable flows are `WLO_BAPI_FLOWS`. Rules. (1) `{repository}/rest/bapi` is
+  called in ONE module (`services/bapi/jobs.ts`, guarded), only on the four paths of the job surface (`isJobPath`;
+  no part of dots, no `..` — such a part leaves the surface once the URL is normalised), and only with a PERSONAL
+  login: never the service account, never nobody — without a person the flow list answers 200 and EMPTY (measured),
+  which would read as "nothing released". Every call carries `DisableGuest: true`. (2) Starting is a write: preview,
+  then a key bound to the flow and its exact inputs (for `node-metadata-write` the checked ids and the language; for
+  another flow the inputs' hash). Whether a refusal started nothing is `wroteNothing` (`upstream-error.ts`), the one
+  reading for every write: a 4xx but 429 did; a 429, a 5xx, an accepted answer without a `jobId` or no answer at
+  all is OPEN — a job may run. (3) `node-metadata-write` REPLACES eight fields of every node it is given (measured
+  2026-11-18), so the ids are checked as the person first: 1–50, records (`ccm:io`), not a collection, not a reference
+  in a collection (the flow would write onto the copy), `access` names `Write`. A read that did not answer is
+  "unchecked", not "no". (4) Through the proxy every person carries the repository's ONE b-api key, and the b-api
+  keeps jobs per key: another person read a job, report included, by its id (measured 2026-11-18). So this server
+  keeps who started which job (`services/bapi/job-owners.ts`, in memory, per account, 30 days, bounded) and asks the
+  b-api about the caller's own jobs only — every other is `unknown_job`; a restart forgets, and the tools say so.
+  (5) Status passes `progress` as given and `iterations` as counts per state only — no values, no codes; a sampled list
+  says `iterationsSampled`. Outputs only on success, at most 1 MB; files never with their download link.

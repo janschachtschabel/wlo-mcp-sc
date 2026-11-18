@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — b-api flows (Kestra) through the repository's proxy, as the signed-in person (chatbot team, 2026-11-17/18)
+
+Off unless `WLO_BAPI_VIA_REPOSITORY`; nothing changes without it.
+
+- **Four tools:** `wlo_start_flow` (preview and confirmation, flows from `WLO_BAPI_FLOWS` only), `wlo_flow_status`
+  (state, `progress`, iteration counts, outputs up to 1 MB, files without their link), `wlo_cancel_flow`,
+  `wlo_list_flows`. They reach the b-api through `{repository}/rest/bapi`, where the repository vouches for the
+  person; personal login only (an access block — session, ticket or password — or a plain password login), never
+  the service account.
+- **`edusharing.chatbot/node-metadata-write`** replaces title, description, keywords, language, subject, level,
+  audience and resource type of every node it is given: the ids are checked first (1–50 own, writable records, no
+  collection, no reference in a collection), and the preview names every record.
+- **Measured on staging (2026-11-17/18):** the proxy takes a session block and a password login alike; the flow
+  writes with the person frozen in its token (eight fields, about 30 s); but every person carries the repository's
+  one b-api key there, and another person could read a job by its id — so this server lets a person see and cancel
+  only the jobs she started here. A wrong password and no login are refused there (401, with `DisableGuest`, which
+  every call of ours carries). Ticket logins at the proxy could not be measured from our side.
+- Review of this package: 2 major (a 4xx after the confirmation read as "may have written"; the owner binding for a
+  password login rested on an unmeasured assumption — measured since), 7 minor, 6 nits; all worked. A second review
+  of the fixes: 1 major (a 429 after the confirmation read as "started nothing" — it now follows `wroteNothing`,
+  busy is no verdict), 5 minor, 4 nits; all worked. A check of those fixes: all held; 3 minor, 2 nits more, worked.
+- Not built: `wlo_flow_file` (no released flow produces files) and the text extraction through the proxy (W5, W7).
+
 ### Changed
 
 - Base image `node:22-alpine` pinned to Node 22.23.5 (digest from Dependabot, 2026-11-12).

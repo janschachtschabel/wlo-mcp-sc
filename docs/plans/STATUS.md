@@ -83,6 +83,10 @@ diese Datei über rund 100 Zeilen wächst.
   ursprüngliche Repo `wlo-mcp-server` bleibt auf seinem Stand vom 01.06.2026 (`2d0080b`): Ein Merge dorthin wurde
   am selben Tag auf Wunsch des Nutzers zurückgenommen. Weiterentwickelt und veröffentlicht wird nur hier, in
   `wlo-mcp-sc`; der Merge-Commit `b577e06` bleibt in dieser Historie.
+- **2026-11-18 — Aufträge der b-api (Kestra) über den Repository-Proxy**, ohne Vorgabe aus (`WLO_BAPI_VIA_REPOSITORY`):
+  `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Live gemessen: Start mit Sitzungs-Block,
+  der Flow schreibt als Person; jede Person sieht über den Proxy jeden Job — darum bindet der Server Jobs an die
+  Person. Plan: `2026-11-17-kestra-flows-ueber-repository-proxy.md`.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

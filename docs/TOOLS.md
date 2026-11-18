@@ -601,6 +601,10 @@ zurück.
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes vorher über `POST /api/uploads`) | — (Upload-Modul) |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel ablegen (Kennzahlen zusätzlich in `cm:description`) | — (Upload-Modul) |
 | `wlo_list_my_batches` | Die eigenen Ablagen wiederfinden, neueste zuerst; mit `nodeId` eine samt Einträgen. Nur lesend, nur eigene Anmeldung | *„Zeig mir meine letzten Ablagen“* |
+| `wlo_start_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: einen freigegebenen b-api-Auftrag (Kestra-Flow) als die angemeldete Person starten; Vorschau, dann `confirmToken`. |
+| `wlo_flow_status` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: Stand (`running`, `succeeded`, `failed`, `cancelled`, `unknown`), Fortschritt und Ergebnis eines eigenen Auftrags. Nur lesend. |
+| `wlo_cancel_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: eigenen Auftrag abbrechen. |
+| `wlo_list_flows` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: die startbaren Aufträge. Nur lesend. |
 | `wlo_update_compendium` | Redaktionellen Kompendialtext einer Sammlung schreiben, ersetzen oder entfernen (Markdown) | *„Schreib einen Einführungstext für diese Sammlung“* |
 | `wlo_set_topic_page` | Festlegen, **welche Variante** eine Themenseite öffentlich rendert. Legt keine Varianten an, löscht und sortiert keine | *„Zeig auf dieser Themenseite künftig die Variante für die Oberstufe“* |
 

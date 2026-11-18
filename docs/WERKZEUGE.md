@@ -110,3 +110,10 @@ Stand 1.2.0: 60 Werkzeuge in der Vorgabe (34 lesend, 26 kuratierend), dazu 4 Sta
 - `wlo_store_batch_file` — eine Datei des Stapels ablegen (Bytes vorher über `POST /api/uploads`).
 - `wlo_store_batch_manifest` — die `vorgang.json` zum Stapel ablegen.
 - `wlo_list_my_batches` — die eigenen Ablagen zeigen, neueste zuerst.
+
+## Aufträge der b-api (4, nur mit `WLO_BAPI_VIA_REPOSITORY`)
+
+- `wlo_start_flow` — einen freigegebenen Auftrag (Kestra-Flow) als die angemeldete Person starten, mit Vorschau.
+- `wlo_flow_status` — Stand, Fortschritt und Ergebnis eines eigenen Auftrags.
+- `wlo_cancel_flow` — einen eigenen laufenden Auftrag abbrechen.
+- `wlo_list_flows` — die Aufträge, die diese Anmeldung hier starten darf.

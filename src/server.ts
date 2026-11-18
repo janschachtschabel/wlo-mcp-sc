@@ -47,6 +47,7 @@ import { registerCurationDeleteTools } from './tools/curation-delete.js';
 import { registerCurationSuggestionTools } from './tools/curation-suggestions.js';
 import { registerCurationDecisionTool } from './tools/curation-decide.js';
 import { registerCurationBatchTools } from './tools/curation-batch.js';
+import { registerBapiFlowTools } from './tools/bapi-flows.js';
 import { registerCurationTreeTools } from './tools/curation-tree.js';
 import { registerCurationAddManyTool } from './tools/curation-add-many.js';
 import { registerCurationSubmitManyTool } from './tools/curation-submit-many.js';
@@ -194,6 +195,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // Off unless WLO_BATCH_UPLOAD_ENABLED — the function checks it and registers
   // nothing otherwise, so the default tool list is unchanged.
   registerCurationBatchTools(server, challenge);      // wlo_prepare_file_batch, wlo_store_batch_file, wlo_store_batch_manifest
+  registerBapiFlowTools(server, challenge);           // wlo_start_flow, wlo_flow_status, wlo_cancel_flow, wlo_list_flows (WLO_BAPI_VIA_REPOSITORY)
 
   return server;
 }

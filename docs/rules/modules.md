@@ -49,6 +49,10 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
 - `src/services/collection-search.ts` — "which collections match this word?",
   asked of BOTH repository backends and merged. The one place that knows there
   are two; see the plan entry above for the three rules that bind it.
+- `src/services/bapi/*` — b-api flows (Kestra) through `{repository}/rest/bapi` (2026-11-18): `jobs.ts` is the ONE
+  caller of that proxy (guarded) — four calls, method and path together, a personal login only, `DisableGuest`
+  on each; `node-metadata-write.ts` checks the ids before a preview; `job-owners.ts` keeps who started which job,
+  because through the proxy every person shares the repository's b-api key. Rules: `write-support.md`.
 - `src/services/write/*` — the shared write pipeline (gate → fields → change-set
   → confirm → verify). No MCP SDK import; every mutation goes through it, so the
   safety properties are tested once instead of per tool.

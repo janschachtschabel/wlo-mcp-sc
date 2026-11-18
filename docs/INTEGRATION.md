@@ -202,6 +202,10 @@ Bereich. Die Bytes kommen vorher über [`POST /api/uploads`](#26-upload-für-die
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen; jeder Index einmal, Prüfsumme und Art müssen passen |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel, vom Server aus der Freigabe gebaut — erst nach einer abgelegten Datei |
 | `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen, neueste zuerst; mit `nodeId` eine samt Einträgen und deren `role` — so findet ein neues Gespräch, ein anderes Gerät oder ein Kestra-Flow das Strukturdokument wieder |
+| `wlo_start_flow` | Nur mit `WLO_BAPI_VIA_REPOSITORY`: einen b-api-Auftrag als die angemeldete Person starten (Vorschau, dann `confirmToken`); `status: preview|started|failed`, `jobId`. |
+| `wlo_flow_status` | Nur lesend: `status`, `rawStatus`, `progress`, `iterations` (Zahlen je Stand), `outputs`, `files`; nur eigene Aufträge. |
+| `wlo_cancel_flow` | Eigenen Auftrag abbrechen: `cancelled`, `already_finished`, `unknown_job`. |
+| `wlo_list_flows` | Nur lesend: die startbaren Aufträge. |
 
 ### 1.3 Widgets (4)
 

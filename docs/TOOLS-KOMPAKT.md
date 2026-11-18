@@ -124,6 +124,10 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen (Bytes über `POST /api/uploads`). |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel ablegen. |
 | `wlo_list_my_batches` | Zeigt die eigenen Ablagen, neueste zuerst. |
+| `wlo_start_flow` | Startet einen b-api-Auftrag (nur mit Schalter). |
+| `wlo_flow_status` | Zeigt Stand und Ergebnis eines eigenen Auftrags. |
+| `wlo_cancel_flow` | Bricht einen eigenen Auftrag ab. |
+| `wlo_list_flows` | Zeigt die startbaren Aufträge. |
 
 ### Themenseiten & Kompendium
 
