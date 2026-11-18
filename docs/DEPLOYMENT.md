@@ -381,6 +381,8 @@ is the coldest — a single call each, not a distribution):
 | Readiness answer (`/ready`) | 30 s (`READY_CACHE_MS`) | the first `/ready` after the start probes the repository itself |
 | Metrics counters and histograms (`/metrics`) | the process | every counter starts at zero, and a series exists only from its first event on — an alert built on `increase()`/`rate()` alone misses the first event after a restart (the chart's rules account for it) |
 | Skill registry cache, short caches | minutes | the first calls are slower |
+| Who started which b-api job (account name and job id; at most 500 per account, the oldest makes room, 20 000 in all) | 30 days | even one's own jobs answer `unknown_job` to status and cancel; with `node-metadata-write` the results are on the records |
+| Whether the repository serves the b-api proxy | the process | the detection asks again at start; until it gets a verdict, `tools/list` has no flow tools (and never, if the verdict is the 404) |
 
 On disk there is exactly one thing: the access registry (`/data/access-registry.json`, §3.1).
 

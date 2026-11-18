@@ -105,6 +105,14 @@ stateless proxy in front of edu-sharing.
   once into their AI host and revoke it at `/auth-revoke.html`. Unlike a Basic
   header, the block is unreadable to the AI provider, useless against anything
   but this server, and withdrawable without a password change.
+- **b-api flows (Kestra)** (HTTP mode) — four tools start, watch and cancel b-api
+  jobs **as the signed-in person** and list the flows that may be started, through
+  the repository's b-api proxy:
+  the repository vouches for the person, so no b-api key is needed for this.
+  Available where the repository serves the proxy (detected at start;
+  `WLO_BAPI_VIA_REPOSITORY` overrides). Starting is two-step like every write; the
+  default flow is `edusharing.chatbot/node-metadata-write`, which overwrites eight
+  metadata fields of up to 50 records. Status and cancel answer only the account that started the job.
 - **German ⇄ URI vocabulary** — filters accept German labels
   (`Mathematik`, `Grundschule`, `Lehrer/in`, `Video`) or full URIs.
 - **Hardened HTTP mode** — upstream timeouts, request-body size limit, per-IP
@@ -1095,7 +1103,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
 - [`docs/apps-sdk-golden-prompts.md`](docs/apps-sdk-golden-prompts.md) — the full
   developer-mode evaluation set (direct / indirect / negative prompts + a
   precision-recall log) to dogfood tool selection and confirm the widgets render.
-- [`docs/PRIVACY.md`](docs/PRIVACY.md) — the baseline privacy policy (stateless,
+- [`docs/PRIVACY.md`](docs/PRIVACY.md) — the baseline privacy policy (what this server keeps, where and how long —
   read-only, no personal data stored) for operators to adapt and publish.
 - [`docs/AUTH.md`](docs/AUTH.md) — how signing in works and why: the access
   block, the allow-list, the OAuth flow, the abuse limits, and the nine rules a
@@ -1108,7 +1116,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   signature, OAuth only) — including what the design does **not** protect.
   German.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **the handover for a team or a
-  chatbot developer**: all 60 tools grouped, every externally callable URL (MCP,
+  chatbot developer**: all tools grouped (60, plus 4 batch and 4 b-api flow tools), every externally callable URL (MCP,
   REST, pages, OAuth), and the behaviour an integration has to know — licence
   filtering, the disclosure fields, the two-step write, the limits, and what
   deliberately does not exist. German.
@@ -1183,7 +1191,7 @@ map — which file owns which rule, and why — is [docs/ARCHITECTURE.md](docs/A
 |---|---|
 | `src/` (top level) | The two entry points (`stdio.ts`, `http.ts`), the server factory (`server.ts`), the HTTP dispatcher (`http-app.ts`), the edu-sharing client (`wlo-*.ts`, with `wlo-fetch.ts` as the one credential boundary), and the leaf modules every layer shares: vocabularies, text handling, reranking, limits, logging, metrics, shutdown. |
 | `src/tools/` | One module per tool group: input schema, rendering, registration. No algorithms — those are in `services/`. `curation-*.ts` are the write tools. |
-| `src/services/` | What the tools and the REST routes both call: search, collections, topic pages, skills and the skill registry, compendium, full text. No MCP SDK import. |
+| `src/services/` | What the tools and the REST routes both call: search, collections, topic pages, skills and the skill registry, compendium, full text, b-api flows (`services/bapi/`). No MCP SDK import. |
 | `src/services/write/` | The write pipeline every mutation goes through: gate, field rules, change set, two-step confirmation, read-back, plans for batches. |
 | `src/auth/` | Personal access: the encrypted access block, its allow-list (the only file written at run time), OAuth 2.1, the ticket exchange for embedded widgets. |
 | `src/rest/` | The HTTP surface beside MCP: `/api/*`, the sign-in and OAuth pages, `/health`, `/ready`, `/metrics`, the static files. Described in `docs/openapi.yaml`. |

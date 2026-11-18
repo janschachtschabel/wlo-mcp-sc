@@ -29,20 +29,6 @@ diese Datei über rund 100 Zeilen wächst.
 
 ## Letzte Pakete
 
-- **2026-11-14 — Sammlungsstrukturen (S1–S10), vier Pakete, je mit Review.** Gespeicherte Reihenfolge
-  lesen und setzen, flache Baumliste, Stapel-Einreichen, Baum-Metadaten, Entfernen und Umhängen im
-  Stapel, leere Sammlungen löschen, Sammlung umhängen, Vorschläge für eine Sammlung, „noch nicht
-  öffentlich“. Plan und drei Messtabellen: `2026-11-14-sammlungsstrukturen.md`.
-- **2026-11-14 — Voll-Audit (77/100, bedingt produktionsreif), alle Befunde behoben.** Vier Bereiche
-  (Schreiben, Lesen, Sicherheit mit Testgerüst, Betrieb mit Oberflächen und Doku), dazu die zwei Funde
-  des Chatbot-Teams. Erstes Review (drei Prüfer): 0 kritisch, 7 groß, 19 klein, 10 Randnotizen. Zweites
-  Review über den ganzen Stand (zwei Prüfer): 0 kritisch, 4 groß, 14 klein, 7 Randnotizen — darunter
-  ein Fehler, den die erste Behebung selbst eingeführt hatte. Alles behoben, je mit Gegenprobe.
-  Was bleibt und so hingenommen ist: Unbewiesene `Basic`-Anmeldungen können einander in den
-  Schreib-Speichern verdrängen (`docs/rules/auth.md`, letzter Block). Was ein Client anders sieht:
-  `CHANGELOG.md` und `2026-11-14-antwort-sammlungsstrukturen-2.md`.
-- **2026-11-14 — Steuerdokumente.** `CLAUDE.md` von 2154 auf rund 250 Zeilen; die Regelblöcke wortgleich
-  nach `docs/rules/` (acht Dateien nach Bereich); diese Datei von 5243 Zeilen auf den Stand gekürzt.
 - **2026-11-15 — Wünsche S11–S13 des Chatbot-Teams.** `order: "position"` an den drei Baum-Werkzeugen,
   das Merkmal `childrenPositioned`, schlanker Zählabruf (Physik mit Zahlen 7,0 statt 11,4 s),
   `unreadParents` / `refusedParents`. Vorher gemessen (`npm run measure:tree`); ein Review (0 kritisch,
@@ -89,6 +75,9 @@ diese Datei über rund 100 Zeilen wächst.
   `wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows`. Live gemessen: Start mit Sitzungs-Block,
   der Flow schreibt als Person; jede Person sieht über den Proxy jeden Job — darum bindet der Server Jobs an die
   Person. Plan: `2026-11-17-kestra-flows-ueber-repository-proxy.md`.
+- **2026-11-19 — Doku zu den b-api-Aufträgen nachgezogen:** Steckbrief und Übergabe-Kurzform (die b-api wird
+  über den Repository-Proxy aufgerufen; Zustand, Netz, Kosten, offene Punkte), Funktionsliste in beiden READMEs,
+  INTEGRATION §3.7, ARCHITECTURE (`bapi/*`), Architekturgrafik mit der b-api hinter dem Repository.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

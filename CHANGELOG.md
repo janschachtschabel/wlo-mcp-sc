@@ -8,7 +8,17 @@ to [Semantic Versioning](https://semver.org/).
 
 ### Added — b-api flows (Kestra) through the repository's proxy, as the signed-in person (chatbot team, 2026-11-17/18)
 
-On where the repository serves the b-api proxy: unless `WLO_BAPI_VIA_REPOSITORY` says `1` or `0`, the HTTP server asks
+Documentation (2026-11-19): the Steckbrief and its hand-over short form no longer say the service does not use the
+b-api or that Kestra does not apply — it calls the b-api through the repository's proxy for the four flow tools (the
+extraction service's optional B-API route with its own key is separate); state,
+network, cost and the open b-api points are named there. A feature entry in both READMEs, a behaviour section in
+INTEGRATION.md (§3.7, and the flow tools in a table of their own), the `bapi/*` services in ARCHITECTURE.md, two
+rows in DEPLOYMENT.md's "What lives in memory", PRIVACY.md and the Apps-SDK checklist, the stdio note in TOOLS.md, the
+count in docs/README.md, and the architecture diagram (`docs/architektur-grafik.html`) with the b-api behind the
+repository. Two reviews of this documentation (2 major: "no b-api key" overlooked the extraction service's optional
+B-API key; the in-memory table in DEPLOYMENT.md lacked the job owners — then 6 minor, 7 nits); all worked.
+
+Available where the repository serves the b-api proxy: unless `WLO_BAPI_VIA_REPOSITORY` says `1` or `0`, the HTTP server asks
 the repository at start, anonymously, whether its proxy answers, and again until it gets a verdict (staging does — measured 2026-11-18); where
 it does not, nothing changes. The startable flow is `edusharing.chatbot/node-metadata-write` unless `WLO_BAPI_FLOWS`
 names others (`none` = none). Only `200` with a list (the proxy) and the measured `404` (no such path) decide; any

@@ -122,6 +122,14 @@ ein schlanker, zustandsloser Proxy vor edu-sharing.
   `/auth-revoke.html`. Anders als ein Basic-Header ist der Block für den
   KI-Anbieter unlesbar, außerhalb dieses Servers wertlos und ohne
   Passwortwechsel zurücknehmbar.
+- **Aufträge der b-api (Kestra)** (HTTP-Modus) — vier Werkzeuge, die b-api-Aufträge
+  **als die angemeldete Person** starten, verfolgen und abbrechen und die startbaren
+  Aufträge auflisten, über den b-api-Proxy des Repositorys: Das Repository bürgt für die Person, dafür braucht
+  der Server keinen b-api-Schlüssel. Verfügbar, wo das Repository den Proxy hat (beim
+  Start erkannt; `WLO_BAPI_VIA_REPOSITORY` übersteuert). Der Start ist zweistufig wie
+  jedes Schreiben; vorgegeben ist `edusharing.chatbot/node-metadata-write`, der acht
+  Metadatenfelder von bis zu 50 Datensätzen überschreibt. Stand und Abbruch antworten nur
+  dem Konto, das den Auftrag gestartet hat.
 - **Deutsch ⇄ URI-Vokabular** — Filter akzeptieren deutsche Labels
   (`Mathematik`, `Grundschule`, `Lehrer/in`, `Video`) oder vollständige URIs.
 - **Gehärteter HTTP-Modus** — Upstream-Timeouts, Größenbegrenzung des
@@ -1151,7 +1159,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Prompts + Precision-Recall-Protokoll), um die Tool-Auswahl zu testen und das
   Rendern der Widgets zu bestätigen.
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — die Basis-Datenschutzerklärung
-  (zustandslos, nur lesend, keine Speicherung personenbezogener Daten), die
+  (was der Server wo und wie lange behält), die
   Betreiber anpassen und veröffentlichen.
 - [`docs/AUTH.md`](docs/AUTH.md) — wie die Anmeldung funktioniert und warum:
   Zugangsblock, Positivliste, OAuth-Ablauf, Missbrauchsschranken und die neun
@@ -1163,7 +1171,7 @@ WLO_REPOSITORY_URL=https://repository.staging.openeduhub.net/edu-sharing node di
   Sitzungsspeicher, App-Signatur, nur OAuth), samt dem, was das Konzept
   **nicht** schützt.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — **die Übergabe für das Team und
-  für Chatbot-Entwicklung**: alle 60 Werkzeuge gruppiert, jede von außen
+  für Chatbot-Entwicklung**: alle Werkzeuge gruppiert (60, dazu 4 für die Stapel-Ablage und 4 für b-api-Aufträge), jede von außen
   aufrufbare Adresse (MCP, REST, Seiten, OAuth) und das Verhalten, das eine
   Integration kennen muss — Lizenzfilter, Offenlegungs-Felder, zweistufiges
   Schreiben, Grenzen, und was es bewusst nicht gibt.
@@ -1246,7 +1254,7 @@ Karte auf Modulebene — welche Datei welche Regel hält, und warum — steht in
 |---|---|
 | `src/` (oberste Ebene) | Die zwei Einstiegspunkte (`stdio.ts`, `http.ts`), die Server-Fabrik (`server.ts`), der HTTP-Verteiler (`http-app.ts`), der edu-sharing-Client (`wlo-*.ts`, mit `wlo-fetch.ts` als der einen Stelle, die Zugangsdaten anhängt) und die Blattmodule, die jede Schicht nutzt: Vokabulare, Textbehandlung, Reranking, Begrenzungen, Logging, Metriken, Herunterfahren. |
 | `src/tools/` | Ein Modul je Werkzeuggruppe: Eingabeschema, Darstellung, Registrierung. Keine Algorithmen — die liegen in `services/`. `curation-*.ts` sind die schreibenden Werkzeuge. |
-| `src/services/` | Was Werkzeuge und REST-Routen gemeinsam aufrufen: Suche, Sammlungen, Themenseiten, Skills und Skill-Registry, Kompendium, Volltext. Kein Import des MCP-SDK. |
+| `src/services/` | Was Werkzeuge und REST-Routen gemeinsam aufrufen: Suche, Sammlungen, Themenseiten, Skills und Skill-Registry, Kompendium, Volltext, b-api-Aufträge (`services/bapi/`). Kein Import des MCP-SDK. |
 | `src/services/write/` | Die Schreibstrecke, durch die jede Änderung läuft: Zugangsprüfung, Feldregeln, Änderungsmenge, zweistufige Bestätigung, Zurücklesen, Pläne für Stapel. |
 | `src/auth/` | Persönlicher Zugang: der verschlüsselte Zugangsblock, seine Erlaubnisliste (die einzige Datei, die zur Laufzeit geschrieben wird), OAuth 2.1, der Ticket-Tausch für eingebettete Widgets. |
 | `src/rest/` | Die HTTP-Oberfläche neben MCP: `/api/*`, die Anmelde- und OAuth-Seiten, `/health`, `/ready`, `/metrics`, die statischen Dateien. Beschrieben in `docs/openapi.yaml`. |

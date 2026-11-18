@@ -21,7 +21,7 @@ One line per document: the question it answers. Pick your role.
 | [`INTEGRATION.md`](INTEGRATION.md) (German) | What is there to call — tools, addresses, sign-in — and which behaviour will surprise my integration (two-step writes, licence filter, limits)? Start here. |
 | [`MCP-REFERENZ.md`](MCP-REFERENZ.md) (German) | The reference: every tool with its parameters, every error code, every setting, every status a write can end in. |
 | [`TOOLS-KOMPAKT.md`](TOOLS-KOMPAKT.md) (German) | All tools on one page, one line each. |
-| [`WERKZEUGE.md`](WERKZEUGE.md) (German) | All 64 tools as a bullet list, one line each, grouped by topic (60 by default, 4 batch tools behind a switch). |
+| [`WERKZEUGE.md`](WERKZEUGE.md) (German) | All 68 tools as a bullet list, one line each, grouped by topic (60 by default, 4 batch tools behind a switch, 4 b-api flow tools where the repository serves the b-api proxy). |
 | [`TOOLS.md`](TOOLS.md) (German) | The same tools in full, with trigger examples, the four widgets and the public REST endpoints. |
 | [`openapi.yaml`](openapi.yaml) | The HTTP surface outside MCP (`/api/*`, `/auth*`, `/oauth/*`, `/health`, `/ready`, `/metrics`), machine-readable. |
 | [`apps-sdk-submission-checklist.md`](apps-sdk-submission-checklist.md), [`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md) | What an OpenAI Apps-SDK submission needs from this server, and the prompts to test it with. |
@@ -31,7 +31,7 @@ One line per document: the question it answers. Pick your role.
 | Document | Answers |
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How is it put together — layers, the dependency rule, the write pipeline, caching — and which rules does a change have to respect? |
-| [`architektur-grafik.html`](architektur-grafik.html) (German) | The same as a diagram: clients, the entry points, the layers, the repository and the side services, and the four ways to sign in. Open in a browser. |
+| [`architektur-grafik.html`](architektur-grafik.html) (German) | The same as a diagram: clients, the entry points, the layers, the repository and the side services (the b-api reached through the repository's proxy included), and the four ways to sign in. Open in a browser. |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | How do I work here: tests, language, commits, dependencies, keeping the six tool tables in step (`npm run docs:tools`). |
 | `CLAUDE.md` (repository root, local — not published) | The working instructions for coding agents: what binds every change, in short form. |
 | [`rules/`](rules/README.md) | The binding rules by area — write support, auth, skills, search, reading collections, the chatbot contract, unsafe tools, modules — each with the measurement, date and reason behind it. Read the file of the area you are about to change. |

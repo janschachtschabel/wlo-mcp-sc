@@ -156,11 +156,13 @@ immer anonym.
 | `wlo_health_check` | Erreichbarkeit des Repositorys |
 | `wlo_auth_status` | Mit welcher Identität diese Sitzung arbeitet und was sie darf |
 
-### 1.2 Kuratieren — 26 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage
+### 1.2 Kuratieren — 26 Werkzeuge (`oauth2`), dazu 4 für die Stapel-Ablage und 4 für b-api-Aufträge
 
-Alle verlangen eine Anmeldung, alle laufen **zweistufig**: erst Vorschau mit
-Änderungsmenge und Einmal-Token, dann Bestätigung. Jeder Schreibvorgang wird
-danach **zurückgelesen**. Wie Vorschau, Pläne und Fehler maschinenlesbar
+Alle verlangen eine Anmeldung. Alle, die schreiben, laufen **zweistufig**: erst
+Vorschau mit Änderungsmenge und Einmal-Token, dann Bestätigung. Jeder Schreibvorgang
+wird danach **zurückgelesen**. Zwei Ausnahmen bei den b-api-Aufträgen: Den Start
+liest der Server nicht zurück, sein Ergebnis meldet `wlo_flow_status`; das Abbrechen
+läuft in einem Schritt, ohne Bestätigung. Wie Vorschau, Pläne und Fehler maschinenlesbar
 aussehen, steht in [3.4](#34-schreiben-ist-immer-zweistufig).
 
 | Werkzeug | Zweck |
@@ -205,9 +207,15 @@ Bereich. Die Bytes kommen vorher über [`POST /api/uploads`](#26-upload-für-die
 | `wlo_store_batch_file` | Eine Datei des Stapels ablegen; jeder Index einmal, Prüfsumme und Art müssen passen |
 | `wlo_store_batch_manifest` | `vorgang.json` zum Stapel, vom Server aus der Freigabe gebaut — erst nach einer abgelegten Datei |
 | `wlo_list_my_batches` | Nur lesend: die eigenen Stapel-Ablagen, neueste zuerst; mit `nodeId` eine samt Einträgen und deren `role` — so findet ein neues Gespräch, ein anderes Gerät oder ein Kestra-Flow das Strukturdokument wieder |
-| `wlo_start_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): einen b-api-Auftrag als die angemeldete Person starten (Vorschau, dann `confirmToken`); `status: preview|started|failed`, `jobId`. |
+
+**b-api-Aufträge (4)** — nur wo der Server den b-api-Proxy des Repositorys erkannt
+hat (oder mit `WLO_BAPI_VIA_REPOSITORY=1`), nur mit der *eigenen* Anmeldung; Verhalten in [3.7](#37-b-api-aufträge-kestra).
+
+| Werkzeug | Zweck |
+|---|---|
+| `wlo_start_flow` | Nur mit b-api-Proxy (`WLO_BAPI_VIA_REPOSITORY`): einen b-api-Auftrag als die angemeldete Person starten (Vorschau, dann `confirmToken`); `status: preview\|started\|failed`, `jobId`. |
 | `wlo_flow_status` | Nur lesend: `status`, `rawStatus`, `progress`, `iterations` (Zahlen je Stand), `outputs`, `files`; nur eigene Aufträge. |
-| `wlo_cancel_flow` | Eigenen Auftrag abbrechen: `cancelled`, `already_finished`, `unknown_job`. |
+| `wlo_cancel_flow` | Eigenen Auftrag abbrechen, ohne Bestätigung: `cancelled`, `already_finished`, `unknown_job`. Was der Auftrag bis dahin geschrieben hat, bleibt. |
 | `wlo_list_flows` | Nur lesend: die startbaren Aufträge. |
 
 ### 1.3 Widgets (4)
@@ -508,6 +516,43 @@ Das Dienstkonto ist standardmäßig gesperrt: In der Repository-Historie steht d
 Kontoname, nicht die Person — eine Änderung darunter ist niemandem zuzuordnen.
 Die Stapel-Ablage nimmt es auch dann nicht an: sie legt in den persönlichen
 Bereich, und den hat nur ein eigenes Konto.
+
+### 3.7 b-api-Aufträge (Kestra)
+
+`wlo_start_flow`, `wlo_flow_status`, `wlo_cancel_flow`, `wlo_list_flows` — nur mit
+eigener Anmeldung, nie mit dem Dienstkonto (auch nicht mit `WLO_ALLOW_SERVICE_WRITES`).
+
+- **Wann es sie gibt:** wo das Repository den b-api-Proxy hat. Der Server fragt das
+  beim Start anonym ab; bis ein klares Ja kommt (meist Sekunden; ohne Antwort beim
+  Start auch Minuten — ein Proxy, der den Gast abweist, gibt nie eines, dann setzt
+  der Betrieb `WLO_BAPI_VIA_REPOSITORY=1`), fehlen die vier in `tools/list`, und ein
+  `tools/call` mit einer zwischengespeicherten Werkzeugliste bekommt den
+  Protokollfehler „unbekanntes Werkzeug“ — dann die Liste neu abrufen.
+- **Asynchron:** Der Start antwortet mit `jobId`; der Auftrag läuft in der b-api
+  weiter. `wlo_flow_status` fragt den Stand ab (`running`, `succeeded`, `failed`,
+  `cancelled`, `unknown`).
+- **Zweistufig wie jedes Schreiben:** Vorschau, dann `confirmToken`.
+  `edusharing.chatbot/node-metadata-write` ersetzt acht Metadatenfelder; die
+  Vorschau nennt jeden Datensatz. Ob ein nach der Bestätigung abgelehnter Start
+  nichts gestartet hat, sagt `error.outcomeOpen`, nicht `reason`.
+- **Abbrechen** läuft in einem Schritt, ohne Bestätigung; was der Auftrag bis dahin
+  geschrieben hat, bleibt.
+- **Ausgelastet:** Die b-api lässt je Schlüssel höchstens 20 unfertige Aufträge zu,
+  und über den Proxy teilen sich alle Personen eines Repositorys diesen Schlüssel —
+  `rate_limited` kann also auch fremde Last sein.
+- **Nur eigene Aufträge:** Stand und Abbruch antworten nur dem Konto, das den
+  Auftrag über diesen Server gestartet hat; jeder andere ist `unknown_job`. Die
+  Zuordnung hält 30 Tage, höchstens 500 Aufträge je Konto und 20 000 insgesamt (der
+  älteste macht Platz — dann ist auch ein eigener Auftrag `unknown_job`). Sie hängt am
+  Kontonamen (beim Zugangsblock das vom Repository bestätigte Konto, sonst der
+  eingegebene Anmeldename; Groß- und Kleinschreibung zählen nicht) — wer dasselbe Konto
+  unter zwei Schreibweisen anmeldet (etwa einmal mit der E-Mail-Adresse), gilt als
+  zwei Konten.
+  Nach einem Neustart des Servers sind auch eigene Aufträge `unknown_job`; bei
+  `node-metadata-write` stehen die Ergebnisse dann an den Datensätzen.
+
+Codes und Felder: [MCP-REFERENZ.md](MCP-REFERENZ.md) (Werkzeugtabelle), die Regeln
+dahinter: [`rules/write-support.md`](rules/write-support.md).
 
 ---
 

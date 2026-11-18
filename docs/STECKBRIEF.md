@@ -1,6 +1,6 @@
 # Steckbrief: wlo-mcp
 
-Stand: 2026-11-15 · Server-Version 1.4.0 · **Entwurf zur Übergabe an das Plattform-Team**
+Stand: 2026-11-19 · Server-Version 1.4.0, dazu die B-API-Aufträge auf `main` (noch ohne Release) · **Entwurf zur Übergabe an das Plattform-Team**
 
 Dieser Steckbrief fasst zusammen, was jemand wissen muss, der den Dienst betreibt, ohne ihn gebaut zu
 haben. Er wiederholt die Einzelheiten nicht, sondern verweist: Betrieb in
@@ -17,10 +17,10 @@ Heute läuft der Dienst mit Docker Compose auf einem Host. Der Helm-Chart ist ei
 | | |
 |---|---|
 | **Service-ID** | `wlo-mcp` (so auch das Feld `service` in jeder Logzeile) |
-| **Ist** | Der Zugang zu **einem** edu-sharing-Repository für MCP-Clients (KI-Programme, Chatbots): Suche, Sammlungen, Themenseiten, Detaildaten, Volltext, Skills — 34 Lesewerkzeuge — und 26 Kuratier-Werkzeuge, die schreiben. Dazu eine kleine öffentliche REST-Fläche (`/api/*`) und die Anmeldeseiten. |
-| **Ist nicht** | Kein LLM und kein LLM-Gateway: der Dienst ruft kein Sprachmodell auf. Kein eigener Datenbestand: alle Inhalte liegen im Repository. Kein Ersatz für das Repository-Rechtesystem — was jemand sieht und ändern darf, entscheidet edu-sharing. |
+| **Ist** | Der Zugang zu **einem** edu-sharing-Repository für MCP-Clients (KI-Programme, Chatbots): Suche, Sammlungen, Themenseiten, Detaildaten, Volltext, Skills — 34 Lesewerkzeuge — und 26 Kuratier-Werkzeuge, die schreiben. Wo das Repository den B-API-Proxy hat, dazu vier Werkzeuge, die **Aufträge der B-API** (Kestra-Flows) als die angemeldete Person starten und verfolgen. Dazu eine kleine öffentliche REST-Fläche (`/api/*`) und die Anmeldeseiten. |
+| **Ist nicht** | Kein LLM und kein LLM-Gateway: der Dienst ruft kein Sprachmodell auf. Einen B-API-Auftrag startet er nur; was der Auftrag tut, läuft in der B-API — der Vorgabe-Flow erzeugt Metadaten mit einem Modell, dort und auf deren Kosten. Kein eigener Datenbestand: alle Inhalte liegen im Repository. Kein Ersatz für das Repository-Rechtesystem — was jemand sieht und ändern darf, entscheidet edu-sharing. |
 | **Technik** | TypeScript, Node 22, ein langlebiger Prozess. Laufzeit-Abhängigkeiten: `@modelcontextprotocol/sdk`, `zod`. Kein Web-Framework, keine Datenbank. |
-| **Abhängig von** | dem Repository (zwingend); Wikipedia (`*.wikipedia.org`, nur für das Wikipedia-Werkzeug); einem Textextraktionsdienst (optional, `WLO_TEXT_EXTRACTION_URL`). |
+| **Abhängig von** | dem Repository (zwingend); Wikipedia (`*.wikipedia.org`, nur für das Wikipedia-Werkzeug); einem Textextraktionsdienst (optional, `WLO_TEXT_EXTRACTION_URL`); der B-API, für die vier Auftrags-Werkzeuge erreicht **über den Proxy des Repositorys** (`{Repository}/rest/bapi` — dafür kein weiterer Host und kein eigener Schlüssel); getrennt davon optional der Extraktionsdienst über den B-API-Proxy, mit dem B-API-Schlüssel `WLO_TEXT_EXTRACTION_API_KEY` (§7). |
 
 ### Anmeldung: der Dienst steht nicht hinter der B-API
 
@@ -54,11 +54,39 @@ Empfohlen ist deshalb, `WLO_PUBLIC_BASE_URL` immer zu setzen.
 
 Schreibende Werkzeuge sind für alle sichtbar und verweigern beim Aufruf, wenn niemand angemeldet ist.
 
+### Die B-API als Ziel, nicht als Vorbau: Aufträge über den Repository-Proxy
+
+Der Dienst steht nicht hinter der B-API, er **ruft** sie für die vier Auftrags-Werkzeuge auf — und zwar
+nicht direkt, sondern über den B-API-Proxy des Repositorys (`{Repository}/rest/bapi/**`). Dort bürgt
+das Repository für die Person, mit deren eigener Anmeldung der Aufruf kommt, und setzt seinen eigenen
+Schlüssel; für die Aufträge hält der Dienst keinen B-API-Schlüssel. Nur persönliche Anmeldungen, nie
+das Dienstkonto. (Getrennt davon kann der Extraktionsdienst über den B-API-Proxy erreicht werden, mit
+dem B-API-Schlüssel `WLO_TEXT_EXTRACTION_API_KEY` — eine andere Route, §7.)
+
+- **Eingeschaltet:** Ohne Einstellung fragt der Dienst beim Start anonym, ob das Repository den Proxy
+  hat (`200` mit Liste = ja, `404` mit JSON-Objekt = nein; ohne klares Urteil erneut, auch über
+  Minuten — ein Proxy, der den Gast abweist, gibt nie eines), und hat die vier Werkzeuge nur dann.
+  `WLO_BAPI_VIA_REPOSITORY=1`/`0` legt es fest. Startbar ist `edusharing.chatbot/node-metadata-write`,
+  solange `WLO_BAPI_FLOWS` nichts anderes nennt.
+- **Netz:** für die Aufträge kein neuer Host — der Proxy liegt auf dem Repository-Host.
+- **Zustand:** Über den Proxy tragen alle Personen den einen Schlüssel des Repositorys, und die B-API
+  würde jeden Job jedem zeigen, der seine ID kennt (gemessen 2026-11-18). Der Dienst merkt sich deshalb,
+  welches Konto welchen Job gestartet hat, und beantwortet Stand und Abbruch nur diesem — im
+  Arbeitsspeicher (§4).
+- **Kapazität:** Die Grenze der B-API von 20 unfertigen Jobs je Schlüssel teilen sich damit alle
+  Personen eines Repositorys.
+- **Asynchron:** Ein Auftrag läuft in der B-API weiter, nachdem der Start geantwortet hat; der Client
+  fragt den Stand mit `wlo_flow_status` ab. Der Dienst selbst hat dafür keinen Hintergrundlauf.
+
+Einzelheiten: [`docs/rules/write-support.md`](rules/write-support.md) (b-api-Block), Plan
+[`2026-11-17-kestra-flows-ueber-repository-proxy.md`](plans/2026-11-17-kestra-flows-ueber-repository-proxy.md).
+
 ## 2. Zwei Abweichungen vom Service-Leitfaden — mit Begründung
 
 **Abweichung 1: Betrieb ohne B-API.**
 Der Dienst wird direkt von MCP-Clients angesprochen, nicht über die B-API, und prüft keinen
-B-API-Schlüssel. Gründe:
+B-API-Schlüssel. (Dass er für die Auftrags-Werkzeuge die B-API über den Repository-Proxy *aufruft*,
+ändert daran nichts — siehe §1.) Gründe:
 
 - MCP-Clients sind fremde Programme (ChatGPT, Claude, andere), die nur das können, was das Protokoll
   vorsieht: OAuth 2.1 oder gar keine Anmeldung. Gemessen am 2026-08-05: der ChatGPT-Connector bietet
@@ -136,13 +164,16 @@ Im **Arbeitsspeicher** des Prozesses (nach einem Neustart weg, zwischen Prozesse
 | Raten- und Login-Zähler, Status-Cache | Fenster von 1–10 min |
 | Geprüfte Upload-Logins (bestätigt 10 min, abgelehnt 60 s), Antwort von `/ready` (30 s) | Sekunden bis 10 min |
 | Metrik-Zähler | bis zum Neustart |
+| Wer welchen B-API-Auftrag gestartet hat (Kontoname und Job-ID; höchstens 500 je Konto, 20 000 insgesamt) | 30 Tage — nach einem Neustart sind auch eigene Aufträge `unknown_job` |
+| Ob das Repository den B-API-Proxy hat | bis zum Neustart (ohne Urteil: erneut gefragt) |
 | Skill-Registry-Cache, Kurzzeit-Caches | Minuten |
 
 Auf der **Platte** genau eine Datei: das Zugangsregister `/data/access-registry.json`.
 
 **Deshalb eine Instanz.** Mit zwei Prozessen kennt der eine die Vorschau des anderen nicht, ein Plan
 läuft auf der Instanz weiter, die ihn nicht hält, ein Upload landet dort, wo das Stapel-Werkzeug
-nicht nachsieht, und jede Instanz vergibt das volle Ratenbudget. Für einen Deployment-Entwurf heißt
+nicht nachsieht, ein gestarteter B-API-Auftrag ist auf der anderen Instanz „fremd“, und jede Instanz
+vergibt das volle Ratenbudget. Für einen Deployment-Entwurf heißt
 das: `replicas: 1`, Strategie `Recreate`, kein Autoscaler. Verfügbarkeit kommt aus dem schnellen
 Neustart (72 MB, in Sekunden bereit), nicht aus Replikaten. Eine zweite Instanz würde auch nichts
 beschleunigen — die Zeit vergeht im Repository.
@@ -194,12 +225,12 @@ bewusst entscheidet — die Vorgaben stehen im Code neben ihrer Messung. Die Gru
 | 1 Repository | welches Repository | `WLO_REPOSITORY_URL` (Pflicht im Chart), `WLO_ROOT_COLLECTION_ID` |
 | 2 Persönliche Anmeldung | Schlüssel, Register | `WLO_AUTH_PRIVATE_KEY`, `…_PREVIOUS`, `WLO_AUTH_REGISTRY_PATH` |
 | 3 Dienstkonto, Schreiben, Stapel | gemeinsames Konto und was es darf | `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`, `WLO_ALLOW_SERVICE_WRITES`, `WLO_BATCH_UPLOAD_ENABLED` |
-| 4 Werkzeuge | welche Werkzeuge es gibt | `WLO_DISABLE_UNSAFE_TOOLS` (ausgeliefert: `all`), `WLO_SKILL_*`, `WLO_TEXT_EXTRACTION_URL` |
+| 4 Werkzeuge | welche Werkzeuge es gibt | `WLO_DISABLE_UNSAFE_TOOLS` (ausgeliefert: `all`), `WLO_SKILL_*`, `WLO_TEXT_EXTRACTION_URL`, `WLO_BAPI_VIA_REPOSITORY` (leer = erkennen), `WLO_BAPI_FLOWS` |
 | 5 Netz | Betrieb hinter einem Proxy | `MCP_SSE`, `TRUST_PROXY`, `WLO_PUBLIC_BASE_URL`, `INTERNAL_PORT` |
 | 6 Grenzen und Zeiten | Feinjustierung | `RATE_LIMIT_RPM`, `TRUSTED_CLIENT_KEYS`, `WLO_UPSTREAM_CONCURRENCY`, `METRICS_TOKEN`, `LOG_LEVEL` |
 | 7 Widgets | ChatGPT-Einreichung | `WLO_WIDGET_*` |
 
-Sechs davon gehören in ein Secret, nie in eine Werte-Datei: `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`,
+Sieben davon gehören in ein Secret, nie in eine Werte-Datei: `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`,
 `WLO_AUTH_PRIVATE_KEY`, `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, `METRICS_TOKEN`, `TRUSTED_CLIENT_KEYS`, `WLO_TEXT_EXTRACTION_API_KEY` (nur wenn der Extraktionsdienst hinter dem B-API-Proxy liegt). Im Chart kommen sie aus einem
 **vorhandenen** Secret (`existingSecret`); alles andere wird eine ConfigMap.
 
@@ -316,7 +347,7 @@ Eingetragen ist nur, was im Repository belegt ist; leere Felder sind nicht gemes
 
 | Server | Node | MCP-SDK | edu-sharing-Instanz | Stand |
 |---|---|---|---|---|
-| 1.4.0 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15) |
+| 1.4.0 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15); `main` nach 1.4.0: B-API-Aufträge über den Repository-Proxy (Start, Lauf, Schreiben als Person, Fremdzugriff; `tests/live/bapi-flows.test.ts`, 2026-11-18) und die Erkennung des Proxys (2026-11-18) |
 | 1.4.0 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
 | 1.4.0 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
 | … | | | | |
@@ -348,5 +379,10 @@ Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit
       Ingress-Controller (die Annotationen im Entwurf gelten für ingress-nginx), Storage-Klasse,
       Sicherung des Volumes, ob ausgehender Verkehr nach Hostnamen beschränkt werden kann.
 - [ ] **Alarmschwellen** nach den ersten Betriebswochen festlegen.
+- [ ] **B-API: Jobs an die Person binden** (beim B-API-Team, 2026-11-18 gemeldet): Über den
+      Repository-Proxy hängen Jobs am Schlüssel des Repositorys; der Dienst gleicht das mit seiner
+      Zuordnung im Arbeitsspeicher aus (§1). Damit teilen sich auch alle Personen eines Repositorys
+      die Grenze von 20 unfertigen Jobs je Schlüssel. Und: ohne `DisableGuest` liest der Gast des
+      Proxys jeden Job, dessen ID er kennt — der Dienst schickt den Kopf immer, die Lücke gehört dem Proxy.
 - [ ] **Schlüssel für das Chatbot-Team** (`TRUSTED_CLIENT_KEYS`) und die erlaubten Ursprünge
       (`TICKET_ALLOWED_ORIGINS`, `WIDGET_OAUTH_ORIGINS`) für die Zielumgebung.

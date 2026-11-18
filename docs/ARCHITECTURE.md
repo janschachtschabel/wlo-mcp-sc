@@ -18,10 +18,12 @@ Three properties shape every design decision in here:
 
 - **It is a translator, not a store.** The server holds no database. Everything
   it answers comes from edu-sharing's REST API on the fly. The exceptions: an
-  in-memory cache (§9), one small file on disk (§8), and short-lived in-memory
+  in-memory cache (§9), one small file on disk (§8), and in-memory
   state for writes in progress — confirmation keys (10 min), approved plans
-  (30 min), batch approvals and upload slots (30 min, §7). That state is lost on
-  a restart and is per process, so the server runs as **one** instance.
+  (30 min), batch approvals and upload slots (30 min, §7) — and, with the b-api
+  flow tools, which account started which b-api job (30 days, the one long-lived
+  item, §6). That state is
+  lost on a restart and is per process, so the server runs as **one** instance.
 - **It is anonymous by default.** A request without `Authorization` gets `200`
   and the full tool list. Reading works without a credential; writing is refused
   at call time, not by hiding the tool.
@@ -51,7 +53,11 @@ Two thin entry points connect a transport to it:
 
 `src/http.ts` owns everything a network-facing process needs and the factory
 must not know about: port binding, rate limits, body caps, proxy trust, the
-credential limiter, and starting the skill-registry cache. `src/http-app.ts`
+credential limiter, and the background work: the skill-registry cache, the
+readiness probe and the b-api proxy detection (`services/bapi/proxy-switch.ts`
+— which decides whether the four flow tools are registered; `createMcpServer()`
+reads it per request). `src/stdio.ts` starts the cache and the service-credential check only; it never probes the
+b-api proxy, because stdio has no personal login and the flow tools need one. `src/http-app.ts`
 holds the request handler and route table; `src/rest/*` the non-MCP endpoints.
 
 Registration order in `server.ts` **is** display order in `tools/list`. Moving a
@@ -234,6 +240,18 @@ Where the algorithms live. Some that carry non-obvious rules:
   negative.
 - **`write/*`** — the write pipeline (§7). No MCP SDK import anywhere in it, so
   the safety properties are tested once instead of per tool.
+- **`bapi/*`** — b-api flows (Kestra), reached through the REPOSITORY's b-api
+  proxy (`{repository}/rest/bapi`), where the repository vouches for the signed-in
+  person; this route needs no b-api key (the optional `WLO_TEXT_EXTRACTION_API_KEY`
+  belongs to the extraction service's separate B-API route). `jobs.ts` is the one caller of that path
+  (guarded): four job calls with a personal login and `DisableGuest`, plus one
+  anonymous start-up probe. `proxy-switch.ts` decides whether the tools exist
+  (`WLO_BAPI_VIA_REPOSITORY`, else that probe). `node-metadata-write.ts` checks the
+  ids before a preview; `job-owners.ts` remembers who started which job (30 days,
+  at most 500 per account and 20 000 in all), because
+  through the proxy every person shares the repository's key and the b-api would
+  show any job to anyone who knows its id (measured 2026-11-18). Starting is a
+  write: preview, single-use key, `wroteNothing` for the outcome.
 
 ---
 

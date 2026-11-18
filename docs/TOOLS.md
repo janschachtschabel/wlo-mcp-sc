@@ -22,7 +22,7 @@ Was die Liste tatsächlich verändert, sind diese Schalter:
 | **`WLO_SKILL_TOOL_MODE=one-tool`** | 60 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
 | **`WLO_DISABLE_SKILL_SEARCH=1`** | 59 Tools — ohne `search_skill` (nur der Registry-Weg) |
 | **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 64) |
-| **Repository mit b-api-Proxy** (oder `WLO_BAPI_VIA_REPOSITORY=1`; HTTP) | jeweils **plus** die vier Flow-Werkzeuge (Staging: 64, mit Stapel 68) |
+| **Repository mit b-api-Proxy** (oder `WLO_BAPI_VIA_REPOSITORY=1`; HTTP) | jeweils **plus** die vier Flow-Werkzeuge (Staging: 64, mit Stapel 68). In stdio nur mit `=1` gelistet — dort ohne eigene Anmeldung aber bei jedem Aufruf abgewiesen |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable

@@ -15,9 +15,10 @@ educational resources (OER) from [WirLernenOnline](https://wirlernenonline.de)
 (the "WLO" edu-sharing repository). It has **no user accounts of its own, no
 database, sets no cookies, and keeps no MCP session state** — every request is served on
 its own. What outlives a request is listed in the table below, item by item:
-short-lived entries in memory (confirmation keys, approved plans, counters,
-caches) and, only when personal access blocks are switched on, one file — the
-allow-list of issued blocks.
+entries in memory — most of them short-lived (confirmation keys, approved plans,
+counters, caches); the one long-lived item is which account started which b-api
+job (30 days, only with the b-api flow tools) — and, only when personal access
+blocks are switched on, one file — the allow-list of issued blocks.
 
 Two things about the surface decide what this policy has to cover, and both
 depend on how the operator configured the deployment:
