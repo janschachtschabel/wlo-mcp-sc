@@ -78,6 +78,8 @@ diese Datei über rund 100 Zeilen wächst.
 - **2026-11-19 — Doku zu den b-api-Aufträgen nachgezogen:** Steckbrief und Übergabe-Kurzform (die b-api wird
   über den Repository-Proxy aufgerufen; Zustand, Netz, Kosten, offene Punkte), Funktionsliste in beiden READMEs,
   INTEGRATION §3.7, ARCHITECTURE (`bapi/*`), Architekturgrafik mit der b-api hinter dem Repository.
+- **2026-11-19 — Version 1.5.0.** Tag `v1.5.0`: Image und Chart mit den b-api-Aufträgen, der Erkennung des
+  Proxys und der nachgezogenen Doku (`release.yml`).
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das
