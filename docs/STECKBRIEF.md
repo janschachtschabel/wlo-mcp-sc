@@ -1,6 +1,6 @@
 # Steckbrief: wlo-mcp
 
-Stand: 2026-11-19 · Server-Version 1.5.0 · **Entwurf zur Übergabe an das Plattform-Team**
+Stand: 2026-11-19 · Server-Version 1.5.1 · **Entwurf zur Übergabe an das Plattform-Team**
 
 Dieser Steckbrief fasst zusammen, was jemand wissen muss, der den Dienst betreibt, ohne ihn gebaut zu
 haben. Er wiederholt die Einzelheiten nicht, sondern verweist: Betrieb in
@@ -229,7 +229,7 @@ beschleunigen — die Zeit vergeht im Repository.
 
 Gemessen am 2026-11-13 mit `npm run measure:resources` (DEPLOYMENT.md §5.0.2), mit Version 1.1.0;
 auf anderer Hardware neu messen. Seit 1.5.0 kommen die Zuordnung der B-API-Aufträge (höchstens 20 000
-Einträge) und B-API-Antworten hinzu — in 1.5.0 ganz gelesen, nach 1.5.0 (noch ohne Release) je bis 8 MB,
+Einträge) und B-API-Antworten hinzu — in 1.5.0 ganz gelesen, seit 1.5.1 je bis 8 MB,
 dann abgebrochen, wobei eine Antwort beim Lesen mehrfach im Speicher liegt. Nicht gemessen und in den
 480 MB nicht enthalten.
 
@@ -311,13 +311,13 @@ Labels tragen nie einen Aufrufer, einen Pfad oder eine Suchanfrage.
 | `wlo_http_request_duration_seconds` | Histogramm | `route` |
 | `wlo_tool_calls_total` | Zähler | `tool`, `outcome` (`ok`, `error` = mit isError beantwortet, `thrown`) |
 | `wlo_tool_duration_seconds` | Histogramm | `tool` |
-| `wlo_tool_errors_total` | Zähler | `tool`, `code` (Fehlercode der Antwort — fünf Gründe der B-API-Werkzeuge, `edu_user_required`, `rejected`, `bad_inputs`, `unknown_job`, `not_allowed`, erst nach 1.5.0, in 1.5.0 als `other`; unbekannte als `other`, fehlende als `uncoded`) |
+| `wlo_tool_errors_total` | Zähler | `tool`, `code` (Fehlercode der Antwort — fünf Gründe der B-API-Werkzeuge, `edu_user_required`, `rejected`, `bad_inputs`, `unknown_job`, `not_allowed`, erst seit 1.5.1, in 1.5.0 als `other`; unbekannte als `other`, fehlende als `uncoded`) |
 | `wlo_upstream_requests_total` | Zähler | `outcome` (`2xx`…`5xx`, `error` = keine Antwort, `cancelled`, `shed` = nicht gesendet, eigene Schranke) |
 | `wlo_upstream_duration_seconds` | Histogramm | `outcome` |
 | `wlo_upstream_gate_wait_seconds` | Histogramm | `outcome` (`granted`, `shed`) — nur Aufrufe, die an der eigenen Schranke warten mussten |
 | `wlo_upstream_in_flight`, `wlo_upstream_waiting`, `wlo_upstream_limit` | Messwert | — |
 | `wlo_rate_limited_total` | Zähler | `limiter` (eigene 429: `rate_limited`, `too_many_logins`, `upload_…`) |
-| `wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes`, `wlo_bapi_job_owners_held` (nach 1.5.0, noch ohne Release) | Messwert | — (begrenzte Speicher im Prozess, beim Abruf gelesen) |
+| `wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes`, `wlo_bapi_job_owners_held` (seit 1.5.1) | Messwert | — (begrenzte Speicher im Prozess, beim Abruf gelesen) |
 | `wlo_build_info` | Messwert | `version` |
 | `process_*`, `nodejs_heap_*`, `nodejs_external_memory_bytes`, `nodejs_eventloop_lag_seconds` | übliche Prozesswerte | — |
 
@@ -395,9 +395,9 @@ Eingetragen ist nur, was im Repository belegt ist; leere Felder sind nicht gemes
 
 | Server | Node | MCP-SDK | edu-sharing-Instanz | Stand |
 |---|---|---|---|---|
-| 1.5.0 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15); 1.5.0: B-API-Aufträge über den Repository-Proxy (Start, Lauf, Schreiben als Person, Fremdzugriff; `tests/live/bapi-flows.test.ts`, 2026-11-18) und die Erkennung des Proxys (2026-11-18) |
-| 1.5.0 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
-| 1.5.0 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
+| 1.5.1 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15); 1.5.0: B-API-Aufträge über den Repository-Proxy (Start, Lauf, Schreiben als Person, Fremdzugriff; `tests/live/bapi-flows.test.ts`, 2026-11-18) und die Erkennung des Proxys (2026-11-18) |
+| 1.5.1 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
+| 1.5.1 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
 | 1.4.0 | 22 | 1.32.2 | Staging | `X-WLO-Client-Address` nur offline geprüft (Tests); laufende Staging-Installation zuletzt festgehalten mit 1.3.0 und Sitzungs-Tausch (2026-11-15, `plans/2026-11-15-antwort-chatbot-sitzung-4.md`) |
 | … | | | | |
 

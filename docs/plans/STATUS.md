@@ -80,6 +80,10 @@ diese Datei über rund 100 Zeilen wächst.
   INTEGRATION §3.7, ARCHITECTURE (`bapi/*`), Architekturgrafik mit der b-api hinter dem Repository.
 - **2026-11-19 — Version 1.5.0.** Tag `v1.5.0`: Image und Chart mit den b-api-Aufträgen, der Erkennung des
   Proxys und der nachgezogenen Doku (`release.yml`).
+- **2026-11-19 — Steckbrief aktuell, Version 1.5.1.** Beide Steckbrief-Dokumente nennen, was 1.3.0–1.5.0
+  brachten (Sitzungs-Tausch, `sessionIngress`, `X-WLO-Client-Address`, Bindung an die Eintragung); die Lesart von
+  `WLO_SESSION_ALLOWED_ORIGINS` (ersetzt die Repository-Herkunft) an neun Stellen richtiggestellt. Code: b-api-Antworten
+  bis 8 MB, Messwert `wlo_bapi_job_owners_held`, alle Schalter-Schreibweisen in `src/env-flags.ts`. Tag `v1.5.1`.
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das

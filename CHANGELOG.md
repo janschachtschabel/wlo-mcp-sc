@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-19
+
 ### Added
 - **`wlo_bapi_job_owners_held`** — a gauge for the store of who started which b-api job, like the other bounded
   stores. The flow tools' reasons (`edu_user_required`, `rejected`, `bad_inputs`, `unknown_job`, `not_allowed`)
