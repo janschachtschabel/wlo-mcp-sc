@@ -11,6 +11,7 @@
 
 import type { HttpAppOptions } from './http-app.js';
 import { parseAllowedOrigins, resolveTicketOrigins } from './auth/ticket-origins.js';
+import { isEnabledFlag, isStrictYes } from './env-flags.js';
 import { createClientBudgets, parseTrustedClientKeys, PROTOCOL_FACTOR, type TrustedClient } from './client-budget.js';
 import { streamableHttpOptions } from './mcp-transport.js';
 import { createDistinctValueLimiter, createRateLimiter } from './rate-limit.js';
@@ -118,7 +119,7 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
   // when this server is mounted on the repository's host below `/edu-sharing`.
   // Off unless set; said at startup, because a server that reads cookies should
   // be seen to.
-  const sessionExchange = /^(1|true|yes)$/i.test(env['WLO_SESSION_EXCHANGE'] ?? '');
+  const sessionExchange = isEnabledFlag(env['WLO_SESSION_EXCHANGE']);
   // Who may ask. Unset: the repository's own origin. A list whose every entry is
   // unusable closes the path (like the ticket list) instead of opening it.
   const sessionOrigins = resolveTicketOrigins(env['WLO_SESSION_ALLOWED_ORIGINS']);
@@ -129,7 +130,7 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
       message: 'WLO_SESSION_EXCHANGE: POST /auth/session takes over a repository session — meant for a mount on the '
         + 'repository host below /edu-sharing, or for a trusted backend that owns such a path and forwards the '
         + 'exchange. Only a page of the origins named here may ask; if the address in the browser differs, set '
-        + 'WLO_SESSION_ALLOWED_ORIGINS. Mounted, the requests arrive through the repository\'s ingress: TRUST_PROXY '
+        + 'WLO_SESSION_ALLOWED_ORIGINS — it replaces the repository origin, so list that too. Mounted, the requests arrive through the repository\'s ingress: TRUST_PROXY '
         + 'must fit that chain, or every person shares one address in the limiters. Forwarded, the budget is the '
         + 'backend\'s key in TRUSTED_CLIENT_KEYS (it names each person\'s address); TRUST_PROXY must then fit the '
         + 'backend\'s own way here, since it decides which X-Forwarded-For hop is the backend\'s',
@@ -192,7 +193,7 @@ export function buildHttpOptions(env: NodeJS.ProcessEnv): HttpOptionsResult {
   // for correct per-client rate limiting behind a reverse proxy (nginx, …). Off by
   // default because X-Forwarded-For must not be trusted when the server is directly
   // exposed (no appending proxy → the whole header is client-controlled).
-  const trustProxy = /^(1|true|yes)$/i.test(env['TRUST_PROXY'] ?? '');
+  const trustProxy = isStrictYes(env['TRUST_PROXY']);
 
   // Trusted clients (plan 2026-11-07, S1): `name:rpm:key`, comma-separated. A
   // chatbot backend is ONE address for all its users; with a key it is counted in

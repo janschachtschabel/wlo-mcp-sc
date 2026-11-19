@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { setServiceCredentialForTest, type WloCredential } from '../src/auth/credential.js';
-import { allowedFlows, droppedFlowNames, probeBapiProxy } from '../src/services/bapi/jobs.js';
+import { allowedFlows, droppedFlowNames, MAX_ANSWER_BYTES, probeBapiProxy } from '../src/services/bapi/jobs.js';
 import { isDisabledFlag, isEnabledFlag } from '../src/env-flags.js';
 import { NODE_METADATA_WRITE } from '../src/services/bapi/node-metadata-write.js';
 import {
@@ -109,6 +109,8 @@ test('the probe: 200 with a list = present; only the measured 404 = absent; ever
     ['403', () => ({ status: 403 }), 'unknown'],
     ['302 (sent to a login or maintenance page)', () => ({ status: 302, headers: { location: '/login' } }), 'unknown'],
     ['429', () => ({ status: 429 }), 'unknown'],
+    // A list past the read bound is not read — no verdict, not a guess.
+    ['200 list past the read bound', () => ({ text: `[${' '.repeat(MAX_ANSWER_BYTES)}]` }), 'unknown'],
     ['503', () => ({ status: 503 }), 'unknown'],
     ['no answer', () => { throw new Error('ECONNREFUSED'); }, 'unknown'],
   ];

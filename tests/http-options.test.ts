@@ -121,6 +121,15 @@ test('METRICS_TOKEN: a real token opens /metrics; a short one stays off and is s
   assert.match(short.notices[0]!.message, /METRICS_TOKEN is too short/);
 });
 
+test('WLO_SESSION_EXCHANGE takes every on spelling, like every switch but TRUST_PROXY', () => {
+  for (const yes of ['1', 'true', 'yes', 'on', ' ON ']) {
+    assert.equal(buildHttpOptions({ WLO_SESSION_EXCHANGE: yes }).options.sessionExchange, true, JSON.stringify(yes));
+  }
+  for (const no of ['', '0', 'false', 'off', '2']) {
+    assert.notEqual(buildHttpOptions({ WLO_SESSION_EXCHANGE: no }).options.sessionExchange, true, JSON.stringify(no));
+  }
+});
+
 test('TRUST_PROXY: only an explicit yes — never by default, never for another value', () => {
   for (const yes of ['1', 'true', 'TRUE', 'yes']) {
     assert.equal(buildHttpOptions({ TRUST_PROXY: yes }).options.trustProxy, true, yes);

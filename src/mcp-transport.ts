@@ -15,17 +15,14 @@
  * import) so the flag logic is unit-testable offline.
  */
 
+import { isEnabledFlag } from './env-flags.js';
+
 /** Options passed to `new StreamableHTTPServerTransport(...)` on the MCP path. */
 export interface StreamableHttpOptions {
   /** Always undefined: the server is stateless, one instance per request. */
   sessionIdGenerator: undefined;
   /** true = single JSON body; false = real SSE stream (MCP_SSE). */
   enableJsonResponse: boolean;
-}
-
-/** Truthy env flags — mirrors the `TRUST_PROXY` convention in `http.ts`. */
-function isTruthy(raw: string | undefined): boolean {
-  return /^(1|true|yes)$/i.test((raw ?? '').trim());
 }
 
 /**
@@ -38,6 +35,6 @@ export function streamableHttpOptions(
 ): StreamableHttpOptions {
   return {
     sessionIdGenerator: undefined,
-    enableJsonResponse: !isTruthy(env['MCP_SSE']),
+    enableJsonResponse: !isEnabledFlag(env['MCP_SSE']),
   };
 }

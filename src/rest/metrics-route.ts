@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 
 import { renderMetrics } from '../metrics.js';
+import { jobOwnersHeld, RETENTION_MS as JOB_OWNER_RETENTION_MS, TOTAL as JOB_OWNER_TOTAL } from '../services/bapi/job-owners.js';
 import { cacheSize } from '../services/skill-registry-cache.js';
 import { confirmStoreSize } from '../services/write/confirm.js';
 import { replayStoreSize } from '../services/write/confirm-replay.js';
@@ -35,6 +36,7 @@ const STORE_GAUGES: ReadonlyArray<{ name: string; help: string; read: () => numb
   { name: 'wlo_confirm_tokens_held', help: 'Confirmation keys held, including expired ones not yet swept.', read: confirmStoreSize },
   { name: 'wlo_confirm_replays_held', help: 'Results kept so a re-presented confirmation key replays instead of writing twice.', read: replayStoreSize },
   { name: 'wlo_upload_held_bytes', help: 'Bytes of uploaded files held for a batch that has not been filed yet.', read: uploadStoreBytes },
+  { name: 'wlo_bapi_job_owners_held', help: `Notes of which account started which b-api job (capped at ${JOB_OWNER_TOTAL}, kept ${JOB_OWNER_RETENTION_MS / 86_400_000} days).`, read: jobOwnersHeld },
 ];
 
 function storeGauges(): string[] {

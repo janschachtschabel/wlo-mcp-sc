@@ -92,7 +92,7 @@ async function detect(attempt: number, gen: number): Promise<BapiProxyDetection>
 export function warnOnBapiSettings(): Array<'switch' | 'flows'> {
   const warned: Array<'switch' | 'flows'> = [];
   if (bapiSwitch().unrecognised) {
-    log.warn('WLO_BAPI_VIA_REPOSITORY is neither 1, 0 nor auto — the b-api flow tools stay off');
+    log.warn('WLO_BAPI_VIA_REPOSITORY is neither an on spelling (1/true/yes/on), an off spelling (0/false/no/off) nor auto — the b-api flow tools stay off');
     warned.push('switch');
   }
   const dropped = droppedFlowNames();

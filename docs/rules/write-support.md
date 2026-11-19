@@ -496,7 +496,11 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   start-up probe (`probeBapiProxy`, `jobs.ts`): `GET …/jobs/flows` only, anonymous and WITHOUT `DisableGuest` on
   purpose — with it the anonymous call is refused 401 and every repository would read as "no proxy". It never
   carries a login and is called only by `proxy-switch.ts` (guarded). It rests on the proxy answering the GUEST on
-  the flow list (`200 []`); if the proxy stops doing that (401/403), no verdict comes and the operator sets `1`. (2) Starting is a write: preview, then a key
+  the flow list (`200 []`); if the proxy stops doing that (401/403), no verdict comes and the operator sets `1`.
+  Every b-api answer, the probe's included, is read up to `MAX_ANSWER_BYTES` (8 MB) and cut there: a status
+  `200` past it is a failed query (`status: failed`, `isError`, as every failed query — contract of 2026-11-18)
+  with `reason: upstream_error`, `code: answer_too_large` (a list too; a start accepted that far is
+  open), never a guess from a cut body; any other status keeps its meaning. (2) Starting is a write: preview, then a key
   bound to the flow and its exact inputs (for `node-metadata-write` the checked ids and the language; for another
   flow the inputs' hash). Whether a refusal started nothing is `wroteNothing` (`upstream-error.ts`), the one
   reading for every write: a 4xx but 429 did; a 429, a 5xx, an accepted answer without a `jobId` or no answer at

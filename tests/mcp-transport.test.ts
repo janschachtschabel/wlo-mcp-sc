@@ -10,7 +10,7 @@ test('defaults to JSON response mode when MCP_SSE is unset', () => {
 });
 
 test('MCP_SSE truthy switches to real SSE streaming (enableJsonResponse false)', () => {
-  for (const v of ['1', 'true', 'TRUE', 'yes', 'Yes']) {
+  for (const v of ['1', 'true', 'TRUE', 'yes', 'Yes', 'on', 'ON', ' true ']) {
     assert.equal(
       streamableHttpOptions({ MCP_SSE: v }).enableJsonResponse,
       false,

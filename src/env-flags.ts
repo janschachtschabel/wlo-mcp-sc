@@ -16,6 +16,16 @@ export function isEnabledFlag(raw: string | null | undefined): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
+/**
+ * The STRICT yes, for a switch whose wrong reading is a security gap
+ * (`TRUST_PROXY`: trusting `X-Forwarded-For` lets any caller pick its own
+ * address). Exactly `1`, `true` or `yes`, any case, nothing around it — no
+ * `on`, no padding (pinned since the audit of 2026-11-14).
+ */
+export function isStrictYes(raw: string | null | undefined): boolean {
+  return /^(1|true|yes)$/i.test(raw ?? '');
+}
+
 /** The explicit off spellings (0/false/no/off, any case), for a switch that is on — or decided otherwise — unless switched off. */
 export function isDisabledFlag(raw: string | null | undefined): boolean {
   const v = (raw ?? '').trim().toLowerCase();

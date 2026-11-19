@@ -19,6 +19,9 @@ import {
 } from '../src/metrics.js';
 import { writeMetrics } from '../src/rest/metrics-route.js';
 import type { FailureCode } from '../src/services/failure-code.js';
+import type { BapiReason } from '../src/services/bapi/jobs.js';
+import { clearJobOwnersForTest, recordJobOwner } from '../src/services/bapi/job-owners.js';
+import { setServiceCredentialForTest } from '../src/auth/credential.js';
 
 const errorResult = (code: unknown) => ({ isError: true, structuredContent: { error: { code, message: 'x' } } });
 
@@ -43,6 +46,16 @@ test('every failure code the read tools answer with is a label of its own', () =
   // here until it is listed, instead of silently counting as "other".
   const all: Record<FailureCode, true> = {
     timeout: true, forbidden: true, not_found: true, upstream_busy: true, upstream_error: true,
+  };
+  for (const code of Object.keys(all)) assert.ok(TOOL_ERROR_CODES.has(code), code);
+});
+
+test('every reason the b-api flow tools answer with is a label of its own', () => {
+  // `error.code` of the four flow tools IS the reason. Typed against the union,
+  // so a reason added there fails to compile here until it is listed.
+  const all: Record<BapiReason, true> = {
+    login_required: true, edu_user_required: true, rejected: true, bad_inputs: true, rate_limited: true,
+    unknown_job: true, not_allowed: true, upstream_error: true,
   };
   for (const code of Object.keys(all)) assert.ok(TOOL_ERROR_CODES.has(code), code);
 });
@@ -85,6 +98,16 @@ test('the bounded stores report their size at scrape time, as gauges', () => {
     assert.match(text, new RegExp(`# TYPE ${name} gauge`), name);
     assert.match(text, new RegExp(`^${name} \\d+$`, 'm'), `${name} carries a number and no label`);
   }
+});
+
+test('the b-api job owners are a bounded store with a gauge of their own', (t) => {
+  clearJobOwnersForTest();
+  t.after(() => { clearJobOwnersForTest(); setServiceCredentialForTest(null); });
+  assert.match(scrape(), /^wlo_bapi_job_owners_held 0$/m);
+  setServiceCredentialForTest({ header: 'Basic dXNlcjpwdw==', label: 'maria', source: 'user' });
+  recordJobOwner('job-1');
+  recordJobOwner('job-2');
+  assert.match(scrape(), /^wlo_bapi_job_owners_held 2$/m);
 });
 
 test('every gauge line has HELP and TYPE, and no name is rendered twice', () => {

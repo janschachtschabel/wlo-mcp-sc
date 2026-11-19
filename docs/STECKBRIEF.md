@@ -17,10 +17,10 @@ Heute läuft der Dienst mit Docker Compose auf einem Host. Der Helm-Chart ist ei
 | | |
 |---|---|
 | **Service-ID** | `wlo-mcp` (so auch das Feld `service` in jeder Logzeile) |
-| **Ist** | Der Zugang zu **einem** edu-sharing-Repository für MCP-Clients (KI-Programme, Chatbots): Suche, Sammlungen, Themenseiten, Detaildaten, Volltext, Skills — 34 Lesewerkzeuge — und 26 Kuratier-Werkzeuge, die schreiben. Wo das Repository den B-API-Proxy hat, dazu vier Werkzeuge, die **Aufträge der B-API** (Kestra-Flows) als die angemeldete Person starten und verfolgen. Dazu eine kleine öffentliche REST-Fläche (`/api/*`) und die Anmeldeseiten. |
+| **Ist** | Der Zugang zu **einem** edu-sharing-Repository für MCP-Clients (KI-Programme, Chatbots): Suche, Sammlungen, Themenseiten, Detaildaten, Volltext, Skills — 34 Lesewerkzeuge — und 26 Kuratier-Werkzeuge, die schreiben; dazu vier Stapel-Werkzeuge mit `WLO_BATCH_UPLOAD_ENABLED`. Wo das Repository den B-API-Proxy hat, dazu vier Werkzeuge, die **Aufträge der B-API** (Kestra-Flows) als die angemeldete Person starten und verfolgen. Dazu eine kleine öffentliche REST-Fläche (`/api/*`) und die Anmeldeseiten. |
 | **Ist nicht** | Kein LLM und kein LLM-Gateway: der Dienst ruft kein Sprachmodell auf. Einen B-API-Auftrag startet er nur; was der Auftrag tut, läuft in der B-API — der Vorgabe-Flow erzeugt Metadaten mit einem Modell, dort und auf deren Kosten. Kein eigener Datenbestand: alle Inhalte liegen im Repository. Kein Ersatz für das Repository-Rechtesystem — was jemand sieht und ändern darf, entscheidet edu-sharing. |
 | **Technik** | TypeScript, Node 22, ein langlebiger Prozess. Laufzeit-Abhängigkeiten: `@modelcontextprotocol/sdk`, `zod`. Kein Web-Framework, keine Datenbank. |
-| **Abhängig von** | dem Repository (zwingend); Wikipedia (`*.wikipedia.org`, nur für das Wikipedia-Werkzeug); einem Textextraktionsdienst (optional, `WLO_TEXT_EXTRACTION_URL`); der B-API, für die vier Auftrags-Werkzeuge erreicht **über den Proxy des Repositorys** (`{Repository}/rest/bapi` — dafür kein weiterer Host und kein eigener Schlüssel); getrennt davon optional der Extraktionsdienst über den B-API-Proxy, mit dem B-API-Schlüssel `WLO_TEXT_EXTRACTION_API_KEY` (§7). |
+| **Abhängig von** | dem Repository (zwingend); Wikipedia (`*.wikipedia.org`, nur für das Wikipedia-Werkzeug); einem Textextraktionsdienst (optional, `WLO_TEXT_EXTRACTION_URL`); der B-API, für die vier Auftrags-Werkzeuge erreicht **über den Proxy des Repositorys** (`{Repository}/rest/bapi` — dafür kein weiterer Host und kein eigener Schlüssel); getrennt davon optional der Extraktionsdienst über den B-API-Proxy, mit dem B-API-Schlüssel `WLO_TEXT_EXTRACTION_API_KEY` (§7); optional, für den Sitzungs-Tausch `POST /auth/session`: ein Pfad auf dem Host des Repositorys unterhalb von `/edu-sharing` (eigener Ingress dort oder ein vertrautes Backend, das weiterreicht — §3). |
 
 ### Anmeldung: der Dienst steht nicht hinter der B-API
 
@@ -33,16 +33,18 @@ B-API-Schlüssel:
 | Dienstkonto | ein gemeinsames Konto für alle Aufrufe auf `/mcp` | `WLO_SERVICE_USER` + `WLO_SERVICE_PASSWORD` |
 | Person, OAuth 2.1 | der Client meldet sich selbst an (`/oauth/*`), die Person loggt sich mit ihrem WLO-Konto ein | `WLO_AUTH_PRIVATE_KEY` **und** eine bekannte öffentliche Adresse — siehe unten |
 | Person, Zugangsblock | verschlüsselter Block von `/auth`, einmal als `Bearer wlo2.…` eingetragen, widerrufbar | `WLO_AUTH_PRIVATE_KEY` |
-| Person, Ticket | ein eingebettetes Widget tauscht ein edu-sharing-Ticket an `POST /auth/ticket` gegen einen Block (12 h gültig) | `WLO_AUTH_PRIVATE_KEY` |
+| Person, Ticket | ein eingebettetes Widget tauscht ein edu-sharing-Ticket an `POST /auth/ticket` gegen einen Block (12 h gültig; seit 1.3.0 an seine Eintragung gebunden — eine Abmeldung hält auch, wenn dasselbe Ticket erneut getauscht wird) | `WLO_AUTH_PRIVATE_KEY`; Browser-Herkünfte mit `TICKET_ALLOWED_ORIGINS` einschränkbar (ohne Angabe: jede) |
+| Person, Sitzung (seit 1.3.0, ohne Vorgabe aus) | ein Widget in einer Seite des Repositorys tauscht die WLO-Sitzung (Cookie `JSESSIONID`, dazu das Balancer-Cookie `INGRESSCOOKIE`, das die Sitzung an ihren Knoten bindet) an `POST /auth/session` gegen einen Block (12 h, an seine Eintragung gebunden; endet mit der Sitzung) | `WLO_AUTH_PRIVATE_KEY` **und** `WLO_SESSION_EXCHANGE=1`; der Pfad muss auf dem Host des Repositorys unterhalb von `/edu-sharing` erreichbar sein — als eigener Ingress dort (`WLO_SESSION_MOUNT_PATH`, im Chart `sessionIngress`) oder über ein vertrautes Backend, das den Tausch mit seinem Schlüssel aus `TRUSTED_CLIENT_KEYS` weiterreicht; anfragen darf nur eine Seite mit der Herkunft des Repositorys — oder, wenn `WLO_SESSION_ALLOWED_ORIGINS` gesetzt ist, eine aus dieser Liste, die dann die Herkunft des Repositorys **ersetzt** (sie also mit aufzählen) |
 | Person, Basic | `Authorization: Basic …` wird ans Repository durchgereicht | keine (nicht empfohlen: der Wert ist das Passwort) |
 
 **Was „anonym“ mit einem Dienstkonto bedeutet — eine Entscheidung des Betreibers.** Ist ein
 Dienstkonto eingerichtet, liest eine `/mcp`-Anfrage OHNE `Authorization`-Kopf mit diesem Konto, nicht
 als Gast. Alles, was das Konto über die öffentlichen Inhalte hinaus lesen darf, ist damit für jeden
-lesbar, der `/mcp` erreicht. Immer anonym bleibt nur die REST-Oberfläche `/api/*` (und der Launcher).
+lesbar, der `/mcp` erreicht. Immer anonym bleibt nur die lesende REST-Oberfläche `/api/*` (und der Launcher); `POST /api/uploads` verlangt eine persönliche Anmeldung.
 Das Dienstkonto also so berechtigen, wie man es jedem Besucher zugestehen würde — oder `/mcp` nur
-einem bekannten Kreis zugänglich machen. Ein Kopf, der sich nicht verwenden lässt, fällt dagegen auf
-Gast zurück, nie auf das Dienstkonto.
+einem bekannten Kreis zugänglich machen. Ein Zugangsblock (`Bearer`), der sich nicht verwenden lässt,
+wird auf `/mcp` mit 401 abgewiesen; ein anderer unbrauchbarer Kopf fällt auf Gast zurück — nie auf das
+Dienstkonto.
 
 **Woher OAuth die öffentliche Adresse nimmt** (`resolveIssuer`, `src/auth/oauth-metadata.ts`): Ist
 `WLO_PUBLIC_BASE_URL` gesetzt, gilt allein dieser Wert — auch dann, wenn er sich nicht als Adresse
@@ -54,13 +56,20 @@ Empfohlen ist deshalb, `WLO_PUBLIC_BASE_URL` immer zu setzen.
 
 Schreibende Werkzeuge sind für alle sichtbar und verweigern beim Aufruf, wenn niemand angemeldet ist.
 
+**Der Sitzungs-Tausch ist ein bewusstes Risiko und deshalb ohne Vorgabe aus:** Er macht aus einer
+`HttpOnly`-Sitzung einen Block, den ein Skript der Seite hält. Einzelheiten und Messungen:
+[`AUTH.md`](AUTH.md) (Sitzungs-Tausch).
+
 ### Die B-API als Ziel, nicht als Vorbau: Aufträge über den Repository-Proxy
 
 Der Dienst steht nicht hinter der B-API, er **ruft** sie für die vier Auftrags-Werkzeuge auf — und zwar
 nicht direkt, sondern über den B-API-Proxy des Repositorys (`{Repository}/rest/bapi/**`). Dort bürgt
 das Repository für die Person, mit deren eigener Anmeldung der Aufruf kommt, und setzt seinen eigenen
-Schlüssel; für die Aufträge hält der Dienst keinen B-API-Schlüssel. Nur persönliche Anmeldungen, nie
-das Dienstkonto. (Getrennt davon kann der Extraktionsdienst über den B-API-Proxy erreicht werden, mit
+Schlüssel; für die Aufträge hält der Dienst keinen B-API-Schlüssel. Nur persönliche Anmeldungen
+(Zugangsblock aus Passwort, Ticket oder Sitzung, oder `Basic`), nie das Dienstkonto; Ticket-Anmeldungen
+am Proxy sind nicht gemessen. Im stdio-Betrieb fragt der Dienst nie nach dem Proxy (dort gibt es keine
+persönliche Anmeldung) — nur ausdrückliches Einschalten (`1`) meldet die Werkzeuge dort an,
+und sie weisen jeden Aufruf ab. (Getrennt davon kann der Extraktionsdienst über den B-API-Proxy erreicht werden, mit
 dem B-API-Schlüssel `WLO_TEXT_EXTRACTION_API_KEY` — eine andere Route, §7.)
 
 - **Eingeschaltet:** Ohne Einstellung fragt der Dienst beim Start anonym, ob das Repository den Proxy
@@ -93,9 +102,14 @@ B-API-Schlüssel. (Dass er für die Auftrags-Werkzeuge die B-API über den Repos
   kein Feld für einen Kopf oder API-Schlüssel.
 - Die Rechte sollen die der **Person** sein, und Änderungen sollen unter ihrem Namen in der
   Repository-Historie stehen. edu-sharing bietet dafür kein weiterreichbares Token (kein
-  OIDC-Discovery, nur Basic und Cookie) — deshalb der verschlüsselte Zugangsblock, den nur dieser
-  Server öffnen kann.
+  OIDC-Discovery; nur Basic, Cookie und kurzlebige Tickets, die edu-sharing-Seiten selbst ausstellen und
+  die ein MCP-Client nicht bekommt) — deshalb der verschlüsselte Zugangsblock, den nur dieser Server
+  öffnen kann; Ticket und Sitzung werden gegen einen solchen Block getauscht.
 - Anonymes Lesen und Anmeldung liegen bewusst auf derselben Adresse.
+
+Ein Betrieb **hinter** der B-API ist gemessen und entworfen, aber nicht gebaut
+([`plans/2026-11-15-b-api-betrieb.md`](plans/2026-11-15-b-api-betrieb.md)); offen sind dort der
+Proxy-Eintrag `wlo-mcp` auf Staging und der Name der zusätzlichen Kopfzeile.
 
 Was der Dienst an Stelle des Gateways selbst mitbringt: Ratenbegrenzung je Adresse bzw. je
 vertrautem Client, Schutz gegen das Durchprobieren von Logins, Größenbegrenzung der Anfragen, eine
@@ -119,7 +133,7 @@ Parameter eines Aufrufs. Gründe:
 
 | Port | Zweck | Pfade | Erreichbar für |
 |---|---|---|---|
-| `3000` (öffentlich, `PORT`) | Clients | `POST /mcp` (MCP, SSE-Antwort) · `GET /api/*`, `POST /api/uploads` · `/auth`, `/auth/*`, `/auth-revoke.html` · `/oauth/*`, `/.well-known/oauth-*` · `/launcher.html` · `/openapi.yaml` | Ingress / Reverse Proxy |
+| `3000` (öffentlich, `PORT`) | Clients | `POST /mcp` (MCP, SSE-Antwort; `POST /` ebenso) · `GET /api/*`, `POST /api/uploads` · `/auth`, `/auth/*` (darunter `POST /auth/session` mit `WLO_SESSION_EXCHANGE`, auch unter `WLO_SESSION_MOUNT_PATH`), `/auth-revoke.html` · `/oauth/*`, `/.well-known/oauth-*` · `/launcher.html` und weitere statische Seiten · `/openapi.yaml` — vollständig in `docs/openapi.yaml` | Ingress / Reverse Proxy; mit `sessionIngress` zusätzlich der Controller des Repository-Hosts |
 | intern (`INTERNAL_PORT`, **ohne Vorgabe aus**; im Chart `9090`) | Proben, Metriken | **nur** `GET /health`, `GET /ready`, `GET /metrics` | Cluster (kubelet, Prometheus) — nie über den Ingress |
 
 - **Den internen Port gibt es nur, wenn er eingeschaltet wird.** `INTERNAL_PORT` ist ohne Vorgabe
@@ -144,7 +158,24 @@ Parameter eines Aufrufs. Gründe:
   10 Minuten — die elfte Person, die sich mit `Basic` oder an den Anmeldeseiten anmeldet, wird
   abgewiesen). Ebenso `API_RATE_LIMIT_RPM` (30/min) und `TICKET_CREDENTIAL_LIMIT` (200). Der
   Controller braucht deshalb `externalTrafficPolicy: Local` oder das PROXY-Protokoll. Nicht
-  betroffen: Zugangsblöcke auf `/mcp` (gezählt je Block) und vertraute Clients (je Schlüssel).
+  betroffen ist nur, was nicht nach Adresse zählt: der Schutz gegen das Durchprobieren für
+  Zugangsblöcke (je Block — das Werkzeugbudget zählt auch für sie je Adresse) und die Budgets
+  vertrauter Clients (`X-WLO-Client-Key`, je Schlüssel; der Login-Schutz für `Basic` bleibt je
+  Adresse). Der Sitzungs-Tausch zahlt, eingehängt auf dem Repository-Host, aus `API_RATE_LIMIT_RPM`
+  und `TICKET_CREDENTIAL_LIMIT` der Adresse — `TRUST_PROXY` muss also zur Kette des Repository-Ingress
+  passen, sonst teilen sich alle Personen 30 Anfragen je Minute. Über ein vertrautes Backend zahlt
+  er aus dessen Protokoll-Budget (3 × rpm) und zählt je Adresse, die das Backend für die Person nennt:
+  `X-WLO-Client-Address` (seit 1.4.0, nur hinter gültigem Schlüssel), sonst sein Eintrag in
+  `X-Forwarded-For`.
+- **Sitzungs-Tausch (optional, seit 1.3.0):** Mit `sessionIngress` legt der Chart einen zweiten Ingress
+  `wlo-mcp-session` auf dem **Host des Repositorys** an, für genau `<path>/auth/session` (unterhalb von
+  `/edu-sharing/`, `pathType: Exact`, ohne Umschreibung — die würde bei ingress-nginx alle Pfade des
+  Hosts auf Regex umstellen). Der Server beantwortet diesen Pfad selbst (`WLO_SESSION_MOUNT_PATH`; der
+  Chart setzt ihn und `WLO_SESSION_EXCHANGE`). Das setzt voraus, dass das Release im Cluster des
+  Repository-Hosts läuft; sonst reicht ein vertrautes Backend den Tausch an `/auth/session` weiter
+  (`createIngress: false`). Mit NetworkPolicy gehört der Namespace dieses Controllers in
+  `sessionIngress.controllerNamespace`. Der Controller muss `Cookie` und `Origin` unverändert
+  weiterreichen.
 - **Proxy-Anforderung:** die Antwort auf `/mcp` ist ein SSE-Strom. Der Proxy darf sie nicht puffern
   und braucht eine lange Lesefrist (3600 s); Anfragegröße mindestens 4 MiB, mit Stapel-Upload
   mindestens `UPLOAD_MAX_BYTES` (DEPLOYMENT.md §4).
@@ -161,19 +192,21 @@ Im **Arbeitsspeicher** des Prozesses (nach einem Neustart weg, zwischen Prozesse
 | Laufende Pläne (Sammlungsbäume, Ablage, Metadaten, Volltexte) | 30 min |
 | Stapel und ihre Upload-Plätze | 30 min / bis abgelegt |
 | OAuth-Autorisierungscodes | 60 s |
-| Raten- und Login-Zähler, Status-Cache | Fenster von 1–10 min |
+| Raten- und Login-Zähler (auch der Schutz für Ticket- und Sitzungs-Tausch und die Budgets vertrauter Clients), Status-Cache | Fenster von 1–10 min |
 | Geprüfte Upload-Logins (bestätigt 10 min, abgelehnt 60 s), Antwort von `/ready` (30 s) | Sekunden bis 10 min |
 | Metrik-Zähler | bis zum Neustart |
 | Wer welchen B-API-Auftrag gestartet hat (Kontoname und Job-ID; höchstens 500 je Konto, 20 000 insgesamt) | 30 Tage — nach einem Neustart sind auch eigene Aufträge `unknown_job` |
 | Ob das Repository den B-API-Proxy hat | bis zum Neustart (ohne Urteil: erneut gefragt) |
 | Skill-Registry-Cache, Kurzzeit-Caches | Minuten |
 
-Auf der **Platte** genau eine Datei: das Zugangsregister `/data/access-registry.json`.
+Auf der **Platte** genau eine Datei: das Zugangsregister `/data/access-registry.json`. Der Prozess
+liest es beim Start ein und hält es im Speicher; ob ein Ticket- oder Sitzungs-Block gilt, entscheidet
+seine Eintragung darin.
 
 **Deshalb eine Instanz.** Mit zwei Prozessen kennt der eine die Vorschau des anderen nicht, ein Plan
 läuft auf der Instanz weiter, die ihn nicht hält, ein Upload landet dort, wo das Stapel-Werkzeug
-nicht nachsieht, ein gestarteter B-API-Auftrag ist auf der anderen Instanz „fremd“, und jede Instanz
-vergibt das volle Ratenbudget. Für einen Deployment-Entwurf heißt
+nicht nachsieht, ein gestarteter B-API-Auftrag ist auf der anderen Instanz „fremd“, eine Instanz sähe Widerrufe und
+Eintragungen der anderen im Zugangsregister nicht, und jede Instanz vergibt das volle Ratenbudget. Für einen Deployment-Entwurf heißt
 das: `replicas: 1`, Strategie `Recreate`, kein Autoscaler. Verfügbarkeit kommt aus dem schnellen
 Neustart (72 MB, in Sekunden bereit), nicht aus Replikaten. Eine zweite Instanz würde auch nichts
 beschleunigen — die Zeit vergeht im Repository.
@@ -181,18 +214,24 @@ beschleunigen — die Zeit vergeht im Repository.
 ## 5. Was zu sichern ist
 
 - **Das Volume unter `/data`** (Compose: `wlo-access-registry`, Chart: PVC `wlo-mcp-data`,
-  ReadWriteOnce, Kilobytes). Es enthält Zugangs-IDs, Benutzernamen und Ausstellungszeiten — nie ein
-  Passwort. Es ist eine **Positivliste**: geht sie verloren, ist jeder ausgestellte Zugangsblock
-  ungültig und alle holen sich einen neuen. Unbequem, aber sicher.
+  ReadWriteOnce, Kilobytes). Es enthält Zugangs-IDs, Benutzernamen, Ausstellungs- und Ablaufzeiten,
+  das bestätigte Konto und die Art des Blocks (bei einer Sitzung ist die Zugangs-ID ein Hash der
+  Sitzungs-ID) — nie ein Passwort. Es ist eine **Positivliste**: geht sie verloren, ist jeder
+  ausgestellte Zugangsblock ungültig und alle holen sich einen neuen (Widgets tauschen Ticket oder
+  Sitzung still neu). Unbequem, aber sicher. Ein Rückfall auf einen Stand vor 1.3.0 beantwortet
+  Sitzungs-Blöcke mit 401.
 - **Der private Schlüssel** (`WLO_AUTH_PRIVATE_KEY`) — im Secret-Speicher der Plattform. Er
-  entschlüsselt jeden ausgestellten Block zu einem lebenden WLO-Passwort.
+  entschlüsselt jeden ausgestellten Block zu einem lebenden WLO-Passwort, Ticket oder Sitzungs-Cookie.
 - Sonst nichts: kein Schema, keine Migration. Was die Kuratier-Werkzeuge geschrieben haben, liegt im
   Repository und folgt dessen Versionierung.
 
 ## 6. Ressourcen
 
-Gemessen am 2026-11-13 mit `npm run measure:resources` (DEPLOYMENT.md §5.0.2); auf anderer Hardware
-neu messen.
+Gemessen am 2026-11-13 mit `npm run measure:resources` (DEPLOYMENT.md §5.0.2), mit Version 1.1.0;
+auf anderer Hardware neu messen. Seit 1.5.0 kommen die Zuordnung der B-API-Aufträge (höchstens 20 000
+Einträge) und B-API-Antworten hinzu — in 1.5.0 ganz gelesen, nach 1.5.0 (noch ohne Release) je bis 8 MB,
+dann abgebrochen, wobei eine Antwort beim Lesen mehrfach im Speicher liegt. Nicht gemessen und in den
+480 MB nicht enthalten.
 
 | Zustand | Arbeitsspeicher (RSS) |
 |---|---|
@@ -224,15 +263,17 @@ bewusst entscheidet — die Vorgaben stehen im Code neben ihrer Messung. Die Gru
 |---|---|---|
 | 1 Repository | welches Repository | `WLO_REPOSITORY_URL` (Pflicht im Chart), `WLO_ROOT_COLLECTION_ID` |
 | 2 Persönliche Anmeldung | Schlüssel, Register | `WLO_AUTH_PRIVATE_KEY`, `…_PREVIOUS`, `WLO_AUTH_REGISTRY_PATH` |
-| 3 Dienstkonto, Schreiben, Stapel | gemeinsames Konto und was es darf | `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`, `WLO_ALLOW_SERVICE_WRITES`, `WLO_BATCH_UPLOAD_ENABLED` |
+| 3 Dienstkonto, Schreiben | gemeinsames Konto und was es darf | `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`, `WLO_ALLOW_SERVICE_WRITES` |
 | 4 Werkzeuge | welche Werkzeuge es gibt | `WLO_DISABLE_UNSAFE_TOOLS` (ausgeliefert: `all`), `WLO_SKILL_*`, `WLO_TEXT_EXTRACTION_URL`, `WLO_BAPI_VIA_REPOSITORY` (leer = erkennen), `WLO_BAPI_FLOWS` |
-| 5 Netz | Betrieb hinter einem Proxy | `MCP_SSE`, `TRUST_PROXY`, `WLO_PUBLIC_BASE_URL`, `INTERNAL_PORT` |
-| 6 Grenzen und Zeiten | Feinjustierung | `RATE_LIMIT_RPM`, `TRUSTED_CLIENT_KEYS`, `WLO_UPSTREAM_CONCURRENCY`, `METRICS_TOKEN`, `LOG_LEVEL` |
+| 5 Netz | Betrieb hinter einem Proxy | `MCP_SSE`, `TRUST_PROXY`, `WLO_PUBLIC_BASE_URL` |
+| 6 Grenzen, Zeiten, Einbettung | Feinjustierung; Chatbot und Widgets in fremden Seiten; Stapel-Ablage; interner Port | `RATE_LIMIT_RPM`, `TRUSTED_CLIENT_KEYS`, `TICKET_ALLOWED_ORIGINS`, `WLO_SESSION_EXCHANGE`, `WLO_SESSION_ALLOWED_ORIGINS`, `WLO_SESSION_MOUNT_PATH`, `WIDGET_OAUTH_ORIGINS`, `WLO_BATCH_UPLOAD_ENABLED`, `INTERNAL_PORT`, `WLO_UPSTREAM_CONCURRENCY`, `METRICS_TOKEN`, `LOG_LEVEL` |
 | 7 Widgets | ChatGPT-Einreichung | `WLO_WIDGET_*` |
 
 Sieben davon gehören in ein Secret, nie in eine Werte-Datei: `WLO_SERVICE_USER`, `WLO_SERVICE_PASSWORD`,
 `WLO_AUTH_PRIVATE_KEY`, `WLO_AUTH_PRIVATE_KEY_PREVIOUS`, `METRICS_TOKEN`, `TRUSTED_CLIENT_KEYS`, `WLO_TEXT_EXTRACTION_API_KEY` (nur wenn der Extraktionsdienst hinter dem B-API-Proxy liegt). Im Chart kommen sie aus einem
-**vorhandenen** Secret (`existingSecret`); alles andere wird eine ConfigMap.
+**vorhandenen** Secret (`existingSecret`); alles andere wird eine ConfigMap. `PORT`, `INTERNAL_PORT`,
+`WLO_REPOSITORY_URL`, `WLO_AUTH_REGISTRY_PATH`, `WLO_SESSION_EXCHANGE` und `WLO_SESSION_MOUNT_PATH` setzt
+der Chart selbst; über `config` gesetzt, weist er sie ab.
 
 Eine unbrauchbare `WLO_REPOSITORY_URL` beendet den Start mit Exit-Code 1.
 
@@ -251,6 +292,12 @@ Eine unbrauchbare `WLO_REPOSITORY_URL` beendet den Start mit Exit-Code 1.
   Token, eine abgelehnte Autorisierung) sowie Warnungen und Fehler. Wer Zugriffe auf diese Pfade
   zählen will, nimmt `wlo_http_requests_total` oder das Log des Proxys. Compose begrenzt das Containerlog auf 5 × 10 MB; auf einer
   Plattform ist die Rotation Sache der Knoten bzw. der Log-Pipeline.
+- **Zeilen, die man kennen sollte:** Jeder Sitzungs-Tausch schreibt eine Ereigniszeile mit der
+  gezählten Adresse als Pseudonym; nennt ein Weiterreicher keine Adresse, schreibt der Server eine
+  Warnung ins Log. Mit `WLO_SESSION_EXCHANGE` schreibt jeder Start eine gewollte `warn`-Zeile. Ob die
+  B-API-Werkzeuge an sind, sagt eine Zeile beim Start; ohne klares Urteil des Repositorys schreibt die
+  Erkennung bei jedem neuen Versuch eine `warn`-Zeile (bis alle 10 min). Beides ist wichtig für Alarme,
+  die nach `warn` filtern.
 - Adresse, Benutzername und Suchbegriff stehen im Log standardmäßig nur als Pseudonym (Schlüssel-Hash, der nur im laufenden Prozess gilt); `LOG_PERSONAL_DATA=plain` schreibt sie im Klartext (Entscheidung des Betreibers).
 
 ## 9. Metriken und vorgeschlagene Alarme
@@ -264,13 +311,13 @@ Labels tragen nie einen Aufrufer, einen Pfad oder eine Suchanfrage.
 | `wlo_http_request_duration_seconds` | Histogramm | `route` |
 | `wlo_tool_calls_total` | Zähler | `tool`, `outcome` (`ok`, `error` = mit isError beantwortet, `thrown`) |
 | `wlo_tool_duration_seconds` | Histogramm | `tool` |
-| `wlo_tool_errors_total` | Zähler | `tool`, `code` (Fehlercode der Antwort; unbekannte als `other`, fehlende als `uncoded`) |
+| `wlo_tool_errors_total` | Zähler | `tool`, `code` (Fehlercode der Antwort — fünf Gründe der B-API-Werkzeuge, `edu_user_required`, `rejected`, `bad_inputs`, `unknown_job`, `not_allowed`, erst nach 1.5.0, in 1.5.0 als `other`; unbekannte als `other`, fehlende als `uncoded`) |
 | `wlo_upstream_requests_total` | Zähler | `outcome` (`2xx`…`5xx`, `error` = keine Antwort, `cancelled`, `shed` = nicht gesendet, eigene Schranke) |
 | `wlo_upstream_duration_seconds` | Histogramm | `outcome` |
 | `wlo_upstream_gate_wait_seconds` | Histogramm | `outcome` (`granted`, `shed`) — nur Aufrufe, die an der eigenen Schranke warten mussten |
 | `wlo_upstream_in_flight`, `wlo_upstream_waiting`, `wlo_upstream_limit` | Messwert | — |
 | `wlo_rate_limited_total` | Zähler | `limiter` (eigene 429: `rate_limited`, `too_many_logins`, `upload_…`) |
-| `wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes` | Messwert | — (begrenzte Speicher im Prozess, beim Abruf gelesen) |
+| `wlo_skill_registry_cache_entries`, `wlo_fulltext_held_bytes`, `wlo_plans_held`, `wlo_confirm_tokens_held`, `wlo_confirm_replays_held`, `wlo_upload_held_bytes`, `wlo_bapi_job_owners_held` (nach 1.5.0, noch ohne Release) | Messwert | — (begrenzte Speicher im Prozess, beim Abruf gelesen) |
 | `wlo_build_info` | Messwert | `version` |
 | `process_*`, `nodejs_heap_*`, `nodejs_external_memory_bytes`, `nodejs_eventloop_lag_seconds` | übliche Prozesswerte | — |
 
@@ -312,8 +359,9 @@ Zusätzlich nötig und nicht aus dem Dienst selbst zu gewinnen: eine **Prüfung 
 
 - Auf `SIGTERM`: keine neuen Verbindungen, laufende Arbeit zu Ende bringen, Exit-Code 0. Ohne
   laufende Arbeit sofort (gemessen: `docker stop` in 1,0–1,4 s).
-- Nach **70 s** (`SHUTDOWN_GRACE_MS`) wird abgeschnitten, Exit-Code 1. In die Nähe kommen nur ein
-  Schreibvorgang mit Quell-URL (bis 60 s) und ein Abschnitt eines Stapel-Plans (etwa 40 s).
+- Nach **70 s** (`SHUTDOWN_GRACE_MS`, fest im Code) wird abgeschnitten, Exit-Code 1. In die Nähe kommen
+  nur ein Schreibvorgang mit Quell-URL (bis 60 s) und ein Abschnitt eines Stapel-Plans (etwa 40 s);
+  `wlo_start_flow` prüft die Datensätze und ruft dann die B-API mit bis zu 30 s Frist (nicht gemessen).
 - Die Frist der Plattform muss **darüber** liegen: Compose `stop_grace_period: 75s`, Chart
   `terminationGracePeriodSeconds: 90`.
 - Während des Auslaufens werden neue Verbindungen abgelehnt (hinter dem Proxy: 502). Ein Client, der
@@ -328,7 +376,7 @@ Zusätzlich nötig und nicht aus dem Dienst selbst zu gewinnen: eine **Prüfung 
   Laufzeitstufe enthält nur Produktionsabhängigkeiten, `dist/`, die gebauten Widgets, `public/` und `docs/openapi.yaml`.
 - **Nicht-root:** Benutzer `node` (uid 1000). Im Betrieb: Dateisystem nur lesbar, beschreibbar sind
   allein `/data` (Volume) und `/tmp`; alle Capabilities entzogen, keine Rechteausweitung.
-- **CI:** Lint, Tests und Build auf Node 22; in der GitHub-Pipeline zusätzlich ein Smoke-Test des
+- **CI:** Lint, Typprüfung, Tests, Abhängigkeits-Audit und Build auf Node 22; in der GitHub-Pipeline zusätzlich ein Smoke-Test des
   Images (`npm run smoke:image`: bauen, unter den Compose-Einschränkungen starten, `/health`,
   `tools/list`, `/openapi.yaml`, sauberes Stoppen, Startabbruch bei unbrauchbarer Repository-Adresse). In der
   GitLab-Pipeline läuft dieser Smoke-Test nicht (er braucht einen Docker-Daemon).
@@ -337,8 +385,8 @@ Zusätzlich nötig und nicht aus dem Dienst selbst zu gewinnen: eine **Prüfung 
   `:X.Y` sowie den Chart `oci://ghcr.io/janschachtschabel/charts/wlo-mcp` in derselben Version;
   `latest` wird nicht veröffentlicht. Ein neues Paket in dieser Registry ist privat, bis sein
   Eigentümer das ändert. Die Ziel-Registry der Plattform ist weiter offen (§14); der Chart hat
-  deshalb keinen Vorgabewert für `image.repository`. Die CI rendert den Chart
-  (`helm lint --strict`, `helm template`). Compose baut weiterhin auf dem Host
+  deshalb keinen Vorgabewert für `image.repository`. Die GitHub-Pipeline rendert den Chart
+  (`helm lint --strict`, `helm template`); die GitLab-Pipeline hat keinen Helm-Schritt. Compose baut weiterhin auf dem Host
   (`docker compose up -d --build`, Name `wlo-mcp:latest`).
 
 ## 13. Kompatibilität
@@ -350,10 +398,11 @@ Eingetragen ist nur, was im Repository belegt ist; leere Felder sind nicht gemes
 | 1.5.0 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15); 1.5.0: B-API-Aufträge über den Repository-Proxy (Start, Lauf, Schreiben als Person, Fremdzugriff; `tests/live/bapi-flows.test.ts`, 2026-11-18) und die Erkennung des Proxys (2026-11-18) |
 | 1.5.0 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
 | 1.5.0 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
+| 1.4.0 | 22 | 1.32.2 | Staging | `X-WLO-Client-Address` nur offline geprüft (Tests); laufende Staging-Installation zuletzt festgehalten mit 1.3.0 und Sitzungs-Tausch (2026-11-15, `plans/2026-11-15-antwort-chatbot-sitzung-4.md`) |
 | … | | | | |
 
-Bekannter Zustand auf Staging (2026-11-06): das Repository lehnt Inhalts-Uploads und das Ablegen in
-Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit nicht live prüfbar
+Bekannter Zustand auf Staging (2026-11-06, seither nicht erneut geprüft): das Repository lehnt
+Inhalts-Uploads und das Ablegen in Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit nicht live prüfbar
 (`docs/plans/archive/STATUS-2026-08-15-bis-2026-11-14.md`).
 
 ## 14. Offen / zu entscheiden
@@ -384,5 +433,12 @@ Sammlungen mit HTTP 500 ab; die davon betroffenen Schreibpfade sind dort derzeit
       Zuordnung im Arbeitsspeicher aus (§1). Damit teilen sich auch alle Personen eines Repositorys
       die Grenze von 20 unfertigen Jobs je Schlüssel. Und: ohne `DisableGuest` liest der Gast des
       Proxys jeden Job, dessen ID er kennt — der Dienst schickt den Kopf immer, die Lücke gehört dem Proxy.
-- [ ] **Schlüssel für das Chatbot-Team** (`TRUSTED_CLIENT_KEYS`) und die erlaubten Ursprünge
-      (`TICKET_ALLOWED_ORIGINS`, `WIDGET_OAUTH_ORIGINS`) für die Zielumgebung.
+- [ ] **Schlüssel für das Chatbot-Team** (`TRUSTED_CLIENT_KEYS`; vorgeschlagen `boerdi:500:<Schlüssel>`)
+      und die erlaubten Ursprünge (`TICKET_ALLOWED_ORIGINS`, `WLO_SESSION_ALLOWED_ORIGINS`,
+      `WIDGET_OAUTH_ORIGINS`) für die Zielumgebung.
+- [ ] **Welche Form des Sitzungs-Tauschs:** `sessionIngress` im Cluster des Repositorys oder ein
+      vertrautes Backend, das weiterreicht — hängt daran, ob der Dienst im Cluster des Repositorys läuft
+      (offen beim Nutzer und T6). Dazu: der Namespace des Controllers und ob er `Cookie` und `Origin`
+      unverändert weiterreicht.
+- [ ] **Termin für das Deployment** in der Zielumgebung.
+- [ ] **Betrieb hinter der B-API** (§2): entworfen, nicht gebaut; offen sind Proxy-Eintrag und Kopfzeile.

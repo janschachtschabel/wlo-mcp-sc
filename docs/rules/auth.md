@@ -240,7 +240,8 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   made from — the entry is filed as `k: 'ticket'` with `sess: true` (an unknown `k` fails an older build's whole
   registry closed; second review 2026-11-15) and carries the
   twelve-hour expiry — the reasoning of the ticket block, unchanged. (5) No CORS on the path, `Origin` required and
-  equal to the repository's origin or listed in `WLO_SESSION_ALLOWED_ORIGINS` — its OWN list (review 2026-11-15:
+  equal to the repository's origin — or, when `WLO_SESSION_ALLOWED_ORIGINS` is set, listed there: the list then REPLACES
+  the repository's origin, which has to be listed too. Its OWN list (review 2026-11-15:
   reusing the ticket list entitled every ticket page to sessions and narrowed the ticket path for whoever set it). (6) Write paths with a session have a
   live test (`tests/live/session-exchange.test.ts`): no CSRF token is needed (2026-08-12), and an ended session is
   refused with 401 instead of reading as a guest.

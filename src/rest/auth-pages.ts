@@ -246,8 +246,8 @@ async function route(
 
   // The session exchange answers a page of the REPOSITORY and nobody else: the
   // cookie comes along because this path is mounted on that host, so the page
-  // that may ask is one of that host (or one the operator listed in
-  // `WLO_SESSION_ALLOWED_ORIGINS`). A browser names its origin on every POST; a request without one is
+  // that may ask is one of that host — or, when the operator set `WLO_SESSION_ALLOWED_ORIGINS`, one in that
+  // list, which then replaces the host's origin. A browser names its origin on every POST; a request without one is
   // no browser, and no browser means no session of a person to take over.
   if (parsed.pathname === '/auth/session') {
     const raw = req.headers?.['origin'];

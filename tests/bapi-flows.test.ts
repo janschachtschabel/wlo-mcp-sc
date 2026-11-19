@@ -19,7 +19,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { applyReadOnlyToolDefaults } from '../src/apps/tool-defaults.js';
 import { setServiceCredentialForTest, type WloCredential } from '../src/auth/credential.js';
 import {
-  allowedFlows, cancelFlow, failureFrom, flowStatus, isJobPath, listFlows, mapJobStatus, startFlow,
+  allowedFlows, cancelFlow, failureFrom, flowStatus, isJobPath, listFlows, mapJobStatus, MAX_ANSWER_BYTES, startFlow,
 } from '../src/services/bapi/jobs.js';
 import { checkNodes, parseInputs } from '../src/services/bapi/node-metadata-write.js';
 import { clearJobOwnersForTest, ownsJob, recordJobOwner } from '../src/services/bapi/job-owners.js';
@@ -582,6 +582,99 @@ test('status text: the server\'s lines first, the flow\'s outputs last and bound
     const odd = await c.callTool({ name: 'wlo_flow_status', arguments: { jobId: 'job-1' } });
     assert.equal((odd.structuredContent as { status: string }).status, 'unknown');
   } finally { await c.close(); }
+});
+
+test('a status answer past the read bound is not read whole — the state is "not readable", said with a code', async (t) => {
+  setServiceCredentialForTest(USER);
+  env(t, { WLO_BAPI_FLOWS: FLOW });
+  recordJobOwner('job-big');
+  // A body past the bound: the answer is cut and never parsed.
+  const big = JSON.stringify({ status: 'SUCCESS', outputs: { report: 'x'.repeat(MAX_ANSWER_BYTES) } });
+  const mock = installFetchMock(() => ({ text: big, headers: { 'content-type': 'application/json' } }));
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); clearJobOwnersForTest(); });
+  const s = await flowStatus('job-big');
+  assert.equal(s.ok, false);
+  assert.equal(!s.ok && s.reason, 'upstream_error');
+  assert.equal(!s.ok && s.code, 'answer_too_large');
+  // The tool says it in words: the state is open, not "the b-api failed".
+  env(t, { WLO_BAPI_VIA_REPOSITORY: '1' });
+  const c = await client();
+  try {
+    const r = await c.callTool({ name: 'wlo_flow_status', arguments: { jobId: 'job-big' } });
+    assert.equal(r.isError, true);
+    assert.match(toolText(r), /größer als 8 MB und wurde nicht gelesen; der Stand ist offen/);
+  } finally { await c.close(); }
+});
+
+/** A Response whose body arrives in the given chunks; `cancelled` says whether the reader gave up. */
+function chunked(chunks: Uint8Array[], status = 200): { response: Response; cancelled: () => boolean } {
+  let i = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) { if (i < chunks.length) c.enqueue(chunks[i++]!); else c.close(); },
+    cancel() { cancelled = true; },
+  });
+  return { response: new Response(body, { status, headers: { 'content-type': 'application/json' } }), cancelled: () => cancelled };
+}
+
+/** A JSON status body of exactly `size` bytes. */
+function statusOfSize(size: number): string {
+  const head = '{"status":"RUNNING","pad":"';
+  return `${head}${'x'.repeat(size - head.length - 2)}"}`;
+}
+
+test('the read bound: exactly at it is read; one byte past it is not — and the stream is let go', async (t) => {
+  setServiceCredentialForTest(USER);
+  recordJobOwner('job-edge');
+  const real = globalThis.fetch;
+  t.after(() => { globalThis.fetch = real; setServiceCredentialForTest(null); clearJobOwnersForTest(); });
+  const at = Buffer.from(statusOfSize(MAX_ANSWER_BYTES));
+  assert.equal(at.byteLength, MAX_ANSWER_BYTES);
+  globalThis.fetch = (async () => chunked([at.subarray(0, 1000), at.subarray(1000)]).response) as typeof fetch;
+  const ok = await flowStatus('job-edge');
+  assert.equal(ok.ok && ok.state, 'running', 'exactly at the bound is still read');
+  const past = Buffer.from(statusOfSize(MAX_ANSWER_BYTES + 1));
+  const big = chunked([past.subarray(0, MAX_ANSWER_BYTES), past.subarray(MAX_ANSWER_BYTES), Buffer.from('never read')]);
+  globalThis.fetch = (async () => big.response) as typeof fetch;
+  const cut = await flowStatus('job-edge');
+  assert.equal(!cut.ok && cut.code, 'answer_too_large');
+  assert.equal(big.cancelled(), true, 'the rest of the body is not read');
+});
+
+test('a character split across chunks arrives whole', async (t) => {
+  setServiceCredentialForTest(USER);
+  recordJobOwner('job-euro');
+  const real = globalThis.fetch;
+  t.after(() => { globalThis.fetch = real; setServiceCredentialForTest(null); clearJobOwnersForTest(); });
+  const bytes = Buffer.from(JSON.stringify({ status: 'SUCCESS', outputs: { price: '5 €' } }));
+  const at = bytes.indexOf(0xe2);
+  globalThis.fetch = (async () => chunked([bytes.subarray(0, at + 1), bytes.subarray(at + 1)]).response) as typeof fetch;
+  const s = await flowStatus('job-euro');
+  assert.deepEqual(s.ok && s.outputs, { price: '5 €' });
+});
+
+test('past the read bound: a known HTTP status keeps its meaning; list and start say the bound', async (t) => {
+  setServiceCredentialForTest(USER);
+  env(t, { WLO_BAPI_FLOWS: FLOW });
+  recordJobOwner('job-busy');
+  const huge = 'x'.repeat(MAX_ANSWER_BYTES + 10);
+  let answer: MockResult = { status: 429, text: huge, headers: { 'retry-after': '7' } };
+  const mock = installFetchMock(() => answer);
+  t.after(() => { mock.restore(); setServiceCredentialForTest(null); clearJobOwnersForTest(); });
+  const busy = await flowStatus('job-busy');
+  assert.equal(!busy.ok && busy.reason, 'rate_limited', 'a 429 stays a 429 however long its body');
+  assert.equal(!busy.ok && busy.retryAfter, 7);
+  answer = { text: huge };
+  const list = await listFlows();
+  assert.equal(!list.ok && list.code, 'answer_too_large');
+  answer = { status: 202, text: huge };
+  const start = await startFlow(FLOW, { node_ids: ['n1'] });
+  assert.equal(!start.ok && 'open' in start && start.open, true, 'accepted without a readable jobId: open');
+  assert.equal(!start.ok && start.code, 'answer_too_large');
+  answer = { status: 429, text: huge, headers: { 'retry-after': '3' } };
+  const busyStart = await startFlow(FLOW, { node_ids: ['n1'] });
+  assert.equal(!busyStart.ok && busyStart.reason, 'rate_limited', 'a busy start stays busy');
+  assert.equal(!busyStart.ok && busyStart.code, undefined, 'and is not called too large');
 });
 
 test('a flow list that is not a list says nothing about what is released', async (t) => {

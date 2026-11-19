@@ -6,6 +6,24 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`wlo_bapi_job_owners_held`** — a gauge for the store of who started which b-api job, like the other bounded
+  stores. The flow tools' reasons (`edu_user_required`, `rejected`, `bad_inputs`, `unknown_job`, `not_allowed`)
+  are labels of their own in `wlo_tool_errors_total` (before: `other`).
+
+### Changed
+- **A b-api answer is read up to 8 MB** and cut there, the start-up probe's included. A job status `200` past
+  that bound is a failed query like any other (`status: failed`, `isError`, `reason: upstream_error`), with
+  `code: answer_too_large` — the job's state is open; a flow list and an accepted start say the same code; any
+  other HTTP status keeps its meaning. Before, the whole answer was read.
+- **`WLO_SESSION_EXCHANGE` and `MCP_SSE` take `on`** like every other switch, and `WLO_SESSION_EXCHANGE` tolerates
+  surrounding spaces (before: only `1`/`true`/`yes`).
+  `TRUST_PROXY` stays strict on purpose (exactly `1`/`true`/`yes`). Every switch is read in `src/env-flags.ts`;
+  a guard keeps it there.
+- **Documentation:** both Steckbrief documents name what 1.3.0 and 1.4.0 added — the session exchange
+  (`POST /auth/session`, `sessionIngress`, the trusted forwarder), `X-WLO-Client-Address`, blocks bound to their
+  listing — and correct the claim that blocks and trusted clients are not affected by a shared address.
+
 ## [1.5.0] - 2026-11-19
 
 ### Added — b-api flows (Kestra) through the repository's proxy, as the signed-in person (chatbot team, 2026-11-17/18)
@@ -152,7 +170,7 @@ Off unless `WLO_SESSION_EXCHANGE=1`; without it nothing changes and the server r
   public results; with `DisableGuest: true` it answers `401`. Every call of a session block carries that header,
   and never an `Authorization` header beside the cookie (`src/auth/upstream-auth.ts`, the one place).
 - `wlo_auth_status` and `GET /auth/status` name the new kind: `credential: "session"`.
-- Only a page of the repository's own origin (or one in `WLO_SESSION_ALLOWED_ORIGINS`, a list of its own) may ask;
+- Only a page of the repository's own origin (or, when `WLO_SESSION_ALLOWED_ORIGINS` is set, one in that list — which then replaces the repository's origin) may ask;
   no CORS headers. Two different session cookies in one request are refused.
 - One review with a security brief: no critical or major finding, 8 minor, 3 nits, all worked. A second review: 1 major
   (a session entry would have failed an older build's whole registry closed on rollback — it is now filed as a ticket

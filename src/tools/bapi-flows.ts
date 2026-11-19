@@ -18,7 +18,7 @@ import { z } from 'zod';
 
 import type { WloToolResult } from '../apps/register.js';
 import {
-  allowedFlows, cancelFlow, FLOW_NAME, flowStatus, JOB_ID, listFlows, MAX_INPUT_BYTES, personalLoginPresent,
+  allowedFlows, cancelFlow, MAX_ANSWER_BYTES, FLOW_NAME, flowStatus, JOB_ID, listFlows, MAX_INPUT_BYTES, personalLoginPresent,
   startFlow, type BapiFailure, type BapiReason, type JobState,
 } from '../services/bapi/jobs.js';
 import {
@@ -295,7 +295,11 @@ export function registerBapiFlowTools(server: McpServer, challenge: WriteAuthCha
       if (!ownsJob(jobId)) return fromFailure({ ok: false, reason: 'unknown_job' }, '', 'failed');
       try {
         const s = await flowStatus(jobId);
-        if (!s.ok) return fromFailure(s, '', 'failed');
+        if (!s.ok) {
+          const tooLarge = s.code === 'answer_too_large'
+            ? `Die Antwort zum Stand war größer als ${MAX_ANSWER_BYTES / (1024 * 1024)} MB und wurde nicht gelesen; der Stand ist offen. ` : '';
+          return fromFailure(s, tooLarge, 'failed');
+        }
         const head = oneLine(`Der Auftrag ${jobId} ${STATE_TEXT[s.state]} (Stand der b-api: ${s.rawStatus || 'leer'})`
           + `${s.errorCode ? `, Fehlercode ${s.errorCode}` : ''}.`);
         const lines = [head];

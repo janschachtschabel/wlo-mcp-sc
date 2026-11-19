@@ -35,7 +35,7 @@ repositoryUrl: ""
 #   METRICS_TOKEN                            Bearer token for /metrics (16+ characters)
 #   TRUSTED_CLIENT_KEYS                      name:rpm:key[,…] for trusted backends
 #   WLO_TEXT_EXTRACTION_API_KEY              B-API key, when the extraction service is behind that proxy
-# Empty = none of the six is set (anonymous reading only).
+# Empty = none of the seven is set (anonymous reading only).
 existingSecret: ""
 
 # Non-secret settings → one ConfigMap. Every value is a STRING (quote numbers);
@@ -93,8 +93,9 @@ config:
   AUTH_CREDENTIAL_LIMIT: ""
   TICKET_CREDENTIAL_LIMIT: ""
   TICKET_ALLOWED_ORIGINS: ""
-  # Further origins under which the session path (sessionIngress) is reached —
-  # a second host name of the repository. Not for foreign pages: no CORS.
+  # The origins under which the session path (sessionIngress) is reached. Set, it
+  # REPLACES the repository's origin — list that too (e.g. beside a second host
+  # name of the repository). Not for foreign pages: no CORS.
   WLO_SESSION_ALLOWED_ORIGINS: ""
   WIDGET_OAUTH_ORIGINS: ""
   MAX_BODY_BYTES: ""

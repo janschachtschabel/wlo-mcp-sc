@@ -27,9 +27,9 @@
 import { currentCredential } from '../../auth/credential.js';
 import { accountOf } from '../write/confirm.js';
 
-const RETENTION_MS = 30 * 24 * 3600 * 1000;
-const PER_OWNER = 500;
-const TOTAL = 20_000;
+export const RETENTION_MS = 30 * 24 * 3600 * 1000;
+export const PER_OWNER = 500;
+export const TOTAL = 20_000;
 
 /** jobId → owner and expiry; insertion order is age order. */
 const owners = new Map<string, { owner: string; expiresAt: number }>();
@@ -61,6 +61,11 @@ export function ownsJob(jobId: string, now: number = Date.now()): boolean {
   const owner = ownerInScope();
   const e = owners.get(jobId);
   return Boolean(owner && e && e.owner === owner && e.expiresAt > now);
+}
+
+/** How many notes are held (expired ones included until the next start sweeps them) — the `/metrics` gauge. */
+export function jobOwnersHeld(): number {
+  return owners.size;
 }
 
 export function clearJobOwnersForTest(): void {

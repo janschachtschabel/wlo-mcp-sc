@@ -558,8 +558,9 @@ What is deliberate:
 - **This is the only place the server reads a `Cookie` header**, and it takes two
   named cookies out of it. A test fails on a second reader or a second writer.
 - **No CORS header, and `Origin` is required.** The page that asks has the
-  repository's origin (`WLO_REPOSITORY_URL`) or is listed in
-  `WLO_SESSION_ALLOWED_ORIGINS` — a list of its own: a page listed for tickets
+  repository's origin (`WLO_REPOSITORY_URL`) — or, when `WLO_SESSION_ALLOWED_ORIGINS`
+  is set, is listed there: the list then REPLACES the repository's origin, which
+  has to be listed too. A list of its own: a page listed for tickets
   is not thereby entitled to sessions, and setting a list here does not narrow
   the ticket path. A request that names no origin is no browser, and without a
   browser there is no person whose session this could be.

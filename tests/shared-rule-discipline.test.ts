@@ -445,6 +445,17 @@ function callsOnImport(file: string): string[] {
   return found;
 }
 
+test('the on and off spellings of a switch are read in env-flags.ts only', () => {
+  // A regex of its own drifted: three switches took `1|true|yes` and not `on`,
+  // which every other switch takes (review 2026-11-19).
+  // Any order, a capturing or a non-capturing group, a regex or a list of spellings.
+  const word = '(?:1|0|true|false|yes|no|on|off)';
+  const inRegex = new RegExp(`\\^\\((?:\\?:)?\\s*${word}\\s*\\|\\s*${word}\\b`);
+  const inList = new RegExp(`\\[\\s*'${word}'\\s*,\\s*'${word}'[^\\]]*\\]\\.includes\\(`);
+  assert.deepEqual([...offenders(inRegex, ['env-flags.ts']), ...offenders(inList, ['env-flags.ts'])], [],
+    'read a switch with isEnabledFlag / isDisabledFlag / isStrictYes (src/env-flags.ts)');
+});
+
 test('env-flags.ts imports nothing, and the pure modules that use it import nothing else', () => {
   // The flag spellings once pulled the whole configuration (env reads, log lines at load) into the pure
   // `rest/validate.ts` (review 2026-11-18). They live in an import-free leaf so that cannot happen again.

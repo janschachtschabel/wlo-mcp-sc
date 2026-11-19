@@ -61,6 +61,8 @@ export const TOOL_ERROR_CODES: ReadonlySet<string> = new Set([
   // outcomes after a write
   'unverified', 'not_stored', 'not_removed', 'suggestion_not_marked', 'proposal_not_marked',
   'no_pending_proposal', 'already_submitted', 'already_proposed', 'already_decided',
+  // the b-api flow tools (`error.code` is their reason; services/bapi/jobs.ts `BapiReason`)
+  'edu_user_required', 'rejected', 'bad_inputs', 'unknown_job', 'not_allowed',
 ]);
 
 /**

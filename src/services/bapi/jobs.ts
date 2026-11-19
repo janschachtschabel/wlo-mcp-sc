@@ -75,7 +75,10 @@ export type BapiReason =
 export interface BapiFailure {
   ok: false;
   reason: BapiReason;
-  /** The b-api's own code, when it named one (`EDU_USER_NOT_VERIFIED`, `LEGACY_HEADERS` …). Foreign text: short, as given. */
+  /**
+   * The b-api's own code, when it named one (`EDU_USER_NOT_VERIFIED`, `LEGACY_HEADERS` …; foreign text: short,
+   * as given) — or ours: `answer_too_large`, an answer past `MAX_ANSWER_BYTES`.
+   */
   code?: string;
   retryAfter?: number;
   status?: number;
@@ -96,7 +99,33 @@ export function isJobPath(method: 'GET' | 'POST' | 'DELETE', path: string): bool
   return job[2] ? method === 'GET' : method === 'GET' || method === 'DELETE';
 }
 
-interface BapiAnswer { status: number; body: unknown; retryAfter?: number }
+interface BapiAnswer { status: number; body: unknown; retryAfter?: number; tooLarge?: true }
+
+/**
+ * The most of one b-api answer that is read. A finished job's status carries its
+ * outputs (shown up to `MAX_OUTPUT_BYTES`); an answer past this bound is cut off
+ * and not parsed, so a runaway output cannot fill the process.
+ */
+export const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
+
+/** The body as text, at most `max` bytes; `null` when it is longer (the rest is not read). */
+async function readBounded(res: Response, max: number): Promise<string | null> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    parts.push(value);
+  }
+  return Buffer.concat(parts).toString('utf8');
+}
 
 /**
  * One call to the repository's b-api proxy, as the person in scope. Throws on
@@ -120,11 +149,14 @@ async function bapiFetch(method: 'GET' | 'POST' | 'DELETE', path: string, body?:
     redirect: 'manual',
     signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
   });
-  const text = await res.text();
+  const text = await readBounded(res, MAX_ANSWER_BYTES);
   let parsed: unknown;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
   const ra = Number(res.headers.get('retry-after'));
-  return { status: res.status, body: parsed, ...(Number.isFinite(ra) && ra > 0 ? { retryAfter: Math.ceil(ra) } : {}) };
+  return {
+    status: res.status, body: parsed, ...(Number.isFinite(ra) && ra > 0 ? { retryAfter: Math.ceil(ra) } : {}),
+    ...(text === null ? { tooLarge: true as const } : {}),
+  };
 }
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -155,8 +187,9 @@ export async function probeBapiProxy(): Promise<{ result: ProxyProbe; status?: n
     }));
     const status = res.status;
     if (status !== 200 && status !== 404) { await res.body?.cancel(); return { result: 'unknown', status }; }
-    let text: string;
-    try { text = await res.text(); } catch { return { result: 'unknown', status }; }
+    let text: string | null;
+    try { text = await readBounded(res, MAX_ANSWER_BYTES); } catch { return { result: 'unknown', status }; }
+    if (text === null) return { result: 'unknown', status };
     let body: unknown;
     try { body = JSON.parse(text); } catch { return { result: 'unknown', status }; }
     // The measured shape is an object (`{error, message}`); a bare `"Not Found"` or `null` is no such word.
@@ -200,7 +233,9 @@ export async function listFlows(): Promise<{ ok: true; flows: FlowInfo[] } | Bap
   const answer = await bapiFetch('GET', '/api/v1/jobs/flows');
   if (answer.status !== 200) return failureFrom(answer, 'upstream_error');
   // Another shape than a list says nothing about what is released.
-  if (!Array.isArray(answer.body)) return { ok: false, reason: 'upstream_error', status: 200 };
+  if (!Array.isArray(answer.body)) {
+    return { ok: false, reason: 'upstream_error', status: 200, ...(answer.tooLarge ? { code: 'answer_too_large' } : {}) };
+  }
   const list = answer.body;
   const allowed = allowedFlows();
   const flows: FlowInfo[] = [];
@@ -237,7 +272,10 @@ export async function startFlow(flow: string, inputs: unknown): Promise<
   const failure = failureFrom(answer, 'not_allowed');
   if (wroteNothing(answer.status)) return failure;
   // Accepted without a usable id, busy, or the b-api failed: a job may exist. A 429 keeps its reason and wait.
-  return { ...failure, ...(answer.status === 429 ? {} : { reason: 'upstream_error' as const }), open: true };
+  return {
+    ...failure, ...(answer.status === 429 ? {} : { reason: 'upstream_error' as const }),
+    ...(answer.tooLarge && answer.status >= 200 && answer.status < 300 ? { code: 'answer_too_large' } : {}), open: true,
+  };
 }
 
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
@@ -301,6 +339,8 @@ export async function flowStatus(jobId: string): Promise<JobStatus | BapiFailure
   if (!personalLoginPresent()) return LOGIN_REQUIRED;
   if (!JOB_ID.test(jobId)) return { ok: false, reason: 'unknown_job' };
   const answer = await bapiFetch('GET', `/api/v1/jobs/${jobId}?details=true`);
+  // Past the read bound the state is not known — said with a code of ours, not guessed from a cut body.
+  if (answer.tooLarge && answer.status === 200) return { ok: false, reason: 'upstream_error', status: 200, code: 'answer_too_large' };
   if (answer.status !== 200 || !answer.body || typeof answer.body !== 'object') return failureFrom(answer, 'unknown_job');
   const b = answer.body as Record<string, unknown>;
   const rawStatus = typeof b['status'] === 'string' ? b['status'].replace(/[^A-Za-z_]/g, '').slice(0, 40) : '';
