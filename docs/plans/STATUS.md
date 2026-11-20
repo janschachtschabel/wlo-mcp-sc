@@ -80,6 +80,7 @@ diese Datei über rund 100 Zeilen wächst.
   INTEGRATION §3.7, ARCHITECTURE (`bapi/*`), Architekturgrafik mit der b-api hinter dem Repository.
 - **2026-11-19 — Version 1.5.0.** Tag `v1.5.0`: Image und Chart mit den b-api-Aufträgen, der Erkennung des
   Proxys und der nachgezogenen Doku (`release.yml`).
+- **2026-11-20 — Version 1.6.0.** Tag `v1.6.0`: Image und Chart mit `wlo_delete_own_content` (`release.yml`).
 - **2026-11-20 — `wlo_delete_own_content`** (Rückmeldung des Chatbot-Teams vom 20.11.): löscht nur eigene, unbenutzte,
   nicht öffentliche Datensätze im persönlichen Bereich; vorher auf Staging gemessen, live getestet. Plan:
   `2026-11-20-eigene-inhalte-loeschen.md`, Antwort: `2026-11-20-antwort-eigene-inhalte.md`.

@@ -1,6 +1,6 @@
 # Eigene Inhalte löschen: `wlo_delete_own_content` (2026-11-20)
 
-Auftrag: Rückmeldung des Chatbot-Teams vom 20.11. („eigene Inhalte löschen“, Punkt 1). Stand: **gebaut, live getestet** (Review folgt).
+Auftrag: Rückmeldung des Chatbot-Teams vom 20.11. („eigene Inhalte löschen“, Punkt 1). Stand: **gebaut, live getestet, zwei Reviews; ausgeliefert mit 1.6.0**.
 Punkt 2 der Rückmeldung (Umwandlungs-Flow) richtet sich an die Flow-Autoren; für uns hängt daran nur später
 W5 `wlo_flow_file` (aus dem Plan `2026-11-17-kestra-flows-ueber-repository-proxy.md`), sobald ein Flow Dateien
 liefert. Punkt 3 ist zur Kenntnis.

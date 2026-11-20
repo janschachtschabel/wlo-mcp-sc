@@ -1,6 +1,6 @@
 # Steckbrief: wlo-mcp
 
-Stand: 2026-11-19 · Server-Version 1.5.1 · **Entwurf zur Übergabe an das Plattform-Team**
+Stand: 2026-11-20 · Server-Version 1.6.0 · **Entwurf zur Übergabe an das Plattform-Team**
 
 Dieser Steckbrief fasst zusammen, was jemand wissen muss, der den Dienst betreibt, ohne ihn gebaut zu
 haben. Er wiederholt die Einzelheiten nicht, sondern verweist: Betrieb in
@@ -395,9 +395,9 @@ Eingetragen ist nur, was im Repository belegt ist; leere Felder sind nicht gemes
 
 | Server | Node | MCP-SDK | edu-sharing-Instanz | Stand |
 |---|---|---|---|---|
-| 1.5.1 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15); 1.5.0: B-API-Aufträge über den Repository-Proxy (Start, Lauf, Schreiben als Person, Fremdzugriff; `tests/live/bapi-flows.test.ts`, 2026-11-18) und die Erkennung des Proxys (2026-11-18) |
-| 1.5.1 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
-| 1.5.1 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
+| 1.6.0 | 22 (Image: `node:22-alpine`, 22.23.5; `engines` ≥ 22.12.0) | 1.32.2 | **Staging** (`repository.staging.openeduhub.net`) — edu-sharing-Version nicht festgehalten | gemessen mit 1.1.0: Lesen, Schreibvertrag (`npm run test:live`), Ressourcen (2026-11-13); 1.2.0: Baumlesen (2026-11-15), Image-Smoke-Test; 1.3.0: Schreibvertrag und Sitzungs-Tausch (`npm run test:live`, 23 von 23, 2026-11-15); 1.5.0: B-API-Aufträge über den Repository-Proxy (Start, Lauf, Schreiben als Person, Fremdzugriff; `tests/live/bapi-flows.test.ts`, 2026-11-18) und die Erkennung des Proxys (2026-11-18); 1.6.0: eigene Inhalte löschen (`tests/live/delete-own.test.ts`, 2026-11-20) |
+| 1.6.0 | 22 | 1.32.2 | Produktion (`redaktion.openeduhub.net`) | einzelne Lesemessungen (vor 1.2.0); kein Schreibtest |
+| 1.6.0 | 22 | 1.32.2 | anderes edu-sharing | nicht gemessen; braucht mindestens `WLO_ROOT_COLLECTION_ID` |
 | 1.4.0 | 22 | 1.32.2 | Staging | `X-WLO-Client-Address` nur offline geprüft (Tests); laufende Staging-Installation zuletzt festgehalten mit 1.3.0 und Sitzungs-Tausch (2026-11-15, `plans/2026-11-15-antwort-chatbot-sitzung-4.md`) |
 | … | | | | |
 

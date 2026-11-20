@@ -1,6 +1,6 @@
 # WLO MCP Server — alle Werkzeuge in einer Zeile
 
-Stand nach 1.5.1: 61 Werkzeuge in der Vorgabe (34 lesend, 27 kuratierend), dazu 4 Stapel-Werkzeuge nur mit
+Stand 1.6.0: 61 Werkzeuge in der Vorgabe (34 lesend, 27 kuratierend), dazu 4 Stapel-Werkzeuge nur mit
 `WLO_BATCH_UPLOAD_ENABLED` und 4 Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat. Reihenfolge nach Thema. Parameter und Antworten:
 [`TOOLS.md`](TOOLS.md), als Tabelle: [`TOOLS-KOMPAKT.md`](TOOLS-KOMPAKT.md).
 

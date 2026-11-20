@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-20
+
 ### Added — delete the person's own content (chatbot team, 2026-11-20)
 - **`wlo_delete_own_content`** — deletes up to 10 of the signed-in person's OWN records, and only those: a record
   (no collection, folder or collection reference) this login created, in its personal area (a filing folder there
