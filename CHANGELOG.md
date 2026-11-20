@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **The OpenAPI tests read `docs/openapi.yaml` whatever its line endings.** A fresh Windows checkout with
+  `core.autocrlf` hands out CRLF, and seven tests failed on it (their patterns read lines by `
+`); CI on Linux
+  never saw it. `.gitattributes` also pins the published spec to LF, so it is served as the same bytes from
+  every build machine.
+
 ## [1.6.0] - 2026-11-20
 
 ### Added — delete the person's own content (chatbot team, 2026-11-20)

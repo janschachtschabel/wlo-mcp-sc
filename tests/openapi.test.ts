@@ -31,7 +31,9 @@ import { fileURLToPath } from 'node:url';
 import { resolveStaticRoute } from '../src/rest/static.js';
 
 const root = new URL('../', import.meta.url);
-const read = (name: string): string => readFileSync(fileURLToPath(new URL(name, root)), 'utf8');
+// Line endings normalised: a Windows checkout with `core.autocrlf` hands out CRLF, and every pattern below
+// reads lines by `\n` (seven tests failed on such a checkout, 2026-11-21).
+const read = (name: string): string => readFileSync(fileURLToPath(new URL(name, root)), 'utf8').replace(/\r\n/g, '\n');
 
 const spec = read('docs/openapi.yaml');
 

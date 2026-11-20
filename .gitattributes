@@ -3,3 +3,5 @@
 # Bash on Windows tolerates it, so a local green run proves nothing about it.
 *.sh text eol=lf
 Dockerfile text eol=lf
+# The published HTTP spec is served as it is checked out: the same bytes from every build machine.
+docs/openapi.yaml text eol=lf
