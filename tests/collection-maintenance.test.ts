@@ -322,15 +322,36 @@ test('wlo_delete_collections: a chain of empty collections goes children-first; 
   try {
     const { preview, done } = await s.confirm('wlo_delete_collections', { nodeIds: ['w1', 'full', 'w2', 'half', 'w3'] });
     const lines = sc(preview).confirm!.preview.items!;
-    assert.match(lines.find(l => l.includes('(full)'))!, /bleibt — enthält 1 Inhalt$/);
-    assert.match(lines.find(l => l.includes('(half)'))!, /bleibt — enthält 1 Untersammlung, die nicht genannt ist$/);
-    assert.match(lines.find(l => l.includes('(w1)'))!, /sobald ihre mitgenannten Untersammlungen gelöscht sind/);
-    assert.match(lines.find(l => l.includes('(w3)'))!, /leer, wird gelöscht$/);
+    assert.match(lines.find(l => l.startsWith('full '))!, /bleibt — enthält 1 Inhalt$/);
+    assert.match(lines.find(l => l.startsWith('half '))!, /bleibt — enthält 1 Untersammlung, die nicht genannt ist$/);
+    assert.match(lines.find(l => l.startsWith('w1 '))!, /sobald ihre mitgenannten Untersammlungen gelöscht sind/);
+    assert.match(lines.find(l => l.startsWith('w3 '))!, /leer, wird gelöscht$/);
     const status = Object.fromEntries(sc(done).items!.map(e => [e.nodeId, codeOf(e)]));
     assert.deepEqual(status, { w3: 'deleted', w2: 'deleted', w1: 'deleted', full: 'not_empty', half: 'not_empty' });
     assert.deepEqual(s.repo.writes.filter(w => w.method === 'DELETE').map(w => w.path.split('/').pop()), ['w3', 'w2', 'w1']);
     assert.ok(s.repo.nodes.has('full') && s.repo.nodes.has('half') && s.repo.nodes.has('other') && s.repo.nodes.has('m1'));
   } finally { await s.end(); }
+});
+
+test('wlo_delete_collections: the order of the nodeIds does not matter to the key', async () => {
+  const s = await scene(wrongTree);
+  try {
+    const preview = await s.call('wlo_delete_collections', { nodeIds: ['w1', 'w2', 'w3'] });
+    const token = sc(preview).confirm?.token;
+    assert.ok(token, toolText(preview));
+    const done = await s.call('wlo_delete_collections', { nodeIds: ['w3', 'w1', 'w2'], confirmToken: token });
+    assert.notEqual(done.isError, true, toolText(done));
+    assert.deepEqual(Object.fromEntries(sc(done).items!.map(e => [e.nodeId, codeOf(e)])), { w3: 'deleted', w2: 'deleted', w1: 'deleted' });
+  } finally { await s.end(); }
+  // Unrelated collections too: nothing orders them but the request.
+  const t = await scene(wrongTree);
+  try {
+    const preview = await t.call('wlo_delete_collections', { nodeIds: ['w3', 'full'] });
+    const token = sc(preview).confirm?.token;
+    assert.ok(token, toolText(preview));
+    const done = await t.call('wlo_delete_collections', { nodeIds: ['full', 'w3'], confirmToken: token });
+    assert.notEqual(done.isError, true, toolText(done));
+  } finally { await t.end(); }
 });
 
 test('wlo_delete_collections: a parent whose child is NOT named stays, even if that child is empty', async () => {
@@ -560,8 +581,8 @@ test('wlo_delete_collections: a record lying directly in a collection makes it n
   try {
     const args = { nodeIds: ['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'holds'] };
     const started = await s.confirm('wlo_delete_collections', args);
-    assert.match(sc(started.preview).confirm!.preview.items!.find(l => l.includes('(k1)'))!, /sobald ihre mitgenannten Untersammlungen gelöscht sind/);
-    assert.match(sc(started.preview).confirm!.preview.items!.find(l => l.includes('(k6)'))!, /leer, wird gelöscht$/);
+    assert.match(sc(started.preview).confirm!.preview.items!.find(l => l.startsWith('k1 '))!, /sobald ihre mitgenannten Untersammlungen gelöscht sind/);
+    assert.match(sc(started.preview).confirm!.preview.items!.find(l => l.startsWith('k6 '))!, /leer, wird gelöscht$/);
     let a = sc(started.done);
     for (let guard = 0; !a.complete && guard < 8; guard++) a = sc(await s.call('wlo_delete_collections', { ...args, continuationToken: a.continuationToken }));
     const status = Object.fromEntries(a.items!.map(e => [e.nodeId, e.status]));

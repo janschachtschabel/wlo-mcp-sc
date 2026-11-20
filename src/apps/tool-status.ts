@@ -70,6 +70,7 @@ export const TOOL_STATUS: Readonly<Record<string, ToolStatus>> = {
   wlo_create_content: { invoking: 'Anlage des Inhalts wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
   wlo_submit_content: { invoking: 'Einreichung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
   wlo_delete_collections: { invoking: 'Löschung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
+  wlo_delete_own_content: { invoking: 'Löschung wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
   wlo_remove_from_collections: { invoking: 'Herausnahme wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
   wlo_move_collection: { invoking: 'Umhängen wird bearbeitet…', invoked: 'Ergebnis liegt vor' },
   wlo_list_collection_proposals: { invoking: 'Vorschläge werden geladen…', invoked: 'Vorschläge geladen' },

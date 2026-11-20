@@ -39,7 +39,7 @@ import { requireWrite, writeMode } from '../services/write/credential-gate.js';
 import { batchUploadEnabled, sharedUploadSlots, slotHolder, slotIdentity } from '../services/write/upload-slot.js';
 import { flattenText } from '../text-sanitize.js';
 import type { WloToolResult } from '../apps/register.js';
-import { registerCurationTool, codedError, isOutcomeOpen, timeoutOrError, type WriteAuthChallenge } from './curation-shared.js';
+import { registerCurationTool, isOutcomeOpen, loginRequiredReply, timeoutOrError, type WriteAuthChallenge } from './curation-shared.js';
 import { registerMyBatchesTool } from './curation-batch-list.js';
 
 const EXT = ['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'ods', 'odp', 'png', 'jpg', 'gif', 'webp', 'mp3', 'mp4',
@@ -106,9 +106,8 @@ function personal(challenge: WriteAuthChallenge): Person | { refusal: WloToolRes
   const owner = writeMode() === 'user' ? batchOwner(cred) : null;
   const slot = slotIdentity(cred);
   if (!cred || !owner || !slot) {
-    const refusal = codedError('login_required', 'Die Ablage in den persönlichen Bereich geht nur mit der eigenen WLO-Anmeldung — ' +
-      'nicht über ein gemeinsames Konto.');
-    return { refusal: { ...refusal, _meta: { 'mcp/www_authenticate': [challenge] } } };
+    return { refusal: loginRequiredReply(challenge, 'Die Ablage in den persönlichen Bereich geht nur mit der eigenen WLO-Anmeldung — ' +
+      'nicht über ein gemeinsames Konto.') };
   }
   return { owner, slotIdentity: slot, slotHolder: slotHolder(cred), pool: batchPool(cred) };
 }

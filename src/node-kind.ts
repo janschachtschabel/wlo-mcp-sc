@@ -20,10 +20,20 @@ import { sanitizeText } from './text-sanitize.js';
 export const CONTENT_TYPE = 'ccm:io';
 export const CONTAINER_TYPE = 'ccm:map';
 const COLLECTION_ASPECT = 'ccm:collection';
+const REFERENCE_ASPECT = 'ccm:collection_io_reference';
 
 /** A collection — not merely a container. A node whose aspects were not sent is not one. */
 export function isCollectionNode(node: Pick<WloNode, 'type' | 'aspects'>): boolean {
   return node.type === CONTAINER_TYPE && (node.aspects?.includes(COLLECTION_ASPECT) ?? false);
+}
+
+/**
+ * A collection's reference to a record (aspect `ccm:collection_io_reference`):
+ * a `ccm:io` of its own whose `ccm:original` is the record. A write through it
+ * lands on the copy, a delete takes only the reference.
+ */
+export function isReferenceNode(node: Pick<WloNode, 'aspects'>): boolean {
+  return node.aspects?.includes(REFERENCE_ASPECT) ?? false;
 }
 
 /** A single record — an original or a reference to one. */

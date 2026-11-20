@@ -28,7 +28,7 @@ the repository anonymously and offers 34 read-only tools plus a public
 read-only REST layer.
 
 **Writing exists, and requires an identity.** With a login the server also offers
-26 curation tools that change data in the repository: editing metadata, creating
+27 curation tools that change data in the repository: editing metadata, creating
 records, attaching a full text, submitting records for editorial review,
 managing collections (creating, renaming, moving, ordering, filing and
 proposing materials), choosing which variant a topic page renders, deciding

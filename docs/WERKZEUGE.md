@@ -1,6 +1,6 @@
 # WLO MCP Server — alle Werkzeuge in einer Zeile
 
-Stand 1.5.0: 60 Werkzeuge in der Vorgabe (34 lesend, 26 kuratierend), dazu 4 Stapel-Werkzeuge nur mit
+Stand nach 1.5.1: 61 Werkzeuge in der Vorgabe (34 lesend, 27 kuratierend), dazu 4 Stapel-Werkzeuge nur mit
 `WLO_BATCH_UPLOAD_ENABLED` und 4 Auftrags-Werkzeuge, wo das Repository den b-api-Proxy hat. Reihenfolge nach Thema. Parameter und Antworten:
 [`TOOLS.md`](TOOLS.md), als Tabelle: [`TOOLS-KOMPAKT.md`](TOOLS-KOMPAKT.md).
 
@@ -92,6 +92,7 @@ Stand 1.5.0: 60 Werkzeuge in der Vorgabe (34 lesend, 26 kuratierend), dazu 4 Sta
 - `wlo_decide_collection_proposal` — einen Vorschlag an eine Sammlung annehmen oder ablehnen.
 - `wlo_delete_collection` — eine Sammlung samt Untersammlungen endgültig löschen.
 - `wlo_delete_collections` — viele leere Sammlungen löschen.
+- `wlo_delete_own_content` — eigene, unbenutzte Datensätze aus dem persönlichen Bereich löschen.
 
 **Themenseiten und Kompendium**
 

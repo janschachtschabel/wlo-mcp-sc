@@ -1,12 +1,12 @@
 # WLO MCP Server — Funktionsübersicht mit Chat-Triggern
 
-Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **60 MCP-Tools**
-(64 mit `WLO_BATCH_UPLOAD_ENABLED`: 34 lesende, 30 kuratierende — vier davon nur mit diesem Schalter; dazu vier
+Vollständige Referenz des aktuell unterstützten Funktionsumfangs: **61 MCP-Tools**
+(65 mit `WLO_BATCH_UPLOAD_ENABLED`: 34 lesende, 31 kuratierende — vier davon nur mit diesem Schalter; dazu vier
 Flow-Werkzeuge, wo das Repository den b-api-Proxy hat), 4 interaktive Widgets und die öffentlichen
 REST-Endpunkte — je mit dem besten Chat-Trigger (natürliche Formulierung, die
 das Tool/Widget auslöst).
 
-**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 26
+**Alle Aufrufenden sehen dieselbe Liste** — auch ohne Anmeldung. Die 27
 Kurations-Tools stehen immer in `tools/list` (die vier Stapel-Werkzeuge nur mit ihrem Schalter), deklarieren `oauth2` und
 **verweigern beim Aufruf**, solange keine schreibberechtigte Anmeldung vorliegt;
 die Antwort trägt dann die Aufforderung, mit der der Client die Anmeldung
@@ -18,11 +18,11 @@ Was die Liste tatsächlich verändert, sind diese Schalter:
 
 | | Sichtbar |
 |---|---|
-| **Standard** | 60 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
-| **`WLO_SKILL_TOOL_MODE=one-tool`** | 60 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
-| **`WLO_DISABLE_SKILL_SEARCH=1`** | 59 Tools — ohne `search_skill` (nur der Registry-Weg) |
-| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 64) |
-| **Repository mit b-api-Proxy** (oder `WLO_BAPI_VIA_REPOSITORY=1`; HTTP) | jeweils **plus** die vier Flow-Werkzeuge (Staging: 64, mit Stapel 68). In stdio nur mit `=1` gelistet — dort ohne eigene Anmeldung aber bei jedem Aufruf abgewiesen |
+| **Standard** | 61 Tools (`search_skill` + `get_skill` + `get_skill_registry`) |
+| **`WLO_SKILL_TOOL_MODE=one-tool`** | 61 Tools — `search_skill` ersetzt durch `get_skill_for_task`; `get_skill` bleibt |
+| **`WLO_DISABLE_SKILL_SEARCH=1`** | 60 Tools — ohne `search_skill` (nur der Registry-Weg) |
+| **`WLO_BATCH_UPLOAD_ENABLED`** | jeweils **plus** die vier Stapel-Werkzeuge (Standard: 65) |
+| **Repository mit b-api-Proxy** (oder `WLO_BAPI_VIA_REPOSITORY=1`; HTTP) | jeweils **plus** die vier Flow-Werkzeuge (Staging: 65, mit Stapel 69). In stdio nur mit `=1` gelistet — dort ohne eigene Anmeldung aber bei jedem Aufruf abgewiesen |
 | **`WLO_DISABLE_UNSAFE_TOOLS`** gesetzt | jeweils **ohne** `get_url_text` |
 
 `WLO_SKILLS_COLLECTION_ID` verändert die Liste **nicht** mehr: ohne die Variable
@@ -529,7 +529,7 @@ gleich `get_skill_registry` — das liest immer live.
 
 ---
 
-## 1b. Kuratierende MCP-Tools (30) — mit Chat-Trigger
+## 1b. Kuratierende MCP-Tools (31) — mit Chat-Trigger
 
 **Für alle gelistet, beim Aufruf geschützt.** Seit dem 2026-08-05 stehen diese
 Tools für jeden in `tools/list`, auch ohne Anmeldung — ein Modell, das ein
@@ -595,6 +595,7 @@ zurück.
 | `wlo_list_collection_proposals` | Vorschläge an eine Sammlung ansehen (offen, angenommen, abgelehnt) — für Personen mit Schreibrecht | *„Welche Vorschläge gibt es für die Sammlung Optik?“* |
 | `wlo_decide_collection_proposal` | Einen Vorschlag annehmen (aufnehmen, dann markieren) oder ablehnen | *„Nimm den Vorschlag für das Arbeitsblatt an“* |
 | `wlo_delete_collections` | Bis zu 200 Sammlungen mit EINER Bestätigung löschen — nur leere; alles andere bleibt und kommt als `not_empty` zurück | *„Nimm den falsch angelegten Baum wieder weg“* |
+| `wlo_delete_own_content` | Bis zu 10 EIGENE Datensätze löschen — nur selbst angelegte im persönlichen Bereich, nirgends verwendet, nicht öffentlich; alles andere bleibt mit Code. Nur eigene Anmeldung. Trigger: „Lösch die hochgeladene Gliederung wieder aus WLO.“ |
 | `wlo_update_contents` | Metadaten für bis zu 200 Datensätze mit EINER Bestätigung; beschreibende Felder werden geschrieben, redaktionelle als Vorschlag hinterlegt (der Server entscheidet je Feld); `add…`-Parameter je Eintrag wie bei `wlo_update_content` | — (Chatbot-Ablauf, viele Datensätze) |
 | `wlo_attach_fulltext` | Volltext (Markdown) im `textContent` eines Datensatzes ablegen, zweistufig und zurückgelesen; Datensätze mit Datei abgelehnt (`would_replace_file` — der Text würde die Datei ersetzen) | — (Chatbot-Ablauf, Volltexte) |
 | `wlo_attach_fulltexts` | Volltexte für bis zu 200 Datensätze mit EINER Bestätigung (≤ 3 MB je Aufruf), je Datensatz die Regeln von `wlo_attach_fulltext` | — (Chatbot-Ablauf, Volltexte) |

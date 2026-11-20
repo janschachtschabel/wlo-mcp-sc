@@ -33,7 +33,7 @@ test('every caller sees the same tool list, write tools included', async () => {
     // 34 read tools + 26 curation tools. `get_url_text` is present because
     // unsafe tools are registered unless the operator disables them — see
     // tests/server-unsafe-disabled.test.ts for that state.
-    assert.equal(names.length, 60, 'the read tools plus every curation tool');
+    assert.equal(names.length, 61, 'the read tools plus every curation tool');
   } finally {
     await client.close();
   }

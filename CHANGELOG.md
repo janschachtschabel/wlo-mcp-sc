@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — delete the person's own content (chatbot team, 2026-11-20)
+- **`wlo_delete_own_content`** — deletes up to 10 of the signed-in person's OWN records, and only those: a record
+  (no collection, folder or collection reference) this login created, in its personal area (a filing folder there
+  included), used nowhere (no collection reference, no course) and not public. The server checks each node in
+  the preview and again right before the delete; a node that fails a condition stays (`status: kept`, `code`
+  `not_found`, `is_a_collection`, `is_a_folder`, `not_a_record`, `is_reference`, `not_own`, `not_in_home`,
+  `in_use`, `is_public` or `not_checked`). Two-step like every write; personal login only, also with
+  `WLO_ALLOW_SERVICE_WRITES`. Measured on staging first (`scripts/own-delete-probe.mjs`) and live-tested.
+  27 curation tools now, 61 in the default list.
+- The refusal "only with your own login" is one helper (`personalLoginRefusal` / `loginRequiredReply`), used by
+  the batch filing and the new tool; the reference aspect is one rule (`isReferenceNode`).
+- Review of this package: 2 major (a delete answered 5xx and then looked at with a REFUSED read reported
+  `deleted` — only a 404 proves our delete now; the key did not continue the stored plan, as `replay: false` was
+  missing — a guard now holds it for every planned tool), 5 minor, 4 nits; all worked.
+
+### Fixed
+- **`wlo_delete_collections`: the order of the nodeIds no longer decides the key.** Unrelated collections named in
+  another order at the confirmation were refused `confirm_mismatch`; the ids are sorted before the preview.
+- **Preview lines of both delete batches name the id first, then the title through `quotedTitle`**
+  (`k1 „Titel“: …`, before `„Titel“ (k1): …`): a quote mark in a repository title could close the pair and make a
+  line a person confirms read like another. A control review of the package: 3 minor, 3 nits; all worked (the
+  `CLAUDE.md` tool count is left to the maintainer).
+
 ## [1.5.1] - 2026-11-19
 
 ### Added

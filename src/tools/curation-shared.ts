@@ -25,7 +25,7 @@ import { renderChangeSet, hasSomethingToConfirm, displayValue, addedValues, type
 import { mintToken, consumeToken, currentIdentity, TOKEN_TTL_MS } from '../services/write/confirm.js';
 import { lookupReplayInCall } from '../services/write/confirm-replay.js';
 import { replayAnswer, runWithReplay } from './curation-replay.js';
-import { writeRefusal, mayPrepare } from '../services/write/credential-gate.js';
+import { writeRefusal, mayPrepare, writeMode } from '../services/write/credential-gate.js';
 import type { PreparedRequest } from '../services/write/prepared-request.js';
 import { registerWloTool, type WloToolDef, type WloToolResult } from '../apps/register.js';
 import { OAUTH_SECURITY_SCHEMES } from '../apps/tool-defaults.js';
@@ -497,4 +497,19 @@ function confirmUnknown(): WloToolResult {
       + 'Neustart des Servers), kann JENER Aufruf geschrieben haben: bitte den Aufruf ohne confirmToken wiederholen '
       + 'und in der neuen Vorschau prüfen, was schon da ist, bevor erneut bestätigt wird.',
     { outcomeOpen: true });
+}
+
+/**
+ * The refusal for a tool only a person's OWN login may use, with the sign-in
+ * challenge like every curation refusal. It matters where the operator allows
+ * service-account writes: the gate lets that account through, and "own" has no
+ * meaning for it.
+ */
+export function loginRequiredReply(challenge: WriteAuthChallenge, message: string): WloToolResult {
+  return { ...codedError('login_required', message), _meta: { 'mcp/www_authenticate': [challenge] } };
+}
+
+/** `loginRequiredReply` unless this call carries a personal login. */
+export function personalLoginRefusal(challenge: WriteAuthChallenge, message: string): WloToolResult | null {
+  return writeMode() === 'user' ? null : loginRequiredReply(challenge, message);
 }

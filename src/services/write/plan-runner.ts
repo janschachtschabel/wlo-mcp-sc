@@ -68,6 +68,8 @@ export type ItemStatus = 'pending' | 'created' | 'existing' | 'added' | 'already
   // collection, `moved` = filed in the target AND taken out of the source,
   // `not_empty` = a collection that is kept because it holds something.
   | 'removed' | 'absent' | 'moved' | 'deleted' | 'not_empty'
+  // Own content (2026-11-20): `kept` = a condition of `wlo_delete_own_content` is not met; `code` says which.
+  | 'kept'
   // Proposed for a collection the caller may not write (S8): NOT in the collection.
   | 'proposed';
 

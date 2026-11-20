@@ -140,7 +140,7 @@ test('idempotentHint says what a second, identical run does', async () => {
   try {
     const { tools } = await client.listTools();
     const writes = tools.filter(t => t.annotations?.readOnlyHint === false);
-    assert.equal(writes.length, 24);
+    assert.equal(writes.length, 25);
     assert.deepEqual(writes.filter(t => t.annotations?.idempotentHint !== true).map(t => t.name).sort(), again);
     for (const t of writes) assert.equal(typeof t.annotations?.idempotentHint, 'boolean', `${t.name} declares idempotentHint`);
     // On a read-only tool the hint means nothing (MCP: "meaningful only when readOnlyHint == false").

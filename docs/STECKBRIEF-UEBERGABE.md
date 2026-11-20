@@ -12,7 +12,7 @@ Legende: **vorhanden** · **nicht vorhanden** · **geprüft** (Antwort in Klamme
 | Punkt | Stand |
 |---|---|
 | **Service** | `wlo-mcp` (WLO MCP Server). Derselbe Name für Paket, Image, Compose-Dienst, Chart und Log-Feld `service`. |
-| **Funktionalität** | Macht die Inhalte von WirLernenOnline für KI-Assistenten über das Model Context Protocol nutzbar: 34 Lese-Werkzeuge (Suche, Sammlungen, Themenseiten, Details, Volltexte, Skills) und 26 Kuratier-Werkzeuge für angemeldete Personen (anlegen, bearbeiten, einsortieren, einreichen), dazu vier Stapel-Werkzeuge mit `WLO_BATCH_UPLOAD_ENABLED`; wo das Repository den B-API-Proxy hat, dazu vier Werkzeuge für Aufträge der B-API (Kestra-Flows) als die angemeldete Person. Dazu eine kleine REST-Fläche und vier Widgets. |
+| **Funktionalität** | Macht die Inhalte von WirLernenOnline für KI-Assistenten über das Model Context Protocol nutzbar: 34 Lese-Werkzeuge (Suche, Sammlungen, Themenseiten, Details, Volltexte, Skills) und 27 Kuratier-Werkzeuge für angemeldete Personen (anlegen, bearbeiten, einsortieren, einreichen), dazu vier Stapel-Werkzeuge mit `WLO_BATCH_UPLOAD_ENABLED`; wo das Repository den B-API-Proxy hat, dazu vier Werkzeuge für Aufträge der B-API (Kestra-Flows) als die angemeldete Person. Dazu eine kleine REST-Fläche und vier Widgets. |
 | **Stabile Version** | **vorhanden** (1.5.1, Git-Tag `v1.5.1`; dieselbe Nummer tragen `package.json`, Image, Chart, `docs/openapi.yaml` und `/health`.) |
 | **Technischer Owner** | **vorhanden** — T4 (festgelegt 2026-11-15). Eine Vertretung ist nicht benannt. Repository-Eigentümer auf GitHub ist `janschachtschabel`. |
 | **Jira** | **nicht vorhanden** |

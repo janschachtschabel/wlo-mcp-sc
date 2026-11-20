@@ -21,7 +21,7 @@ export const CURATION_TOOLS = [
   'wlo_set_topic_page',
   // Reading proposals is gated too: they are curation workflow, not public data.
   'wlo_suggest_metadata', 'wlo_list_suggestions', 'wlo_decide_suggestion',
-  'wlo_delete_content', 'wlo_delete_collection', 'wlo_delete_collections',
+  'wlo_delete_content', 'wlo_delete_collection', 'wlo_delete_collections', 'wlo_delete_own_content',
 ];
 
 /**

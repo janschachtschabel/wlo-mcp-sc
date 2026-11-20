@@ -10,7 +10,7 @@ diese Datei über rund 100 Zeilen wächst.
 
 ## Was es gibt
 
-- 34 Lese-Werkzeuge, 26 Kuratier-Werkzeuge (60; mit `WLO_BATCH_UPLOAD_ENABLED` 64; dazu vier b-api-Auftrags-Werkzeuge,
+- 34 Lese-Werkzeuge, 27 Kuratier-Werkzeuge (61; mit `WLO_BATCH_UPLOAD_ENABLED` 65; dazu vier b-api-Auftrags-Werkzeuge,
   wo das Repository den b-api-Proxy hat — Staging: ja), REST unter `/api`,
   `/auth`, `/oauth`; Widgets für Suche, Baum, Themenseite, Detail.
 - Abgeschlossene Pläne (Entwurf und Aufgaben je in `docs/plans/`): Apps-SDK-Umbau (P0–P8), Schreiben und
@@ -80,6 +80,9 @@ diese Datei über rund 100 Zeilen wächst.
   INTEGRATION §3.7, ARCHITECTURE (`bapi/*`), Architekturgrafik mit der b-api hinter dem Repository.
 - **2026-11-19 — Version 1.5.0.** Tag `v1.5.0`: Image und Chart mit den b-api-Aufträgen, der Erkennung des
   Proxys und der nachgezogenen Doku (`release.yml`).
+- **2026-11-20 — `wlo_delete_own_content`** (Rückmeldung des Chatbot-Teams vom 20.11.): löscht nur eigene, unbenutzte,
+  nicht öffentliche Datensätze im persönlichen Bereich; vorher auf Staging gemessen, live getestet. Plan:
+  `2026-11-20-eigene-inhalte-loeschen.md`, Antwort: `2026-11-20-antwort-eigene-inhalte.md`.
 - **2026-11-19 — Steckbrief aktuell, Version 1.5.1.** Beide Steckbrief-Dokumente nennen, was 1.3.0–1.5.0
   brachten (Sitzungs-Tausch, `sessionIngress`, `X-WLO-Client-Address`, Bindung an die Eintragung); die Lesart von
   `WLO_SESSION_ALLOWED_ORIGINS` (ersetzt die Repository-Herkunft) an neun Stellen richtiggestellt. Code: b-api-Antworten

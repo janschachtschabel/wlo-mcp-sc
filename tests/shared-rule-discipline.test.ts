@@ -456,6 +456,20 @@ test('the on and off spellings of a switch are read in env-flags.ts only', () =>
     'read a switch with isEnabledFlag / isDisabledFlag / isStrictYes (src/env-flags.ts)');
 });
 
+test('every planned tool lets its key CONTINUE the stored plan (replay: false)', () => {
+  // With replay on, presenting the confirmation key again returns the first answer marked `replayed` — the
+  // stored plan is never continued, and an item left `pending` after a 5xx is never looked at again on that
+  // path (review 2026-11-20: wlo_delete_own_content had forgotten it).
+  const tools = join(srcDir, 'tools');
+  // `curation-plan.ts` DEFINES runPlannedCall; every other file that calls it is a planned tool.
+  const missing = readdirSync(tools).filter(f => f.endsWith('.ts') && f !== 'curation-plan.ts').filter(f => {
+    // Comments stripped: a `replay: false` in a comment sets nothing.
+    const text = readFileSync(join(tools, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    return /\brunPlannedCall\s*</.test(text) && !/\breplay:\s*false\b/.test(text);
+  });
+  assert.deepEqual(missing, [], 'a tool that runs a plan sets replay: false in registerCurationTool');
+});
+
 test('env-flags.ts imports nothing, and the pure modules that use it import nothing else', () => {
   // The flag spellings once pulled the whole configuration (env reads, log lines at load) into the pure
   // `rest/validate.ts` (review 2026-11-18). They live in an import-free leaf so that cannot happen again.

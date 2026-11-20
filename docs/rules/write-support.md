@@ -410,6 +410,17 @@ Index: [README.md](README.md) · short rules: [`CLAUDE.md`](../../CLAUDE.md).
   suggestions follow. `isPublic: false` means "only its owner"; `true` promises
   nothing (a collection shared with one account reports `true` to it), so the
   filing previews say the NEGATIVE only (`tools/curation-public.ts`).
+- **Deleting OWN content (`wlo_delete_own_content`, 2026-11-20; plan `2026-11-20-eigene-inhalte-loeschen.md`).**
+  The server, not the client, limits it: a record is deleted only when ONE function (`checkOwnDeletable`,
+  `services/write/delete-own-plan.ts`) finds, in the preview and again right before the delete — a record
+  (`wrongKind`), not a collection's reference (`isReferenceNode`), `cm:creator` = the login's account
+  (`accountOf`, without case; measured: the creator is the authority, `cm:owner` is not), primary parent the
+  home or a plain folder there (`wrongKind … is_a_folder`, up to 3 deep), no usage (`/usage/v1/usages/node/{id}`
+  → `{usages: []}`, measured; a reference into a collection does NOT change the primary parent, so this check is
+  needed), not public. The first condition not met is the node's code and the node stays (`kept`); what cannot
+  be read keeps it too (`not_checked`) — never a delete on a missing answer. Personal login only
+  (`personalLoginRefusal`), also where `WLO_ALLOW_SERVICE_WRITES` lets the service account write: "own" has no
+  meaning for a shared account. Live test: `tests/live/delete-own.test.ts`.
 - **Maintaining a tree (S1 set / S6 / S7, 2026-11-14).** Four measurements
   bind it (`npm run measure:moves`, re-measure before contradicting): `POST
   …/order` positions ONLY the ids it is given (an incomplete list leaves two

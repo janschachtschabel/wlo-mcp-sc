@@ -18,6 +18,7 @@ import { runPlan, type ItemState, type StoredPlan } from '../services/write/plan
 import type { WloToolResult } from '../apps/register.js';
 import { previewReply, rejectionReply, registerCurationTool, type WriteAuthChallenge } from './curation-shared.js';
 import { planItemLabel, planReply } from './curation-plan-reply.js';
+import { quotedTitle } from '../text-line.js';
 import { canonicalArgs, runPlannedCall } from './curation-plan.js';
 
 const KIND = 'delete-empty-collections';
@@ -31,7 +32,7 @@ const label = (s: ItemState) => planItemLabel(s, STATUS_LABEL);
 function answer(plan: StoredPlan<DeleteItem>, report: Awaited<ReturnType<typeof runPlan>>): WloToolResult {
   return planReply('Löschen leerer Sammlungen:', report, plan.expiresAt, plan.items.map(i => ({
     id: { nodeId: i.nodeId },
-    text: `„${i.title}“`,
+    text: quotedTitle(i.title),
     state: plan.state.get(i.key)!,
   })), label, 'items');
 }
@@ -53,11 +54,13 @@ Gelöschtes lässt sich nicht verlässlich wiederherstellen. Für EINE Sammlung 
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     handler: async (params) => {
       requireWrite();
-      const ids = [...new Set((params['nodeIds'] as string[]).map(id => id.trim()))];
+      // Sorted once: the preview's lines are part of the fingerprint, and the order must not decide the key
+      // (review 2026-11-20 — unrelated collections named in another order were refused `confirm_mismatch`).
+      const ids = [...new Set((params['nodeIds'] as string[]).map(id => id.trim()))].sort();
       return runPlannedCall<DeleteItem>({
         kind: KIND, params,
         // Order does not matter to the caller, so it does not make another plan.
-        args: canonicalArgs([...ids].sort()),
+        args: canonicalArgs(ids),
         step: (plan) => deleteEmptyStep(plan),
         answer,
         prepare: async () => {

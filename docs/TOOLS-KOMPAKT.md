@@ -88,7 +88,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `search` | Leichte Belegstellen-Treffer für belegte Antworten. |
 | `fetch` | Der Volltext zu einem Treffer per id. |
 
-## Kuratierend (30)
+## Kuratierend (31)
 
 ### Inhalte
 
@@ -116,6 +116,7 @@ Ein Name, der nicht trifft, liefert alles statt eines Fehlers.
 | `wlo_list_collection_proposals` | Zeigt, welche Materialien für eine Sammlung vorgeschlagen wurden. |
 | `wlo_decide_collection_proposal` | Nimmt einen Vorschlag an eine Sammlung an oder lehnt ihn ab. |
 | `wlo_delete_collections` | Löscht viele Sammlungen mit einer Bestätigung, aber nur leere. |
+| `wlo_delete_own_content` | Löscht eigene, unbenutzte Datensätze aus dem persönlichen Bereich. |
 | `wlo_update_contents` | Ändert Metadaten vieler Datensätze mit einer Bestätigung (schreibt bzw. schlägt vor). |
 | `wlo_attach_fulltext` | Legt einen Volltext im textContent eines Datensatzes ab — nur an einem Datensatz ohne Datei, sonst abgelehnt. |
 | `wlo_attach_fulltexts` | Legt Volltexte für viele Datensätze mit einer Bestätigung ab. |

@@ -52,6 +52,7 @@ import { registerCurationTreeTools } from './tools/curation-tree.js';
 import { registerCurationAddManyTool } from './tools/curation-add-many.js';
 import { registerCurationSubmitManyTool } from './tools/curation-submit-many.js';
 import { registerCurationDeleteEmptyTool } from './tools/curation-delete-empty.js';
+import { registerCurationDeleteOwnTool } from './tools/curation-delete-own.js';
 import { registerCurationRemoveManyTool } from './tools/curation-remove-many.js';
 import { registerCurationOrderTool } from './tools/curation-order.js';
 import { registerCurationMoveTool } from './tools/curation-move.js';
@@ -192,6 +193,7 @@ export function createMcpServer({ issuer = null }: McpServerOptions = {}): McpSe
   // rather than next to the tools that merely change a field.
   registerCurationDeleteTools(server, challenge);     // wlo_delete_content, wlo_delete_collection
   registerCurationDeleteEmptyTool(server, challenge);  // wlo_delete_collections — empty ones only
+  registerCurationDeleteOwnTool(server, challenge);    // wlo_delete_own_content — the person's own, unused records only
   // Off unless WLO_BATCH_UPLOAD_ENABLED — the function checks it and registers
   // nothing otherwise, so the default tool list is unchanged.
   registerCurationBatchTools(server, challenge);      // wlo_prepare_file_batch, wlo_store_batch_file, wlo_store_batch_manifest

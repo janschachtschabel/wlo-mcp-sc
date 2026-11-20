@@ -19,7 +19,7 @@
  */
 
 import { mapPool } from '../../concurrency.js';
-import { isCollectionNode, isContentNode } from '../../node-kind.js';
+import { isCollectionNode, isContentNode, isReferenceNode } from '../../node-kind.js';
 import { readNodeMetadata } from '../../wlo-node.js';
 import { titleFromProperties } from '../../node-match.js';
 import { sanitizeText } from '../../text-sanitize.js';
@@ -35,7 +35,6 @@ export type NodeCheck =
   | { ok: true; nodes: CheckedNode[]; language: 'de' | 'en' }
   | { ok: false; reason: 'bad_inputs' | 'upstream_error'; problems: Array<{ nodeId: string; problem: NodeProblem }>; message: string };
 
-const REFERENCE_ASPECT = 'ccm:collection_io_reference';
 
 /** Shape of the inputs: `{node_ids: string[1..50], language?: "de"|"en"}`, nothing else. */
 export function parseInputs(inputs: Record<string, unknown>):
@@ -64,7 +63,7 @@ export async function checkNodes(ids: string[], language: 'de' | 'en'): Promise<
         return { nodeId, problem };
       }
       if (!isContentNode(node) || isCollectionNode(node)) return { nodeId, problem: 'not_a_record' as const };
-      if (node.aspects?.includes(REFERENCE_ASPECT)) return { nodeId, problem: 'is_reference' as const };
+      if (isReferenceNode(node)) return { nodeId, problem: 'is_reference' as const };
       if (!Array.isArray(node.access)) return { nodeId, problem: 'unchecked' as const };
       if (!node.access.includes('Write')) return { nodeId, problem: 'not_writable' as const };
       return { nodeId, title: sanitizeText(titleFromProperties(node.properties ?? {})) || '(ohne Titel)' };

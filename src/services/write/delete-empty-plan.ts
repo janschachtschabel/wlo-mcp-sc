@@ -24,6 +24,7 @@ import { wrongKind, type KindMismatch } from '../../node-kind.js';
 import { getChildCollectionsResult, getCollectionContents, readNodeMetadata } from '../../wlo-api.js';
 import { mapPool } from '../../concurrency.js';
 import { sanitizeText } from '../../text-sanitize.js';
+import { quotedTitle } from '../../text-line.js';
 import { collectionTitleFromProperties } from '../../node-match.js';
 import { isRefusal, wroteNothing } from '../../upstream-error.js';
 import { failureCode } from '../failure-code.js';
@@ -152,7 +153,8 @@ export function deleteLine(item: DeleteItem, notEmpty: string | undefined, unkno
       // Not empty YET: it holds named sub-collections, and goes only when they are gone.
       : viaChildren ? 'wird gelöscht, sobald ihre mitgenannten Untersammlungen gelöscht sind (sonst hält sie nichts)'
         : 'leer, wird gelöscht';
-  return `„${item.title}“ (${item.nodeId}): ${what}`;
+  // The id first, then the title through `quotedTitle` (a quote mark in a title must not forge a line).
+  return `${item.nodeId} ${quotedTitle(item.title)}: ${what}`;
 }
 
 /**

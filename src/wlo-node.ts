@@ -270,6 +270,25 @@ export async function getNodesMetadata(
 }
 
 /**
+ * How many usages a node has — every kind: collection references, courses,
+ * apps (`GET /usage/v1/usages/node/{id}` → `{usages: [...]}`, measured
+ * 2026-11-20). A usage arises from a reference, never from being a collection's
+ * own child (skill wlo-collections-references). `null` = not readable: no answer,
+ * a refusal, or another shape — never "none".
+ */
+export async function getNodeUsageCount(nodeId: string): Promise<number | null> {
+  try {
+    const res = await wloFetch(`${BASE_URL}/usage/v1/usages/node/${encodeURIComponent(nodeId)}`, { headers: { Accept: 'application/json' } });
+    if (!res.ok) { logUpstreamMiss('getNodeUsageCount', res); return null; }
+    const data = await readJson<{ usages?: unknown }>(res, 'getNodeUsageCount');
+    return Array.isArray(data?.usages) ? data.usages.length : null;
+  } catch (err) {
+    log.warn('usages not readable', { nodeId, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
  * GET /node/v1/nodes/-home-/{nodeId}/parents
  * Returns the parent nodes (collections) of a given node.
  *

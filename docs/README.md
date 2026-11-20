@@ -21,7 +21,7 @@ One line per document: the question it answers. Pick your role.
 | [`INTEGRATION.md`](INTEGRATION.md) (German) | What is there to call — tools, addresses, sign-in — and which behaviour will surprise my integration (two-step writes, licence filter, limits)? Start here. |
 | [`MCP-REFERENZ.md`](MCP-REFERENZ.md) (German) | The reference: every tool with its parameters, every error code, every setting, every status a write can end in. |
 | [`TOOLS-KOMPAKT.md`](TOOLS-KOMPAKT.md) (German) | All tools on one page, one line each. |
-| [`WERKZEUGE.md`](WERKZEUGE.md) (German) | All 68 tools as a bullet list, one line each, grouped by topic (60 by default, 4 batch tools behind a switch, 4 b-api flow tools where the repository serves the b-api proxy). |
+| [`WERKZEUGE.md`](WERKZEUGE.md) (German) | All 69 tools as a bullet list, one line each, grouped by topic (61 by default, 4 batch tools behind a switch, 4 b-api flow tools where the repository serves the b-api proxy). |
 | [`TOOLS.md`](TOOLS.md) (German) | The same tools in full, with trigger examples, the four widgets and the public REST endpoints. |
 | [`openapi.yaml`](openapi.yaml) | The HTTP surface outside MCP (`/api/*`, `/auth*`, `/oauth/*`, `/health`, `/ready`, `/metrics`), machine-readable. |
 | [`apps-sdk-submission-checklist.md`](apps-sdk-submission-checklist.md), [`apps-sdk-golden-prompts.md`](apps-sdk-golden-prompts.md) | What an OpenAI Apps-SDK submission needs from this server, and the prompts to test it with. |
