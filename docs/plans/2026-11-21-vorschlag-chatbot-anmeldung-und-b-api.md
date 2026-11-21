@@ -4,7 +4,8 @@ Für das Gespräch mit dem Chatbot-Team. Fasst die Pläne vom 15.11.
 (`2026-11-15-chatbot-anmeldung-aus-der-sitzung.md`, `2026-11-15-b-api-betrieb.md`) mit dem zusammen, was
 seither dazukam: die Umstellung der b-api auf Delegation (10.11.), der b-api-Proxy des Repositorys
 (`/edu-sharing/rest/bapi/**`, gemessen 17./18.11.) und der Leitfaden „Dienste übergeben“ (17.11.).
-Stand des MCP: 1.6.0.
+Stand des MCP: 1.6.0. Abgeglichen am 21.11. mit dem Leitfaden (Fassung 17.11.), der b-api-Doku zu Flows und
+Routing und der Delegations-Info des b-api-Entwicklers; wo diese Quellen etwas festlegen, steht es dabei.
 
 Jede Aussage ist gekennzeichnet: **gebaut** (im MCP vorhanden), **gemessen** (gegen Staging), **Entwurf**
 (nicht gebaut) oder **offen** (zu entscheiden oder zu messen).
@@ -33,6 +34,11 @@ Der **Zugangsblock** ist die eine Währung: ein verschlüsseltes Paket, das nur 
 auch wenn dieselbe Sitzung erneut getauscht wird). Mit ihm laufen **alle** Werkzeuge als die Person — auch
 die Kuratier-Werkzeuge, `wlo_start_flow` und `wlo_delete_own_content`. Ohne ihn liest der MCP anonym.
 
+**Damit ist auch der offene Punkt „Job-Start durch Dienste“ des Leitfadens (Kap. 8) für den Chatbot gelöst:**
+Mit dem Delegations-Token kann der Chatbot keinen Flow starten. Mit dem Block startet ihn der MCP für die
+Person über den Repository-Proxy (`wlo_start_flow`, gemessen 18.11.: der Flow schreibt als die Person) — der
+Start muss also nicht ins Frontend wandern.
+
 ### A.3 Drei Wege zum Block — alle gebaut
 
 | Weg | Was das Widget hat | Aufruf | Voraussetzung | Stand |
@@ -46,6 +52,12 @@ Pflicht; mit `WLO_SESSION_ALLOWED_ORIGINS` ersetzt die Liste diese Herkunft), nu
 CORS-Kopfzeilen, gelesen werden nur `JSESSIONID` und `INGRESSCOOKIE`, jeder Repository-Aufruf mit
 `DisableGuest: true` — eine beendete Sitzung liest nie still als Gast (gemessen). Genau diese Bedingungen
 nennt der Leitfaden (Kap. 2.2, „Sicherheit“) als zulässige Ausnahme vom Verbot, Sitzungen weiterzugeben.
+
+**Zu B2 — der Pfad ist nicht der b-api-Proxy des Repositorys.** `/edu-sharing/rest/bapi/**` entfernt Schlüssel-
+und Personen-Kopfzeilen des Clients und gibt dem Dienst ein Delegations-Token, kein Cookie (Delegations-Info).
+Für den Sitzungs-Tausch braucht euer Backend deshalb einen **eigenen** Pfad auf dem Repository-Host unterhalb
+von `/edu-sharing`, an dem `Cookie` und `Origin` ankommen. Ob `/rest/bapi` das Cookie durchreicht, ist nicht
+gemessen; wir gehen von nein aus.
 
 ### A.4 Vorschlag: so nutzt das Widget es automatisch
 
@@ -105,19 +117,30 @@ Nichts zu tun. `Authorization: Bearer <Block>` und `X-WLO-Client-Key` gehen dire
 ### B.2 Stufe 1 — der Chatbot hinter der b-api, der MCP direkt (kein Bau am MCP)
 
 ```
-Widget ──► b-api  /api/v1/proxy/badboerdichat/…  ──► Chatbot-Backend ──► MCP (direkt)
+Widget ──► Repository  /edu-sharing/rest/bapi/api/v1/proxy/badboerdichat/…  ──► b-api ──► Chatbot-Backend ──► MCP (direkt)
 ```
+
+- **Das Widget ruft über den Repository-Proxy, nicht direkt an der b-api** (Delegations-Info: „nur dann ist die
+  angemeldete Person dabei“). Erst so trägt das Token, das euer Backend bekommt, die Person — nötig für eure
+  Rückrufe an die edu-sharing-Pfade der b-api; reine LLM-Rückrufe gehen auch ohne.
+- Grenzen dieses Wegs, soweit dokumentiert: **Multipart liefert 415** (Datei-Uploads brauchen einen anderen
+  Weg — bei uns `POST /api/uploads` direkt am MCP), der Proxy entfernt `x-edu-*` und `x-api-key`, und ob eigene
+  Kopfzeilen und `text/event-stream` durchkommen, ist offen.
 
 - Hinter dem Proxy ist `Authorization` belegt: Dort steht das Delegations-Token der b-api. **Dieses Token
   gehört nicht an den MCP** — es gilt nur gegenüber der b-api.
 - Der Block braucht deshalb einen eigenen Platz in eurer Chat-Anfrage:
-  **im JSON-Körper** (etwa `wloAccess`) — ohne jede Einstellung am Proxy, unsere Empfehlung — oder in einer
-  eigenen Kopfzeile, die der b-api-Admin in `allowedRequestHeaders` freigibt.
+  **im JSON-Körper** (etwa `wloAccess`) — ohne jede Einstellung an einem der beiden Proxys, unsere Empfehlung —
+  oder in einer eigenen Kopfzeile, die der b-api-Admin in `allowedRequestHeaders` freigibt (und die dann auch
+  der Repository-Proxy durchlassen muss — ungemessen).
 - Backend → MCP unverändert direkt, mit `Bearer <Block>` und `X-WLO-Client-Key`. Der MCP ist dann nur aus
   dem Cluster erreichbar zu machen oder bleibt öffentlich (für ChatGPT, Claude und andere MCP-Clients ist
   er es ohnehin).
-- Für eure LLM-Rückrufe gilt Kap. 2.2 des Leitfadens: Token aus `Authorization` unverändert an die b-api
-  zurück, kein eigener Schlüssel.
+- Für eure Rückrufe gilt Kap. 2.2 des Leitfadens: Token aus `Authorization` unverändert an die b-api zurück,
+  genau diese eine Kopfzeile, kein `X-API-KEY`, kein eigener Schlüssel, nichts davon ins Log; es endet mit eurer
+  Antwort (höchstens 6 h).
+- **Der Block lebt länger als das Token** (12 h gegen „bis zur Antwort“): Was nach eurer Antwort weiterlaufen
+  soll, kann der MCP mit dem Block tun, die b-api mit dem Token nicht.
 
 Das ist der Weg, den wir empfehlen: Er kostet am MCP nichts und trennt sauber, was wem gehört — die b-api
 kennt den Aufrufer und die Kosten, der Block kennt die Person im Repository.
@@ -125,11 +148,22 @@ kennt den Aufrufer und die Kosten, der Block kennt die Person im Repository.
 ### B.3 Stufe 2 — auch der MCP hinter der b-api (Entwurf, nicht gebaut)
 
 ```
-Chatbot-Backend ──► b-api  /api/v1/proxy/wlo-mcp/mcp ──► MCP
+Variante a:  Chatbot-Backend ──► b-api  /api/v1/proxy/wlo-mcp/mcp ──► MCP
+Variante b:  Widget ──► Repository /edu-sharing/rest/bapi/api/v1/proxy/wlo-mcp/mcp ──► b-api ──► MCP
 ```
 
-Heute scheitert das: Der MCP liest das `Bearer bdt_…` der b-api als unbrauchbare Anmeldung und antwortet
+Heute scheitert beides am MCP: Er liest das `Bearer bdt_…` der b-api als unbrauchbare Anmeldung und antwortet
 **401**; und der Block hätte keinen Platz, weil `Authorization` belegt ist.
+
+**Variante a scheitert nach heutiger Doku außerdem an der b-api selbst.** Ein Dienst darf mit seinem
+Delegations-Token nur Pfade in dessen Scopes rufen, und für Proxy-Einträge nennt die Doku genau drei:
+`llm`, `edu-sharing-llm`, `edu-sharing-repo`. Den Scope `proxy:<dienst>` gibt es nur für **Flows**
+(`bapi.scopes`); dort heißt es ausdrücklich, andere Proxy-Dienste blieben zu (401). Einen eigenen Schlüssel darf
+der Chatbot auch nicht mehr nehmen („der Dienstschlüssel entfällt komplett“). Der Leitfaden nennt zwar ein
+Beispiel, in dem ein Dienst die Textextraktion mit demselben Token ruft — das widerspricht der Scope-Liste und
+ist die **erste Frage an das b-api-Team**: Kann `delegationScopes` eines Proxy-Eintrags `proxy:wlo-mcp`
+enthalten? Ohne ein Ja bleiben für Stufe 2 nur Variante b (das Widget spricht MCP — dann sitzt die
+Gesprächslogik im Browser) oder ein Flow, der `proxy:wlo-mcp` ruft.
 
 Was dafür zu bauen und einzustellen wäre:
 
@@ -156,9 +190,7 @@ Offen und nur mit einem Proxy-Eintrag auf Staging messbar:
 
 - Kommt eine freigegebene eigene Kopfzeile unverändert durch? Kommt `x-client-trace-id` / B3 an?
 - Trägt der Proxy `text/event-stream`, und wie lange?
-- Darf ein Dienst hinter der b-api mit seinem Delegations-Token einen **anderen Proxy-Dienst** rufen
-  (Chatbot → `proxy/wlo-mcp`)? Der Leitfaden zeigt das für die Textextraktion; welche `delegationScopes`
-  es dafür braucht, ist zu klären.
+- Die Scope-Frage oben (Variante a) — sie entscheidet, ob Stufe 2 für euer Backend überhaupt offensteht.
 - Das Token endet mit dem ursprünglichen Aufruf: Alles, was der Chatbot über die b-api beim MCP auslöst,
   muss **innerhalb** dieser einen Chat-Anfrage fertig werden. Unsere Stapel-Werkzeuge arbeiten in Stücken
   je Aufruf (bis ~40 s) — passt, wenn euer `responseTimeout` das trägt.
@@ -166,9 +198,10 @@ Offen und nur mit einem Proxy-Eintrag auf Staging messbar:
 ### B.4 Empfehlung
 
 - **Jetzt:** Stufe 0/1 und Weg B2 (oder A, wo ein Ticket da ist). Kein Bau am MCP.
-- **Stufe 2 nur, wenn T6 verlangt, dass der MCP nicht direkt erreichbar ist.** Dann zuerst messen
-  (Proxy-Eintrag auf Staging), danach das kleine Paket am MCP. Vorab von euch und dem Betreiber zu
-  entscheiden: der Name der zweiten Kopfzeile.
+- **Stufe 2 nur, wenn T6 verlangt, dass der MCP nicht direkt erreichbar ist.** Dann zuerst die Scope-Frage
+  mit dem b-api-Team klären, dann messen (Proxy-Eintrag auf Staging), danach das kleine Paket am MCP. Vorab
+  von euch und dem Betreiber zu entscheiden: der Name der zweiten Kopfzeile. Der Leitfaden sieht diese zweite
+  Kopfzeile für Dienste mit eigener Personen-Anmeldung ausdrücklich vor (Kap. 2.2, „Sicherheit“).
 
 ## Fragen für das Gespräch
 
@@ -177,5 +210,9 @@ Offen und nur mit einem Proxy-Eintrag auf Staging messbar:
 3. Läuft euer Backend künftig hinter der b-api (Stufe 1)? Dann: Block im JSON-Körper oder eigene Kopfzeile?
 4. Gibt es einen Grund, auch den MCP hinter die b-api zu stellen (Stufe 2)? Wenn ja: Name der Kopfzeile,
    und wer bittet den b-api-Admin um den Proxy-Eintrag zum Messen?
-5. Ruft ihr über die b-api andere Proxy-Dienste mit dem Delegations-Token — habt ihr Erfahrung mit den
-   nötigen `delegationScopes`?
+5. Ruft ihr über die b-api andere Proxy-Dienste mit dem Delegations-Token — hat das bei euch funktioniert,
+   und mit welchen `delegationScopes`? (Die Doku nennt `proxy:<dienst>` nur für Flows.)
+6. Startet ihr Flows künftig über `wlo_start_flow` am MCP (mit dem Block), statt den Start ins Frontend zu
+   legen? Dann ist der offene Punkt aus Kap. 8 des Leitfadens für euch erledigt.
+7. Ruft euer Widget euer Backend über den Repository-Proxy (`/edu-sharing/rest/bapi/…`) — und was habt ihr
+   dort zu eigenen Kopfzeilen, Streams und Uploads gemessen?
