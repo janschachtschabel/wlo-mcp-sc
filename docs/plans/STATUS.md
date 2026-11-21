@@ -88,6 +88,9 @@ diese Datei über rund 100 Zeilen wächst.
   brachten (Sitzungs-Tausch, `sessionIngress`, `X-WLO-Client-Address`, Bindung an die Eintragung); die Lesart von
   `WLO_SESSION_ALLOWED_ORIGINS` (ersetzt die Repository-Herkunft) an neun Stellen richtiggestellt. Code: b-api-Antworten
   bis 8 MB, Messwert `wlo_bapi_job_owners_held`, alle Schalter-Schreibweisen in `src/env-flags.ts`. Tag `v1.5.1`.
+- **2026-11-21 — Vorschlag zur Diskussion mit dem Chatbot-Team:** Anmeldung aus der Redaktion (drei gebaute Wege
+  zum Zugangsblock) und MCP ↔ Chatbot hinter der b-api (Stufe 2 ist Entwurf, nichts gebaut):
+  `2026-11-21-vorschlag-chatbot-anmeldung-und-b-api.md`. Dazu: OpenAPI-Tests lesen CRLF (`.gitattributes`).
 - **Entschieden 2026-11-15: die Werkzeugliste bleibt vorerst, wie sie ist.** `tools/list` misst rund 235 000 Zeichen für 60 Werkzeuge (Test hält das
   als Obergrenze). Kleiner wird es nur durch eine andere Form des veröffentlichten Schemas —
   gemeinsame Datensatz-Definition je Werkzeug per `$ref`, Qualitätsparameter als ein Objekt — und das
